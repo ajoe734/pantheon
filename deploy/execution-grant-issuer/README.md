@@ -25,14 +25,26 @@ python3 deploy/execution-grant-issuer/run_server.py \
 ```
 This generates the private key with permissions `0600` and outputs the public key base64url trust string and fingerprint.
 
-### Step 2.2: Configure Service
+### Step 2.2: Configure Application Default Credentials
+Token verification (`identity_platform.check_revocation` included) is performed
+by the pinned `firebase-admin` SDK, authenticated with Application Default
+Credentials on this host -- never a downloadable service-account key file.
+Provision ADC once per issuer host, e.g.:
+```bash
+gcloud auth application-default login --project=pantheon-dev-20260902
+```
+or attach a workload identity / metadata-server credential if the issuer
+runs on GCE/GKE. `GET /healthz` fails closed (503) if ADC cannot actually be
+resolved; see Section 8 of the operations guide.
+
+### Step 2.3: Configure Service
 Copy `issuer-config.example.json` to `/etc/pantheon/execution-grant-issuer/config.json` and configure:
 1. `identity_platform.project_id`: Target identity project (default: `pantheon-dev-20260902`).
 2. `identity_platform.allowed_operator_uids`: Allowlist of human operator UIDs permitted to authorize execution.
 3. `signing.private_key_file`: Path to the generated Ed25519 private key.
 4. `signing.key_id`: Matching key ID.
 
-### Step 2.3: Configure Systemd Service
+### Step 2.4: Configure Systemd Service
 ```bash
 sudo cp deploy/execution-grant-issuer/pantheon-execution-grant-issuer.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -41,7 +53,7 @@ sudo systemctl start pantheon-execution-grant-issuer
 sudo systemctl status pantheon-execution-grant-issuer
 ```
 
-### Step 2.4: Configure Public Trust in Pantheon
+### Step 2.5: Configure Public Trust in Pantheon
 Promote the issuer public key into `.orchestrator/config.json`:
 ```json
 {
@@ -52,7 +64,10 @@ Promote the issuer public key into `.orchestrator/config.json`:
   }
 }
 ```
-Deploy / promote this configuration into the live supervisor runtime using `scripts/promote_supervisor_runtime.py`.
+Deploy / promote this configuration into the live supervisor runtime using the
+qualified current-host invocation documented in
+`docs/operations/execution-grant-issuer.md` § 6.3 (`--repo`, `--status-root`,
+`--authority-env-file`, `--discover-only` then `--promote`).
 
 ## 3. Health & Verification Probes
 - Health endpoint: `curl -s http://127.0.0.1:8090/healthz`

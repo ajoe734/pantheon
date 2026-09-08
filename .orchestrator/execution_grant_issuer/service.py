@@ -282,10 +282,10 @@ class ExecutionGrantIssuerService:
         healthy = True
 
         try:
-            self.verifier._get_google_public_keys()
-            checks["identity_platform_certs"] = "ok"
+            self.verifier.check_identity_platform_readiness()
+            checks["identity_platform_credentials"] = "ok"
         except Exception as exc:
-            checks["identity_platform_certs"] = f"unavailable: {exc}"
+            checks["identity_platform_credentials"] = f"unavailable: {exc}"
             healthy = False
 
         if not self.verifier.allowed_operator_uids:

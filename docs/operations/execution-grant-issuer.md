@@ -28,15 +28,22 @@ The **Execution Grant Issuer** is an isolated development-tooling authority serv
 ## 2. Authentication & Cryptographic Verification
 
 ### Identity Platform ID Token Verification
-The issuer accepts only cryptographically verified user tokens from the configured project (`pantheon-dev-20260902`):
-- **Algorithm:** RS256 signature verified against Google's public x509 certificates (`https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com`).
-- **Issuer (`iss`):** `https://securetoken.google.com/pantheon-dev-20260902`
-- **Audience (`aud`):** `pantheon-dev-20260902` (rejects retired projects such as `pantheon-benjamin-20260528`).
-- **Subject (`sub` / `user_id`):** Must match an entry in the explicit `allowed_operator_uids` allowlist.
+Cryptographic verification (signature, issuer, audience, expiry) and,
+when `identity_platform.check_revocation` is enabled (default `true`),
+revoked/disabled-account denial are delegated entirely to the pinned
+`firebase-admin` SDK's `auth.verify_id_token(check_revoked=True)`,
+authenticated with Application Default Credentials on the isolated issuer
+host -- the issuer never re-implements token cryptography, never calls
+Google endpoints directly, and never reads a downloadable service-account
+key file. On top of the SDK's verified claims, the issuer additionally
+enforces:
+- **Project (`pantheon-dev-20260902`):** enforced by the SDK against `iss`/`aud` (rejects retired projects such as `pantheon-benjamin-20260528`).
+- **Subject (`sub` / `uid`):** Must match an entry in the explicit `allowed_operator_uids` allowlist.
 - **Email:** Non-empty and `email_verified == true`.
 - **Freshness (`auth_time`):** Authentication timestamp must be within `max_auth_age_seconds` (default 3600s) and not in the future.
 - **Multi-Factor Authentication (MFA):** Token must contain a completed second-factor claim (`sign_in_second_factor` in `totp`, `phone`, `sms`, `security_key`). Single-factor password-only tokens are rejected.
 - **Forbidden Principals:** Anonymous tokens, service account / ADC tokens, and custom-provider claims are rejected.
+- **Revoked / Disabled Accounts:** With `check_revocation: true`, the SDK's live revocation check denies revoked tokens and disabled accounts (`RevokedIdTokenError`, `UserDisabledError`); any SDK error (including a certificate-fetch outage) fails closed.
 
 ### Ed25519 Grant Signing
 - Once verification and challenge consumption succeed, the service constructs a grant payload adhering strictly to `execution_authorization.py`:
@@ -189,10 +196,37 @@ Record the public key in `.orchestrator/config.json`:
 ```
 
 ### Step 6.3: Runtime Promotion
-Run Pantheon's qualified runtime promotion script to deploy the configuration to live supervisor and command runtimes:
+`scripts/promote_supervisor_runtime.py` replaces the running supervisor with
+one exact authoritative-V2 runtime; it has no bare invocation and always
+requires an explicit `--status-root`. Run it from the current-host qualified
+source checkout (`$PANTHEON_DEPLOY_ROOT`), against the live status root
+(`$PANTHEON_STATUS_ROOT`), and supply the public-trust-only verifier map via
+`--authority-env-file` -- a mode-`0600` file containing only public verifier
+material (e.g. the `mfa_issuer_public_keys` trust root above), never a
+private signing key or bearer credential:
+
 ```bash
-python3 scripts/promote_supervisor_runtime.py
+# 1. Discover-only: validate the candidate runtime and current live config
+#    without stopping anything.
+python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
+  --repo "${PANTHEON_DEPLOY_ROOT:?}" \
+  --status-root "${PANTHEON_STATUS_ROOT:?}" \
+  --authority-env-file /etc/pantheon/execution-grant-issuer/public-trust-env.json \
+  --discover-only --json
+
+# 2. Promote: stop the incumbent supervisor and launch the validated
+#    candidate. Only run this after step 1 reports every invariant passed.
+python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
+  --repo "${PANTHEON_DEPLOY_ROOT:?}" \
+  --status-root "${PANTHEON_STATUS_ROOT:?}" \
+  --authority-env-file /etc/pantheon/execution-grant-issuer/public-trust-env.json \
+  --promote
 ```
+
+`--repo` and `--status-root` must both resolve to the qualified, currently
+deployed checkouts on this host -- never a retired or ad-hoc path. Omitting
+`--promote`/`--discover-only` is not a safe default; run discovery first and
+only pass `--promote` once its output confirms the candidate is eligible.
 
 ### Step 6.4: Rollback & Revocation Procedure
 If an issuer key is compromised or needs to be revoked:
@@ -201,7 +235,7 @@ If an issuer key is compromised or needs to be revoked:
    AI_NAME=Human/Ops scripts/ai-status.sh execution-grant-revoke DEV502-TRACE-001 "Key compromised"
    ```
 2. Remove the key ID from `execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json`.
-3. Promote the updated configuration via `scripts/promote_supervisor_runtime.py`.
+3. Promote the updated configuration using the qualified current-host invocation from Step 6.3 (`--repo`, `--status-root`, `--authority-env-file`, then `--discover-only` followed by `--promote`).
 4. Stop the issuer service:
    ```bash
    sudo systemctl stop pantheon-execution-grant-issuer
@@ -225,8 +259,8 @@ To ensure background auto-workers cannot forge or mint execution grants:
 ## 8. Readiness & Liveness Failure Conditions
 
 The `/healthz` and `/livez` endpoints expose service health. The service fails closed and marks itself unready under the following conditions:
-1. **Certificate Outage / Cache Expiry:**
-   - Google Cloud Identity Platform public certificates cannot be fetched from `https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com` and the local certificate cache has expired (`now >= cache_expires_at`).
+1. **Application Default Credentials Unavailable (`identity_platform_credentials`):**
+   - Readiness actually resolves the issuer host's Application Default Credentials (the same credential `firebase-admin`'s `auth.verify_id_token(check_revoked=True)` needs at request time); if ADC cannot be resolved, `/healthz` returns 503 even though `/livez` still reports the process is up.
 2. **Signer Key Inaccessibility:**
    - Private key file cannot be loaded, has wrong permissions, or does not contain a valid Ed25519 private key.
 3. **Insecure Network Binding:**
@@ -241,37 +275,86 @@ The `/healthz` and `/livez` endpoints expose service health. The service fails c
 The execution grant issuer enforces current-project tokens from `pantheon-dev-20260902` and rejects tokens from retired projects (`pantheon-benjamin-20260528`) or single-factor authentication.
 
 ### Acquiring a Fresh MFA ID Token
-The tooling web interface (`index.html`) and CLI accept an already-obtained fresh Identity Platform user ID token. To acquire one:
-1. **Interactive gcloud login (Operator Workstation):**
+
+**This is a distinct credential from `gcloud` / Application Default
+Credentials.** `gcloud auth login --update-adc` authenticates the *operator's
+workstation* to call Google Cloud APIs (and is what the issuer host itself
+uses via ADC to call `firebase-admin`'s `auth.verify_id_token`) -- it does
+**not** produce an Identity Platform *user* ID token, has no MFA claim, and
+is never accepted by the issuer's token verifier (service-account/ADC
+subjects are explicitly rejected). The only way to obtain a token this
+service will accept is genuine Identity Platform end-user sign-in with a
+completed second factor, below.
+
+The tooling web interface (`index.html`) and CLI accept an already-obtained
+fresh Identity Platform user ID token. To acquire one entirely on the
+operator's own workstation, without ever putting a password, pending
+credential, or the resulting `idToken` on the command line, in shell
+history, or on stdout:
+
+1. Sign in with password to initiate the MFA challenge. Provide the password
+   over stdin (`--data @-`) instead of as a shell argument, and capture only
+   the response body to a private file (`-o`, created with a restrictive
+   umask) so a pending credential is never printed to the terminal:
    ```bash
-   gcloud auth login --project=pantheon-dev-20260902 --update-adc
+   umask 0177
+   curl -sS -X POST \
+     "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
+     -H "Content-Type: application/json" \
+     --data @- -o /tmp/signin-step1.json <<'EOF'
+   {"email":"operator-chloe@pantheon.trade","password":"REPLACE_INTERACTIVELY","returnSecureToken":true}
+   EOF
    ```
-2. **Identity Platform REST Authentication with Second Factor:**
-   - Step 1: Sign in with password to initiate MFA challenge:
-     ```bash
-     curl -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
+   If MFA is enrolled, `/tmp/signin-step1.json` (mode `0600` from the
+   `umask` above) contains `mfaPendingCredential` and the enrolled
+   `mfaEnrollmentId`(s) under `mfaInfo`. Replace the literal password in the
+   heredoc interactively; do not leave it in a saved script or shell history.
+2. Finalize the second factor using the official **v2** endpoint (the v1
+   path used previously does not exist for this operation). The request body
+   is `mfaPendingCredential`, `mfaEnrollmentId`, and
+   `totpVerificationInfo.verificationCode` -- not the v1-shaped
+   `totpVerificationCode`:
+   ```bash
+   PENDING_CRED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mfaPendingCredential"])' /tmp/signin-step1.json)"
+   ENROLLMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mfaInfo"][0]["mfaEnrollmentId"])' /tmp/signin-step1.json)"
+   umask 0177
+   python3 -c '
+   import json, sys
+   print(json.dumps({
+       "mfaPendingCredential": sys.argv[1],
+       "mfaEnrollmentId": sys.argv[2],
+       "totpVerificationInfo": {"verificationCode": sys.argv[3]},
+   }))
+   ' "$PENDING_CRED" "$ENROLLMENT_ID" "REPLACE_WITH_TOTP_CODE" \
+     | curl -sS -X POST \
+       "https://identitytoolkit.googleapis.com/v2/accounts/mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
        -H "Content-Type: application/json" \
-       -d '{"email":"operator-chloe@pantheon.trade","password":"<password>","returnSecureToken":true}'
-     ```
-     If MFA is enrolled, this returns an `mfaPendingCredential`.
-   - Step 2: Finalize second factor (TOTP / SMS / Phone):
-     ```bash
-     curl -X POST "https://identitytoolkit.googleapis.com/v1/accounts:mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
-       -H "Content-Type: application/json" \
-       -d '{"mfaPendingCredential":"<pending-cred>","totpVerificationCode":{"verificationCode":"<totp-code>"}}'
-     ```
-     The returned `idToken` contains the verified `sign_in_second_factor` claim and `auth_time`.
+       --data @- -o /tmp/signin-step2.json
+   shred -u /tmp/signin-step1.json
+   ```
+   The returned `idToken` in `/tmp/signin-step2.json` (mode `0600`) contains
+   the verified `sign_in_second_factor` claim and `auth_time`. Neither the
+   TOTP code nor the resulting `idToken` is ever printed to the terminal by
+   this sequence.
 3. **Feeding the Token to the CLI:**
    ```bash
-   # Save securely to a 0600 file:
-   echo -n "<idToken>" > /tmp/operator-token.txt
-   chmod 0600 /tmp/operator-token.txt
+   # Extract only the idToken into its own private 0600 file; the file is
+   # created with the restrictive umask still in effect, so there is no
+   # echo-then-chmod window during which the token is world/group readable.
+   umask 0177
+   python3 -c '
+   import json, sys
+   with open(sys.argv[2], "w") as f:
+       f.write(json.load(open(sys.argv[1]))["idToken"])
+   ' /tmp/signin-step2.json /tmp/operator-token.txt
+   shred -u /tmp/signin-step2.json
 
    # Run the scoped TRACE client:
    python3 scripts/request_execution_grant.py request \
      --task DEV502-TRACE-001 \
      --token-file /tmp/operator-token.txt \
      --submit
+   shred -u /tmp/operator-token.txt
    ```
 
 ---

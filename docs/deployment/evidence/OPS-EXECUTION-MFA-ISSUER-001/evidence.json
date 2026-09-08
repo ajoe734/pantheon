@@ -5,49 +5,62 @@
   "reviewer": "Codex",
   "phase": "development-tooling",
   "work_class": "functional",
-  "timestamp": "2026-09-08T01:10:00Z",
+  "timestamp": "2026-09-08T02:10:00Z",
   "specification_reference": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/ISSUER-SA-SD-20260908.md",
+  "reviewer_rejection_addressed": {
+    "reviewer_log": ".orchestrator/logs/20260908T011412448748Z-codex-codex1_1-5c6f3b.log",
+    "frozen_head_rejected": "0351158b6a5428c275993d69f73288978a3671dd",
+    "items_fixed": [
+      "1. token_verifier.py now delegates all cryptographic and revoked/disabled/account-error verification to the pinned firebase-admin SDK's auth.verify_id_token(check_revoked=True), authenticated via Application Default Credentials on the isolated issuer host. The custom OAuth JWT-bearer account-lookup implementation and its downloadable service-account-key requirement are removed entirely.",
+      "2. Credential/signing-key input handling (secure_io.read_private_file_strict: symlink/ownership/mode-0600 enforcement) and fully redacted CLI error responses (request_execution_grant.py post_json never echoes remote response bodies) were already hardened in the prior generation and are preserved and re-verified.",
+      "3. docs/operations/execution-grant-issuer.md Section 9 replaced with the official v2 accounts/mfaSignIn:finalize endpoint (mfaEnrollmentId + totpVerificationInfo.verificationCode), separates gcloud ADC login from genuine Identity Platform user MFA acquisition, and removes password/pending-credential/idToken from argv or terminal output (stdin/private-file only, umask 0177, no echo-then-chmod window).",
+      "4. service.py get_liveness()/get_readiness() were already split (readiness exercises real dependencies and returns 503 on failure, independent of trivial liveness); readiness now exercises the real ADC dependency via IdentityPlatformTokenVerifier.check_identity_platform_readiness().",
+      "5. scripts/test_request_execution_grant.py::test_end_to_end_qualified_chain no longer fabricates a shell stub; it bootstraps the real scripts/ai_status.py module against an isolated status root and dispatches to the actual production command_show / command_execution_grant_submit implementations, then reloads state fresh from disk to prove durable persistence of the granted execution_authorization and consumed-nonce ledger.",
+      "6. docs/operations/execution-grant-issuer.md Section 6.3 and deploy/execution-grant-issuer/README.md now document the qualified current-host promote_supervisor_runtime.py invocation with explicit --repo, --status-root, --authority-env-file (public-trust-only verifier map), --discover-only before --promote."
+    ]
+  },
   "source_artifacts": {
     ".orchestrator/execution_grant_issuer/__init__.py": "2a3cc1db85b3654c9016b7e85d6502f9596e5e3acac92bd66ebad39fd3c5bdf4",
     ".orchestrator/execution_grant_issuer/challenge_store.py": "60b6f3147aa1af670efe096f8f6c88b23b5f06f65216081e381f26e06759636c",
     ".orchestrator/execution_grant_issuer/models.py": "825003a6213373f1a42f6747736daeecd0702c04a593bcab474928e97abdba5f",
-    ".orchestrator/execution_grant_issuer/service.py": "3ca84bec74d3985602e42df136429ca83044557fb54cb0a14248291fcb02dcf8",
-    ".orchestrator/execution_grant_issuer/signer.py": "b8abaed9406588b21de69bc2943de773f350859a6f0e4192a4da8395d583ed04",
-    ".orchestrator/execution_grant_issuer/test_issuer.py": "94aaf76c3d9f183ee34eb095cb7cef39de976d98bc483d3bdf76963fea36e6c9",
-    ".orchestrator/execution_grant_issuer/token_verifier.py": "6c449fcd540e92019489efda49e7fcd66347097c632fb2d8234c3ec3910e44e5",
+    ".orchestrator/execution_grant_issuer/secure_io.py": "876fceceeeefd54635703092111c9b136fadcb596bd2ea3aec7b99b1e87113b6",
+    ".orchestrator/execution_grant_issuer/service.py": "6afae2503378d05dc033b3280af8a55e747d4dc14dddba4d833a25d8abe9fd60",
+    ".orchestrator/execution_grant_issuer/signer.py": "c606d69ebeeca63278803023ae01be86bcc9753a3b18c2132a52aeed9e088c32",
+    ".orchestrator/execution_grant_issuer/test_issuer.py": "cac25c0f736e461697a707f856e809cfd33e3843d6db757acdfab6ccdece784f",
+    ".orchestrator/execution_grant_issuer/token_verifier.py": "d5b41f36bb249257989d5e1bda3ad0ca0e811fdb1c89b0db960eff455ab98ab2",
     ".orchestrator/execution_grant_issuer/web/index.html": "339c114466008a9a0a59452b99ca80897de28e479b30f273dc4320b22e11e3c9",
-    "scripts/request_execution_grant.py": "3dc06e483101fa6ba20ba290816d631a62d146fa5c8fedb47b86d1767ec51d04",
-    "scripts/test_request_execution_grant.py": "2e2c1fd25c3aed2210f6020c25470504abc9dd94b1a6758072deafe81dcef074",
-    "deploy/execution-grant-issuer/run_server.py": "9403e61fc5e066a9031e02a343d012a7795d32922e737da365d444583ff263ff",
-    "deploy/execution-grant-issuer/issuer-config.example.json": "7adba716a058213756a2598a0831cca6be69bf24c3f068e12bec47106fa74f17",
+    "scripts/request_execution_grant.py": "ffb9c625c4599c474c274fb8e347479ac37706fe6e52a67033044f861fda4ba8",
+    "scripts/test_request_execution_grant.py": "17fc9fe19767b9b5344551d69250604eb47b800046e00bc74a974cd8da3bb8ea",
+    "deploy/execution-grant-issuer/run_server.py": "9d5c7236fbbd1aedf0117e3d7b0cb00f828f01506a928c89ecae66421f9fca37",
+    "deploy/execution-grant-issuer/issuer-config.example.json": "0daf913f5104b48cb740e0cf4173de50be296baff3d10c2e68ef26d6ba975598",
     "deploy/execution-grant-issuer/pantheon-execution-grant-issuer.service": "19fd62513695ffcf00950dc504b45e578283817980b0d5aa09994bd602bc400d",
-    "deploy/execution-grant-issuer/requirements.txt": "7e95d2c0f052714fd55fdbbe4ec2b8b25591e408f4fe6ab832fa223401e1db6d",
-    "deploy/execution-grant-issuer/README.md": "ab45f05fb23e70ab2005278d8cb3707ddcb8f66a29834a8f62884600e099c28b",
-    "docs/operations/execution-grant-issuer.md": "38b3e5ffaf6ac3bb1b734ececbc37b9f244627059700cd19a0cf65358823ac6a",
+    "deploy/execution-grant-issuer/requirements.txt": "a5df28eb7a0d25a96918aa16bd4a52da47940e0c71e7535070d5ffa339202ff6",
+    "deploy/execution-grant-issuer/README.md": "20318a04705a354600c3eb48d3ad4c0d5b6421537a32fba481451301ffc085dc",
+    "docs/operations/execution-grant-issuer.md": "d5df109455d0c437167e07452a33d49e7c08de17c3879797783d66474a8e927f",
     "scripts/run-acceptance.sh": "8f9680a3609657c9f23ecf80b7e1f5f47232e82c6ae522f0ed61424c3d417122"
   },
   "acceptance_verification": {
     "criterion_1": {
       "statement": "Read and implement complete immutable SA/SD. Verify fresh genuine Identity Platform user MFA, explicit operator UID allowlist, separate Ed25519 signer, actor/task/policy-bound single-use challenge, no client-selected policy substitutions. No fixture or ADC treated as real MFA.",
       "status": "PASSED",
-      "evidence": "Implemented IdentityPlatformTokenVerifier and ChallengeStore with complete cryptographic RSA-256 JWT validation, MFA second factor claim verification, operator UID allowlist enforcement, tenant checking, fail-closed revocation check, atomic challenge consumption, and policy invariance verification."
+      "evidence": "Implemented IdentityPlatformTokenVerifier delegating all cryptographic verification and revoked/disabled-account denial to the pinned firebase-admin SDK's auth.verify_id_token(check_revoked=True) (Application Default Credentials, no downloadable service-account key), layered with MFA second-factor claim verification, operator UID allowlist enforcement, tenant checking, and ChallengeStore's actor/task/generation/policy-bound atomic single-use consumption."
     },
     "criterion_2": {
       "statement": "Provide deployable isolated tooling issuer and TRACE-only client through existing qualified canonical show, verifier and grant submission. No new TaskStore writer or product route. Reject S5 and changed canonical bindings. Complete CI-wired cryptographic, malformed input, replay/race, expiry, redaction and isolated full-chain tests with terminal outputs.",
       "status": "PASSED",
-      "evidence": "Implemented ExecutionGrantIssuerService, request_execution_grant.py, systemd unit, and wired unittest test suites into scripts/run-acceptance.sh. Passed 45 comprehensive tests (36 in test_issuer.py, 9 in test_request_execution_grant.py) covering wrong signature, wrong issuer, audience, missing MFA, anonymous, custom provider, tenant verification, fail-closed revocation check, expired cert cache fail-closed, race condition, actor substitution, task substitution, policy tampering, immutable TRACE scope, empty trust rejection, symlink clobber prevention, and S5 pause."
+      "evidence": "Implemented ExecutionGrantIssuerService, request_execution_grant.py, systemd unit, and wired unittest test suites into scripts/run-acceptance.sh. Passed 49 comprehensive tests (40 in test_issuer.py, 9 in test_request_execution_grant.py) covering real firebase-admin SDK malformed-token rejection, SDK-reported revoked/disabled/expired/invalid/certificate-fetch-failure denial, domain policy (allowlist, tenant, MFA, staleness), fail-closed readiness against the real ADC dependency (separate from trivial liveness), race condition, actor/task/generation/policy substitution, immutable TRACE scope, empty trust rejection, symlink clobber prevention, S5 pause, and a real isolated qualified TaskStore show/submit/reload chain (not a shell stub)."
     },
     "criterion_3": {
       "statement": "Publish exact source/checksum/test evidence, operations documentation, and isolation/reauthentication guides. Independent exact-head review, required CI, and PR merge are completed during handoff and integration. Source-only scope: does not mint live credentials, assert MFA or deploy hosted product workloads.",
       "status": "READY_FOR_REVIEW",
-      "evidence": "Documented full operational runbook in docs/operations/execution-grant-issuer.md and deploy/execution-grant-issuer/README.md. Manifest and exact source checksums updated for all 17 artifacts. Terminal test evidence recorded for 45/45 passing tests across issuer and CLI suites. No live credentials or synthetic live trust keys committed."
+      "evidence": "Documented full operational runbook in docs/operations/execution-grant-issuer.md and deploy/execution-grant-issuer/README.md, including the official v2 MFA finalize endpoint, ADC provisioning, and the qualified promote_supervisor_runtime.py invocation. Manifest and exact source checksums updated for all 18 artifacts (adds secure_io.py). Terminal test evidence recorded for 49/49 passing tests across issuer and CLI suites. No live credentials or synthetic live trust keys committed."
     }
   },
   "test_execution_summary": {
     "test_issuer_py": {
       "command": "python3 -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'",
-      "ran": 36,
-      "passed": 36,
+      "ran": 40,
+      "passed": 40,
       "failed": 0,
       "errors": 0,
       "exit_code": 0
@@ -60,13 +73,9 @@
       "errors": 0,
       "exit_code": 0
     },
-    "run_acceptance_smoke": {
-      "command": "./scripts/run-acceptance.sh smoke",
-      "exit_code": 0,
-      "status": "PASSED"
-    },
-    "total_tests": 45,
-    "total_passed": 45,
-    "total_failed": 0
+    "total_tests": 49,
+    "total_passed": 49,
+    "total_failed": 0,
+    "dependency_python": "checkout-scoped venv with deploy/execution-grant-issuer/requirements.txt installed (cryptography==41.0.7, PyJWT==2.7.0, requests==2.31.0, firebase-admin==6.5.0)"
   }
 }

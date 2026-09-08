@@ -21,7 +21,8 @@
       "phone",
       "totp",
       "security_key"
-    ]
+    ],
+    "check_revocation": true
   },
   "signing": {
     "key_id": "pantheon-mfa-issuer-dev-20260908",

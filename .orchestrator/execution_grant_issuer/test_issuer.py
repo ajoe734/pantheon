@@ -2,39 +2,36 @@
 
 OPS-EXECUTION-MFA-ISSUER-001.
 Covers:
-- Cryptographic verification of genuine Identity Platform user MFA ID tokens
-- Rejection of invalid signatures, wrong projects, wrong issuers, missing MFA,
-  password-only, anonymous, and service-account/ADC tokens
-- Allowlist and email verification enforcement
-- Stale and future auth_time rejection
+- Real firebase-admin SDK integration (structurally malformed tokens are
+  rejected by the actual, unmocked ``firebase_admin.auth.verify_id_token``)
+- Fail-closed denial when the SDK reports a revoked, disabled, expired,
+  invalid, or certificate-unavailable token (``check_revoked=True``)
+- Domain policy layered on top of verified claims: allowlist, email
+  verification, tenant scoping, MFA second-factor, and auth_time freshness
 - Ephemeral single-use challenge lifecycle, expiry, and replay protection
 - Atomic concurrent challenge consumption (race condition prevention)
 - Actor substitution, task substitution, and client policy modification rejection
 - Mandatory S5 / step-5 execution-authorization pause
 - Full cryptographic integration with execution_authorization.verify_execution_grant
 - Redaction verification (no raw tokens, private keys, or bearer secrets logged)
+- Readiness exercises the real ADC dependency and fails closed independently of liveness
 """
 from __future__ import annotations
 
 import concurrent.futures
 import json
-import os
 import sys
-import tempfile
+import time
 import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from typing import Any, Mapping
+from unittest.mock import patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
-from cryptography.hazmat.primitives.serialization import (
-    Encoding,
-    NoEncryption,
-    PrivateFormat,
-)
+from firebase_admin import auth as firebase_auth
 
 # Ensure .orchestrator is in sys.path
 _orchestrator_dir = Path(__file__).resolve().parents[1]
@@ -49,12 +46,37 @@ from execution_grant_issuer.signer import Ed25519GrantSigner
 from execution_grant_issuer.token_verifier import IdentityPlatformTokenVerifier
 
 
+def _decode_unverified_claims(token_str: str) -> Mapping[str, Any]:
+    """Stand in for what the real firebase-admin SDK would return.
+
+    Only used as the default patched behavior of
+    ``firebase_auth.verify_id_token`` in tests that are not specifically
+    exercising SDK-level denial (revoked/disabled/expired/invalid/cert
+    outage) -- those tests instead patch the same call site with a genuine
+    ``firebase_admin.auth`` exception instance. This keeps the extensively
+    tested cryptographic signature/issuer/audience verification itself as
+    the SDK's responsibility (proven separately by
+    ``test_malformed_token_is_rejected_by_real_sdk`` against the real,
+    unmocked SDK call) while deterministically covering this module's own
+    domain policy (allowlist, tenant, MFA, freshness) without depending on
+    live network access to Google's certificate endpoint in CI.
+    """
+    return jwt.decode(
+        token_str,
+        options={
+            "verify_signature": False,
+            "verify_aud": False,
+            "verify_iss": False,
+            "verify_exp": False,
+        },
+    )
+
+
 class TestExecutionGrantIssuer(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         # Generate RSA keys once at class level for fast test execution
         cls.rsa_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        cls.rsa_public_key = cls.rsa_private_key.public_key()
         cls.other_rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
         cls.ed25519_private_key = ed25519.Ed25519PrivateKey.generate()
@@ -64,18 +86,26 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.project_id = "pantheon-dev-20260902"
         self.operator_uid = "operator-chloe-primary"
         self.operator_email = "operator-chloe@pantheon.trade"
-        self.key_id = "test-rsa-kid-1"
 
         self.signer_key_id = "pantheon-mfa-issuer-test-key-1"
         self.signer = Ed25519GrantSigner(self.ed25519_private_key, key_id=self.signer_key_id)
 
-        # Token verifier with explicit trusted public key and allowlist
+        # Real IdentityPlatformTokenVerifier: constructs a real (lazily
+        # ADC-backed) firebase_admin App. Application Default Credentials are
+        # only actually resolved if verify_id_token or the readiness check is
+        # exercised without a patch installed.
         self.verifier = IdentityPlatformTokenVerifier(
             project_id=self.project_id,
             allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
             max_auth_age_seconds=3600,
         )
+
+        self._verify_id_token_patch = patch(
+            "execution_grant_issuer.token_verifier.firebase_auth.verify_id_token",
+            side_effect=self._verify_id_token_stub,
+        )
+        self.mock_verify_id_token = self._verify_id_token_patch.start()
+        self.addCleanup(self._verify_id_token_patch.stop)
 
         # Canonical TRACE task specification and derived policy
         self.task_id = "DEV502-TRACE-001"
@@ -111,6 +141,10 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             allowed_tasks=[self.task_id, "DEV502-FAILPATH-001"],
             allowed_environments=["pantheon-dev"],
         )
+
+    @staticmethod
+    def _verify_id_token_stub(token_str, app=None, check_revoked=False, clock_skew_seconds=0):
+        return _decode_unverified_claims(token_str)
 
     def _mint_id_token(
         self,
@@ -155,7 +189,7 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             claims.update(custom_claims)
 
         effective_key = key if key is not None else self.rsa_private_key
-        effective_kid = kid if kid is not None else self.key_id
+        effective_kid = kid if kid is not None else "test-rsa-kid-1"
 
         return jwt.encode(
             claims,
@@ -164,39 +198,8 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             headers={"kid": effective_kid},
         )
 
-    def _write_service_account_credentials_file(self) -> str:
-        """Write a synthetic (non-Google) service account JSON file with 0600
-        perms for constructing a verifier with check_revocation=True."""
-        private_pem = self.other_rsa_key.private_bytes(
-            encoding=Encoding.PEM,
-            format=PrivateFormat.PKCS8,
-            encryption_algorithm=NoEncryption(),
-        ).decode("utf-8")
-        fd, path = tempfile.mkstemp(prefix="test-sa-creds-", suffix=".json")
-        os.close(fd)
-        os.chmod(path, 0o600)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "client_email": "test-issuer-sa@example-project.iam.gserviceaccount.com",
-                    "private_key": private_pem,
-                },
-                f,
-            )
-        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
-        return path
-
-    @staticmethod
-    def _mock_oauth_token_response() -> MagicMock:
-        resp = MagicMock()
-        resp.read.return_value = json.dumps(
-            {"access_token": "synthetic-test-access-token", "expires_in": 3600}
-        ).encode("utf-8")
-        resp.__enter__.return_value = resp
-        return resp
-
     # -------------------------------------------------------------------------
-    # 1. Token Verification & Cryptographic Rejection Tests
+    # 1. Real SDK Integration & Fail-Closed Denial Tests
     # -------------------------------------------------------------------------
 
     def test_valid_token_with_mfa_succeeds(self) -> None:
@@ -205,28 +208,96 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.assertEqual(operator.uid, self.operator_uid)
         self.assertEqual(operator.email, self.operator_email)
         self.assertEqual(operator.second_factor, "totp")
+        # Confirm the real SDK entrypoint was actually invoked with
+        # check_revoked=True (the default), not bypassed.
+        self.mock_verify_id_token.assert_called_once()
+        _, kwargs = self.mock_verify_id_token.call_args
+        self.assertTrue(kwargs["check_revoked"])
+        self.assertIs(kwargs["app"], self.verifier._firebase_app)
 
-    def test_rejects_wrong_signature(self) -> None:
-        token = self._mint_id_token(key=self.other_rsa_key)
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(token, now=self.now)
-        self.assertIn("signature verification failed", str(cm.exception).lower())
+    def test_malformed_token_is_rejected_by_real_sdk(self) -> None:
+        """Exercises the real, unmocked firebase_admin.auth.verify_id_token.
 
-    def test_rejects_wrong_issuer(self) -> None:
-        token = self._mint_id_token(
-            custom_claims={"iss": "https://securetoken.google.com/wrong-project"}
+        A structurally malformed token fails inside the SDK's own segment
+        parsing before any certificate fetch or network call, so this proves
+        genuine SDK wiring without depending on live network access in CI.
+        """
+        self._verify_id_token_patch.stop()
+        try:
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.verify_token("not.a.valid.jwt", now=self.now)
+            self.assertIn("token verification failed", str(cm.exception).lower())
+        finally:
+            self.mock_verify_id_token = self._verify_id_token_patch.start()
+
+    def test_sdk_denies_revoked_token(self) -> None:
+        self.mock_verify_id_token.side_effect = firebase_auth.RevokedIdTokenError(
+            "Firebase ID token has been revoked"
         )
+        token = self._mint_id_token()
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("issuer", str(cm.exception).lower())
+        self.assertIn("revoked", str(cm.exception).lower())
 
-    def test_rejects_wrong_audience_project(self) -> None:
-        token = self._mint_id_token(
-            custom_claims={"aud": "pantheon-benjamin-20260528"}  # retired project
+    def test_sdk_denies_disabled_account(self) -> None:
+        self.mock_verify_id_token.side_effect = firebase_auth.UserDisabledError(
+            "The user record is disabled"
         )
+        token = self._mint_id_token()
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("audience", str(cm.exception).lower())
+        self.assertIn("disabled", str(cm.exception).lower())
+
+    def test_sdk_denies_expired_token(self) -> None:
+        self.mock_verify_id_token.side_effect = firebase_auth.ExpiredIdTokenError(
+            "Firebase ID token has expired", cause=None
+        )
+        token = self._mint_id_token()
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("expired", str(cm.exception).lower())
+
+    def test_sdk_certificate_fetch_failure_fails_closed(self) -> None:
+        self.mock_verify_id_token.side_effect = firebase_auth.CertificateFetchError(
+            "Could not fetch certificates", cause=None
+        )
+        token = self._mint_id_token()
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("failed to fetch identity platform public keys", str(cm.exception).lower())
+
+    def test_sdk_invalid_token_denied(self) -> None:
+        self.mock_verify_id_token.side_effect = firebase_auth.InvalidIdTokenError(
+            "Firebase ID token has invalid signature"
+        )
+        token = self._mint_id_token()
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("token verification failed", str(cm.exception).lower())
+
+    def test_unexpected_sdk_error_fails_closed(self) -> None:
+        self.mock_verify_id_token.side_effect = RuntimeError("synthetic transport outage")
+        token = self._mint_id_token()
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("token verification failed", str(cm.exception).lower())
+
+    def test_check_revocation_flag_is_passed_through_to_sdk(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            check_revocation=False,
+        )
+        with patch(
+            "execution_grant_issuer.token_verifier.firebase_auth.verify_id_token",
+            side_effect=self._verify_id_token_stub,
+        ) as mock_verify:
+            v.verify_token(self._mint_id_token(), now=self.now)
+        self.assertFalse(mock_verify.call_args.kwargs["check_revoked"])
+
+    # -------------------------------------------------------------------------
+    # 2. Domain Policy Layered On Top Of Verified Claims
+    # -------------------------------------------------------------------------
 
     def test_rejects_missing_second_factor_password_only(self) -> None:
         # Password-only token has no sign_in_second_factor
@@ -272,18 +343,110 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             self.verifier.verify_token(token, now=self.now)
         self.assertIn("future", str(cm.exception).lower())
 
-    def test_rejects_expired_token(self) -> None:
-        token = self._mint_id_token(expired=True)
+    def test_rejects_empty_allowlist(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[],
+        )
+        token = self._mint_id_token()
+        with self.assertRaises(AuthenticationError) as cm:
+            v.verify_token(token, now=self.now)
+        self.assertIn("allowlist is empty", str(cm.exception).lower())
+
+    def test_rejects_wrong_tenant_or_unexpected_tenant(self) -> None:
+        token = self._mint_id_token(
+            custom_claims={"firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp", "tenant": "untrusted-tenant"}}
+        )
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("expired", str(cm.exception).lower())
+        self.assertIn("tenant", str(cm.exception).lower())
 
-    def test_rejects_malformed_token(self) -> None:
-        with self.assertRaises(AuthenticationError):
-            self.verifier.verify_token("not.a.valid.jwt", now=self.now)
+        v_tenant = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            expected_tenant_id="my-tenant-1",
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            v_tenant.verify_token(token, now=self.now)
+        self.assertIn("tenant mismatch", str(cm.exception).lower())
+
+        valid_tenant_token = self._mint_id_token(
+            custom_claims={"firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp", "tenant": "my-tenant-1"}}
+        )
+        op = v_tenant.verify_token(valid_tenant_token, now=self.now)
+        self.assertEqual(op.uid, self.operator_uid)
+
+    def test_rejects_factor_identifier_without_method(self) -> None:
+        token = self._mint_id_token(
+            second_factor=None,
+            custom_claims={"firebase": {"sign_in_provider": "password", "second_factor_identifier": "totp"}}
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("sign_in_second_factor", str(cm.exception).lower())
+
+    def test_rejects_custom_provider(self) -> None:
+        token = self._mint_id_token(
+            sign_in_provider="custom",
+            second_factor="totp",
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("custom", str(cm.exception).lower())
+
+    def test_malformed_auth_time_claim_rejected(self) -> None:
+        t_auth_str = self._mint_id_token(custom_claims={"auth_time": "invalid"})
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(t_auth_str, now=self.now)
+        self.assertIn("auth_time", str(cm.exception).lower())
 
     # -------------------------------------------------------------------------
-    # 2. Challenge Lifecycle, Expiry, and Replay Tests
+    # 3. Readiness Exercises The Real ADC Dependency
+    # -------------------------------------------------------------------------
+
+    def test_readiness_fails_closed_when_adc_unavailable(self) -> None:
+        with patch.object(
+            self.verifier._firebase_app.credential,
+            "get_credential",
+            side_effect=RuntimeError("synthetic ADC outage"),
+        ):
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.check_identity_platform_readiness()
+            self.assertIn("application default credentials", str(cm.exception).lower())
+
+    def test_readiness_succeeds_when_adc_resolves(self) -> None:
+        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=object()):
+            self.verifier.check_identity_platform_readiness()  # does not raise
+
+    def test_service_readiness_returns_503_shape_on_adc_failure(self) -> None:
+        with patch.object(
+            self.verifier._firebase_app.credential,
+            "get_credential",
+            side_effect=RuntimeError("synthetic ADC outage"),
+        ):
+            result = self.service.get_readiness()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("unavailable", result["checks"]["identity_platform_credentials"])
+
+    def test_service_readiness_ok_when_all_dependencies_healthy(self) -> None:
+        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=object()):
+            result = self.service.get_readiness()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["checks"]["identity_platform_credentials"], "ok")
+
+    def test_liveness_is_trivial_and_independent_of_readiness(self) -> None:
+        with patch.object(
+            self.verifier._firebase_app.credential,
+            "get_credential",
+            side_effect=RuntimeError("synthetic ADC outage"),
+        ):
+            liveness = self.service.get_liveness()
+            readiness = self.service.get_readiness()
+        self.assertEqual(liveness["status"], "ok")
+        self.assertEqual(readiness["status"], "unavailable")
+
+    # -------------------------------------------------------------------------
+    # 4. Challenge Lifecycle, Expiry, and Replay Tests
     # -------------------------------------------------------------------------
 
     def test_challenge_creation_and_consumption_success(self) -> None:
@@ -427,7 +590,7 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.assertEqual(len(errors), 9)
 
     # -------------------------------------------------------------------------
-    # 3. Security Binding Enforcement (Actor, Task, Gen, Policy)
+    # 5. Security Binding Enforcement (Actor, Task, Gen, Policy)
     # -------------------------------------------------------------------------
 
     def test_rejects_actor_substitution(self) -> None:
@@ -602,7 +765,7 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.assertIn("allowed task scope", str(cm.exception).lower())
 
     # -------------------------------------------------------------------------
-    # 4. Redaction Verification (No Secrets Leaked)
+    # 6. Redaction Verification (No Secrets Leaked)
     # -------------------------------------------------------------------------
 
     def test_redaction_in_audit_receipts(self) -> None:
@@ -637,7 +800,7 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.assertNotIn("Ed25519PrivateKey", receipt_str)
 
     # -------------------------------------------------------------------------
-    # 5. Full End-to-End Cryptographic Integration with execution_authorization
+    # 7. Full End-to-End Cryptographic Integration with execution_authorization
     # -------------------------------------------------------------------------
 
     def test_issued_grant_verifies_against_execution_authorization(self) -> None:
@@ -717,195 +880,8 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             )
 
     # -------------------------------------------------------------------------
-    # 6. Additional Regression Tests for Reviewer Findings
+    # 8. Additional Regression Tests for Reviewer Findings
     # -------------------------------------------------------------------------
-
-    def test_rejects_empty_allowlist(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-        )
-        token = self._mint_id_token()
-        with self.assertRaises(AuthenticationError) as cm:
-            v.verify_token(token, now=self.now)
-        self.assertIn("allowlist is empty", str(cm.exception).lower())
-
-    def test_revocation_check_requires_service_account_credentials(self) -> None:
-        with self.assertRaises(ValueError) as cm:
-            IdentityPlatformTokenVerifier(
-                project_id=self.project_id,
-                allowed_operator_uids=[self.operator_uid],
-                trusted_public_keys={self.key_id: self.rsa_public_key},
-                check_revocation=True,
-            )
-        self.assertIn("service_account_credentials_file", str(cm.exception))
-
-    def test_revocation_check_fails_closed_on_lookup_error(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-            check_revocation=True,
-            service_account_credentials_file=self._write_service_account_credentials_file(),
-        )
-        token = self._mint_id_token()
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=[self._mock_oauth_token_response(), RuntimeError("synthetic account lookup outage")],
-        ):
-            with self.assertRaises(AuthenticationError) as cm:
-                v.verify_token(token, now=self.now)
-            self.assertIn("revocation check failed", str(cm.exception).lower())
-
-    def test_revocation_check_fails_closed_when_oauth_mint_fails(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-            check_revocation=True,
-            service_account_credentials_file=self._write_service_account_credentials_file(),
-        )
-        token = self._mint_id_token()
-        with patch("urllib.request.urlopen", side_effect=RuntimeError("synthetic oauth token outage")):
-            with self.assertRaises(AuthenticationError) as cm:
-                v.verify_token(token, now=self.now)
-            self.assertIn("revocation check failed", str(cm.exception).lower())
-
-    def test_revocation_check_authorizes_lookup_with_bearer_token(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-            check_revocation=True,
-            service_account_credentials_file=self._write_service_account_credentials_file(),
-        )
-        token = self._mint_id_token()
-        lookup_resp = MagicMock()
-        lookup_resp.read.return_value = json.dumps({
-            "users": [{"localId": self.operator_uid, "disabled": False}]
-        }).encode("utf-8")
-        lookup_resp.__enter__.return_value = lookup_resp
-
-        captured_requests: list[Any] = []
-
-        def _fake_urlopen(req, timeout=10):
-            captured_requests.append(req)
-            if len(captured_requests) == 1:
-                return self._mock_oauth_token_response()
-            return lookup_resp
-
-        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
-            op = v.verify_token(token, now=self.now)
-        self.assertEqual(op.uid, self.operator_uid)
-        self.assertEqual(len(captured_requests), 2)
-        lookup_req = captured_requests[1]
-        self.assertEqual(
-            lookup_req.get_header("Authorization"), "Bearer synthetic-test-access-token"
-        )
-
-    def test_revocation_check_fails_closed_on_disabled_account(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-            check_revocation=True,
-            service_account_credentials_file=self._write_service_account_credentials_file(),
-        )
-        token = self._mint_id_token()
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "users": [{"localId": self.operator_uid, "disabled": True}]
-        }).encode("utf-8")
-        mock_resp.__enter__.return_value = mock_resp
-
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=[self._mock_oauth_token_response(), mock_resp],
-        ):
-            with self.assertRaises(AuthenticationError) as cm:
-                v.verify_token(token, now=self.now)
-            self.assertIn("disabled", str(cm.exception).lower())
-
-    def test_revocation_check_fails_closed_on_revoked_tokens(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-            check_revocation=True,
-            service_account_credentials_file=self._write_service_account_credentials_file(),
-        )
-        token = self._mint_id_token()
-        auth_ts = int(self.now.timestamp())
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "users": [{"localId": self.operator_uid, "disabled": False, "validSince": str(auth_ts + 100)}]
-        }).encode("utf-8")
-        mock_resp.__enter__.return_value = mock_resp
-
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=[self._mock_oauth_token_response(), mock_resp],
-        ):
-            with self.assertRaises(AuthenticationError) as cm:
-                v.verify_token(token, now=self.now)
-            self.assertIn("revoked", str(cm.exception).lower())
-
-    def test_rejects_wrong_tenant_or_unexpected_tenant(self) -> None:
-        token = self._mint_id_token(
-            custom_claims={"firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp", "tenant": "untrusted-tenant"}}
-        )
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(token, now=self.now)
-        self.assertIn("tenant", str(cm.exception).lower())
-
-        v_tenant = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
-            expected_tenant_id="my-tenant-1",
-        )
-        with self.assertRaises(AuthenticationError) as cm:
-            v_tenant.verify_token(token, now=self.now)
-        self.assertIn("tenant mismatch", str(cm.exception).lower())
-
-        valid_tenant_token = self._mint_id_token(
-            custom_claims={"firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp", "tenant": "my-tenant-1"}}
-        )
-        op = v_tenant.verify_token(valid_tenant_token, now=self.now)
-        self.assertEqual(op.uid, self.operator_uid)
-
-    def test_rejects_factor_identifier_without_method(self) -> None:
-        token = self._mint_id_token(
-            second_factor=None,
-            custom_claims={"firebase": {"sign_in_provider": "password", "second_factor_identifier": "totp"}}
-        )
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(token, now=self.now)
-        self.assertIn("sign_in_second_factor", str(cm.exception).lower())
-
-    def test_rejects_custom_provider(self) -> None:
-        token = self._mint_id_token(
-            sign_in_provider="custom",
-            second_factor="totp",
-        )
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(token, now=self.now)
-        self.assertIn("custom", str(cm.exception).lower())
-
-    def test_expired_cert_cache_fails_closed_on_refresh_error(self) -> None:
-        v = IdentityPlatformTokenVerifier(
-            project_id=self.project_id,
-            allowed_operator_uids=[self.operator_uid],
-        )
-        v._certs_cache = {self.key_id: self.rsa_public_key}
-        v._certs_cache_expires_at = 1.0  # Expired
-        token = self._mint_id_token()
-
-        with patch("urllib.request.urlopen", side_effect=RuntimeError("synthetic cert network failure")):
-            with self.assertRaises(AuthenticationError) as cm:
-                v.verify_token(token, now=self.now)
-            self.assertIn("failed to fetch identity platform public keys", str(cm.exception).lower())
 
     def test_wrong_actor_does_not_burn_challenge(self) -> None:
         token = self._mint_id_token(uid=self.operator_uid)
@@ -964,27 +940,6 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         stored = store.get_challenge(cid)
         self.assertEqual(stored.actor_uid, self.operator_uid)
         self.assertEqual(stored.policy_snapshot["action_scope"], "execute")
-
-    def test_malformed_numeric_claims_rejected(self) -> None:
-        t_exp_bool = self._mint_id_token(custom_claims={"exp": True})
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(t_exp_bool, now=self.now)
-        self.assertIn("exp", str(cm.exception).lower())
-
-        t_exp_str = self._mint_id_token(custom_claims={"exp": "1234567890"})
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(t_exp_str, now=self.now)
-        self.assertIn("exp", str(cm.exception).lower())
-
-        t_iat_bool = self._mint_id_token(custom_claims={"iat": False})
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(t_iat_bool, now=self.now)
-        self.assertIn("iat", str(cm.exception).lower())
-
-        t_auth_str = self._mint_id_token(custom_claims={"auth_time": "invalid"})
-        with self.assertRaises(AuthenticationError) as cm:
-            self.verifier.verify_token(t_auth_str, now=self.now)
-        self.assertIn("auth_time", str(cm.exception).lower())
 
 
 if __name__ == "__main__":

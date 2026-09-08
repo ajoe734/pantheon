@@ -132,13 +132,16 @@ def run_service(config: dict[str, Any]) -> None:
         if not ssl_key_file or not Path(ssl_key_file).is_file():
             raise FileNotFoundError(f"TLS private key file not found: {ssl_key_file}")
 
-    # Initialize Token Verifier
+    # Initialize Token Verifier. Verification (signature, issuer, audience,
+    # expiry, and revoked/disabled-account denial when check_revocation is
+    # enabled) is performed by the pinned firebase-admin SDK using
+    # Application Default Credentials on this isolated issuer host -- no
+    # downloadable service-account key file is read or required.
     project_id = id_cfg.get("project_id", "pantheon-dev-20260902")
     allowed_uids = id_cfg.get("allowed_operator_uids", [])
     max_auth_age = int(id_cfg.get("max_auth_age_seconds", 3600))
     allowed_factors = id_cfg.get("allowed_second_factors")
     check_revocation = bool(id_cfg.get("check_revocation", True))
-    service_account_credentials_file = id_cfg.get("service_account_credentials_file")
 
     verifier = IdentityPlatformTokenVerifier(
         project_id=project_id,
@@ -146,7 +149,6 @@ def run_service(config: dict[str, Any]) -> None:
         max_auth_age_seconds=max_auth_age,
         allowed_second_factors=allowed_factors,
         check_revocation=check_revocation,
-        service_account_credentials_file=service_account_credentials_file,
     )
 
     # Initialize Signer

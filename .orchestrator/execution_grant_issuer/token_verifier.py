@@ -3,44 +3,44 @@
 OPS-EXECUTION-MFA-ISSUER-001.
 Verifies fresh genuine Identity Platform user MFA tokens against configured
 project, allowed operator UIDs, second factor claims, and freshness limits.
+
+Signature, issuer, audience, expiry, and (when ``check_revocation`` is
+enabled) revoked/disabled-account denial are delegated entirely to the
+pinned ``firebase-admin`` SDK's ``auth.verify_id_token(check_revoked=True)``,
+authenticated with Application Default Credentials on the isolated issuer
+host. This module never re-implements token cryptography, never talks to
+Google endpoints directly, and never requires a downloadable service-account
+key file. It only layers the domain-specific MFA/operator-allowlist/tenant/
+freshness policy on top of the claims the SDK already verified.
 """
 from __future__ import annotations
 
-import json
 import logging
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import jwt
-from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
 
 from .models import AuthenticationError, VerifiedOperator
-from .secure_io import UnsafeCredentialFileError, read_private_file_strict
 
 logger = logging.getLogger("execution_grant_issuer.token_verifier")
 
-GOOGLE_SECURETOKEN_CERTS_URL = (
-    "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
-)
-GOOGLE_ACCOUNT_LOOKUP_URL = (
-    "https://identitytoolkit.googleapis.com/v1/projects/{project_id}/accounts:lookup"
-)
-GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
-IDENTITY_TOOLKIT_OAUTH_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 SUPPORTED_SECOND_FACTORS = frozenset({"phone", "totp", "sms", "email", "security_key"})
 DEFAULT_MAX_AUTH_AGE_SECONDS = 3600
 CLOCK_SKEW_TOLERANCE_SECONDS = 10
-ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 60
 
 
 class IdentityPlatformTokenVerifier:
-    """Verifies Identity Platform user ID tokens with genuine MFA claims."""
+    """Verifies Identity Platform user ID tokens with genuine MFA claims.
+
+    Cryptographic verification (signature, issuer, audience, expiry, and
+    revoked/disabled-account denial) is delegated to ``firebase_admin.auth``.
+    This class only enforces the additional operational policy: an explicit
+    operator UID allowlist, verified email, tenant scoping, a genuine
+    second-factor claim, and freshness of the ``auth_time`` claim.
+    """
 
     def __init__(
         self,
@@ -50,12 +50,8 @@ class IdentityPlatformTokenVerifier:
         max_auth_age_seconds: int = DEFAULT_MAX_AUTH_AGE_SECONDS,
         allowed_second_factors: Sequence[str] | None = None,
         expected_tenant_id: str | None = None,
-        trusted_public_keys: Mapping[str, RSAPublicKey | str] | None = None,
-        certs_url: str = GOOGLE_SECURETOKEN_CERTS_URL,
-        account_lookup_url: str | None = None,
-        check_revocation: bool = False,
-        service_account_credentials_file: str | Path | None = None,
-        oauth_token_url: str = GOOGLE_OAUTH_TOKEN_URL,
+        check_revocation: bool = True,
+        clock_skew_seconds: int = CLOCK_SKEW_TOLERANCE_SECONDS,
     ) -> None:
         if not project_id or not project_id.strip():
             raise ValueError("project_id must be non-empty")
@@ -71,219 +67,46 @@ class IdentityPlatformTokenVerifier:
             if allowed_second_factors is not None
             else SUPPORTED_SECOND_FACTORS
         )
-        self.expected_tenant_id = expected_tenant_id.strip() if expected_tenant_id and expected_tenant_id.strip() else None
-        self._trusted_public_keys: dict[str, RSAPublicKey] = {}
-        if trusted_public_keys:
-            for kid, key in trusted_public_keys.items():
-                if isinstance(key, RSAPublicKey):
-                    self._trusted_public_keys[kid] = key
-                elif isinstance(key, str):
-                    self._trusted_public_keys[kid] = self._load_public_key_from_pem(key)
-        self.certs_url = certs_url
-        self.account_lookup_url = (
-            account_lookup_url.strip()
-            if account_lookup_url and account_lookup_url.strip()
-            else GOOGLE_ACCOUNT_LOOKUP_URL.format(project_id=self.project_id)
+        self.expected_tenant_id = (
+            expected_tenant_id.strip() if expected_tenant_id and expected_tenant_id.strip() else None
         )
         self.check_revocation = check_revocation
-        self.oauth_token_url = oauth_token_url
-        self._certs_cache: dict[str, RSAPublicKey] = {}
-        self._certs_cache_expires_at: float = 0.0
-        self._access_token: str | None = None
-        self._access_token_expires_at: float = 0.0
-
-        self._service_account_email: str | None = None
-        self._service_account_private_key: str | None = None
-        if self.check_revocation:
-            if not service_account_credentials_file:
-                raise ValueError(
-                    "check_revocation is enabled but no service_account_credentials_file was "
-                    "provided; an unauthenticated account lookup call cannot be trusted to "
-                    "actually detect a disabled or revoked operator, so this fails closed at "
-                    "construction time rather than issuing an unauthorized request"
-                )
-            try:
-                sa_bytes = read_private_file_strict(
-                    service_account_credentials_file,
-                    description="Service account credentials file",
-                )
-            except UnsafeCredentialFileError as exc:
-                raise ValueError(str(exc)) from exc
-            try:
-                sa_info = json.loads(sa_bytes.decode("utf-8"))
-            except Exception as exc:
-                raise ValueError(
-                    f"Service account credentials file is not valid JSON: {service_account_credentials_file}"
-                ) from exc
-            email = str(sa_info.get("client_email") or "").strip()
-            private_key = str(sa_info.get("private_key") or "").strip()
-            if not email or not private_key:
-                raise ValueError(
-                    "Service account credentials file must contain 'client_email' and "
-                    "'private_key' fields"
-                )
-            self._service_account_email = email
-            self._service_account_private_key = private_key
+        self.clock_skew_seconds = clock_skew_seconds
+        self._firebase_app = self._get_or_init_firebase_app(self.project_id)
 
     @staticmethod
-    def _load_public_key_from_pem(pem_data: str) -> RSAPublicKey:
-        data = pem_data.strip().encode("utf-8")
-        if b"BEGIN CERTIFICATE" in data:
-            cert = x509.load_pem_x509_certificate(data)
-            pub = cert.public_key()
-            if not isinstance(pub, RSAPublicKey):
-                raise ValueError("Certificate does not contain an RSA public key")
-            return pub
-        raise ValueError("Unsupported key/certificate PEM format")
+    def _get_or_init_firebase_app(project_id: str) -> firebase_admin.App:
+        """Return a cached Firebase Admin app bound to this exact project.
 
-    def _get_google_public_keys(self) -> dict[str, RSAPublicKey]:
-        now = time.time()
-        if self._certs_cache and now < self._certs_cache_expires_at:
-            return self._certs_cache
-
-        try:
-            req = urllib.request.Request(
-                self.certs_url,
-                headers={"User-Agent": "pantheon-execution-grant-issuer/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                content = response.read().decode("utf-8")
-                certs_data: dict[str, str] = json.loads(content)
-
-                new_cache: dict[str, RSAPublicKey] = {}
-                for kid, cert_pem in certs_data.items():
-                    new_cache[kid] = self._load_public_key_from_pem(cert_pem)
-
-                cache_control = response.headers.get("Cache-Control", "")
-                max_age = 3600
-                for part in cache_control.split(","):
-                    part = part.strip()
-                    if part.startswith("max-age="):
-                        try:
-                            max_age = int(part.split("=")[1])
-                        except ValueError:
-                            pass
-                self._certs_cache = new_cache
-                self._certs_cache_expires_at = now + max_age
-                return self._certs_cache
-        except Exception as exc:
-            # Fail closed if certificate refresh fails and the cache is expired
-            if self._certs_cache and now < self._certs_cache_expires_at:
-                return self._certs_cache
-            raise AuthenticationError(
-                f"Failed to fetch Identity Platform public keys: {exc}"
-            ) from exc
-
-    def _resolve_public_key(self, kid: str) -> RSAPublicKey:
-        if kid in self._trusted_public_keys:
-            return self._trusted_public_keys[kid]
-        google_keys = self._get_google_public_keys()
-        if kid in google_keys:
-            return google_keys[kid]
-        raise AuthenticationError(f"Token key ID {kid!r} not found in trusted certificates")
-
-    def _mint_service_account_access_token(self) -> str:
-        """Mint (or reuse a cached) OAuth 2.0 access token for the configured
-        service account using the RFC 7523 JWT-bearer grant, so the account
-        lookup call below is an authorized Identity Toolkit request rather
-        than an anonymous one that Google will simply reject or ignore.
+        Uses Application Default Credentials on the isolated issuer host --
+        never a downloadable service-account key file. ``get_app`` is reused
+        across instances constructed for the same project so repeated
+        verifier construction (e.g. one per request) does not raise
+        "app already exists" or leak duplicate credentialed clients.
         """
-        now = time.time()
-        if self._access_token and now < self._access_token_expires_at - ACCESS_TOKEN_REFRESH_MARGIN_SECONDS:
-            return self._access_token
-
-        if not self._service_account_email or not self._service_account_private_key:
-            raise AuthenticationError(
-                "Account revocation check requires service account credentials, but none are configured"
+        app_name = f"pantheon-execution-grant-issuer-{project_id}"
+        try:
+            return firebase_admin.get_app(app_name)
+        except ValueError:
+            return firebase_admin.initialize_app(
+                firebase_credentials.ApplicationDefault(),
+                {"projectId": project_id},
+                name=app_name,
             )
 
-        iat = int(now)
-        exp = iat + 3600
-        assertion_claims = {
-            "iss": self._service_account_email,
-            "scope": IDENTITY_TOOLKIT_OAUTH_SCOPE,
-            "aud": self.oauth_token_url,
-            "iat": iat,
-            "exp": exp,
-        }
-        try:
-            assertion = jwt.encode(assertion_claims, self._service_account_private_key, algorithm="RS256")
-        except Exception as exc:
-            raise AuthenticationError(f"Failed to sign service account OAuth assertion: {exc}") from exc
+    def check_identity_platform_readiness(self) -> None:
+        """Exercise the real ADC dependency the verifier relies on.
 
-        body = urllib.parse.urlencode(
-            {
-                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                "assertion": assertion,
-            }
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            self.oauth_token_url,
-            data=body,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": "pantheon-execution-grant-issuer/1.0",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                token_response = json.loads(resp.read().decode("utf-8"))
-        except Exception as exc:
-            raise AuthenticationError(f"Failed to obtain OAuth access token for account lookup: {exc}") from exc
-
-        access_token = str(token_response.get("access_token") or "").strip()
-        if not access_token:
-            raise AuthenticationError("OAuth token endpoint did not return an access_token")
-
-        self._access_token = access_token
-        self._access_token_expires_at = iat + int(token_response.get("expires_in", 3600))
-        return access_token
-
-    def _check_account_revocation(self, uid: str, auth_time_int: int) -> None:
-        """Check user revocation/disabled status against Identity Platform account lookup.
-
-        Fails closed on any network error, missing user, disabled account, or revocation.
-        The lookup is authorized with a service-account OAuth access token; per Google's
-        published API contract, accounts:lookup requires the
-        'https://www.googleapis.com/auth/cloud-platform' (or 'identitytoolkit') OAuth scope,
-        so an unauthenticated call cannot be relied on to actually enforce revocation.
+        Readiness must fail closed if Application Default Credentials are
+        not actually resolvable on this host, since that is precisely the
+        condition under which ``check_revoked=True`` verification (and any
+        live token verification at all) would fail at request time.
         """
         try:
-            access_token = self._mint_service_account_access_token()
-            req_data = json.dumps({"localId": [uid]}).encode("utf-8")
-            req = urllib.request.Request(
-                self.account_lookup_url,
-                data=req_data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {access_token}",
-                    "User-Agent": "pantheon-execution-grant-issuer/1.0",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                content = resp.read().decode("utf-8")
-                lookup_data = json.loads(content)
-                users = lookup_data.get("users", [])
-                if not users:
-                    raise ValueError(f"Account lookup returned no user record for UID {uid!r}")
-                user = users[0]
-                if user.get("disabled") is True:
-                    raise ValueError(f"Operator account {uid!r} is disabled")
-                valid_since = user.get("validSince") or user.get("tokensValidAfterTime")
-                if valid_since is not None:
-                    try:
-                        valid_since_epoch = int(valid_since)
-                    except (TypeError, ValueError):
-                        valid_since_epoch = None
-                    if valid_since_epoch is not None and auth_time_int < valid_since_epoch:
-                        raise ValueError(
-                            f"Operator ID token for UID {uid!r} has been revoked (valid since {valid_since_epoch})"
-                        )
+            self._firebase_app.credential.get_credential()
         except Exception as exc:
             raise AuthenticationError(
-                f"Account revocation check failed for UID {uid!r}: {exc}"
+                f"Application Default Credentials are not available: {exc}"
             ) from exc
 
     def verify_token(self, token_str: str, *, now: datetime | None = None) -> VerifiedOperator:
@@ -298,85 +121,55 @@ class IdentityPlatformTokenVerifier:
         if not token_str:
             raise AuthenticationError("Bearer token is empty")
 
-        # Inspect unverified header for key ID and algorithm
         try:
-            unverified_header = jwt.get_unverified_header(token_str)
+            claims: Mapping[str, Any] = firebase_auth.verify_id_token(
+                token_str,
+                app=self._firebase_app,
+                check_revoked=self.check_revocation,
+                clock_skew_seconds=self.clock_skew_seconds,
+            )
+        except firebase_auth.RevokedIdTokenError as exc:
+            raise AuthenticationError(f"Operator ID token has been revoked: {exc}") from exc
+        except firebase_auth.UserDisabledError as exc:
+            raise AuthenticationError(f"Operator account is disabled: {exc}") from exc
+        except firebase_auth.ExpiredIdTokenError as exc:
+            raise AuthenticationError(f"Token has expired: {exc}") from exc
+        except firebase_auth.CertificateFetchError as exc:
+            raise AuthenticationError(
+                f"Failed to fetch Identity Platform public keys: {exc}"
+            ) from exc
+        except firebase_auth.InvalidIdTokenError as exc:
+            raise AuthenticationError(f"Token verification failed: {exc}") from exc
+        except AuthenticationError:
+            raise
         except Exception as exc:
-            raise AuthenticationError(f"Malformed token header: {exc}") from exc
+            # Fail closed: any unexpected SDK error (network, ADC, malformed
+            # response) denies the operator rather than proceeding unverified.
+            raise AuthenticationError(f"Token verification failed: {exc}") from exc
 
-        alg = unverified_header.get("alg")
-        if alg != "RS256":
-            raise AuthenticationError(f"Invalid token algorithm: expected RS256, got {alg!r}")
-
-        kid = unverified_header.get("kid")
-        if not kid or not isinstance(kid, str):
-            raise AuthenticationError("Token header is missing 'kid' (key ID)")
-
-        public_key = self._resolve_public_key(kid)
-
-        expected_issuer = f"https://securetoken.google.com/{self.project_id}"
         current_time = now.astimezone(timezone.utc) if now else datetime.now(timezone.utc)
         current_epoch = int(current_time.timestamp())
 
-        try:
-            claims = jwt.decode(
-                token_str,
-                key=public_key,
-                algorithms=["RS256"],
-                audience=self.project_id,
-                issuer=expected_issuer,
-                options={
-                    "require": ["exp", "iat", "aud", "iss", "sub", "auth_time"],
-                    "verify_signature": True,
-                    "verify_exp": False,  # Checked below against current_time
-                    "verify_iat": False,  # Checked below against current_time
-                    "verify_aud": True,
-                    "verify_iss": True,
-                },
-            )
-        except jwt.InvalidIssuerError as exc:
-            raise AuthenticationError(f"Invalid token issuer: {exc}") from exc
-        except jwt.InvalidAudienceError as exc:
-            raise AuthenticationError(f"Invalid token audience (wrong project): {exc}") from exc
-        except jwt.InvalidSignatureError as exc:
-            raise AuthenticationError(f"Token signature verification failed: {exc}") from exc
-        except Exception as exc:
-            raise AuthenticationError(f"Token verification failed: {exc}") from exc
-
-        # Timestamp validations against current_time (supporting caller-provided time)
-        exp_val = claims.get("exp")
-        if type(exp_val) is not int and type(exp_val) is not float:
-            raise AuthenticationError("Token 'exp' claim must be a numeric timestamp")
-        if int(exp_val) <= current_epoch - CLOCK_SKEW_TOLERANCE_SECONDS:
-            raise AuthenticationError("Token has expired")
-
-        iat_val = claims.get("iat")
-        if type(iat_val) is not int and type(iat_val) is not float:
-            raise AuthenticationError("Token 'iat' claim must be a numeric timestamp")
-        if int(iat_val) > current_epoch + CLOCK_SKEW_TOLERANCE_SECONDS:
-            raise AuthenticationError("Token 'iat' is in the future")
-
-        # Disallow Service Account / ADC tokens
-        # Standard user ID token has iss = https://securetoken.google.com/<project_id>
-        # (already checked by jwt.decode), but ensure sub is not service account email
-        sub = str(claims.get("sub") or "").strip()
+        # Disallow Service Account / ADC tokens. The SDK already confirms this
+        # is a genuine Identity Platform user ID token (issuer/audience), but
+        # a defense-in-depth check against the subject shape is kept here.
+        sub = str(claims.get("sub") or claims.get("uid") or "").strip()
         if not sub or sub.endswith(".gserviceaccount.com"):
             raise AuthenticationError("Service account and ADC tokens are not permitted")
 
-        # Disallow anonymous and custom provider tokens
+        # Disallow anonymous and custom provider tokens.
         firebase_claims = claims.get("firebase")
         if not isinstance(firebase_claims, Mapping):
             raise AuthenticationError("Token is missing required 'firebase' claims object")
 
         sign_in_provider = str(firebase_claims.get("sign_in_provider") or "").strip()
-        provider_id = str(claims.get("provider_id") or "").strip()
-        if sign_in_provider in ("anonymous", "custom") or provider_id in ("anonymous", "custom"):
+        if sign_in_provider in ("anonymous", "custom"):
             raise AuthenticationError(
-                f"Authentication provider {sign_in_provider or provider_id!r} is not permitted; "
+                f"Authentication provider {sign_in_provider!r} is not permitted; "
                 "custom and anonymous providers are rejected"
             )
 
-        # Enforce project-only or expected tenant
+        # Enforce project-only or expected tenant.
         tenant = claims.get("tenant") or firebase_claims.get("tenant")
         if self.expected_tenant_id is None:
             if tenant:
@@ -389,26 +182,28 @@ class IdentityPlatformTokenVerifier:
                     f"Tenant mismatch: expected {self.expected_tenant_id!r}, got {tenant!r}"
                 )
 
-        # Explicit operator UID allowlist verification
+        # Explicit operator UID allowlist verification.
         if not self.allowed_operator_uids:
             raise AuthenticationError("No operator UIDs are allowed; allowlist is empty")
         if sub not in self.allowed_operator_uids:
             raise AuthenticationError(f"Operator UID {sub!r} is not in the allowed operators list")
 
-        # Email and verified status check
+        # Email and verified status check.
         email = str(claims.get("email") or "").strip()
         if not email:
             raise AuthenticationError("Token does not contain an email address")
         if claims.get("email_verified") is not True:
             raise AuthenticationError("Operator email address is not verified")
 
-        # auth_time freshness checks
+        # auth_time freshness checks. This is a Pantheon-specific policy claim
+        # that the SDK's own verification does not enforce, so it is validated
+        # here defensively (type and range) rather than trusted blindly.
         auth_time_epoch = claims.get("auth_time")
         if type(auth_time_epoch) is not int and type(auth_time_epoch) is not float:
             raise AuthenticationError("Token 'auth_time' claim must be a numeric timestamp")
         auth_time_int = int(auth_time_epoch)
 
-        if auth_time_int > current_epoch + CLOCK_SKEW_TOLERANCE_SECONDS:
+        if auth_time_int > current_epoch + self.clock_skew_seconds:
             raise AuthenticationError("Token 'auth_time' is in the future")
 
         auth_age = current_epoch - auth_time_int
@@ -418,8 +213,8 @@ class IdentityPlatformTokenVerifier:
                 "fresh MFA re-authentication is required"
             )
 
-        # Multi-factor authentication (MFA) second-factor verification
-        # Requires actual signed 'sign_in_second_factor'; second_factor_identifier alone is insufficient
+        # Multi-factor authentication (MFA) second-factor verification.
+        # Requires actual signed 'sign_in_second_factor'; second_factor_identifier alone is insufficient.
         second_factor = firebase_claims.get("sign_in_second_factor")
         if not second_factor or not str(second_factor).strip():
             raise AuthenticationError(
@@ -432,15 +227,11 @@ class IdentityPlatformTokenVerifier:
                 f"Unsupported MFA second factor {second_factor_str!r}; allowed: {sorted(self.allowed_second_factors)}"
             )
 
-        # Account revocation and disabled check
-        if self.check_revocation:
-            self._check_account_revocation(sub, auth_time_int)
-
         auth_time_dt = datetime.fromtimestamp(auth_time_int, tz=timezone.utc)
         return VerifiedOperator(
             uid=sub,
             email=email,
             auth_time=auth_time_dt,
             second_factor=second_factor_str,
-            claims=claims,
+            claims=dict(claims),
         )

@@ -10,9 +10,11 @@ Tests:
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -41,6 +43,66 @@ from execution_grant_issuer.service import ExecutionGrantIssuerService, create_i
 from execution_grant_issuer.signer import Ed25519GrantSigner
 from execution_grant_issuer.token_verifier import IdentityPlatformTokenVerifier
 
+# Authoritative-mode task-state env vars are process-ambient in a real
+# auto-worker session. This isolated fixture deliberately runs the qualified
+# TaskStore in plain repo (non-authoritative) mode against a throwaway status
+# root, so any inherited authoritative binding must be suspended for the
+# duration of the direct ai_status.save_state/load_state calls below.
+_AUTHORITATIVE_TASK_STATE_ENV_KEYS = (
+    "PANTHEON_TASK_STATE_STORE_MODE",
+    "PANTHEON_TASK_STATE_EVENT_LOG",
+    "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON",
+)
+
+
+@contextlib.contextmanager
+def _repo_mode_task_state_env():
+    saved = {key: os.environ.pop(key, None) for key in _AUTHORITATIVE_TASK_STATE_ENV_KEYS}
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is not None:
+                os.environ[key] = value
+
+
+def _render_qualified_taskstore_bridge(status_root: Path) -> str:
+    """Render a real qualified TaskStore bridge for test_end_to_end_qualified_chain.
+
+    Bootstraps the actual ``scripts/ai_status.py`` module against an
+    isolated status root and dispatches to the real production
+    ``command_show`` / ``command_execution_grant_submit`` implementations --
+    not a hand-rolled stub that fabricates canned JSON. ``request_execution_grant.py``
+    invokes this exactly like the real ``scripts/ai-status.sh`` (``argv[1]``
+    is the command, e.g. ``show``, and the remaining args follow), so the
+    isolated status root is baked into the rendered script rather than
+    passed positionally.
+    """
+    return f"""#!/usr/bin/env python3
+import sys
+sys.path.insert(0, {str(ROOT_DIR)!r})
+sys.path.insert(0, {str(ORCHESTRATOR_DIR)!r})
+sys.dont_write_bytecode = True
+
+import scripts.ai_status as ai_status
+
+command = sys.argv[1] if len(sys.argv) > 1 else ""
+args = sys.argv[2:]
+
+root = ai_status.configure_status_root_paths({str(status_root)!r})
+ai_status.CONFIG_FILE = root / ".orchestrator" / "config.json"
+
+state = ai_status.load_state()
+if command == "show":
+    ai_status.command_show(state, args)
+elif command == "execution-grant-submit":
+    ai_status.command_execution_grant_submit(state, args)
+    ai_status.save_state(state)
+else:
+    print(f"Unknown command: {{command}}", file=sys.stderr)
+    sys.exit(1)
+"""
+
 
 class TestRequestExecutionGrantCLI(unittest.TestCase):
     @classmethod
@@ -60,8 +122,27 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
         self.verifier = IdentityPlatformTokenVerifier(
             project_id=self.project_id,
             allowed_operator_uids=[self.operator_uid],
-            trusted_public_keys={self.key_id: self.rsa_public_key},
         )
+        # verify_token() delegates cryptographic verification to the real
+        # firebase-admin SDK (see execution_grant_issuer/test_issuer.py for
+        # SDK-level revoked/disabled/expired/invalid denial coverage). This
+        # CLI test suite is only concerned with the scoped TRACE client's own
+        # behavior, so the SDK call is deterministically stubbed to decode
+        # the locally-minted test token's claims without live network access.
+        self._verify_id_token_patch = patch(
+            "execution_grant_issuer.token_verifier.firebase_auth.verify_id_token",
+            side_effect=lambda token_str, app=None, check_revoked=False, clock_skew_seconds=0: jwt.decode(
+                token_str,
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_iss": False,
+                    "verify_exp": False,
+                },
+            ),
+        )
+        self._verify_id_token_patch.start()
+        self.addCleanup(self._verify_id_token_patch.stop)
 
         self.task_id = "DEV502-TRACE-001"
         self.spec = {
@@ -221,7 +302,15 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
             cli.verify_grant_locally(signed_grant, canonical_task_row, self.policy, wrong_keys)
 
     def test_end_to_end_qualified_chain(self) -> None:
-        """Run full HTTP server and execute real qualified show -> issuance -> verifier -> submit chain."""
+        """Run the full HTTP issuer and the real qualified TaskStore.
+
+        Exercises the actual production ``scripts/ai_status.py`` ``show`` and
+        ``execution-grant-submit`` commands (real state load/save, real
+        ``execution_authorization.verify_execution_grant`` and nonce-ledger
+        consumption) against an isolated status root -- not a hand-rolled
+        shell script that fabricates canned JSON. Persistence is proven by
+        reloading the state fresh from disk after submission.
+        """
         service = ExecutionGrantIssuerService(
             verifier=self.verifier,
             signer=self.signer,
@@ -241,34 +330,28 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
             td_path = Path(td)
             token_file = td_path / "token.txt"
             token_file.write_text(token, encoding="utf-8")
+            token_file.chmod(0o600)
 
             grant_file = td_path / "grant.json"
-            config_file = td_path / "config.json"
-            config_file.write_text(json.dumps({
-                "execution_authorization": {
-                    "mfa_issuer_public_keys": {
-                        self.signer_key_id: self.signer.public_key_base64url
-                    }
-                }
-            }), encoding="utf-8")
 
-            # Create an isolated qualified command root with scripts/ai-status.sh
-            cmd_root = td_path / "command_root"
-            scripts_dir = cmd_root / "scripts"
-            scripts_dir.mkdir(parents=True, exist_ok=True)
-            ai_status_sh = scripts_dir / "ai-status.sh"
-            submitted_file = td_path / "submitted_receipt.json"
-            counter_file = td_path / "show_counter.txt"
-            counter_file.write_text("0", encoding="utf-8")
+            # Isolated qualified TaskStore status root: a real ai-status.json
+            # seeded with one task, and a real .orchestrator/config.json
+            # trust root -- both read by the actual scripts/ai_status.py.
+            status_root = td_path / "status_root"
+            (status_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
 
             canonical_task_row = {
                 **deepcopy(self.spec),
                 "id": self.task_id,
                 "generation": 3,
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
                 "summary_zh": self.spec["summary"],
                 "target_repo": "pantheon",
                 "execution_resources": ["pantheon-dev"],
                 "artifacts": ["docs/deployment/evidence/DEV502-TRACE-001/"],
+                "last_update": "2026-09-08T10:00:00Z",
                 "dev_bridge": {
                     "work_class": "hosted",
                     "operator_authorization_required": True,
@@ -280,33 +363,59 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
                     "policy": self.policy,
                 },
             }
-            task_json_file = td_path / "task.json"
-            task_json_file.write_text(json.dumps({"task": canonical_task_row}), encoding="utf-8")
 
-            # Write ai-status.sh runner script
-            ai_status_script = f"""#!/bin/sh
-set -e
-CMD="$1"
-TASK="$2"
-if [ "$CMD" = "show" ]; then
-  COUNT=$(cat "{counter_file}")
-  COUNT=$((COUNT + 1))
-  echo "$COUNT" > "{counter_file}"
-  cat "{task_json_file}"
-  exit 0
-elif [ "$CMD" = "execution-grant-submit" ]; then
-  if [ "$AI_NAME" != "Human/Ops" ]; then
-    echo "ERROR: AI_NAME must be Human/Ops" >&2
-    exit 1
-  fi
-  echo "$EXECUTION_GRANT_JSON" > "{submitted_file}"
-  exit 0
-else
-  echo "Unknown command: $CMD" >&2
-  exit 1
-fi
-"""
-            ai_status_sh.write_text(ai_status_script, encoding="utf-8")
+            import scripts.ai_status as ai_status  # local import: isolates module-global mutation
+
+            seed_state = ai_status.default_state()
+            seed_state["tasks"] = [canonical_task_row]
+
+            orig_status_root = ai_status.STATUS_ROOT
+            orig_status_file = ai_status.STATUS_FILE
+            orig_log_file = ai_status.LOG_FILE
+            orig_current_work = ai_status.CURRENT_WORK_FILE
+            orig_docs_site = ai_status.DOCS_SITE_DIR
+            orig_orch_state = ai_status.ORCHESTRATOR_STATE_FILE
+            orig_approval_queue = ai_status.APPROVAL_QUEUE_FILE
+            orig_dashboard_bundle = ai_status.DASHBOARD_BUNDLE_FILE
+            orig_config_file = ai_status.CONFIG_FILE
+            try:
+                ai_status.configure_status_root_paths(status_root)
+                ai_status.CONFIG_FILE = status_root / ".orchestrator" / "config.json"
+                ai_status.CONFIG_FILE.write_text(
+                    json.dumps(
+                        {
+                            "execution_authorization": {
+                                "mfa_issuer_public_keys": {
+                                    self.signer_key_id: self.signer.public_key_base64url
+                                }
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with _repo_mode_task_state_env():
+                    ai_status.save_state(seed_state)
+            finally:
+                ai_status.STATUS_ROOT = orig_status_root
+                ai_status.STATUS_FILE = orig_status_file
+                ai_status.LOG_FILE = orig_log_file
+                ai_status.CURRENT_WORK_FILE = orig_current_work
+                ai_status.DOCS_SITE_DIR = orig_docs_site
+                ai_status.ORCHESTRATOR_STATE_FILE = orig_orch_state
+                ai_status.APPROVAL_QUEUE_FILE = orig_approval_queue
+                ai_status.DASHBOARD_BUNDLE_FILE = orig_dashboard_bundle
+                ai_status.CONFIG_FILE = orig_config_file
+
+            # Real qualified command root: scripts/ai-status.sh is a thin
+            # bridge into the real scripts/ai_status.py show / execution-
+            # grant-submit commands against the isolated status root above.
+            cmd_root = td_path / "command_root"
+            scripts_dir = cmd_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            ai_status_sh = scripts_dir / "ai-status.sh"
+            ai_status_sh.write_text(
+                _render_qualified_taskstore_bridge(status_root), encoding="utf-8"
+            )
             ai_status_sh.chmod(0o755)
 
             env_patch = {
@@ -314,8 +423,8 @@ fi
             }
 
             try:
-                with patch.dict(os.environ, env_patch):
-                    # 1. Prepare
+                with _repo_mode_task_state_env(), patch.dict(os.environ, env_patch):
+                    # 1. Prepare (real qualified `show` against the isolated TaskStore)
                     prep_out_file = td_path / "prep.json"
                     prep_args = MagicMock(
                         task=self.task_id,
@@ -332,7 +441,7 @@ fi
                         issuer_url=issuer_url,
                         token_file=str(token_file),
                         token_stdin=False,
-                        config_file=str(config_file),
+                        config_file=str(status_root / ".orchestrator" / "config.json"),
                         grant_out=str(grant_file),
                         submit=True,
                     )
@@ -351,18 +460,44 @@ fi
                     saved_grant = json.loads(grant_file.read_text(encoding="utf-8"))
                     self.assertEqual(saved_grant["task_id"], self.task_id)
                     self.assertEqual(saved_grant["signature"]["key_id"], self.signer_key_id)
-
-                    # Verify submit was executed and saved to submitted_file
-                    self.assertTrue(submitted_file.is_file())
-                    submitted_grant = json.loads(submitted_file.read_text(encoding="utf-8"))
-                    self.assertEqual(submitted_grant["task_id"], self.task_id)
-
-                    # Verify show was called twice: once at start, once right before submission
-                    show_count = int(counter_file.read_text(encoding="utf-8").strip())
-                    self.assertEqual(show_count, 3)  # 1 for prepare, 2 for request (initial + before submit)
             finally:
                 server.shutdown()
                 server.server_close()
+
+            # 3. Reload the qualified TaskStore state fresh from disk (a new
+            # process would see exactly this) and prove the real
+            # execution_authorization gate was actually granted and durably
+            # persisted -- not merely echoed back by a fake submit stub.
+            try:
+                ai_status.configure_status_root_paths(status_root)
+                ai_status.CONFIG_FILE = status_root / ".orchestrator" / "config.json"
+                with _repo_mode_task_state_env():
+                    reloaded_state = ai_status.load_state()
+            finally:
+                ai_status.STATUS_ROOT = orig_status_root
+                ai_status.STATUS_FILE = orig_status_file
+                ai_status.LOG_FILE = orig_log_file
+                ai_status.CURRENT_WORK_FILE = orig_current_work
+                ai_status.DOCS_SITE_DIR = orig_docs_site
+                ai_status.ORCHESTRATOR_STATE_FILE = orig_orch_state
+                ai_status.APPROVAL_QUEUE_FILE = orig_approval_queue
+                ai_status.DASHBOARD_BUNDLE_FILE = orig_dashboard_bundle
+                ai_status.CONFIG_FILE = orig_config_file
+
+            reloaded_task = next(t for t in reloaded_state["tasks"] if t["id"] == self.task_id)
+            self.assertEqual(reloaded_task["execution_authorization"]["state"], "granted")
+            self.assertEqual(
+                reloaded_task["execution_authorization"]["grant"]["task_id"], self.task_id
+            )
+            ledger = reloaded_state.get("execution_authorization_consumed_grants") or {}
+            self.assertEqual(len(ledger), 1)
+
+            log_lines = (status_root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()
+            submit_entries = [
+                json.loads(line) for line in log_lines if '"execution_grant_submitted"' in line
+            ]
+            self.assertEqual(len(submit_entries), 1)
+            self.assertEqual(submit_entries[0]["agent"], "Human/Ops")
 
     def test_empty_trust_rejects_before_request(self) -> None:
         """Verify that empty public trust aborts request before contacting issuer."""
