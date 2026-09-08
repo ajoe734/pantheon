@@ -1,0 +1,76 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-TRUTH-001",
+  "base_ref": "dev@4622181ade7421340bf15573f18c28a536985540",
+  "depends_on": "AGORA-CHAIN-001 (done), OVERLAY-RETIRE-001 (done)",
+  "normative_plan": "SD \u00a77.2 Twelve-loop truth projector, SA ADR-05, GAP-MGMT-02; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "implementation": {
+    "files_modified": [
+      "docs/deployment/evidence/LOOP-TRUTH-001/evidence.json",
+      "services/control-plane/bff/management_read_models/__init__.py",
+      "services/control-plane/bff/management_read_models/loop_truth.py",
+      "services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
+      "services/control-plane/bff/management_read_models/twelve_loop_projector.py",
+      "services/control-plane/bff/migrations/002_create_twelve_loop_truth_schema.sql",
+      "services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+      "services/control-plane/bff/migrations/twelve_loop_truth.py"
+    ],
+    "projector_architecture": "TwelveLoopTruthProjector consumes canonical stimulus, terminal, and next_consumer receipts to persist (release_id, correlation_id, loop_id) observations. Terminal plus next-consumer receipt is strictly required for loop completion; unreceipted or pending next_consumer receipts remain open. Incremental stream ingestion exactly equals rebuild from raw receipts. Backfill receipts cannot overwrite newer live truth. Static loop registry supplies labels and order only and never sets runtime completion.",
+    "receipt_storage": "002_create_twelve_loop_truth_schema.sql establishes loop_truth_projection schema with loop_receipts (immutable source receipt store) and twelve_loop_observations (projected truth table). twelve_loop_truth.py exposes TwelveLoopStore, MemoryTwelveLoopStore, and PostgresTwelveLoopStore.",
+    "invariants_enforced": [
+      "Terminal plus next-consumer receipt is required for completion (absent next receipt = open)",
+      "Incremental output equals rebuild output",
+      "Backfill never overwrites a newer live observation",
+      "Static registry supplies labels and order only; registry maturity never sets runtime completion",
+      "All writes are idempotent by receipt identity",
+      "Freshness status is fresh within max_age_seconds, otherwise stale with explicit age in degradation_reason"
+    ],
+    "mandatory_deletions": {
+      "static_or_incident_derived_success_substitution": "Static or incident-derived success substitution excised; unobserved or failed loops remain explicit without synthetic fallback."
+    },
+    "rollback_plan": "Disable the new read projection while preserving source receipts (via PANTHEON_ENABLE_RECEIPT_LOOP_TRUTH=false or projector.disable_projection())."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
+        "result": "13 passed in 3.06s",
+        "executed": 13,
+        "collected": 13
+      },
+      {
+        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
+        "result": "1 passed in 1.33s",
+        "executed": 1,
+        "collected": 1
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "result": "43 passed, 137 warnings in 45.10s",
+        "executed": 43,
+        "collected": 43
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit code 0 (clean)",
+        "executed": 1,
+        "collected": 1
+      }
+    ]
+  },
+  "acceptance_check": {
+    "canonical_receipt_derived_truth": true,
+    "terminal_plus_next_consumer_required_for_completion": true,
+    "incremental_equals_rebuild": true,
+    "backfill_cannot_replace_newer_live_truth": true,
+    "static_registry_supplies_labels_only_never_completion": true,
+    "explicit_freshness_provenance_degradation": true,
+    "mandatory_deletions_verified": true,
+    "rollback_safe_preserves_source_receipts": true,
+    "postgresql_migration_and_store_durability": true
+  },
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}
