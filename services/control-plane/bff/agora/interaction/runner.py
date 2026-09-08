@@ -103,11 +103,11 @@ def _snapshot_for(read_store: Any, persona: Dict[str, Any]) -> Optional[Dict[str
 
 
 def _provider_error(exc: Exception) -> Dict[str, Any]:
-    if isinstance(exc, OpenClawOpsClientError):
+    if isinstance(exc, OpenClawOpsClientError) or type(exc).__name__ == "OpenClawOpsClientError":
         return {
-            "code": exc.error_code,
-            "message": exc.message[:300],
-            "retryable": exc.status_code in {0, 429, 502, 503, 504},
+            "code": getattr(exc, "error_code", "SERVICE_UNAVAILABLE"),
+            "message": str(getattr(exc, "message", str(exc)))[:300],
+            "retryable": getattr(exc, "status_code", 0) in {0, 429, 502, 503, 504},
         }
     return {
         "code": "OPENCLAW_PERSONA_OPINION_INVALID",

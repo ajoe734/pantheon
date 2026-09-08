@@ -115,7 +115,7 @@ def test_task_state_store_uses_external_runtime_journal(tmp_path: Path) -> None:
 
     store = rendered["task_state_store"]
     assert isinstance(store, dict)
-    assert store == {"mode": "authoritative", "event_log": str(runtime / "v2.jsonl")}
+    assert store == {"mode": "authoritative", "event_log": str(runtime / "task-state" / "v2.jsonl")}
 
 
 def test_validated_command_root_is_self_contained_and_clean(tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ def test_build_live_config_ignores_live_overlay_and_renders_v2_paths(tmp_path: P
 
     assert "extra" not in rendered
     assert rendered["task_state_store"]["mode"] == "authoritative"
-    assert Path(rendered["task_state_store"]["event_log"]).parent == live_path.parent
+    assert Path(rendered["task_state_store"]["event_log"]).parent == live_path.parent / "task-state"
     assert rendered["paths"]["status_file"] == str(status / "ai-status.json")
 
 

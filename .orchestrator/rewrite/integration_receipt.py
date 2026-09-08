@@ -314,7 +314,7 @@ def integration_receipt_consumes_candidate(
         and receipt["target_branch"] == binding["target_branch"]
         and receipt["pr"] == binding["pr"]
         and receipt["head_sha"] == binding["head_sha"]
-        and bool(receipt["merge_commit_sha"])
+        and bool(receipt.get("merge_commit_sha"))
     )
 
 
