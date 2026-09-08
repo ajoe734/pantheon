@@ -7995,6 +7995,27 @@ def _github_review_bridge_module():
     return github_review_bridge
 
 
+def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
+    """Return whether a canonical reviewer decision must write GitHub proof.
+
+    The default remains fail-closed so deployments which have not explicitly
+    opted out keep the GitHub review/proof bridge. The temporary canonical task
+    mode still revalidates the exact PR admission before it records the
+    existing task-store decision; it only skips the GitHub write that a shared
+    account cannot perform on its own pull request.
+    """
+
+    review_gate = config.get("review_gate")
+    if not isinstance(review_gate, Mapping):
+        return True
+    value = review_gate.get("github_review_bridge_required")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    raise SystemExit("review_gate.github_review_bridge_required must be a boolean")
+
+
 
 
 
@@ -8856,7 +8877,7 @@ def reserve_review_decision_intent(
 
 
 def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
-    """Perform idempotent GitHub I/O for one durable intent, lock-free."""
+    """Perform external admission and, when enabled, GitHub decision I/O."""
 
     intent = pending_review_decision_intent(task)
     if intent is None:
@@ -8884,7 +8905,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
     binding = deepcopy(dict(intent["binding"]))
     command = str(intent["command"])
     admission = None
-    if command == "approve":
+    if command in {"approve", "reopen"}:
         github_review_bridge = _github_review_bridge_module()
         try:
             admission = github_review_bridge.revalidate_review_admission(
@@ -8897,7 +8918,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
                 task_id=task_id,
                 nonce=str(intent["nonce"]),
                 detail=(
-                    f"Cannot approve task {task_id}: the reserved exact delivery is "
+                    f"Cannot {command} task {task_id}: the reserved exact delivery is "
                     f"no longer an open, current review admission: {exc}"
                 ),
             ) from exc
@@ -8942,6 +8963,8 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
                 f"GitHub rejected operator acceptance for {task_id}: {exc}"
             ) from exc
         result[OPERATOR_ACCEPTANCE_KEY] = dict(evidence)
+        return result
+    if not github_review_bridge_required(config):
         return result
     try:
         evidence = bridge_github_review_decision(
@@ -9022,7 +9045,7 @@ def finalize_review_decision_intent(
             raise SystemExit(
                 f"{task_id} operator acceptance evidence is invalid: {exc}"
             ) from exc
-    else:
+    elif github_review_bridge_required(load_config()):
         if not isinstance(evidence, Mapping):
             raise SystemExit(f"{task_id} review intent produced no GitHub evidence")
         github_review_bridge = _github_review_bridge_module()
@@ -9037,6 +9060,10 @@ def finalize_review_decision_intent(
             )
         except github_review_bridge.GitHubReviewBridgeError as exc:
             raise SystemExit(f"{task_id} GitHub intent evidence is invalid: {exc}") from exc
+    elif evidence not in (None, {}, []):
+        raise SystemExit(
+            f"{task_id} canonical task review mode must not receive GitHub evidence"
+        )
 
     # Existing audit/archive outboxes predate the reservation. They are safe to
     # recover only now, after admission and GitHub I/O succeeded. Recheck the

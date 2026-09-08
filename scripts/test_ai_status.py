@@ -4109,6 +4109,46 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         activity_recover.assert_called_once()
         self.assertEqual(self.state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY], pending_before)
 
+    def test_canonical_task_review_mode_keeps_exact_admission_without_github_write(self) -> None:
+        message = "Approve through canonical task review mode."
+        preflight = self._pr_approve_preflight(message)
+        task = self.state["tasks"][0]
+        lock_state = {"runtime": False, "task": False}
+        runtime_lock, task_lock = self._two_phase_contexts(lock_state)
+        config = {"review_gate": {"github_review_bridge_required": False}}
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(ai_status, "canonical_task_state_lock", side_effect=task_lock),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(ai_status, "validate_bound_status_command_task_authority"),
+            mock.patch.object(ai_status, "save_state"),
+            mock.patch.object(ai_status, "recover_status_archive_outbox"),
+            mock.patch.object(ai_status, "recover_status_activity_outbox"),
+            mock.patch.object(ai_status, "sync_all"),
+            mock.patch.object(ai_status, "refresh_derived_status_views_if_current"),
+            mock.patch.object(self._review_bridge, "revalidate_review_admission") as revalidate,
+            mock.patch.object(self._review_bridge, "validate_result_evidence") as validate,
+            mock.patch.object(ai_status, "bridge_github_review_decision") as bridge,
+        ):
+            committed = ai_status.run_two_phase_review_decision(
+                "approve", ["REG-002", message], preflight
+            )
+
+        self.assertEqual(committed["tasks"][0]["status"], "review_approved")
+        self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
+        revalidate.assert_called_once()
+        bridge.assert_not_called()
+        validate.assert_not_called()
+
     def test_operator_accept_two_phase_uses_distinct_bridge_without_review(self) -> None:
         message = "Human/Ops accepts the existing exact PR head."
         self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
