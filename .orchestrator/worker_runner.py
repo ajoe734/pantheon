@@ -212,9 +212,15 @@ def validate_coordination_root(
         raise RuntimeError(f"ai-status.json cannot be a symlink: {status_file}")
 
     # Enforce supervisor marker paths exist
+    state_marker = root / ".orchestrator" / "worker-runtime" / "state.json"
+    if not state_marker.exists():
+        state_marker = root / ".orchestrator" / "state.json"
+    approval_marker = root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    if not approval_marker.exists():
+        approval_marker = root / ".orchestrator" / "approval-queue.json"
     for marker_path in (
-        root / ".orchestrator" / "state.json",
-        root / ".orchestrator" / "approval-queue.json",
+        state_marker,
+        approval_marker,
         root / ".orchestrator" / "config.json",
     ):
         if not marker_path.exists() or not marker_path.is_file():
@@ -397,7 +403,13 @@ def _append_leased_git_metadata_mounts(
     bwrap_cmd.extend(["--bind", str(git_dir), str(git_dir)])
 
 
-def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
+def _append_task_store_mounts(
+    bwrap_cmd: list[str],
+    raw_event_log: str,
+    *,
+    workspace_path: Path | None = None,
+    coordination_root: Path | None = None,
+) -> None:
     """Expose the atomic TaskStore surface without exposing sibling runtime data."""
 
     expanded_event_path = Path(os.path.expanduser(raw_event_log))
@@ -427,17 +439,25 @@ def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
         if required.is_symlink() or not required.is_file():
             raise RuntimeError(f"task-state governed file is unavailable: {required}")
 
-    # The V2 store replaces its head through a same-directory temporary file,
-    # so binding individual files is insufficient.  Bind the parent writable,
-    # then remount every non-TaskStore sibling read-only.  Existing protected
-    # mountpoints cannot be replaced or unlinked from inside the namespace.
+    # The dedicated task-state directory houses only task-state store files and
+    # their atomic replacement temporary files. Keep the outer runtime (config,
+    # keys, interpreter and unrelated entries) read-only at directory level,
+    # and bind only the dedicated data directory writable without enumerating
+    # transient publication temporary files.
+    outer_runtime = parent.parent
+    if outer_runtime not in (Path("/"), parent):
+        def _conflicts_with(target: Path | None) -> bool:
+            if target is None:
+                return False
+            try:
+                target.resolve().relative_to(outer_runtime.resolve())
+                return True
+            except ValueError:
+                return False
+
+        if not _conflicts_with(workspace_path) and not _conflicts_with(coordination_root):
+            bwrap_cmd.extend(["--ro-bind-try", str(outer_runtime), str(outer_runtime)])
     bwrap_cmd.extend(["--bind", str(parent), str(parent)])
-    for sibling in sorted(parent.iterdir(), key=lambda item: item.name):
-        if sibling.name in allowed_names:
-            continue
-        if sibling.is_symlink():
-            raise RuntimeError(f"runtime sibling cannot be a symlink: {sibling}")
-        bwrap_cmd.extend(["--ro-bind", str(sibling), str(sibling)])
 
 
 def _append_coordination_state_mounts(
@@ -596,20 +616,25 @@ def bind_worker_sandbox(
     # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
         _append_coordination_state_mounts(bwrap_cmd, coord_resolved)
+        worker_runtime_dir = coord_resolved / ".orchestrator" / "worker-runtime"
+        worker_runtime_dir.mkdir(parents=True, exist_ok=True)
         governed_candidates = [
-            coord_resolved / ".orchestrator" / "state.json",
-            coord_resolved / ".orchestrator" / "approval-queue.json",
             coord_resolved / ".orchestrator" / "runtime-admission.lock",
             coord_resolved / ".orchestrator" / "task-state.lock",
             coord_resolved / ".orchestrator" / "activity-audit.lock",
             coord_resolved / ".orchestrator" / "status-derived-views.lock",
-            coord_resolved / ".orchestrator" / "worker-runtime",
+            worker_runtime_dir,
             coord_resolved / "archive" / "logs",
             coord_resolved / ".orchestrator" / "logs",
         ]
         event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
         if event_log and event_log.strip():
-            _append_task_store_mounts(bwrap_cmd, event_log.strip())
+            _append_task_store_mounts(
+                bwrap_cmd,
+                event_log.strip(),
+                workspace_path=ws_resolved,
+                coordination_root=coord_resolved,
+            )
 
         for p in governed_candidates:
             if p.exists():

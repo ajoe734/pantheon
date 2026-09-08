@@ -513,7 +513,8 @@ _UNSET = object()
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.pid"
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor.pid"
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:

@@ -361,6 +361,8 @@ def _runtime_source_layout(
         requested = config_path(config, key).expanduser()
         if validate_data_leaves:
             _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
+        if not requested.parent.exists():
+            requested.parent.mkdir(parents=True, exist_ok=True)
         try:
             source_root = requested.parent.resolve(strict=True)
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
@@ -400,18 +402,23 @@ def _runtime_source_layout(
 
     source_root = next(iter(distinct_source_roots), None)
     if status_root is not None and source_root is not None:
-        allowed_source_roots = {status_root, status_root / ".orchestrator"}
+        allowed_source_roots = {
+            status_root,
+            status_root / ".orchestrator",
+            status_root / ".orchestrator" / "worker-runtime",
+        }
         if source_root not in allowed_source_roots:
             raise RuntimeError(
                 "canonical runtime source root does not belong to the status "
                 f"root: source_root={source_root}, status_root={status_root}"
             )
     elif status_root is None and source_root is not None:
-        status_root = (
-            source_root.parent
-            if source_root.name == ".orchestrator"
-            else source_root
-        )
+        if source_root.name == "worker-runtime" and source_root.parent.name == ".orchestrator":
+            status_root = source_root.parent.parent
+        elif source_root.name == ".orchestrator":
+            status_root = source_root.parent
+        else:
+            status_root = source_root
 
     if status_root is None:
         raise KeyError(

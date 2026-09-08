@@ -2955,7 +2955,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 pid=worker_pid,
                 pid_start_ticks=worker_pid_start_ticks,
             )
-            central_state_path = central / ".orchestrator" / "state.json"
+            central_state_path = central / ".orchestrator" / "worker-runtime" / "state.json"
             central_state_path.parent.mkdir(parents=True, exist_ok=True)
             central_state_path.write_text(
                 json.dumps(

@@ -21,6 +21,7 @@ def _init_repo(path: Path) -> None:
 
 
 import shutil
+import threading
 import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -166,7 +167,9 @@ def _write_status(path: Path) -> None:
         json.dumps({"tasks": [], "agents": [], "handoffs": [], "blockers": []}) + "\n",
         encoding="utf-8",
     )
-    (path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    (path / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+    (path / ".orchestrator" / "worker-runtime" / "state.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "worker-runtime" / "approval-queue.json").write_text("[]", encoding="utf-8")
     (path / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
     (path / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
     (path / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
@@ -1091,10 +1094,12 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 _init_repo(repository)
             _write_status(central)
             runtime.mkdir()
-            event_log = runtime / "task-state-events-v2.jsonl"
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
             event_log.write_text("event\n", encoding="utf-8")
-            (runtime / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
-            (runtime / f"{event_log.name}.lock").touch()
+            (task_state_dir / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.lock").touch()
             live_config = runtime / "live-supervisor.json"
             live_config.write_text("{}\n", encoding="utf-8")
 
@@ -1111,16 +1116,16 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                     sandbox_binary="/usr/bin/bwrap",
                 )
 
-            runtime_indices = [
+            task_state_indices = [
                 index
                 for index, value in enumerate(sandbox_args)
-                if value == str(runtime.resolve())
+                if value == str(task_state_dir.resolve())
             ]
-            self.assertEqual(len(runtime_indices), 2)
-            self.assertEqual(sandbox_args[runtime_indices[0] - 1], "--bind")
-            self.assertEqual(sandbox_args[runtime_indices[0] + 1], str(runtime.resolve()))
-            config_idx = sandbox_args.index(str(live_config.resolve()))
-            self.assertEqual(sandbox_args[config_idx - 1], "--ro-bind")
+            self.assertEqual(len(task_state_indices), 2)
+            self.assertEqual(sandbox_args[task_state_indices[0] - 1], "--bind")
+            self.assertEqual(sandbox_args[task_state_indices[0] + 1], str(task_state_dir.resolve()))
+            runtime_idx = sandbox_args.index(str(runtime.resolve()))
+            self.assertEqual(sandbox_args[runtime_idx - 1], "--ro-bind-try")
             self.assertNotIn(str(event_log.resolve()), sandbox_args)
 
     def test_bind_worker_sandbox_reopens_only_selected_linked_gitdir(self):
@@ -1186,9 +1191,11 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 _init_repo(repository)
             _write_status(central)
             runtime.mkdir()
-            event_log = runtime / "task-state-events-v2.jsonl"
-            head = runtime / f"{event_log.name}.head.json"
-            lock = runtime / f"{event_log.name}.lock"
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
+            head = task_state_dir / f"{event_log.name}.head.json"
+            lock = task_state_dir / f"{event_log.name}.lock"
             live_config = runtime / "live-supervisor.json"
             event_log.write_text("event-1\n", encoding="utf-8")
             head.write_text('{"sequence":1}\n', encoding="utf-8")
@@ -1799,6 +1806,219 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
 
             self.assertNotEqual(proc.returncode, 0, proc.stderr + proc.stdout)
             self.assertEqual(source.read_text(encoding="utf-8"), "API = 1\n")
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_concurrent_atomic_state_and_head_publication_allows_stable_sandbox_startup(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-concurrent-pub-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
+            head = task_state_dir / f"{event_log.name}.head.json"
+            lock = task_state_dir / f"{event_log.name}.lock"
+            event_log.write_text("event-0\n", encoding="utf-8")
+            head.write_text('{"seq": 0}\n', encoding="utf-8")
+            lock.touch()
+
+            state_file = central / ".orchestrator" / "worker-runtime" / "state.json"
+            stop_event = threading.Event()
+            pub_errors = []
+
+            def publish_state():
+                counter = 0
+                while not stop_event.is_set():
+                    counter += 1
+                    try:
+                        tmp = state_file.with_name(f"{state_file.name}.{counter}.tmp")
+                        tmp.write_text(json.dumps({"version": 2, "counter": counter}), encoding="utf-8")
+                        os.replace(tmp, state_file)
+                    except Exception as e:
+                        pub_errors.append(e)
+                    time.sleep(0.005)
+
+            def publish_head():
+                counter = 0
+                while not stop_event.is_set():
+                    counter += 1
+                    try:
+                        tmp = head.with_name(f"{head.name}.{counter}.tmp")
+                        tmp.write_text(json.dumps({"seq": counter}), encoding="utf-8")
+                        os.replace(tmp, head)
+                    except Exception as e:
+                        pub_errors.append(e)
+                    time.sleep(0.005)
+
+            t1 = threading.Thread(target=publish_state, daemon=True)
+            t2 = threading.Thread(target=publish_head, daemon=True)
+            t1.start()
+            t2.start()
+
+            try:
+                with mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                    clear=False,
+                ):
+                    for attempt in range(25):
+                        sandbox_args = wr.bind_worker_sandbox(
+                            ["python3", "-c", "import sys; sys.exit(0)"],
+                            command_root=command_root,
+                            workspace_path=worktree,
+                            coordination_root=central,
+                            sandbox_binary=_FUNCTIONAL_BWRAP,
+                        )
+                        proc = subprocess.run(
+                            sandbox_args, cwd=worktree, capture_output=True, text=True, timeout=10
+                        )
+                        self.assertEqual(
+                            proc.returncode,
+                            0,
+                            f"Attempt {attempt} failed: {proc.stderr}\nstdout: {proc.stdout}",
+                        )
+            finally:
+                stop_event.set()
+                t1.join(timeout=2)
+                t2.join(timeout=2)
+
+            self.assertEqual(pub_errors, [])
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_governed_writer_can_commit_atomic_state_and_head_inside_sandbox(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-governed-writer-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
+            head = task_state_dir / f"{event_log.name}.head.json"
+            lock = task_state_dir / f"{event_log.name}.lock"
+            event_log.write_text("event-0\n", encoding="utf-8")
+            head.write_text('{"seq": 0}\n', encoding="utf-8")
+            lock.touch()
+
+            live_config = runtime / "live-supervisor.json"
+            live_config.write_text('{"live": true}\n', encoding="utf-8")
+            coord_config = central / ".orchestrator" / "config.json"
+            state_file = central / ".orchestrator" / "worker-runtime" / "state.json"
+
+            program = (
+                "import os, pathlib, sys, json\n"
+                "state, event, head, live_conf, coord_conf = map(pathlib.Path, sys.argv[1:6])\n"
+                "# 1. Atomic write to state.json under worker-runtime succeeds\n"
+                "tmp_state = state.with_name(state.name + '.tmp')\n"
+                "tmp_state.write_text(json.dumps({'version': 2, 'worker_committed': True}))\n"
+                "os.replace(tmp_state, state)\n"
+                "# 2. Append to event log and atomic replace head.json under task-state succeeds\n"
+                "with event.open('a') as h: h.write('worker-event-1\\n')\n"
+                "tmp_head = head.with_name(head.name + '.tmp')\n"
+                "tmp_head.write_text(json.dumps({'seq': 1, 'worker_committed': True}))\n"
+                "os.replace(tmp_head, head)\n"
+                "# 3. Attempt to mutate protected siblings outside task-state fails (EROFS)\n"
+                "denied = 0\n"
+                "try: live_conf.write_text('mutated')\n"
+                "except OSError: denied += 1\n"
+                "try: coord_conf.write_text('mutated')\n"
+                "except OSError: denied += 1\n"
+                "sys.exit(0 if denied == 2 else 43)\n"
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    [
+                        sys.executable,
+                        "-c",
+                        program,
+                        str(state_file),
+                        str(event_log),
+                        str(head),
+                        str(live_config),
+                        str(coord_config),
+                    ],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary=_FUNCTIONAL_BWRAP,
+                )
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(json.loads(state_file.read_text())["worker_committed"], True)
+            self.assertIn("worker-event-1", event_log.read_text())
+            self.assertEqual(json.loads(head.read_text())["worker_committed"], True)
+            self.assertEqual(live_config.read_text(), '{"live": true}\n')
+            self.assertEqual(coord_config.read_text(), "{}")
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_transient_head_temp_disappearing_does_not_break_sandbox_startup(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-transient-head-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
+            head = task_state_dir / f"{event_log.name}.head.json"
+            lock = task_state_dir / f"{event_log.name}.lock"
+            event_log.write_text("event-0\n", encoding="utf-8")
+            head.write_text('{"seq": 0}\n', encoding="utf-8")
+            lock.touch()
+
+            # Transient head temp file created by a publisher
+            transient_temp = task_state_dir / f"{event_log.name}.head.json.123.456.tmp"
+            transient_temp.write_text('{"seq": 1}\n', encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    ["python3", "-c", "import sys; sys.exit(0)"],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary=_FUNCTIONAL_BWRAP,
+                )
+
+            # Publisher completes publication by os.replace, renaming the temp file away
+            os.replace(transient_temp, head)
+
+            # bwrap must launch cleanly without failing on the missing transient temp file
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 class TestCanonicalWorkerEntryProcess(unittest.TestCase):

@@ -544,6 +544,61 @@ def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
 
 
+def canonical_status_paths(
+    repo_config: dict[str, Any],
+    status_root: Path,
+    *,
+    fill_defaults: bool = False,
+) -> dict[str, str]:
+    raw_paths = repo_config.get("paths")
+    if fill_defaults:
+        defaults = {
+            "status_file": "ai-status.json",
+            "activity_log": "ai-activity-log.jsonl",
+            "current_work": "current-work.md",
+            "dashboard": "docs-site/index.html",
+            "state_file": ".orchestrator/worker-runtime/state.json",
+            "approval_queue": ".orchestrator/worker-runtime/approval-queue.json",
+            "provider_capabilities": ".orchestrator/provider_capabilities.json",
+            "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        }
+        paths = dict(defaults)
+        if isinstance(raw_paths, dict):
+            paths.update(raw_paths)
+    else:
+        paths = raw_paths
+
+    if not isinstance(paths, dict) or not paths:
+        raise ValueError("repo config must define a non-empty paths object")
+
+    rendered: dict[str, str] = {}
+    for key, raw_value in paths.items():
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise ValueError(f"repo config path {key!r} must be a non-empty string")
+        source = Path(os.path.expanduser(raw_value))
+        candidate = source if source.is_absolute() else status_root / source
+        candidate = candidate.absolute()
+        symlink = first_symlink_component(candidate)
+        if symlink is not None:
+            raise ValueError(f"repo config path {key!r} contains a symlink component: {symlink}")
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(status_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"repo config path {key!r} escapes canonical status root: {candidate}"
+            ) from exc
+        rendered[key] = str(candidate)
+
+    expected_status_file = status_root / "ai-status.json"
+    if Path(rendered.get("status_file", "")) != expected_status_file:
+        raise ValueError(
+            "live supervisor status_file must resolve to the canonical status root: "
+            f"expected {expected_status_file}, got {rendered.get('status_file')!r}"
+        )
+    return rendered
+
+
 def config_status_root(config: dict[str, Any]) -> Path:
     paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
     if "status_file" in paths:
@@ -555,6 +610,8 @@ def config_status_root(config: dict[str, Any]) -> Path:
     if "state_file" in paths:
         try:
             state_path = config_path(config, "state_file").resolve()
+            if state_path.parent.name == "worker-runtime" and state_path.parent.parent.name == ".orchestrator":
+                return state_path.parent.parent.parent.resolve()
             if state_path.parent.name == ".orchestrator":
                 return state_path.parent.parent.resolve()
             return state_path.parent.resolve()
@@ -4479,7 +4536,11 @@ def new_runtime_id(prefix: str) -> str:
 def worker_runtime_paths(config: dict[str, Any], run_id: str) -> dict[str, Path]:
     safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id or "worker")).strip("-") or "worker"
     try:
-        root = config_path(config, "state_file").parent / "worker-runtime"
+        state_dir = config_path(config, "state_file").parent
+        if state_dir.name == "worker-runtime":
+            root = state_dir
+        else:
+            root = state_dir / "worker-runtime"
     except KeyError:
         try:
             root = config_path(config, "status_file").parent / ".orchestrator" / "worker-runtime"
@@ -4574,11 +4635,12 @@ def write_status(config: dict[str, Any], payload: dict[str, Any], *, source: str
     runtime_env = task_state_store_runtime_env(config)
     from rewrite import task_state_store
 
-    task_state_store.append_state_commit(
-        runtime_env[TASK_STATE_EVENT_LOG_ENV],
-        payload,
-        source=source,
-    )
+    event_log = runtime_env[TASK_STATE_EVENT_LOG_ENV]
+    with task_state_store.snapshot_transaction(event_log) as transaction:
+        snapshot = transaction.load_snapshot()
+        if not snapshot["event_count"]:
+            raise RuntimeError("runtime mutation requires existing canonical events")
+        transaction.append_state_commit(payload, source=source)
     write_json(config_path(config, "status_file"), payload)
 
 
