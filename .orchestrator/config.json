@@ -16,6 +16,9 @@
   "execution_authorization": {
     "mfa_issuer_public_keys": {}
   },
+  "review_gate": {
+    "github_review_bridge_required": false
+  },
   "permission_broker": {
     "allowed_workspace_roots": [
       ".",

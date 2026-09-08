@@ -12081,7 +12081,12 @@ def apply_auto_commit_archive_result(
             if key in result:
                 bucket[key] = result[key]
         save_runtime_state(config, state)
-    refresh_dashboard_runtime_artifacts(config)
+    # Archive telemetry is operational state, but the dashboard and docs are
+    # derived views.  Refreshing those views here runs after the short state
+    # commit yet still on the supervisor's only cycle thread.  A slow derived
+    # view must not prevent that thread from recording a successful loop or
+    # observing worker progress.  The regular status projection refreshes the
+    # views from this durable state on its next run.
     return bool(result.get("opened_pr"))
 
 

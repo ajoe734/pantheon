@@ -2472,6 +2472,32 @@ class CheckClassifierTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
 
+    def test_temporary_bridge_bypass_ignores_only_the_legacy_gate_status(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"].append(
+            {
+                "name": "Pantheon canonical review gate",
+                "state": "FAILURE",
+                "isRequired": True,
+            }
+        )
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            FakeRunner(pr=pr),
+            execute=False,
+            gate=approved_gate(),
+            config={"review_gate": {"github_review_bridge_required": False}},
+        )
+        self.assertEqual(result.action, "would_merge")
+
     def test_exact_head_drift_blocks_integration(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
