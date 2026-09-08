@@ -1692,6 +1692,59 @@ patch_entry(
                         self.assertIsNotNone(ref_res["row"])
                         self.assertEqual(ref_res["row"]["id"], "ctx-ref-1")
 
+    def test_daily_obeys_authorized_requested_tenant(self) -> None:
+        from unittest.mock import patch
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+        from services.control_plane.bff.agora.router import create_agora_router
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            stores = build_decision_journal_stores(tmp)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            reader = DomainDecisionJournalReaderPort(stores=stores)
+            service = AgoraService(get_read_store=lambda: reader, journal_write_owner=owner)
+            identity = OperatorIdentity(
+                operator_id="alice",
+                roles=["operator"],
+                mfa_verified=True,
+                claims={"tid": "tenant-a", "sub": "alice", "allowed_tenants": ["tenant-a", "tenant-b"]},
+            )
+            for tenant in ["tenant-a", "tenant-b"]:
+                create_entry(
+                    stores,
+                    entry_id=tenant,
+                    title=tenant,
+                    body="Synthetic private note",
+                    actor_id="alice",
+                    user_id="alice",
+                    tenant_id=tenant,
+                    created_at="2026-09-08T00:00:00Z",
+                )
+            app = FastAPI()
+            app.include_router(
+                create_agora_router(
+                    extract_identity=lambda *a, **kw: identity,
+                    require_read_role=lambda *a, **kw: None,
+                    require_write_role=lambda *a, **kw: None,
+                    bff_error=lambda status, code, msg, details=None, **kw: HTTPException(status_code=status, detail=msg),
+                    utc_now=lambda: "2026-09-08T00:00:00Z",
+                    sync_servant_agent=lambda payload: payload,
+                    get_read_store=lambda: reader,
+                    service=service,
+                    journal_write_owner=owner,
+                )
+            )
+            with TestClient(app) as client:
+                headers = {"X-Tenant-Id": "tenant-b"}
+                listed = client.get("/bff/agora/journal", headers=headers)
+                daily = client.get("/bff/agora/daily", headers=headers)
+                self.assertEqual(listed.status_code, 200)
+                self.assertEqual(daily.status_code, 200)
+                list_ids = [row["id"] for row in listed.json()["items"]]
+                daily_ids = [row["id"] for row in daily.json()["data"]["sections"]["journal"]]
+                self.assertEqual(list_ids, ["tenant-b"])
+                self.assertEqual(daily_ids, list_ids, "daily must use the same authorized tenant as journal list")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -491,16 +491,21 @@ def create_agora_router(
     def agora_daily_brief(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
         x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
         scope = None
         try:
-            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
         except AgoraScopeResolutionError as exc:
             _raise_scope_error(exc, bff_error)
-        resolved_tenant = (scope.tenant_id if scope else None) or (x_tenant_id.strip() if x_tenant_id else None)
+        resolved_tenant = (scope.tenant_id if scope else None) or (x_tenant_id.strip() if x_tenant_id else None) or (x_pantheon_tenant.strip() if x_pantheon_tenant else None)
         resolved_user = (scope.user_id if scope else None) or (x_user_id.strip() if x_user_id else None) or getattr(identity, "operator_id", None)
         return agora_service.get_daily_brief(
             identity=identity,

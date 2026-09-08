@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py & services/control-plane/bff/agora/identity/scope.py: Canonical scope resolution (resolve_canonical_agora_scope) unified across AgoraService._private_record_visible, filter_private_records, list_journal_entries, patch_journal_entry, create_journal_entry, get_daily_brief, and BFF _resolve_agora_interaction_context_ref. Supported tenant claim aliases (tenant_id, tenantId, tenant.id, tid, org_id, organization.id) and env precedence (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID) achieve full roundtrip parity between create, list, patch, and interaction context references. Strict tenant boundary enforcement: environment default tenant is never appended to authenticated callers' allowed_tenants and only serves as fallback when identity has no claims or explicit tenant restrictions. resolve_canonical_agora_scope validates caller scope via resolve_agora_user_scope fail-closed, propagating AgoraScopeResolutionError, denying unauthorized tenant override, and denying unprivileged user elevation without admin/system roles. Journal endpoints in create_agora_router inspect X-Tenant-Id, X-Pantheon-Tenant headers, and payload tenant, raising HTTP 403 (AGORA_SCOPE_TENANT_DENIED) upon tenant denial. Unified fail-closed _get_committed_entry_snapshot resolution and _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). list_entries consistently preserves the before_entry snapshot during incomplete or uncommitted patches across crashed recoveries, preventing private metadata or body disclosure across principals. Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries. CORRECTIVE (PR #5667 review, commit 9c1284a29): resolve_agora_user_scope previously fell back to `[requested_tenant_id or default_tenant]` for allowed_tenants when an identity carried no tenant claims and PANTHEON_BFF_ALLOWED_TENANTS was unset, letting an unauthenticated-claims caller self-authorize any X-Tenant-Id header or body tenant_id. Fixed to derive allowed_tenants only from trusted claims/env/default (`_env_csv(...) or [default_tenant]`), never from request input; regression test_missing_tenant_claims_cannot_be_elevated_by_request_input reproduces the reviewer's exact repro and asserts 403 on cross-tenant GET/PATCH/POST while the caller's own default tenant still succeeds."
+      "implementation": "services/governance/decision_journal.py & services/control-plane/bff/agora/identity/scope.py: Canonical scope resolution (resolve_canonical_agora_scope) unified across AgoraService._private_record_visible, filter_private_records, list_journal_entries, patch_journal_entry, create_journal_entry, get_daily_brief, and BFF _resolve_agora_interaction_context_ref. Supported tenant claim aliases (tenant_id, tenantId, tenant.id, tid, org_id, organization.id) and env precedence (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID) achieve full roundtrip parity between create, list, patch, and interaction context references. Strict tenant boundary enforcement: environment default tenant is never appended to authenticated callers' allowed_tenants and only serves as fallback when identity has no claims or explicit tenant restrictions. resolve_canonical_agora_scope validates caller scope via resolve_agora_user_scope fail-closed, propagating AgoraScopeResolutionError, denying unauthorized tenant override, and denying unprivileged user elevation without admin/system roles. Journal endpoints in create_agora_router inspect X-Tenant-Id, X-Pantheon-Tenant headers, and payload tenant, raising HTTP 403 (AGORA_SCOPE_TENANT_DENIED) upon tenant denial. Unified fail-closed _get_committed_entry_snapshot resolution and _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). list_entries consistently preserves the before_entry snapshot during incomplete or uncommitted patches across crashed recoveries, preventing private metadata or body disclosure across principals. Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries. CORRECTIVE (PR #5667 review, commit 9c1284a29): resolve_agora_user_scope previously fell back to `[requested_tenant_id or default_tenant]` for allowed_tenants when an identity carried no tenant claims and PANTHEON_BFF_ALLOWED_TENANTS was unset, letting an unauthenticated-claims caller self-authorize any X-Tenant-Id header or body tenant_id. Fixed to derive allowed_tenants only from trusted claims/env/default (`_env_csv(...) or [default_tenant]`), never from request input; regression test_missing_tenant_claims_cannot_be_elevated_by_request_input reproduces the reviewer's exact repro and asserts 403 on cross-tenant GET/PATCH/POST while the caller's own default tenant still succeeds. CORRECTIVE (PR #5667 review head df1f88e26): agora_daily_brief in services/control-plane/bff/agora/router.py previously called resolve_agora_user_scope without passing requested_tenant_id and omitted X-Pantheon-Tenant header support, causing daily brief queries to default to the identity's default tenant even when the caller explicitly supplied X-Tenant-Id or X-Pantheon-Tenant for another authorized tenant. Fixed by passing requested_tenant_id=x_tenant_id or x_pantheon_tenant, adding X-Pantheon-Tenant header parameter, and ensuring full consumer parity between /bff/agora/journal and /bff/agora/daily; regression test_daily_obeys_authorized_requested_tenant added to test_decision_journal_write_owner.py."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -31,7 +31,7 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit. CORRECTIVE (PR #5667 review head 8ee88255d, commit a742e3ebf): journal_migration.py previously performed an unconditional entries.put on legacy migration destination without CAS or snapshot revalidation, allowing concurrent tenant migrations to race. Fixed by claiming the legacy row with compare_and_set against the exact read snapshot so losing concurrent migrations report conflicts."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -87,7 +87,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 57,
+        "tests": 58,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -95,7 +95,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 36,
+        "tests": 38,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -206,16 +206,34 @@
         "note": "Independent reviewer repro for PR #5667 P1 finding (tenant scope elevation); rerun clean after fix at commit 9c1284a29."
       },
       {
-        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py (post-fix rerun)",
-        "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 113,
+        "name": "/tmp/journal-review-8ee88255.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 1,
         "failures": 0,
         "errors": 0,
         "status": "PASSED",
-        "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after the scope.py fix; includes new router regression test_missing_tenant_claims_cannot_be_elevated_by_request_input."
+        "note": "Independent reviewer repro for PR #5667 head 8ee88255d P1 finding (migration TOCTOU race); rerun clean after fix in journal_migration.py at commit a742e3ebf."
+      },
+      {
+        "name": "/tmp/journal-review-df1f88e2.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED",
+        "note": "Independent reviewer repro for PR #5667 head df1f88e26 finding (agora_daily_brief missing requested_tenant_id and X-Pantheon-Tenant support); rerun clean after fix in router.py and test_decision_journal_write_owner.py."
+      },
+      {
+        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py (post-fix rerun)",
+        "runner": ".venv-pantheon/bin/python -m pytest",
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED",
+        "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after router.py daily tenant scope fix; includes new test_daily_obeys_authorized_requested_tenant."
       }
     ],
-    "total_tests_passed": 220
+    "total_tests_passed": 263
   },
   "artifacts": [
     "services/governance/decision_journal.py",
