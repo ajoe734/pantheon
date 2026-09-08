@@ -4065,6 +4065,91 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             )
 
         self.assertEqual(result.action, "waiting")
+        self.assertIn("failed to re-dispatch workflow", result.detail)
+        self.assertIn("API down", result.detail)
+        self.assertNotIn("re-dispatched workflow", result.detail)
+
+    def test_canonical_review_gate_red_with_malformed_reopen_tag_opens_ci_red(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+            ]
+            runner = FakeRunner(pr=pr)
+            approve_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+            reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
+            runner.tag_payloads[approve_ref] = {"ref": approve_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+            # Malformed reopen tag: object has unsupported type
+            runner.tag_payloads[reopen_ref] = {"ref": reopen_ref, "object": {"sha": APPROVED_HEAD, "type": "blob"}}
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(len(runner.dispatches), 0)
+            self.assertIsNotNone(result.unblock_task_id)
+
+    def test_canonical_review_gate_red_with_reopen_api_error_opens_ci_red(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+            ]
+            runner = FakeRunner(pr=pr)
+            approve_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+            reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
+            runner.tag_payloads[approve_ref] = {"ref": approve_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+
+            original_run = runner.run
+            def run_with_reopen_api_error(cmd, *args, **kwargs):
+                if any("git/refs/tags/" in str(arg) and "reopen" in str(arg) for arg in cmd):
+                    raise auto_integrator.CommandFailure(cmd, 1, stdout="", stderr="API 500 Internal Server Error")
+                return original_run(cmd, *args, **kwargs)
+
+            runner.run = run_with_reopen_api_error
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(len(runner.dispatches), 0)
+            self.assertIsNotNone(result.unblock_task_id)
 
 
 if __name__ == "__main__":

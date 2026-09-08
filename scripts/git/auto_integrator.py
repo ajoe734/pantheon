@@ -812,9 +812,13 @@ def make_integrator_tag_lookup(
             endpoint = f"repos/{repository}/git/tags/{ref_or_sha}"
         try:
             data = json_runner.run_json(["gh", "api", endpoint])
-        except Exception:
-            return None
+        except Exception as exc:
+            if github_review_bridge._is_not_found(exc):
+                return None
+            raise
         if isinstance(data, Mapping):
+            if not data:
+                return None
             return data
         return None
 
@@ -2682,10 +2686,14 @@ def integrate_candidate(
         has_operator = canonical_review_gate_ci.operator_acceptance_proof_tag_exists(
             repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
         )
-        has_reopen = canonical_review_gate_ci.reopen_proof_tag_exists(
-            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        reopen_ref = f"refs/tags/{github_review_bridge.review_proof_tag_name(decision=github_review_bridge.REOPEN, head_sha=decision.head_oid)}"
+        reopen_inspection = canonical_review_gate_ci.inspect_proof_tag(
+            repository=repo_slug,
+            ref=reopen_ref,
+            expected_head_sha=decision.head_oid,
+            lookup=tag_lookup,
         )
-        if (has_review or has_operator) and not has_reopen:
+        if (has_review or has_operator) and reopen_inspection.is_absent:
             head_branch = candidate.branch or str(pr.get("headRefName") or "")
             base = candidate.target_branch or str(pr.get("baseRefName") or "dev")
             binding = github_review_bridge.ReviewBinding(
@@ -2694,21 +2702,30 @@ def integrate_candidate(
                 head_branch=head_branch,
                 base=base,
             )
+            dispatch_error: str | None = None
             if execute:
                 try:
                     github_review_bridge._dispatch_canonical_review_gate_workflow(
                         json_runner,
                         repository=repo_slug,
                         binding=binding,
-                        required=False,
+                        required=True,
                     )
-                except Exception:
-                    pass
-            detail = (
-                f"PR #{number} canonical review gate check is not green; "
-                f"{'re-dispatched' if execute else 'would re-dispatch'} workflow "
-                f"for verified proof tag at {decision.head_oid[:12]} and waiting for check to complete."
-            )
+                except Exception as exc:
+                    dispatch_error = str(exc)
+
+            if dispatch_error:
+                detail = (
+                    f"PR #{number} canonical review gate check is not green; "
+                    f"failed to re-dispatch workflow for verified proof tag at {decision.head_oid[:12]}: "
+                    f"{dispatch_error} and waiting for check to complete."
+                )
+            else:
+                detail = (
+                    f"PR #{number} canonical review gate check is not green; "
+                    f"{'re-dispatched' if execute else 'would re-dispatch'} workflow "
+                    f"for verified proof tag at {decision.head_oid[:12]} and waiting for check to complete."
+                )
             return IntegrationResult(
                 candidate.task_id,
                 "waiting",

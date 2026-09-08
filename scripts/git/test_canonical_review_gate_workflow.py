@@ -207,6 +207,59 @@ class BuildStatusPayloadTests(unittest.TestCase):
         self.assertEqual(payload["state"], "failure")
         self.assertIn("conflicting review-proof tags", payload["description"])
 
+    def test_reopen_tag_malformed_object_none_with_valid_approve_fails_closed(self) -> None:
+        approve_ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        reopen_ref = f"refs/tags/pantheon-review/reopen/{HEAD}"
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup(
+                {
+                    (REPOSITORY, approve_ref): {"ref": approve_ref, "object": {"sha": HEAD, "type": "commit"}},
+                    (REPOSITORY, reopen_ref): {"ref": reopen_ref, "object": None},
+                }
+            ),
+        )
+        self.assertEqual(payload["state"], "failure")
+        self.assertIn("cannot verify absence of reopen tag", payload["description"])
+
+    def test_reopen_tag_mismatched_target_with_valid_approve_fails_closed(self) -> None:
+        approve_ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        reopen_ref = f"refs/tags/pantheon-review/reopen/{HEAD}"
+        mismatched_sha = "c" * 40
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup(
+                {
+                    (REPOSITORY, approve_ref): {"ref": approve_ref, "object": {"sha": HEAD, "type": "commit"}},
+                    (REPOSITORY, reopen_ref): {"ref": reopen_ref, "object": {"sha": mismatched_sha, "type": "commit"}},
+                }
+            ),
+        )
+        self.assertEqual(payload["state"], "failure")
+        self.assertIn("cannot verify absence of reopen tag", payload["description"])
+
+    def test_reopen_tag_api_error_with_valid_approve_fails_closed(self) -> None:
+        approve_ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        reopen_ref = f"refs/tags/pantheon-review/reopen/{HEAD}"
+        def faulty_lookup(repo: str, target: str):
+            if target == reopen_ref:
+                raise gate_ci.GitHubReviewBridgeError("GitHub API 500 error")
+            if target == approve_ref:
+                return {"ref": approve_ref, "object": {"sha": HEAD, "type": "commit"}}
+            return None
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=faulty_lookup,
+        )
+        self.assertEqual(payload["state"], "failure")
+        self.assertIn("cannot verify absence of reopen tag", payload["description"])
+
     def test_proof_tag_at_a_different_head_does_not_count(self) -> None:
         """This is the exact-head-binding property: a new commit after
         approval must not silently keep passing on the strength of an old
@@ -381,6 +434,101 @@ class DefaultTagLookupTests(unittest.TestCase):
         with mock.patch("subprocess.run", return_value=completed):
             result = gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
         self.assertIsNone(result)
+
+    def test_raises_on_non_404_failure(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Internal Server Error (HTTP 500)"
+        )
+        with mock.patch("subprocess.run", return_value=completed):
+            with self.assertRaises(gate_ci.GitHubReviewBridgeError):
+                gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
+
+
+class InspectProofTagTests(unittest.TestCase):
+    def test_confirmed_absent_when_lookup_returns_none(self) -> None:
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/some-tag",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: None,
+        )
+        self.assertEqual(inspection.status, "confirmed_absent")
+        self.assertTrue(inspection.is_absent)
+        self.assertFalse(inspection.is_valid)
+
+    def test_api_error_when_lookup_raises(self) -> None:
+        def err_lookup(r, t):
+            raise RuntimeError("API timeout")
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/some-tag",
+            expected_head_sha=HEAD,
+            lookup=err_lookup,
+        )
+        self.assertEqual(inspection.status, "api_error")
+        self.assertFalse(inspection.is_absent)
+        self.assertFalse(inspection.is_valid)
+        self.assertIn("API timeout", inspection.detail)
+
+    def test_malformed_when_payload_not_mapping_or_missing_object(self) -> None:
+        cases = [
+            "not a mapping",
+            {"ref": "refs/tags/some-tag"},
+            {"ref": "refs/tags/some-tag", "object": None},
+            {"ref": "refs/tags/some-tag", "object": {"sha": "bad_sha", "type": "commit"}},
+            {"ref": "refs/tags/some-tag", "object": {"sha": HEAD, "type": "tree"}},
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload):
+                inspection = gate_ci.inspect_proof_tag(
+                    repository=REPOSITORY,
+                    ref="refs/tags/some-tag",
+                    expected_head_sha=HEAD,
+                    lookup=lambda r, t: payload,
+                )
+                self.assertEqual(inspection.status, "malformed")
+                self.assertFalse(inspection.is_valid)
+
+    def test_valid_lightweight_commit_tag(self) -> None:
+        payload = {"ref": "refs/tags/some-tag", "object": {"sha": HEAD, "type": "commit"}}
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/some-tag",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: payload,
+        )
+        self.assertEqual(inspection.status, "valid")
+        self.assertTrue(inspection.is_valid)
+        self.assertEqual(inspection.target_sha, HEAD)
+
+    def test_mismatched_commit_tag(self) -> None:
+        other_sha = "c" * 40
+        payload = {"ref": "refs/tags/some-tag", "object": {"sha": other_sha, "type": "commit"}}
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/some-tag",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: payload,
+        )
+        self.assertEqual(inspection.status, "mismatched")
+        self.assertFalse(inspection.is_valid)
+        self.assertEqual(inspection.target_sha, other_sha)
+
+    def test_valid_peeled_annotated_tag(self) -> None:
+        tag_sha = "a" * 40
+        table = {
+            "refs/tags/some-tag": {"ref": "refs/tags/some-tag", "object": {"sha": tag_sha, "type": "tag"}},
+            tag_sha: {"sha": tag_sha, "object": {"sha": HEAD, "type": "commit"}},
+        }
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/some-tag",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: table.get(t),
+        )
+        self.assertEqual(inspection.status, "valid")
+        self.assertTrue(inspection.is_valid)
+        self.assertEqual(inspection.target_sha, HEAD)
 
 
 class WorkflowDispatchContractTests(unittest.TestCase):

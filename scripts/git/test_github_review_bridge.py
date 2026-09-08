@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -1163,29 +1164,8 @@ class GitHubReviewBridgeTests(unittest.TestCase):
 
     def test_approve_deletes_opposing_reopen_tag(self) -> None:
         runner = FakeRunner()
-        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
-        runner.tag_refs[reopen_ref] = {"ref": reopen_ref, "object": {"sha": HEAD, "type": "commit"}}
-
-        bridge.bridge_review_decision(
-            repository=REPOSITORY,
-            task_id="AUDIT-001",
-            actor="Codex2",
-            decision="approve",
-            message="Approved head.",
-            binding=binding(),
-            runner=runner,
-        )
-
-        self.assertNotIn(reopen_ref, runner.tag_refs)
-        approve_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.APPROVE, head_sha=HEAD)}"
-        self.assertIn(approve_ref, runner.tag_refs)
-
-    def test_reopen_deletes_opposing_approve_and_operator_tags(self) -> None:
-        runner = FakeRunner()
-        approve_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.APPROVE, head_sha=HEAD)}"
-        operator_ref = f"refs/tags/{bridge.operator_acceptance_proof_tag_name(head_sha=HEAD)}"
-        runner.tag_refs[approve_ref] = {"ref": approve_ref, "object": {"sha": HEAD, "type": "commit"}}
-        runner.tag_refs[operator_ref] = {"ref": operator_ref, "object": {"sha": HEAD, "type": "commit"}}
+        reopen_nonce = "1" * 32
+        approve_nonce = "2" * 32
 
         bridge.bridge_review_decision(
             repository=REPOSITORY,
@@ -1195,11 +1175,215 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             message="Reopened head.",
             binding=binding(),
             runner=runner,
+            intent_nonce=reopen_nonce,
+        )
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Approved head.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=approve_nonce,
+        )
+
+        self.assertNotIn(reopen_ref, runner.tag_refs)
+        approve_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.APPROVE, head_sha=HEAD)}"
+        self.assertIn(approve_ref, runner.tag_refs)
+
+    def test_reopen_deletes_opposing_approve_and_operator_tags(self) -> None:
+        runner = FakeRunner()
+        approve_nonce = "1" * 32
+        reopen_nonce = "2" * 32
+
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Approved head.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=approve_nonce,
+        )
+        approve_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.APPROVE, head_sha=HEAD)}"
+        self.assertIn(approve_ref, runner.tag_refs)
+
+        bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Operator accepts this head.",
+            binding=binding(),
+            runner=runner,
+        )
+        operator_ref = f"refs/tags/{bridge.operator_acceptance_proof_tag_name(head_sha=HEAD)}"
+        self.assertIn(operator_ref, runner.tag_refs)
+
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="reopen",
+            message="Reopened head.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=reopen_nonce,
         )
 
         self.assertNotIn(approve_ref, runner.tag_refs)
         self.assertNotIn(operator_ref, runner.tag_refs)
         reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+    def test_stale_retry_approve_fails_closed_and_preserves_reopen_tag(self) -> None:
+        runner = FakeRunner()
+        nonce1 = "1" * 32
+        nonce2 = "2" * 32
+        nonce3 = "3" * 32
+
+        # 1. Initial approval
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Initial approval.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=nonce1,
+        )
+        approve_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.APPROVE, head_sha=HEAD)}"
+        self.assertIn(approve_ref, runner.tag_refs)
+
+        # 2. Reopen supersedes approval
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="reopen",
+            message="Changes required.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=nonce2,
+        )
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        self.assertNotIn(approve_ref, runner.tag_refs)
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+        # 3. Stale retry of approval with nonce1 must fail closed and preserve reopen tag
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "has been superseded by newer review intent",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Stale retry.",
+                binding=binding(),
+                runner=runner,
+                intent_nonce=nonce1,
+            )
+        self.assertIn(reopen_ref, runner.tag_refs)
+        self.assertNotIn(approve_ref, runner.tag_refs)
+
+        # 4. Genuine reapproval with nonce3 succeeds and deletes reopen tag
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Genuine reapproval.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=nonce3,
+        )
+        self.assertNotIn(reopen_ref, runner.tag_refs)
+        self.assertIn(approve_ref, runner.tag_refs)
+
+    def test_opposing_tag_malformed_fails_closed(self) -> None:
+        runner = FakeRunner()
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        # Lightweight tag without annotated payload
+        runner.tag_refs[reopen_ref] = {"ref": reopen_ref, "object": {"sha": HEAD, "type": "commit"}}
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "cannot delete opposing tag.*tag payload is missing or malformed",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Approved head.",
+                binding=binding(),
+                runner=runner,
+                intent_nonce="1" * 32,
+            )
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+    def test_opposing_tag_mismatched_target_fails_closed(self) -> None:
+        runner = FakeRunner()
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        other_sha = "b" * 40
+        runner.tag_refs[reopen_ref] = {"ref": reopen_ref, "object": {"sha": other_sha, "type": "commit"}}
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "cannot delete opposing tag.*targets mismatched commit",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Approved head.",
+                binding=binding(),
+                runner=runner,
+                intent_nonce="1" * 32,
+            )
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+    def test_opposing_tag_mismatched_task_id_fails_closed(self) -> None:
+        runner = FakeRunner()
+        # Set up annotated tag with mismatched task_id
+        tag_sha = "9" * 40
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        runner.tag_refs[reopen_ref] = {"ref": reopen_ref, "object": {"sha": tag_sha, "type": "tag"}}
+        runner.tag_objects[tag_sha] = {
+            "sha": tag_sha,
+            "tag": reopen_ref.removeprefix("refs/tags/"),
+            "message": json.dumps({
+                "task_id": "OTHER-TASK-999",
+                "actor": "Codex2",
+                "decision": "reopen",
+                "head_sha": HEAD,
+                "intent_nonce": "1" * 32,
+            }),
+            "object": {"sha": HEAD, "type": "commit"},
+        }
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "cannot delete opposing tag.*task_id 'OTHER-TASK-999' != 'AUDIT-001'",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Approved head.",
+                binding=binding(),
+                runner=runner,
+                intent_nonce="2" * 32,
+            )
         self.assertIn(reopen_ref, runner.tag_refs)
 
 
