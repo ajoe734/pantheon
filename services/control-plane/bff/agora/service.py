@@ -35,6 +35,7 @@ from ..models import (
     TargetObject,
     utc_now as default_utc_now,
 )
+from .identity.scope import resolve_canonical_agora_scope
 
 from services.control_plane.bff.ports import (
     OpenClawOpsClient,
@@ -583,16 +584,21 @@ class AgoraService:
         owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
         return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
 
-    def _private_record_visible(self, record: Dict[str, Any], identity: OperatorIdentity) -> bool:
-        identity_tenant = str(
-            getattr(identity, "tenant_id", "")
-            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
-            or (identity.claims.get("tenant") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
-            or os.getenv("PANTHEON_BFF_TENANT_ID")
-            or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID")
-            or os.getenv("PANTHEON_TENANT_ID")
-            or "pantheon-dev"
-        ).strip()
+    def _private_record_visible(
+        self,
+        record: Dict[str, Any],
+        identity: OperatorIdentity,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
+        )
+        identity_tenant = str(resolved_tenant or "").strip()
         record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
 
         # Tenant isolation:
@@ -607,17 +613,34 @@ class AgoraService:
         owner = self._private_record_owner(record)
         if visibility != "private" or not owner:
             return True
-        return owner == identity.operator_id
+        operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
+        allowed_users = {u for u in (resolved_user, operator_id) if u}
+        return owner in allowed_users
 
     def filter_private_records(
         self,
         records: List[Dict[str, Any]],
         identity: OperatorIdentity,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
+        )
         return [
             record
             for record in records
-            if isinstance(record, dict) and self._private_record_visible(record, identity)
+            if isinstance(record, dict)
+            and self._private_record_visible(
+                record,
+                identity,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            )
         ]
 
     def raise_cross_user_forbidden(self, *, resource: str, resource_id: str) -> None:
@@ -807,17 +830,11 @@ class AgoraService:
             "entryId": entry_id,
             "patch": patch,
         })
-        resolved_tenant = (
-            tenant_id
-            or getattr(identity, "tenant_id", None)
-            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
-            or "pantheon-dev"
-        )
-        resolved_user = (
-            user_id
-            or getattr(identity, "user_id", None)
-            or getattr(identity, "operator_id", None)
-            or ""
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
         )
         store = self.read_store
         if store is not None and hasattr(store, "list_decision_journal_entries"):
@@ -831,7 +848,12 @@ class AgoraService:
                     e for e in store.list_decision_journal_entries()
                     if str(e.get("id") or e.get("entry_id") or "") == entry_id
                 ]
-            if existing and not self._private_record_visible(existing[0], identity):
+            if existing and not self._private_record_visible(
+                existing[0],
+                identity,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            ):
                 self.raise_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
 
         now = self.utc_now()
@@ -932,9 +954,17 @@ class AgoraService:
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
+        if identity or tenant_id or user_id:
+            resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+                identity,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                utc_now=self.utc_now,
+            )
+        else:
+            resolved_tenant = None
+            resolved_user = None
         store = self.read_store
-        resolved_tenant = tenant_id or (getattr(identity, "tenant_id", None) if identity else None)
-        resolved_user = user_id or (getattr(identity, "user_id", None) if identity else None) or (getattr(identity, "operator_id", None) if identity else None)
         signals = store.list_agora_signals() if store and hasattr(store, "list_agora_signals") else []
         watchlist = store.list_agora_watchlist() if store and hasattr(store, "list_agora_watchlist") else []
         journal = []
@@ -1518,17 +1548,11 @@ class AgoraService:
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
-        resolved_tenant = (
-            tenant_id
-            or getattr(identity, "tenant_id", None)
-            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
-            or "pantheon-dev"
-        )
-        resolved_user = (
-            user_id
-            or getattr(identity, "user_id", None)
-            or getattr(identity, "operator_id", None)
-            or ""
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
         )
         store = self.read_store
         entries = []
@@ -1537,7 +1561,12 @@ class AgoraService:
                 entries = store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
             except TypeError:
                 entries = store.list_decision_journal_entries()
-        visible_entries = self.filter_private_records(entries, identity)
+        visible_entries = self.filter_private_records(
+            entries,
+            identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
         return self.agora_list_response(
             dataset="decision_journal_entries",
             surface_key="agora_journal_list",
@@ -1560,19 +1589,11 @@ class AgoraService:
     ) -> Any:
         self.reject_body_idempotency_key(payload)
         resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        resolved_tenant = (
-            tenant_id
-            or getattr(identity, "tenant_id", None)
-            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
-            or payload.get("tenant_id")
-            or payload.get("tenantId")
-            or "pantheon-dev"
-        )
-        resolved_user = (
-            user_id
-            or getattr(identity, "user_id", None)
-            or getattr(identity, "operator_id", None)
-            or ""
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id or payload.get("tenant_id") or payload.get("tenantId"),
+            user_id=user_id or payload.get("user_id") or payload.get("userId"),
+            utc_now=self.utc_now,
         )
         title = self.agora_required_text(payload, "title")
         body_text = str(payload.get("body") or payload.get("decision") or payload.get("rationale") or "").strip()

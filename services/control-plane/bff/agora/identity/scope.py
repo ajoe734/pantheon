@@ -173,16 +173,21 @@ def resolve_agora_user_scope(
         )
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
-    default_tenant = _first_nonblank(
+    env_default_tenant = _first_nonblank(
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
+    )
+    default_tenant = _first_nonblank(
+        env_default_tenant,
         *_claim_strings(claims, _TENANT_CLAIM_PATHS),
         "pantheon-dev",
     )
     allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
     if not allowed_tenants:
         allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
+    elif env_default_tenant and env_default_tenant not in allowed_tenants:
+        allowed_tenants.append(env_default_tenant)
     tenant_id = _first_nonblank(requested_tenant_id, default_tenant)
 
     if not tenant_id or not user_id:
@@ -315,3 +320,71 @@ def filter_agora_user_records(
         for record in records
         if isinstance(record, dict) and agora_record_matches_user_scope(record, scope)
     ]
+
+
+def resolve_canonical_agora_scope(
+    identity: Any,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> tuple[str, str]:
+    """Consistently resolve canonical (tenant_id, user_id) for Agora callers.
+
+    Precedence:
+    1. Explicitly provided non-blank tenant_id / user_id arguments.
+    2. resolve_agora_user_scope if identity is a valid OperatorIdentity.
+    3. Fallback extraction:
+       - user_id: getattr(identity, 'user_id'), claims user aliases, operator_id
+       - tenant_id: env vars (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID,
+         PANTHEON_TENANT_ID), getattr(identity, 'tenant_id'), claims tenant aliases,
+         'pantheon-dev'.
+    """
+    clean_tenant = str(tenant_id or "").strip()
+    clean_user = str(user_id or "").strip()
+    if clean_tenant and clean_user:
+        return clean_tenant, clean_user
+
+    if identity is not None:
+        try:
+            now_fn = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=now_fn,
+                requested_tenant_id=clean_tenant or None,
+            )
+            return (
+                clean_tenant or str(scope.tenant_id or "").strip(),
+                clean_user or str(scope.user_id or "").strip(),
+            )
+        except Exception:
+            pass
+
+        claims = _claims(identity)
+        operator_id = str(getattr(identity, "operator_id", "") or "").strip()
+        if not clean_user:
+            clean_user = _first_nonblank(
+                getattr(identity, "user_id", None),
+                *_claim_strings(claims, _USER_CLAIM_PATHS),
+                operator_id,
+            )
+        if not clean_tenant:
+            clean_tenant = _first_nonblank(
+                os.getenv("PANTHEON_BFF_TENANT_ID"),
+                os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+                os.getenv("PANTHEON_TENANT_ID"),
+                getattr(identity, "tenant_id", None),
+                *_claim_strings(claims, _TENANT_CLAIM_PATHS),
+                "pantheon-dev",
+            )
+        return clean_tenant, clean_user
+
+    if not clean_tenant:
+        clean_tenant = _first_nonblank(
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "pantheon-dev",
+        )
+    return clean_tenant, clean_user
+

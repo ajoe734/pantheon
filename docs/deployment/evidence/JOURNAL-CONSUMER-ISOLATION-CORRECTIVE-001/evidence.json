@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Unified fail-closed _get_committed_entry_snapshot resolution and _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). list_entries consistently preserves the before_entry snapshot during incomplete or uncommitted patches across crashed recoveries, preventing private metadata or body disclosure across principals. Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries."
+      "implementation": "services/governance/decision_journal.py & services/control-plane/bff/agora/identity/scope.py: Canonical scope resolution (resolve_canonical_agora_scope) unified across AgoraService._private_record_visible, filter_private_records, list_journal_entries, patch_journal_entry, create_journal_entry, get_daily_brief, and BFF _resolve_agora_interaction_context_ref. Supported tenant claim aliases (tenant_id, tenantId, tenant.id, tid, org_id, organization.id) and env precedence (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID) achieve full roundtrip parity between create, list, patch, and interaction context references. Unified fail-closed _get_committed_entry_snapshot resolution and _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). list_entries consistently preserves the before_entry snapshot during incomplete or uncommitted patches across crashed recoveries, preventing private metadata or body disclosure across principals. Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 32,
+        "tests": 36,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -100,6 +100,14 @@
         "name": "tests/agora_write_owner/",
         "runner": ".venv-pantheon/bin/python -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-e22aa6aa.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 2,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -159,9 +167,25 @@
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-abf97fb5.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-cb67a9f3.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
       }
     ],
-    "total_tests_passed": 125
+    "total_tests_passed": 139
   },
   "artifacts": [
     "services/governance/decision_journal.py",
@@ -169,6 +193,7 @@
     "services/governance/migrations/journal_migration.py",
     "services/control-plane/bff/agora/service.py",
     "services/control-plane/bff/agora/router.py",
+    "services/control-plane/bff/agora/identity/scope.py",
     "services/control-plane/bff/governance/decision_journal_write_owner.py",
     "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
     "services/control-plane/bff/ports/read_surface_ports.py",

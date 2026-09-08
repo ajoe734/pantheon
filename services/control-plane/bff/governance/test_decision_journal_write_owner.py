@@ -1228,6 +1228,250 @@ patch_entry(
             self.assertIsNone(events[0]["diff"]["before"])
             self.assertEqual(events[0]["diff"]["after"]["body"], "PUBLIC REPLACEMENT")
 
+    def test_supported_tenant_claim_aliases_positive_roundtrip_and_parity(self) -> None:
+        from unittest.mock import patch
+        from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
+
+        aliases = [
+            ("tenant_id", {"tenant_id": "tenant-alias-1"}),
+            ("tenantId", {"tenantId": "tenant-alias-2"}),
+            ("tenant.id", {"tenant": {"id": "tenant-alias-3"}}),
+            ("tid", {"tid": "tenant-alias-4"}),
+            ("org_id", {"org_id": "tenant-alias-5"}),
+            ("organization.id", {"organization": {"id": "tenant-alias-6"}}),
+        ]
+        for name, claims in aliases:
+            with self.subTest(alias=name):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with patch.dict(os.environ, {}, clear=True):
+                        owner = DecisionJournalOwnerAdapter(stores=build_decision_journal_stores(tmp))
+                        reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+                        service = AgoraService(get_read_store=lambda: reader, journal_write_owner=owner)
+                        identity = OperatorIdentity(
+                            operator_id="operator-alice",
+                            roles=["operator"],
+                            mfa_verified=True,
+                            claims={**claims, "sub": "operator-alice"},
+                        )
+                        scope = resolve_agora_user_scope(identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+                        val = list(claims.values())[0]
+                        expected_tenant = val["id"] if isinstance(val, dict) else val
+                        self.assertEqual(scope.tenant_id, expected_tenant)
+
+                        created = service.create_journal_entry(
+                            payload={"id": f"entry-{name}", "title": f"Title {name}", "body": "Body"},
+                            identity=identity,
+                            idempotency_key=f"create-{name}",
+                            x_idempotency_key=None,
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                        )
+                        self.assertIsNotNone(created)
+
+                        # Parity check: DomainDecisionJournalReaderPort vs AgoraService.list_journal_entries
+                        canonical = reader.list_decision_journal_entries(tenant_id=scope.tenant_id, user_id=scope.user_id)
+                        self.assertEqual(len(canonical), 1)
+                        self.assertEqual(canonical[0]["id"], f"entry-{name}")
+
+                        listed = service.list_journal_entries(
+                            identity=identity,
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                        )
+                        self.assertEqual(len(listed["items"]), 1)
+                        self.assertEqual(listed["items"][0]["id"], f"entry-{name}")
+                        self.assertEqual(listed["data"], canonical)
+
+                        # Patch check: owner can patch own created entry
+                        patched = service.patch_journal_entry(
+                            entry_id=f"entry-{name}",
+                            patch={"title": f"Patched {name}"},
+                            identity=identity,
+                            resolved_key=f"patch-{name}",
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                        )
+                        self.assertIsNotNone(patched)
+                        self.assertEqual(patched.data.title, f"Patched {name}")
+
+    def test_env_tenant_precedence_over_claims(self) -> None:
+        from unittest.mock import patch
+        from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
+
+        env_vars = [
+            "PANTHEON_BFF_TENANT_ID",
+            "PANTHEON_BFF_DEFAULT_TENANT_ID",
+            "PANTHEON_TENANT_ID",
+        ]
+        for env_var in env_vars:
+            with self.subTest(env_var=env_var):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with patch.dict(os.environ, {env_var: "tenant-env-override"}, clear=True):
+                        owner = DecisionJournalOwnerAdapter(stores=build_decision_journal_stores(tmp))
+                        reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+                        service = AgoraService(get_read_store=lambda: reader, journal_write_owner=owner)
+                        identity = OperatorIdentity(
+                            operator_id="alice",
+                            roles=["operator"],
+                            mfa_verified=True,
+                            claims={"tid": "tenant-claim-ignored", "sub": "alice"},
+                        )
+                        scope = resolve_agora_user_scope(identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+                        self.assertEqual(scope.tenant_id, "tenant-env-override")
+
+                        created = service.create_journal_entry(
+                            payload={"id": "entry-env", "title": "Env Title", "body": "Body"},
+                            identity=identity,
+                            idempotency_key="create-env",
+                            x_idempotency_key=None,
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                        )
+                        self.assertEqual(created["data"]["tenant_id"], "tenant-env-override")
+
+                        listed = service.list_journal_entries(
+                            identity=identity,
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                        )
+                        self.assertEqual(len(listed["items"]), 1)
+                        self.assertEqual(listed["items"][0]["id"], "entry-env")
+
+                        patched = service.patch_journal_entry(
+                            entry_id="entry-env",
+                            patch={"title": "Patched Env"},
+                            identity=identity,
+                            resolved_key="patch-env",
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                        )
+                        self.assertEqual(patched.data.title, "Patched Env")
+
+    def test_fail_closed_cross_tenant_and_cross_user_isolation(self) -> None:
+        from unittest.mock import patch
+        from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {}, clear=True):
+                owner = DecisionJournalOwnerAdapter(stores=build_decision_journal_stores(tmp))
+                reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+                service = AgoraService(get_read_store=lambda: reader, journal_write_owner=owner)
+
+                alice_identity = OperatorIdentity(
+                    operator_id="alice",
+                    roles=["operator"],
+                    mfa_verified=True,
+                    claims={"tid": "tenant-a", "sub": "alice"},
+                )
+                bob_identity = OperatorIdentity(
+                    operator_id="bob",
+                    roles=["operator"],
+                    mfa_verified=True,
+                    claims={"tid": "tenant-b", "sub": "bob"},
+                )
+                mallory_identity = OperatorIdentity(
+                    operator_id="mallory",
+                    roles=["operator"],
+                    mfa_verified=True,
+                    claims={"tid": "tenant-a", "sub": "mallory"},
+                )
+
+                alice_scope = resolve_agora_user_scope(alice_identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+                bob_scope = resolve_agora_user_scope(bob_identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+                mallory_scope = resolve_agora_user_scope(mallory_identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+
+                service.create_journal_entry(
+                    payload={"id": "entry-alice", "title": "Alice Private", "body": "Secret", "visibility": "private"},
+                    identity=alice_identity,
+                    idempotency_key="create-alice",
+                    x_idempotency_key=None,
+                    tenant_id=alice_scope.tenant_id,
+                    user_id=alice_scope.user_id,
+                )
+
+                # Cross-tenant (Bob in tenant-b cannot see alice's entry)
+                bob_list = service.list_journal_entries(
+                    identity=bob_identity,
+                    tenant_id=bob_scope.tenant_id,
+                    user_id=bob_scope.user_id,
+                )
+                self.assertEqual(bob_list["data"], [])
+
+                with self.assertRaises(HTTPException) as ctx:
+                    service.patch_journal_entry(
+                        entry_id="entry-alice",
+                        patch={"title": "Hacked by Bob"},
+                        identity=bob_identity,
+                        resolved_key="patch-bob",
+                        tenant_id=bob_scope.tenant_id,
+                        user_id=bob_scope.user_id,
+                    )
+                self.assertIn(ctx.exception.status_code, (403, 404))
+
+                # Same tenant, different user (Mallory in tenant-a cannot see or patch Alice's private entry)
+                mallory_list = service.list_journal_entries(
+                    identity=mallory_identity,
+                    tenant_id=mallory_scope.tenant_id,
+                    user_id=mallory_scope.user_id,
+                )
+                self.assertEqual(mallory_list["data"], [])
+
+                with self.assertRaises(HTTPException) as ctx:
+                    service.patch_journal_entry(
+                        entry_id="entry-alice",
+                        patch={"title": "Hacked by Mallory"},
+                        identity=mallory_identity,
+                        resolved_key="patch-mallory",
+                        tenant_id=mallory_scope.tenant_id,
+                        user_id=mallory_scope.user_id,
+                    )
+                self.assertIn(ctx.exception.status_code, (403, 404))
+
+    def test_main_bff_journal_context_ref_resolution_parity(self) -> None:
+        from unittest.mock import patch
+        from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
+        from services.control_plane.bff.main import _resolve_agora_interaction_context_ref
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {}, clear=True):
+                stores = build_decision_journal_stores(tmp)
+                reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+
+                identity = OperatorIdentity(
+                    operator_id="alice",
+                    roles=["operator"],
+                    mfa_verified=True,
+                    claims={"tid": "tenant-a", "sub": "alice"},
+                )
+                scope = resolve_agora_user_scope(identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+
+                create_entry(
+                    stores,
+                    entry_id="ctx-ref-1",
+                    title="Context Ref Entry",
+                    body="Context body",
+                    actor_id="alice",
+                    tenant_id="tenant-a",
+                    user_id="alice",
+                    created_at="2026-09-08T00:00:00Z",
+                )
+
+                with patch("services.control_plane.bff.main.read_store", reader):
+                    with patch("services.control_plane.bff.main._extract_identity", return_value=identity):
+                        ref_res = _resolve_agora_interaction_context_ref(
+                            kind="journal_entry",
+                            ref_id="ctx-ref-1",
+                            ref_version=None,
+                            resolved=scope,
+                            session={"workshop_id": "ws-1"},
+                            context_refs=[],
+                            authorization="Bearer token",
+                            source_route="/agora/workshop",
+                            focused_object={"kind": "other", "id": "other-1"},
+                        )
+                        self.assertIsNotNone(ref_res["row"])
+                        self.assertEqual(ref_res["row"]["id"], "ctx-ref-1")
+
 
 if __name__ == "__main__":
     unittest.main()

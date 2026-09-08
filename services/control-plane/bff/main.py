@@ -8251,16 +8251,21 @@ def _agora_private_record_owner(record: Dict[str, Any]) -> str:
             return clean
     owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
     return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
-def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
-    identity_tenant = str(
-        getattr(identity, "tenant_id", "")
-        or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
-        or (identity.claims.get("tenant") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
-        or os.getenv("PANTHEON_BFF_TENANT_ID")
-        or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID")
-        or os.getenv("PANTHEON_TENANT_ID")
-        or "pantheon-dev"
-    ).strip()
+def _agora_private_record_visible(
+    record: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> bool:
+    from .agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
+    identity_tenant = str(resolved_tenant or "").strip()
     record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
     if identity_tenant:
         if not record_tenant or record_tenant != identity_tenant:
@@ -8271,15 +8276,33 @@ def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIden
     owner = _agora_private_record_owner(record)
     if visibility != "private" or not owner:
         return True
-    return owner == identity.operator_id
+    operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
+    allowed_users = {u for u in (resolved_user, operator_id) if u}
+    return owner in allowed_users
 def _agora_filter_private_records(
     records: List[Dict[str, Any]],
     identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    from .agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
     return [
         record
         for record in records
-        if isinstance(record, dict) and _agora_private_record_visible(record, identity)
+        if isinstance(record, dict)
+        and _agora_private_record_visible(
+            record,
+            identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
     ]
 def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
     for field in fields:
@@ -22806,14 +22829,22 @@ def _resolve_agora_interaction_context_ref(
             )
             return {"row": episode, "audience_verified": audience_verified}
 
-        scoped_tenant = getattr(identity, "tenant_id", None) or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
-        scoped_user = getattr(identity, "user_id", None) or getattr(identity, "operator_id", None)
+        from .agora.identity.scope import resolve_canonical_agora_scope
+
+        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=getattr(resolved, "tenant_id", None),
+            user_id=getattr(resolved, "user_id", None),
+        )
         try:
             journal_entries = read_store.list_decision_journal_entries(tenant_id=scoped_tenant, user_id=scoped_user)
         except TypeError:
             journal_entries = read_store.list_decision_journal_entries()
         journal_rows = _agora_filter_private_records(
-            journal_entries, identity,
+            journal_entries,
+            identity,
+            tenant_id=scoped_tenant,
+            user_id=scoped_user,
         )
         journal = next(
             (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),
