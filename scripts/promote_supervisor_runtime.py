@@ -1461,16 +1461,38 @@ def _replace_supervisor_locked(
             incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
             if incumbent_identity is None:
                 raise RuntimeError("existing incumbent identity is not qualified for rollback")
-            result["writer_drain"] = qualify_and_drain_incumbent_writers(
-                incumbent, timeout_seconds=termination_timeout
-            )
         else:
             incumbent_identity = None
 
+        # Quiesce the incumbent before sampling and draining its writers.  The
+        # incumbent owns process_queue, so draining first leaves a race where
+        # it can reserve and launch a replacement worker between the drain and
+        # the cutover.  A failed drain below restarts the qualified incumbent
+        # against its untouched config; storage migration has not started yet.
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
         )
         result["stopped_pid"] = stopped_pid
+
+        if incumbent:
+            try:
+                result["writer_drain"] = qualify_and_drain_incumbent_writers(
+                    incumbent, timeout_seconds=termination_timeout
+                )
+            except Exception as drain_exc:
+                if stopped_pid is not None:
+                    try:
+                        result["restarted_pid"] = launch_v2_supervisor(
+                            incumbent,
+                            identity=incumbent_identity,
+                            status_root=status_root,
+                            authority_env_file=authority_env_file,
+                        )
+                    except Exception as restart_exc:
+                        raise RuntimeError(
+                            f"{drain_exc}; incumbent restart failed: {restart_exc}"
+                        ) from drain_exc
+                raise
 
         migration_record: dict[str, Any] | None = None
         lock_fd: int | None = None
