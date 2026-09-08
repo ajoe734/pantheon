@@ -72,6 +72,16 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_stall_trace_handler_registers_sigusr2(self) -> None:
+        with mock.patch.object(supervisor.faulthandler, "register") as register:
+            supervisor.install_stall_trace_handler()
+
+        register.assert_called_once_with(
+            signal.SIGUSR2,
+            file=sys.stderr,
+            all_threads=True,
+        )
+
     def test_dashboard_refresh_uses_scoped_canonical_task_state_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
