@@ -1436,11 +1436,17 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
+        # Deployment reads the authoritative RegistryEntry and ApprovalDecision
+        # itself under its own scoped verified reader principal, and its request
+        # model forbids extra fields.  These checkpointed receipts therefore stay
+        # local coordination preconditions from the earlier validated steps.
+        # Deployment must revalidate current owner authority using only the exact
+        # identifiers; these checkpoints are never sent as client snapshots.
         registry_receipt = _mapping(
             record.references.get("strategy_artifact_approved"),
             label="checkpointed approved StrategyArtifact RegistryEntry",
         )
-        approval_receipt = _mapping(
+        _mapping(
             record.references.get("strategy_artifact_approval_decided"),
             label="checkpointed ApprovalDecision",
         )
@@ -1448,7 +1454,15 @@ class PersonaProvisioningCoordinator:
             record.references.get("baseline_strategy_artifact_approved"),
             label="checkpointed approved zero-capital baseline StrategyArtifact RegistryEntry",
         )
-        registry_entry = _registry_entry(registry_receipt)
+        self._validate_registry(
+            registry_receipt,
+            ids,
+            state="approved",
+            registry_id=ids.strategy_artifact_id,
+            version=ids.version,
+            approval_decision_id=ids.strategy_artifact_approval_decision_id,
+            artifact_type="execution_bundle",
+        )
         baseline_entry = _registry_entry(baseline_receipt)
         self._validate_registry(
             baseline_receipt,
@@ -1466,8 +1480,6 @@ class PersonaProvisioningCoordinator:
             "target_stage": "paper",
             "current_stage": "none",
             "registry_id": ids.strategy_artifact_id,
-            "registry_entry": registry_entry,
-            "approval_decision": approval_receipt,
             "created_by": self.actor_id,
             "sponsor_persona_id": record.persona_id,
             "scale": {"capital_scale_pct": 0.0, "gross_scale_pct": 100.0},
@@ -1568,11 +1580,21 @@ class PersonaProvisioningCoordinator:
                     "Deployment saga readback does not prove admitted provisioning"
                 )
 
-        registry_entry = _registry_entry(
+        # Same owner-authority rule as the plan POST: prove the approved
+        # RegistryEntry checkpoint exists locally, then dispatch identifiers
+        # only.  DispatchDeploymentPlanRequest forbids extra fields and
+        # Deployment re-reads the authoritative entry itself.
+        self._validate_registry(
             _mapping(
                 record.references.get("strategy_artifact_approved"),
                 label="checkpointed approved StrategyArtifact RegistryEntry",
-            )
+            ),
+            ids,
+            state="approved",
+            registry_id=ids.strategy_artifact_id,
+            version=ids.version,
+            approval_decision_id=ids.strategy_artifact_approval_decision_id,
+            artifact_type="execution_bundle",
         )
         receipt = self._transition_then_get(
             owner="deployment",
@@ -1588,7 +1610,6 @@ class PersonaProvisioningCoordinator:
                 "saga_id": ids.deployment_saga_id,
                 "source_task_id": f"persona-provisioning-{ids.token}",
                 "workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
-                "registry_entry": registry_entry,
                 "metadata": {
                     "tenant_id": record.tenant_id,
                     "persona_id": record.persona_id,
