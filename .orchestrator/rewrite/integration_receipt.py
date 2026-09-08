@@ -23,6 +23,8 @@ the existing projection contract, not a new one.
 """
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
 import os
 import re
@@ -32,6 +34,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from common import canonical_task_state_lock_file, validate_status_command_runtime
+import multi_repo_registry
 
 from rewrite.task_state_store import append_state_commit, snapshot_transaction
 
@@ -124,12 +127,12 @@ class IntegrationReceipt:
 class IntegrationAuthority:
     """Concrete proofs the caller already holds, re-verified before writing.
 
-    ``lock_path``/``lock_schema``/``lock_pid`` re-check the canonical
-    auto-integrator flock this process acquired in
-    ``scripts/git/auto_integrator.py:lock_file`` -- the metadata file it
-    publishes under that flock is re-read here to prove *this* process still
-    owns it (SD.md 6.4 point 3), without this module importing
-    ``auto_integrator`` itself.
+    ``lock_path``/``lock_schema``/``lock_pid``/``lock_inode`` re-check the
+    canonical auto-integrator flock this process acquired in
+    ``scripts/git/auto_integrator.py:lock_file`` -- the metadata file and held
+    kernel lock it publishes under that flock are re-read and validated here to
+    prove *this* process still owns it (SD.md 6.4 point 3), without this module
+    importing ``auto_integrator`` itself.
     """
 
     command_root: Path
@@ -140,6 +143,8 @@ class IntegrationAuthority:
     lock_path: Path
     lock_schema: str
     lock_pid: int
+    lock_inode: int | None = None
+    lock_device: int | None = None
 
 
 @dataclass(frozen=True)
@@ -231,22 +236,26 @@ def parse_integration_receipt(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def frozen_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
+def frozen_delivery_binding(
+    task: Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Derive the row's own frozen (repository, branch, pr, head) identity.
 
     Pure and read-only: only fields already embedded on the canonical row
-    (``target_repo``, ``review_binding``) are consulted, matching
+    (``target_repo``, ``artifacts``, ``review_binding``) and configured
+    registry repositories are consulted, matching
     ``integration_receipt_consumes_candidate``'s "no filesystem operation"
-    contract (SD.md 6.6). A non-default repository id cannot be resolved to
-    a GitHub slug without reading live config, so it safely returns ``None``
-    (never a false match) rather than guessing.
+    contract (SD.md 6.6). Unrecognized, ambiguous, or misconfigured repository
+    scopes safely return None (fail closed).
     """
 
     if not isinstance(task, Mapping):
         return None
-    repo_id = str(task.get("target_repo") or _DEFAULT_REPOSITORY_ID).strip() or _DEFAULT_REPOSITORY_ID
-    if repo_id.casefold() not in _DEFAULT_REPOSITORY_ALIASES:
+    repo_identity = multi_repo_registry.task_repository_slug_and_default_branch(config, task)
+    if repo_identity is None:
         return None
+    repo_slug, default_branch = repo_identity
     binding = task.get("review_binding")
     if not isinstance(binding, Mapping):
         return None
@@ -256,16 +265,19 @@ def frozen_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
     head_sha = _oid(binding.get("head_sha"))
     if not head_sha:
         return None
-    target_branch = str(binding.get("base") or "").strip() or _DEFAULT_TARGET_BRANCH
+    target_branch = str(binding.get("base") or "").strip() or default_branch
     return {
-        "repository": _DEFAULT_REPOSITORY_SLUG,
+        "repository": repo_slug,
         "target_branch": target_branch,
         "pr": pr,
         "head_sha": head_sha,
     }
 
 
-def integration_receipt_consumes_candidate(task: Mapping[str, Any]) -> bool:
+def integration_receipt_consumes_candidate(
+    task: Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+) -> bool:
     """True only when ``task`` already carries a receipt for its current
     identity -- the auto-integrator must skip it without any GitHub call,
     fetch, filesystem operation, or ancestry query (SD.md 6.6)."""
@@ -287,7 +299,7 @@ def integration_receipt_consumes_candidate(task: Mapping[str, Any]) -> bool:
     # exact-generation CAS. Future-generation receipts remain invalid.
     if current_generation < 1 or receipt["task_generation"] > current_generation:
         return False
-    binding = frozen_delivery_binding(task)
+    binding = frozen_delivery_binding(task, config=config)
     if binding is None:
         return False
     delivery = task.get("delivery_binding")
@@ -306,17 +318,133 @@ def integration_receipt_consumes_candidate(task: Mapping[str, Any]) -> bool:
     )
 
 
-def _read_lock_owner_pid(lock_path: Path, *, expected_schema: str) -> int | None:
+def _verify_lock_authority(
+    lock_path: Path,
+    *,
+    expected_schema: str,
+    expected_pid: int,
+    expected_inode: int | None = None,
+    expected_device: int | None = None,
+) -> None:
     try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    if payload.get("schema") != expected_schema or payload.get("state") != "held":
-        return None
-    pid = payload.get("pid")
-    return pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(str(lock_path), flags)
+    except OSError as exc:
+        raise IntegrationReceiptAuthorityError(
+            f"cannot open canonical auto-integrator lock {lock_path}: {exc}"
+        ) from exc
+
+    try:
+        opened_stat = os.fstat(fd)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator flock is not held exclusively by this process generation"
+            )
+        except (BlockingIOError, OSError) as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                raise IntegrationReceiptAuthorityError(
+                    f"cannot inspect canonical auto-integrator lock {lock_path}: {exc}"
+                ) from exc
+
+        proc_locks = Path("/proc/locks")
+        if proc_locks.exists():
+            expected_dev_pair = (os.major(opened_stat.st_dev), os.minor(opened_stat.st_dev))
+            matches: list[tuple[str, ...]] = []
+            try:
+                for row in proc_locks.read_text(encoding="ascii", errors="strict").splitlines():
+                    fields = tuple(row.split())
+                    if len(fields) < 8 or fields[1] == "->":
+                        continue
+                    try:
+                        major_hex, minor_hex, inode_text = fields[5].split(":", 2)
+                        row_device = (int(major_hex, 16), int(minor_hex, 16))
+                        row_inode = int(inode_text)
+                    except (IndexError, ValueError):
+                        continue
+                    if row_device == expected_dev_pair and row_inode == opened_stat.st_ino:
+                        matches.append(fields)
+            except OSError as exc:
+                raise IntegrationReceiptAuthorityError(
+                    f"cannot inspect kernel lock table /proc/locks: {exc}"
+                ) from exc
+
+            if not matches:
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock {lock_path} has no kernel lock record"
+                )
+            if len(matches) != 1:
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock {lock_path} has multiple kernel lock records"
+                )
+            fields = matches[0]
+            if fields[1:4] != ("FLOCK", "ADVISORY", "WRITE") or fields[6:8] != ("0", "EOF"):
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock {lock_path} has wrong kernel mode: {fields[1:4]}"
+                )
+            try:
+                kernel_pid = int(fields[4])
+            except (IndexError, ValueError):
+                kernel_pid = -1
+            if kernel_pid != expected_pid:
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock kernel owner differs: expected pid {expected_pid}, found {kernel_pid}"
+                )
+
+        try:
+            current_stat = os.stat(lock_path)
+        except OSError as exc:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock {lock_path} disappeared: {exc}"
+            ) from exc
+
+        if (opened_stat.st_dev, opened_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock inode changed: {lock_path}"
+            )
+
+        if expected_device is not None and opened_stat.st_dev != expected_device:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock device changed: expected {expected_device}, "
+                f"found {opened_stat.st_dev}"
+            )
+
+        if expected_inode is not None and opened_stat.st_ino != expected_inode:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock inode changed: expected {expected_inode}, "
+                f"found {opened_stat.st_ino}"
+            )
+
+        try:
+            with open(fd, "r", encoding="utf-8", closefd=False) as handle:
+                handle.seek(0)
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock metadata is unreadable: {exc}"
+            ) from exc
+
+        if not isinstance(payload, Mapping):
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator lock metadata is not an object"
+            )
+        if payload.get("schema") != expected_schema or payload.get("state") != "held":
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator lock is not in held state"
+            )
+        pid = payload.get("pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid != expected_pid:
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator flock is not held by this process generation"
+            )
+    finally:
+        os.close(fd)
 
 
 def _verify_authority(
@@ -347,11 +475,13 @@ def _verify_authority(
             f"{authority.status_root} != {expected_status_root}"
         )
 
-    owner_pid = _read_lock_owner_pid(authority.lock_path, expected_schema=authority.lock_schema)
-    if owner_pid is None or owner_pid != authority.lock_pid:
-        raise IntegrationReceiptAuthorityError(
-            "canonical auto-integrator flock is not held by this process generation"
-        )
+    _verify_lock_authority(
+        authority.lock_path,
+        expected_schema=authority.lock_schema,
+        expected_pid=authority.lock_pid,
+        expected_inode=authority.lock_inode,
+        expected_device=authority.lock_device,
+    )
 
 
 def _find_task(state: Mapping[str, Any], task_id: str) -> dict[str, Any] | None:
@@ -425,6 +555,7 @@ def record_integration_receipt(
                     observation=observation,
                     merge_commit_sha=merge_commit_sha,
                     observed_at=observed_at,
+                    config=config,
                 )
                 if result.written:
                     transaction.append_state_commit(state, source=RECEIPT_SOURCE)
@@ -439,6 +570,7 @@ def record_integration_receipt(
             observation=observation,
             merge_commit_sha=merge_commit_sha,
             observed_at=observed_at,
+            config=config,
         )
         if result.written:
             if event_path is not None:  # pragma: no cover - defensive, unreachable
@@ -456,6 +588,7 @@ def _apply_receipt_to_state(
     observation: str,
     merge_commit_sha: str,
     observed_at: str,
+    config: Mapping[str, Any] | None = None,
 ) -> ReceiptWriteResult:
     task = _find_task(state, task_id)
     if task is None:
@@ -479,7 +612,7 @@ def _apply_receipt_to_state(
             "merge-then-review state"
         )
 
-    current_binding = frozen_delivery_binding(task)
+    current_binding = frozen_delivery_binding(task, config=config)
     if current_binding is None or (
         current_binding["repository"] != expected_delivery_binding.repository
         or current_binding["target_branch"] != expected_delivery_binding.target_branch
@@ -501,8 +634,13 @@ def _apply_receipt_to_state(
         observed_at=observed_at,
     ).as_dict()
 
-    existing = parse_integration_receipt(task.get(RECEIPT_KEY))
-    if existing is not None:
+    raw_existing = task.get(RECEIPT_KEY)
+    if raw_existing is not None:
+        existing = parse_integration_receipt(raw_existing)
+        if existing is None:
+            raise IntegrationReceiptConflictError(
+                f"task {task_id} already carries a malformed or unknown-version {RECEIPT_KEY}"
+            )
         identity_fields = (
             "task_generation",
             "repository",
