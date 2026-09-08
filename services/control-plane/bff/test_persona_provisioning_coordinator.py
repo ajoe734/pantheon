@@ -90,6 +90,19 @@ class FakeOwnerTransport:
         binding["status"] = body["status"]
         return deepcopy(binding)
 
+    def _owner_registry_entry(self, registry_id: str) -> dict[str, Any]:
+        """Resolve an approved RegistryEntry from owner state, by exact ID."""
+
+        view = self.objects.get(
+            ("registry", f"/api/registry/strategy-artifacts/{registry_id}")
+        )
+        if view is None:
+            raise AssertionError(f"unknown RegistryEntry: {registry_id}")
+        entry = deepcopy(view["entry"])
+        if entry.get("artifact_state") != "approved":
+            raise AssertionError(f"RegistryEntry {registry_id} is not approved")
+        return entry
+
     def _put(self, owner: str, path: str, value: Mapping[str, Any]) -> dict[str, Any]:
         stored = deepcopy(dict(value))
         self.objects[(owner, path)] = stored
@@ -211,7 +224,10 @@ class FakeOwnerTransport:
             return binding
 
         if owner == "deployment" and path == "/api/deployment/plans":
-            entry = body["registry_entry"]
+            # Deployment is the owner reader: it resolves the RegistryEntry by
+            # the exact registry_id it was given, exactly like the real service.
+            # It must never trust a caller-embedded snapshot.
+            entry = self._owner_registry_entry(body["registry_id"])
             plan = {
                 "plan_id": body["plan_id"],
                 "approval_decision_id": body["approval_decision_id"],
@@ -535,13 +551,10 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     )
     assert plan["metadata"]["strategy_spec_registry_id"] == ids.registry_id
     assert plan["metadata"]["strategy_artifact_id"] == ids.strategy_artifact_id
-    assert plan["registry_entry"]["artifact_state"] == "approved"
-    assert plan["registry_entry"]["artifact_type"] == "execution_bundle"
-    assert plan["registry_entry"]["metadata"]["strategy_artifact"]["artifact_id"] == (
-        ids.strategy_artifact_id
-    )
-    assert plan["approval_decision"]["decision"] == "approved"
-    assert plan["approval_decision"]["target_id"] == ids.strategy_artifact_id
+    # Deployment owns the Registry/Governance reads; the coordinator sends the
+    # exact IDs and never a client-side snapshot of owner state.
+    assert "registry_entry" not in plan
+    assert "approval_decision" not in plan
     assert plan["rollback"]["target_artifact_id"] == ids.baseline_strategy_artifact_id
     assert plan["rollback"]["target_version"] == ids.baseline_version
     assert plan["rollback"]["action_type"] == "pause_then_replace"
@@ -550,8 +563,7 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     dispatch = _post_payload(transport, dispatch_path)
     assert dispatch["saga_id"] == ids.deployment_saga_id
     assert dispatch["metadata"]["persona_capital_binding_id"] == ids.persona_capital_binding_id
-    assert dispatch["registry_entry"]["registry_id"] == ids.strategy_artifact_id
-    assert dispatch["registry_entry"]["artifact_type"] == "execution_bundle"
+    assert "registry_entry" not in dispatch
     assert "runtime_id" not in dispatch
     assert "runtime_binding_id" not in dispatch
     assert {call[1] for call in transport.calls} == {
@@ -699,8 +711,21 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     assert plan.rollback.target_artifact_id == ids.baseline_strategy_artifact_id
     assert plan.rollback.target_version == ids.baseline_version
     assert plan.binding_id is None
-    assert plan.registry_entry["artifact_type"] == "execution_bundle"
     assert dispatch.saga_id == ids.deployment_saga_id
+
+    # The forbidden client snapshots are gone from both wire requests; the owner
+    # objects are resolved by exact ID from owner state, as Deployment does.
+    assert not hasattr(plan, "registry_entry")
+    assert not hasattr(plan, "approval_decision")
+    assert not hasattr(dispatch, "registry_entry")
+    owner_registry_entry = transport._owner_registry_entry(plan.registry_id)
+    owner_approval_decision = transport.objects[
+        ("governance", f"/api/governance/approvals/{plan.approval_decision_id}")
+    ]
+    assert owner_registry_entry["artifact_type"] == "execution_bundle"
+    assert owner_registry_entry["approval_decision_id"] == plan.approval_decision_id
+    assert owner_approval_decision["decision"] == "approved"
+    assert owner_approval_decision["target_id"] == ids.strategy_artifact_id
 
     governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
     sys.path.insert(0, governance_dir)
@@ -709,8 +734,8 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     domain_plan = StagePlanner().create_plan(
         plan_id=plan.plan_id,
         approval_decision_id=plan.approval_decision_id,
-        approval_decision=plan.approval_decision,
-        registry_entry=plan.registry_entry,
+        approval_decision=owner_approval_decision,
+        registry_entry=owner_registry_entry,
         capital_pool_id=plan.capital_pool_id,
         target_stage=plan.target_stage.value,
         current_stage=plan.current_stage.value if plan.current_stage else None,
