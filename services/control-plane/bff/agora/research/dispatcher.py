@@ -282,64 +282,169 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
             # Fallback for simulation mode only
             backend_output = None
 
+        # Fail closed on missing backend result in real mode
+        if self.mode == "real" and backend_output is None:
+            raise RuntimeError(
+                f"Backend execution owner returned missing/empty result for authentic real stage '{self.stage_type}' "
+                f"(backend: {self.preferred_backend}). Authentic execution must fail closed."
+            )
+
         if isinstance(backend_output, ResearchStageResult):
+            terminal_success_outcomes = {"succeeded", "completed", "passed"}
+            terminal_failure_outcomes = {"failed", "cancelled", "inconclusive"}
+            if backend_output.outcome in terminal_failure_outcomes:
+                raise RuntimeError(
+                    f"Authentic execution failed for stage '{self.stage_type}' with outcome '{backend_output.outcome}': "
+                    f"{backend_output.error_message or 'failed'}"
+                )
+            if backend_output.outcome not in terminal_success_outcomes:
+                raise RuntimeError(
+                    f"Authentic execution for stage '{self.stage_type}' returned nonterminal outcome '{backend_output.outcome}'."
+                )
+
             result = backend_output
-            if result.receipt is None and run_id:
+            # Preserve observed provenance from backend; do not rewrite to self.mode
+            observed_prov = result.provenance if result.provenance in VALID_PROVENANCE_VALUES else self.mode
+            result.provenance = observed_prov
+
+            if result.receipt is not None:
+                receipt_obj = result.receipt
+                if isinstance(receipt_obj, dict):
+                    receipt_obj = ResearchExecutionReceipt.from_dict(receipt_obj)
+                if not getattr(receipt_obj, "receipt_id", None):
+                    raise RuntimeError("Owner-emitted receipt missing receipt_id")
+                if run_id and str(receipt_obj.run_id) != str(run_id):
+                    raise RuntimeError(f"Owner-emitted receipt run_id mismatch: expected {run_id}, got {receipt_obj.run_id}")
+                if str(receipt_obj.mode).lower() not in VALID_MODES:
+                    raise RuntimeError(f"Owner-emitted receipt has invalid mode: {receipt_obj.mode}")
+                if str(getattr(receipt_obj, "spec_version", "1.0")) != "1.0":
+                    raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt_obj.spec_version}")
+                result.receipt = receipt_obj
+            else:
                 checksum = next(iter(result.checksums.values()), None)
-                result.receipt = ResearchExecutionReceipt(
+                backend_ref = self.backend_reference or getattr(result, "backend_job_id", None) or None
+                if self.mode == "real" and observed_prov == "real":
+                    if not checksum and not backend_ref:
+                        raise RuntimeError(
+                            f"Authentic real execution for stage '{self.stage_type}' missing backend reference and artifact digest."
+                        )
+                    if run_id:
+                        result.receipt = ResearchExecutionReceipt(
+                            receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
+                            run_id=run_id,
+                            executor=self.executor,
+                            mode="real",
+                            correlation_id=correlation_id,
+                            completed_at=_utc_now_iso(),
+                            backend_reference=backend_ref,
+                            artifact_digest=checksum,
+                        )
+                elif run_id:
+                    receipt_mode = observed_prov if observed_prov in ("real", "simulation") else "simulation"
+                    result.receipt = ResearchExecutionReceipt(
+                        receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
+                        run_id=run_id,
+                        executor=self.executor,
+                        mode=receipt_mode,
+                        correlation_id=correlation_id,
+                        completed_at=_utc_now_iso(),
+                        backend_reference=backend_ref,
+                        artifact_digest=checksum,
+                    )
+
+            for m in result.metrics:
+                if isinstance(m, dict) and "provenance" not in m:
+                    m["provenance"] = observed_prov
+            for ev in result.evidence_refs:
+                if isinstance(ev, dict) and "provenance" not in ev:
+                    ev["provenance"] = observed_prov
+            return result
+
+        if isinstance(backend_output, dict):
+            status_val = str(backend_output.get("status") or backend_output.get("execution_status") or "").lower()
+            outcome_val = str(backend_output.get("outcome") or "").lower()
+            if status_val in {"failed", "error"} or outcome_val in {"failed", "error", "fail"}:
+                raise RuntimeError(
+                    f"Authentic execution failed for stage '{self.stage_type}': "
+                    f"{backend_output.get('error') or backend_output.get('error_message') or backend_output.get('message') or 'status=failed'}"
+                )
+            if status_val in {"running", "queued", "pending", "in_progress"} or outcome_val in {"running", "queued", "pending", "in_progress"}:
+                raise RuntimeError(
+                    f"Authentic execution for stage '{self.stage_type}' returned nonterminal status '{status_val or outcome_val}'."
+                )
+
+            observed_prov = backend_output.get("provenance") or self.mode
+            if observed_prov not in VALID_PROVENANCE_VALUES:
+                observed_prov = "unavailable"
+
+            backend_ref = backend_output.get("backend_reference") or self.backend_reference
+            checksum = backend_output.get("artifact_digest") or backend_output.get("checksum")
+            if self.mode == "real" and observed_prov == "real":
+                if not backend_ref and not checksum:
+                    raise RuntimeError(
+                        f"Authentic real execution for stage '{self.stage_type}' missing backend reference and artifact digest."
+                    )
+
+            receipt_val = backend_output.get("receipt")
+            receipt = None
+            if receipt_val is not None:
+                if isinstance(receipt_val, dict):
+                    receipt = ResearchExecutionReceipt.from_dict(receipt_val)
+                elif isinstance(receipt_val, ResearchExecutionReceipt):
+                    receipt = receipt_val
+                if not getattr(receipt, "receipt_id", None):
+                    raise RuntimeError("Owner-emitted receipt missing receipt_id")
+                if run_id and str(receipt.run_id) != str(run_id):
+                    raise RuntimeError(f"Owner-emitted receipt run_id mismatch: expected {run_id}, got {receipt.run_id}")
+                if str(receipt.mode).lower() not in VALID_MODES:
+                    raise RuntimeError(f"Owner-emitted receipt has invalid mode: {receipt.mode}")
+                if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
+                    raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt.spec_version}")
+            elif run_id:
+                receipt_mode = "real" if (self.mode == "real" and observed_prov == "real") else "simulation"
+                receipt = ResearchExecutionReceipt(
                     receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
                     run_id=run_id,
                     executor=self.executor,
-                    mode=self.mode,
+                    mode=receipt_mode,
                     correlation_id=correlation_id,
                     completed_at=_utc_now_iso(),
-                    backend_reference=self.backend_reference,
+                    backend_reference=backend_ref,
                     artifact_digest=checksum,
                 )
-            result.provenance = self.mode
-            for m in result.metrics:
-                if isinstance(m, dict):
-                    m["provenance"] = self.mode
-            for ev in result.evidence_refs:
-                if isinstance(ev, dict):
-                    ev["provenance"] = self.mode
-            return result
 
-        result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
-        checksum = next(iter(result.checksums.values()), None)
-
-        backend_ref = self.backend_reference
-        if isinstance(backend_output, dict):
-            backend_ref = backend_output.get("backend_reference") or backend_ref
-            checksum = backend_output.get("artifact_digest") or backend_output.get("checksum") or checksum
+            result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
+            result.receipt = receipt
+            result.provenance = observed_prov
             if "metrics" in backend_output and isinstance(backend_output["metrics"], list):
                 result.metrics = list(backend_output["metrics"])
+            if checksum:
+                result.checksums["artifact"] = checksum
+            for m in result.metrics:
+                if isinstance(m, dict) and "provenance" not in m:
+                    m["provenance"] = observed_prov
+            for ev in result.evidence_refs:
+                if isinstance(ev, dict) and "provenance" not in ev:
+                    ev["provenance"] = observed_prov
+            return result
 
-        receipt: Optional[ResearchExecutionReceipt] = None
+        # Fallback for simulation mode only when no backend output provided
+        result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
+        checksum = next(iter(result.checksums.values()), None)
+        receipt = None
         if run_id:
             receipt = ResearchExecutionReceipt(
                 receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
                 run_id=run_id,
                 executor=self.executor,
-                mode=self.mode,
+                mode="simulation",
                 correlation_id=correlation_id,
                 completed_at=_utc_now_iso(),
-                backend_reference=backend_ref,
+                backend_reference=self.backend_reference,
                 artifact_digest=checksum,
             )
-
         result.receipt = receipt
-        result.provenance = self.mode
-        result.warnings = []
-
-        # Ensure all metrics and evidence reflect the authentic execution mode
-        for m in result.metrics:
-            if isinstance(m, dict):
-                m["provenance"] = self.mode
-        for ev in result.evidence_refs:
-            if isinstance(ev, dict):
-                ev["provenance"] = self.mode
-
+        result.provenance = "simulation"
         return result
 
 
@@ -386,6 +491,28 @@ class AdapterRegistry:
 
     def is_allowlisted(self, stage_type: str) -> bool:
         return stage_type in self._adapters
+
+
+def build_authentic_adapter_registry(
+    *,
+    mode: Literal["real", "simulation"] = "real",
+    execution_owners: Optional[Dict[str, Any]] = None,
+    default_backend_fn: Optional[Callable[..., Any]] = None,
+) -> AdapterRegistry:
+    """Build an AdapterRegistry populated with authentic stage adapters for all allowlisted stages."""
+    registry = AdapterRegistry()
+    owners = execution_owners or {}
+    for stage_type, backend in ALLOWLISTED_STAGE_BACKENDS.items():
+        owner = owners.get(stage_type) or default_backend_fn
+        registry.register_authentic_adapter(
+            stage_type,
+            preferred_backend=backend,
+            executor=f"{backend}_executor",
+            mode=mode,
+            backend_reference=f"{backend}://stages/{stage_type}",
+            execution_owner=owner,
+        )
+    return registry
 
 
 class ResearchDispatcher:

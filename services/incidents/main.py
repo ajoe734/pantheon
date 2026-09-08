@@ -309,6 +309,7 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
 
 
 _SUGGESTION_CONSUMER: Optional[Any] = None
+_DELIVERED_SUGGESTION_INCIDENT_IDS: set[str] = set()
 
 
 def attach_incident_suggestion_consumer(consumer_fn: Any) -> None:
@@ -322,6 +323,10 @@ def get_incident_suggestion_consumer() -> Optional[Any]:
 
 
 def _build_default_suggestion_consumer() -> Optional[Any]:
+    bff_dir = str(Path(__file__).resolve().parent.parent / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
     try:
         from agora.performance.consumer import EvaluationTelemetryConsumer
         from agora.performance.store import PerformanceSuggestionStore
@@ -329,14 +334,7 @@ def _build_default_suggestion_consumer() -> Optional[Any]:
         eval_consumer = EvaluationTelemetryConsumer(store=perf_store)
         return eval_consumer.consume
     except Exception:
-        try:
-            from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer
-            from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
-            perf_store = PerformanceSuggestionStore()
-            eval_consumer = EvaluationTelemetryConsumer(store=perf_store)
-            return eval_consumer.consume
-        except Exception:
-            return None
+        return None
 
 
 @app.post(
@@ -355,11 +353,14 @@ def consume_threshold_incident(
         incident_store=store,
         reference_validator=reference_validator,
         suggestion_consumer=suggestion_cb,
+        delivered_incident_ids=_DELIVERED_SUGGESTION_INCIDENT_IDS,
     )
     try:
         result = consumer.consume(body)
     except CanonicalReferenceError as exc:
         raise HTTPException(status_code=422, detail={"reference_errors": exc.errors})
+    except IncidentConsumerRetryableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except IncidentConsumerError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 

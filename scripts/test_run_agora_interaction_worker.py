@@ -165,6 +165,172 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
         )
         self.assertNotIn("Healthcheck OK", proc.stdout + proc.stderr)
 
+    def test_production_adapter_registry_wires_authentic_adapters(self) -> None:
+        """The production adapter registry must wire AuthenticStageAdapter with real mode
+        for all allowlisted stages, not synthetic DefaultAllowlistedAdapter.
+        """
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from agora.research.dispatcher import (
+            ALLOWLISTED_STAGE_BACKENDS,
+            AuthenticStageAdapter,
+            build_authentic_adapter_registry,
+        )
+
+        registry = build_authentic_adapter_registry()
+        for stage_type, backend in ALLOWLISTED_STAGE_BACKENDS.items():
+            adapter = registry.get(stage_type)
+            self.assertIsNotNone(adapter, f"Missing adapter for {stage_type}")
+            self.assertIsInstance(
+                adapter,
+                AuthenticStageAdapter,
+                f"Adapter for {stage_type} is not an AuthenticStageAdapter",
+            )
+            self.assertEqual(adapter.preferred_backend, backend)
+            self.assertEqual(adapter.mode, "real")
+
+    def test_research_store_construction_failure_is_not_swallowed(self) -> None:
+        """A required research store failure must propagate and fail startup, not be caught/swallowed."""
+        clean_env = os.environ.copy()
+        clean_env["AGORA_WORKSHOP_STORE_BACKEND"] = "memory"
+        clean_env["AGORA_GOVERNANCE_STORE_BACKEND"] = "memory"
+        clean_env["AGORA_RESEARCH_STORE_BACKEND"] = "invalid_unknown_backend"
+
+        proc = subprocess.run(
+            [sys.executable, str(LAUNCHER_PATH), "--once"],
+            cwd=str(REPO_ROOT),
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Unsupported AGORA_RESEARCH_STORE_BACKEND", proc.stderr + proc.stdout)
+
+    def test_e2e_bff_enqueue_separate_worker_restart_persistence(self) -> None:
+        """Prove BFF enqueue -> separate worker -> fresh read/restart parity across store reconstruction."""
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from types import SimpleNamespace
+        from agora.interaction.worker import AgoraInteractionWorker
+        from agora.research.dispatcher import AuthenticStageAdapter, ResearchDispatcher
+        from agora.research.receipt import resolve_run_provenance
+        from agora.research.store import MemoryResearchPlanStore
+
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            storage_path = tmp.name
+
+            # 1. BFF creates plan, run, and enqueues to outbox in durable store
+            bff_store = MemoryResearchPlanStore(storage_path=storage_path)
+            plan_id = "plan-e2e-restart"
+            run_id = "run-e2e-restart"
+            trace_id = "trace-e2e-restart"
+            tenant_id = "pantheon-dev"
+            user_id = "agora-user-a"
+            stage_item = {
+                "stage_id": "stage-proto-1",
+                "stage_type": "prototype_backtest",
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+            }
+            plan = {
+                "plan_id": plan_id,
+                "strategy_id": "strat-e2e",
+                "lock_version": 2,
+                "stages": [stage_item],
+                "correlation_id": trace_id,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+            }
+            bff_store.create_plan(plan)
+            bff_store.create_run({
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": "stage-proto-1",
+                "stage_type": "prototype_backtest",
+                "execution_status": "queued",
+                "outcome": "inconclusive",
+                "correlation_id": trace_id,
+                "provenance": "unavailable",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+            })
+            bff_store.create_outbox_record({
+                "outbox_id": f"rob:{plan_id}:stage-proto-1:{run_id}",
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": "stage-proto-1",
+                "stage_type": "prototype_backtest",
+                "stage": stage_item,
+                "plan": plan,
+                "backend": "vectorbt",
+                "status": "queued",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "payload": {"plan": plan, "stage": stage_item},
+                "downstream_idempotency_key": f"idemp:{run_id}",
+            })
+            del bff_store
+
+            # 2. Separate worker opens the store from disk with authentic adapter and drains outbox
+            worker_store = MemoryResearchPlanStore(storage_path=storage_path)
+            dispatcher = ResearchDispatcher(store=worker_store)
+            dispatcher.registry.register_authentic_adapter(
+                "prototype_backtest",
+                preferred_backend="vectorbt",
+                executor="vectorbt_executor",
+                mode="real",
+                backend_reference="vectorbt://runs/99",
+                execute_fn=lambda *args, **kwargs: {
+                    "backend_reference": "vectorbt://runs/99",
+                    "artifact_digest": "sha256:d8a9e102f4c8b",
+                    "metrics": [{"name": "sharpe_ratio", "value": 2.5}],
+                },
+            )
+            worker = AgoraInteractionWorker(
+                research_store=worker_store,
+                research_dispatcher=dispatcher,
+                worker_id="separate-worker-1",
+            )
+            drained = worker.drain_research_outbox()
+            self.assertGreaterEqual(drained, 1)
+            del worker
+            del dispatcher
+            del worker_store
+
+            # 3. Fresh read / restart: reconstruct store from disk and verify persistence and provenance
+            reconstructed_store = MemoryResearchPlanStore(storage_path=storage_path)
+            run = reconstructed_store.get_run(run_id)
+            self.assertIsNotNone(run)
+            self.assertEqual(run["execution_status"], "succeeded")
+            self.assertEqual(run["outcome"], "pass")
+            self.assertEqual(run["provenance"], "real")
+            self.assertEqual(run["executor"], "vectorbt_executor")
+
+            receipt = reconstructed_store.get_execution_receipt(run_id)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt["mode"], "real")
+            self.assertEqual(receipt["run_id"], run_id)
+            self.assertEqual(receipt["backend_reference"], "vectorbt://runs/99")
+
+            prov, resolved_receipt = resolve_run_provenance(
+                reconstructed_store,
+                run,
+                expected_correlation_id=trace_id,
+                expected_owner="vectorbt_executor",
+            )
+            self.assertEqual(prov, "real")
+            self.assertIsNotNone(resolved_receipt)
+
 
 if __name__ == "__main__":
     unittest.main()

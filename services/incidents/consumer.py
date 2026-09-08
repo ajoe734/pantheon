@@ -84,15 +84,62 @@ class ThresholdTelemetryIncidentConsumer:
         collector: Optional[PostmortemEvidenceCollector] = None,
         reference_validator: Any | None = None,
         suggestion_consumer: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        downstream_work_store: Optional[Any] = None,
+        delivered_incident_ids: Optional[set[str]] = None,
     ) -> None:
         self._store = incident_store
         self._collector = collector or PostmortemEvidenceCollector()
         self._reference_validator = reference_validator
         self._suggestion_consumer = suggestion_consumer
+        self._downstream_work_store = downstream_work_store
+        self._pending_downstream_work: List[Dict[str, Any]] = []
+        self._delivered_incident_ids: set[str] = (
+            delivered_incident_ids if delivered_incident_ids is not None else set()
+        )
 
     def attach_suggestion_consumer(self, consumer_fn: Callable[[Dict[str, Any]], Any]) -> None:
         """Attach a downstream suggestion consumer callback (SD §6.4)."""
         self._suggestion_consumer = consumer_fn
+
+    def _record_pending_downstream_work(
+        self,
+        payload: Mapping[str, Any],
+        incident: IncidentCase,
+        exc: Exception,
+    ) -> None:
+        work_item = {
+            "incident_id": incident.incident_id,
+            "payload": dict(payload),
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "last_error": str(exc),
+        }
+        self._pending_downstream_work.append(work_item)
+        if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "record_pending_work"):
+            try:
+                self._downstream_work_store.record_pending_work(work_item)
+            except Exception:
+                pass
+
+    def retry_pending_downstream_work(self) -> int:
+        """Retry any pending downstream suggestion dispatches that failed previously."""
+        if not self._suggestion_consumer:
+            return 0
+        succeeded = 0
+        still_pending = []
+        for item in self._pending_downstream_work:
+            inc_id = item["incident_id"]
+            incident = self._store.get_incident(inc_id)
+            if incident is None:
+                still_pending.append(item)
+                continue
+            try:
+                self._dispatch_suggestion(item["payload"], incident)
+                self._delivered_incident_ids.add(inc_id)
+                succeeded += 1
+            except Exception:
+                still_pending.append(item)
+        self._pending_downstream_work = still_pending
+        return succeeded
 
     def _dispatch_suggestion(self, payload: Mapping[str, Any], incident: IncidentCase) -> None:
         if not self._suggestion_consumer:
@@ -156,11 +203,18 @@ class ThresholdTelemetryIncidentConsumer:
         existing = self._store.get_incident(incident.incident_id)
         if existing is not None:
             _require_same_incident_identity(existing, incident)
-            if self._suggestion_consumer is not None:
+            if (
+                self._suggestion_consumer is not None
+                and existing.incident_id not in self._delivered_incident_ids
+            ):
                 try:
                     self._dispatch_suggestion(payload, existing)
-                except Exception:
-                    pass
+                    self._delivered_incident_ids.add(existing.incident_id)
+                except Exception as exc:
+                    self._record_pending_downstream_work(payload, existing, exc)
+                    raise IncidentConsumerRetryableError(
+                        f"Downstream suggestion persistence failed for existing incident {existing.incident_id}: {exc}"
+                    ) from exc
             return ThresholdIncidentResult(incident=existing, created=False)
 
         try:
@@ -169,19 +223,30 @@ class ThresholdTelemetryIncidentConsumer:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
                 _require_same_incident_identity(existing, incident)
-                if self._suggestion_consumer is not None:
+                if (
+                    self._suggestion_consumer is not None
+                    and existing.incident_id not in self._delivered_incident_ids
+                ):
                     try:
                         self._dispatch_suggestion(payload, existing)
-                    except Exception:
-                        pass
+                        self._delivered_incident_ids.add(existing.incident_id)
+                    except Exception as exc:
+                        self._record_pending_downstream_work(payload, existing, exc)
+                        raise IncidentConsumerRetryableError(
+                            f"Downstream suggestion persistence failed for existing incident {existing.incident_id}: {exc}"
+                        ) from exc
                 return ThresholdIncidentResult(incident=existing, created=False)
             raise IncidentConsumerError(str(exc)) from exc
 
         if self._suggestion_consumer is not None:
             try:
                 self._dispatch_suggestion(payload, created)
-            except Exception:
-                pass
+                self._delivered_incident_ids.add(created.incident_id)
+            except Exception as exc:
+                self._record_pending_downstream_work(payload, created, exc)
+                raise IncidentConsumerRetryableError(
+                    f"Downstream suggestion persistence failed for incident {created.incident_id}: {exc}"
+                ) from exc
 
         return ThresholdIncidentResult(incident=created, created=True)
 

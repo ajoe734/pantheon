@@ -1,13 +1,15 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "AGORA-CHAIN-001",
-  "base_ref": "dev@c4c4c43f0b4bcb91b3d77113d9d476bc11998144",
+  "base_ref": "dev@53d799f6c9ea291980bceaa4ea41350043345e02",
   "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done), OVERLAY-RETIRE-001 (done)",
   "normative_plan": "SD §6 Agora design, §12.4, GAP-AGORA-01, GAP-AGORA-02, GAP-AGORA-03, GAP-AGORA-05, GAP-AGORA-06; pkt-pantheon-structural-closure-functional-v2-20260903",
   "implementation": {
     "files_modified": [
+      "docker-compose.yml",
       "docs/deployment/evidence/AGORA-CHAIN-001/evidence.json",
       "scripts/run_agora_interaction_worker.py",
+      "scripts/test_run_agora_interaction_worker.py",
       "services/control-plane/bff/agora/interaction/router.py",
       "services/control-plane/bff/agora/interaction/runner.py",
       "services/control-plane/bff/agora/interaction/test_worker.py",
@@ -32,20 +34,23 @@
       "services/control-plane/bff/agora/strategy_workshop/test_reconstruction_worker.py",
       "services/control-plane/bff/agora/trading_room/routes/common.py",
       "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
       "services/control-plane/bff/tests/test_agora_research_run_projection.py",
       "services/control-plane/specs/agora/bundle_index.v1_3.json",
       "services/control-plane/specs/agora/v4/research_run_projection.schema.json",
       "services/incidents/consumer.py",
       "services/incidents/main.py",
+      "services/incidents/test_main_routes.py",
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
-    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, and correlation validation in receipt.py and routes/common.py. Unreceipted runs never return 'real' (resolving to 'fixture' or 'simulation'). Non-terminal runs, absent receipts, missing receipt_id/completed_at, spec_version != '1.0', wrong owner, or wrong correlation return 'unavailable'. Route-level negative tests prove fail-closed provenance projection.",
-    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in 'real' mode. It invokes the real backend, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. AgoraInteractionWorker is wired with durable ResearchPlanStore and ResearchDispatcher to drain queued research outbox records naturally without manual test draining. Durability is backed by JSON snapshot persistence on all mutating operations, verified by reconstructing the store from disk across worker restarts.",
+    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, and correlation validation in receipt.py and routes/common.py. Unreceipted runs never return 'real' (resolving to 'fixture' or 'simulation'). Non-terminal runs, absent receipts, missing receipt_id/completed_at, spec_version != '1.0', wrong owner, or wrong correlation return 'unavailable'. AuthenticStageAdapter in real mode strictly validates backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrites observed simulation/fixture provenance into real mode. Negative controls suite (test_agora_authentic_adapter_negative_controls.py) proves fail-closed behavior across missing backend outputs, non-terminal status, failed execution outcomes, mode forgery/mismatch, invalid receipt schemas, missing artifact digests, and missing backend references.",
+    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in 'real' mode. It invokes the real backend, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. AgoraInteractionWorker launcher (scripts/run_agora_interaction_worker.py) and docker-compose.yml wire AGORA_RESEARCH_STORE_BACKEND/DSN/SCHEMA, build_authentic_adapter_registry(), and fail fast on unconstructable stores or clients. Durability is backed by Postgres or persistent store snapshotting across worker restarts, verified by test_e2e_bff_enqueue_separate_worker_restart_persistence.",
     "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer.",
-    "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Preserved publish_event_fn upon attachment to ensure read-model events are published. Wired canonical telemetry entry point in services/incidents/main.py and verified via threshold_consumer.consume(threshold_payload) with persistent incident creation, suggestion storage, event publishing, and replay idempotency.",
+    "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Downstream suggestion persistence failures are never swallowed with created=True; pending downstream work is recorded into retry queue and surfaced as IncidentConsumerRetryableError (HTTP 503). Eventual suggestion and read-model event delivery are proven on retry/replay, with delivered incident tracking enforcing zero duplicate suggestions and zero duplicate events.",
     "mandatory_deletions": {
       "client_supplied_real_provenance_flags": "Deleted routing.get('backend_mode', 'real') default in _build_run_projection; initial projection defaults to unavailable until authentic ResearchExecutionReceipt is recorded and validated.",
-      "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; verified fail-closed lease, retry, DLQ, and crash recovery mechanics.",
+      "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; verified fail-closed lease, retry, DLQ, and crash recovery mechanics without fake synchronous fallback.",
       "manual_only_suggestion_production": "Replaced manual suggestion injection with EvaluationTelemetryConsumer attached to canonical ThresholdTelemetryIncidentConsumer."
     },
     "rollback_plan": "Disable new consumers and deploy the prior exact paper-safe release without deleting canonical receipts."
@@ -54,15 +59,21 @@
     "commands": [
       {
         "command": "python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 12.78s",
+        "result": "33 passed in 9.77s",
         "executed": 33,
         "collected": 33
       },
       {
         "command": "python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/agora/performance/ services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_research_store_backend.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
-        "result": "52 passed, 2 skipped, 210 warnings in 46.51s",
+        "result": "52 passed, 2 skipped, 210 warnings in 34.13s",
         "executed": 52,
         "collected": 54
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/tests/test_agora_research_candidate_governed.py scripts/test_run_agora_interaction_worker.py services/incidents/test_main_routes.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -q",
+        "result": "81 passed, 72 warnings in 37.19s",
+        "executed": 81,
+        "collected": 81
       },
       {
         "command": "git diff --check",
@@ -78,7 +89,10 @@
     "server_side_provenance_enforced": true,
     "telemetry_triggered_suggestions_no_new_scheduler": true,
     "mandatory_deletions_verified": true,
-    "rollback_safe": true
+    "rollback_safe": true,
+    "p1_authentic_stage_adapter_negative_controls": true,
+    "p1_worker_durable_store_and_authentic_adapter_wiring": true,
+    "p1_downstream_suggestion_retryable_surfacing_and_zero_duplicates": true
   },
   "review": {
     "reviewer": "Codex",

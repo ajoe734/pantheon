@@ -23,9 +23,13 @@ from agora.governance.store import ProposalStore
 from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
-from agora.research.dispatcher import ResearchDispatcher
+from agora.research.dispatcher import ResearchDispatcher, build_authentic_adapter_registry
 from agora.research.routes.common import publish_research_progress
-from agora.research.store import make_research_plan_store
+from agora.research.store import (
+    MemoryResearchPlanStore,
+    PostgresResearchPlanStore,
+    make_research_plan_store,
+)
 from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
 
 logging.basicConfig(
@@ -87,16 +91,37 @@ def main() -> int:
     read_store = build_canonical_persona_client()
 
     # Durable research store and dispatcher
-    try:
-        research_store = make_research_plan_store()
-        research_dispatcher = ResearchDispatcher(
-            store=research_store,
-            publish_progress_fn=publish_research_progress,
-        )
-    except Exception as exc:
-        logger.warning("Could not initialize research dispatcher: %s", exc)
-        research_store = None
-        research_dispatcher = None
+    # Research store is a required dependency: wire the same durable owner store (postgres in production)
+    # and fail startup if unavailable.
+    research_backend = (
+        os.getenv("AGORA_RESEARCH_STORE_BACKEND")
+        or os.getenv("AGORA_RESEARCH_PLAN_STORE_BACKEND")
+        or (workshop_backend if workshop_backend == "postgres" else "off")
+    ).strip().lower()
+    research_dsn = (
+        os.getenv("AGORA_RESEARCH_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+        or gov_dsn
+    )
+    research_schema = os.getenv("AGORA_RESEARCH_STORE_SCHEMA", "agora_research")
+    storage_path = os.getenv("AGORA_RESEARCH_STORE_STORAGE_PATH")
+
+    if research_backend == "postgres":
+        research_store = PostgresResearchPlanStore(dsn=research_dsn, schema=research_schema)
+    elif research_backend in ("off", "memory"):
+        research_store = MemoryResearchPlanStore(storage_path=storage_path)
+    else:
+        raise ValueError(f"Unsupported AGORA_RESEARCH_STORE_BACKEND: {research_backend}")
+
+    # Wire authentic backend adapters for research stages
+    adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
+    adapter_registry = build_authentic_adapter_registry(mode=adapter_mode)
+
+    research_dispatcher = ResearchDispatcher(
+        store=research_store,
+        adapter_registry=adapter_registry,
+        publish_progress_fn=publish_research_progress,
+    )
 
     tenant_id = args.tenant_id or os.getenv("PANTHEON_TENANT_ID")
 
