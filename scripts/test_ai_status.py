@@ -46,6 +46,264 @@ def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
     )
 
 
+class DependencyContractBatchTests(unittest.TestCase):
+    def setUp(self):
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        import runtime_state
+        self.runtime_module = runtime_state
+        self.journal = self._test_root.parent / (self._test_root.name + '-journal') / 'events.jsonl'
+        self.addCleanup(shutil.rmtree, self.journal.parent, True)
+        self.config = {"paths": {
+            "state_file": str(self._test_root / '.orchestrator/state.json'),
+            "status_file": str(self._test_status_file),
+            "activity_log": str(self._test_log_file),
+            "approval_queue": str(self._test_root / '.orchestrator/approval-queue.json'),
+        }}
+        self.env = mock.patch.dict(os.environ, {
+            "AI_NAME": "Human/Ops", "ORCH_RUN_ID": "", "PANTHEON_WORKTREE_ROOT": "",
+            "ORCH_WORKSPACE_PATH": "", ai_status.LOCAL_HUMAN_OPS_ENV: "1",
+            ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+            ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.journal),
+            common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(self._test_root, self.journal),
+        })
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.state = ai_status.default_state()
+        template = deepcopy(self.state['tasks'][0])
+        def task(task_id, deps, artifacts):
+            row = deepcopy(template)
+            row.update(id=task_id, owner='Codex', reviewer='Claude', status='todo', generation=1,
+                       depends_on=deps, dependency_tracks={}, artifacts=artifacts, target_repo='execute-plans',
+                       acceptance=['Keep exact original acceptance'], next='Keep original hold description')
+            return row
+        self.state['tasks'] = [
+            task('DEP', ['STRICT', 'PROTOCOL', 'COVERAGE'], ['package.json', 'vite.config.ts']),
+            task('STRICT', ['READ'], ['package.json', 'vite.config.*']),
+            task('READ', [], ['src/read.ts']),
+            task('PROTOCOL', [], ['scripts/release.sh']),
+        ]
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {'COVERAGE': {
+            'id': 'COVERAGE', 'status': 'done', 'terminal_outcome': 'completed', 'generation': 1,
+            'last_update': '2026-09-01T00:00:00Z',
+        }}
+        self.runtime = runtime_state.default_state()
+        self._seed()
+
+    def _seed(self):
+        ai_status.append_state_commit(self.journal, self.state, source='dependency-contract-fixture')
+        self.runtime_module.save_runtime_state(self.config, self.runtime)
+
+    def _request(self, changes=None):
+        state = ai_status.load_state()
+        return {'reason': 'Reverse source writers while retaining release obligations', 'tasks': [
+            {'task_id': task_id, 'expected_sha256': ai_status.task_mutation_cas_digest(ai_status.get_task(state, task_id)), 'depends_on': deps}
+            for task_id, deps in (changes or [('DEP', ['COVERAGE']), ('STRICT', ['READ', 'DEP'])])
+        ]}
+
+    def _run(self, batch):
+        path = self._test_root / 'dependency-request.json'
+        path.write_text(json.dumps(batch))
+        output = io.StringIO()
+        with (
+            mock.patch.object(ai_status, 'validate_status_command_runtime_binding'),
+            mock.patch.object(ai_status, 'validate_status_root_binding'),
+            mock.patch.object(ai_status, 'load_config', return_value=self.config),
+            mock.patch.object(ai_status, 'refresh_derived_status_views_if_current'),
+            contextlib.redirect_stdout(output),
+        ):
+            code = ai_status.main(['ai_status.py', 'dependency-contract', str(path)])
+        return code, json.loads(output.getvalue())
+
+    def _snapshot(self):
+        return ai_status.load_snapshot(self.journal)
+
+    def test_atomic_reversal_one_append_provenance_hold_tracks_and_replay(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['waiting_for'] = 'Human/Ops'
+        dep['dev_bridge'] = {'task_spec_hash': 'a' * 64, 'task_spec': {'depends_on': list(dep['depends_on'])}, 'documents': [{'path': 'immutable.md'}], 'work_class': 'ci'}
+        dep['dependency_tracks'] = {'PROTOCOL': 'hosted', 'COVERAGE': 'functional'}
+        self._seed()
+        batch = self._request()
+        before = self._snapshot()
+        code, result = self._run(batch)
+        self.assertEqual(code, 0)
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        changed_fields = {'depends_on', 'dependency_tracks', 'generation', 'contract_revision', 'last_update'}
+        for old in before['state']['tasks']:
+            new = ai_status.get_task(after['state'], old['id'])
+            self.assertEqual({k:v for k,v in old.items() if k not in changed_fields}, {k:v for k,v in new.items() if k not in changed_fields})
+        updated = ai_status.get_task(after['state'], 'DEP')
+        self.assertEqual(updated['dependency_tracks'], {'COVERAGE': 'functional'})
+        self.assertEqual(updated['generation'], 2)
+        self.assertEqual(result['checkpoint']['last_event_id'], after['last_event_id'])
+        events = after['state'][ai_status.STATUS_ACTIVITY_OUTBOX_KEY]['events']
+        self.assertEqual(sum(e['type'] == 'dependency_contract_revised' for e in events), 1)
+        self.assertEqual(len(events[-1]['changes']), 2)
+        self.assertEqual(self._run(batch)[1]['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_stale_second_row_or_protected_field_changes_commit_nothing(self):
+        for field, value in [('generation', 2), ('owner', 'Codex2'), ('status', 'blocked'), ('acceptance', ['changed'])]:
+            with self.subTest(field=field):
+                batch = self._request()
+                current = ai_status.load_state()
+                ai_status.get_task(current, 'STRICT')[field] = value
+                ai_status.append_state_commit(self.journal, current, source='concurrent-change')
+                before = self._snapshot()
+                with self.assertRaisesRegex(SystemExit, 'CAS failed'):
+                    self._run(batch)
+                self.assertEqual(self._snapshot(), before)
+
+    def test_rejects_invalid_requests_without_append(self):
+        mutations = [
+            lambda b: b['tasks'].append(deepcopy(b['tasks'][0])),
+            lambda b: b['tasks'][0].update(owner='Codex2'),
+            lambda b: b['tasks'][0].update(depends_on=['DEP']),
+            lambda b: b['tasks'][0].update(depends_on=['']),
+            lambda b: b['tasks'][0].update(depends_on=['READ', 'READ']),
+            lambda b: b['tasks'][0].update(depends_on='READ'),
+            lambda b: b['tasks'][0].update(depends_on=['UNKNOWN']),
+            lambda b: b.update(reason=''),
+            lambda b: b.update(provenance={}),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                batch = self._request()
+                mutate(batch)
+                before = self._snapshot()
+                with self.assertRaises(SystemExit):
+                    self._run(batch)
+                self.assertEqual(self._snapshot(), before)
+
+    def test_cycle_through_unchanged_task_rejected(self):
+        self.state['tasks'][2]['depends_on'] = ['DEP']
+        # Original graph must be acyclic too.
+        self.state['tasks'][1]['depends_on'] = []
+        self._seed()
+        before = self._snapshot()
+        with self.assertRaisesRegex(SystemExit, 'cycle'):
+            self._run(self._request())
+        self.assertEqual(self._snapshot(), before)
+
+    def test_one_sided_and_transitive_third_writer_unordering_rejected(self):
+        before = self._snapshot()
+        with self.assertRaisesRegex(SystemExit, 'unserialize'):
+            self._run(self._request([('DEP', ['COVERAGE'])]))
+        self.assertEqual(self._snapshot(), before)
+        self.state['tasks'][2]['artifacts'] = ['vite.config.ts']
+        self._seed()
+        before = self._snapshot()
+        with self.assertRaisesRegex(SystemExit, 'unserialize'):
+            self._run(self._request())
+        self.assertEqual(self._snapshot(), before)
+
+    def test_unrelated_historical_missing_and_unordered_writers_do_not_block(self):
+        other = deepcopy(self.state['tasks'][2])
+        other.update(id='HISTORY', depends_on=['OLD-MISSING'], artifacts=['package.json'])
+        self.state['tasks'].append(other)
+        self._seed()
+        code, result = self._run(self._request())
+        self.assertEqual(code, 0)
+        self.assertEqual(result['historical_missing_dependencies'], {'HISTORY': ['OLD-MISSING']})
+
+    def test_partial_track_cannot_replace_terminal_writer_order(self):
+        self.state['tasks'][1]['dependency_tracks'] = {'READ': 'functional'}
+        self.state['tasks'][2]['artifacts'] = ['package.json']
+        self._seed()
+        # No established READ/DEP terminal ordering exists; the revision must
+        # not invent one or require unrelated debt cleanup.
+        self.assertEqual(self._run(self._request())[0], 0)
+
+    def test_runtime_workers_queue_leases_and_reservations_are_busy(self):
+        states = []
+        for status in ['starting', 'running', 'waiting_approval', 'pending', 'suspended_approval']:
+            runtime = deepcopy(self.runtime)
+            runtime['workers']['run-test'] = {'task_id': 'DEP', 'status': status, 'queue_event_id': 'evt'}
+            runtime['queue']['events']['evt'] = {'status': 'pending', 'intent': {'task_id': 'DEP'}}
+            states.append(runtime)
+        for status in ['pending', 'queued', 'admitted', 'started', 'retry_backoff']:
+            runtime = deepcopy(self.runtime)
+            runtime['queue']['events']['evt'] = {'status': status, 'intent': {'task_id': 'STRICT'}}
+            states.append(runtime)
+        runtime = deepcopy(self.runtime)
+        runtime['worker_worktrees'] = {'leases': {'lease': {'task_id': 'DEP'}}}
+        states.append(runtime)
+        for reservation in [
+            {'token': 'off-lock'},
+            {'token': 'off-lock', 'launch_intent': {'task_id': 'DEP', 'status': 'prepared'}},
+            {'token': 'off-lock', 'launch_receipt': {'task_id': 'STRICT'}},
+            {'token': 'off-lock', 'launch_receipt': {'task_id': 'OTHER'}},
+        ]:
+            runtime = deepcopy(self.runtime)
+            runtime['supervisor']['runtime_phase_reservations'] = {'process_queue': reservation}
+            states.append(runtime)
+        batch = self._request()
+        for runtime in states:
+            with self.subTest(runtime=runtime):
+                self.runtime_module.save_runtime_state(self.config, runtime)
+                before = self._snapshot()
+                self.assertEqual(self._run(batch)[0], 75)
+                self.assertEqual(self._snapshot(), before)
+
+    def test_pending_review_recovery_and_privileged_catalog_rejected(self):
+        for field, value in [
+            ('review_decision_intent', {'nonce': 'pending'}),
+            ('review_requeue_intent', {'task_generation': 1}),
+            ('worker_recovery', {'status': 'pending', 'receipt_id': 'recovery'}),
+            ('execution_authorization', {'policy': {'requires_execution_authorization': True}}),
+            ('artifact_conflict_guard', {'catalog_sha256': 'a' * 64}),
+        ]:
+            with self.subTest(field=field):
+                self.state['tasks'][1][field] = value
+                self._seed()
+                before = self._snapshot()
+                try:
+                    code, _ = self._run(self._request())
+                    self.assertEqual(code, 75)
+                except SystemExit:
+                    pass
+                self.assertEqual(self._snapshot(), before)
+                self.state['tasks'][1].pop(field)
+
+    def test_worker_and_nonoperator_ingress_rejected(self):
+        for env in [{'AI_NAME':'Codex'}, {'ORCH_RUN_ID':'worker'}, {ai_status.LOCAL_HUMAN_OPS_ENV:'0'}, {'PANTHEON_WORKTREE_ROOT':'/worker'}]:
+            with self.subTest(env=env), mock.patch.dict(os.environ, env):
+                before = self._snapshot()
+                with self.assertRaisesRegex(SystemExit, 'local Human/Ops'):
+                    self._run(self._request())
+                self.assertEqual(self._snapshot(), before)
+
+    def test_preappend_failure_preserves_rows_pending_outbox_and_retry(self):
+        # The first revision leaves its durable audit pending. A second batch
+        # must carry it without a separate pre-command recovery append.
+        self._run(self._request())
+        batch = self._request([('DEP', ['COVERAGE', 'PROTOCOL'])])
+        before = self._snapshot()
+        with mock.patch.object(ai_status, 'sync_all', side_effect=RuntimeError('injected before append')):
+            with self.assertRaisesRegex(RuntimeError, 'injected'):
+                self._run(batch)
+        self.assertEqual(self._snapshot(), before)
+        self.assertEqual(self._run(batch)[0], 0)
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        events = after['state'][ai_status.STATUS_ACTIVITY_OUTBOX_KEY]['events']
+        self.assertEqual(len(events), 2)
+        self.assertEqual(self._run(batch)[1]['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_glob_scope_overlap_and_repository_identity(self):
+        for left, right in [('vite.config.*','vite.config.ts'), ('src/**','src/a/b.ts'), ('src/*.ts','src/read.ts'), ('src/[ab].ts','src/a.ts'), ('src/*a*','src/*b*')]:
+            self.assertTrue(ai_status._artifact_paths_overlap(left, right), (left, right))
+            self.assertTrue(ai_status._artifact_paths_overlap(right, left), (right, left))
+        self.assertFalse(ai_status._artifact_paths_overlap('src/*.ts', 'tests/a.ts'))
+        self.state['tasks'][1]['target_repo'] = 'pantheon'
+        self._seed()
+        self.assertEqual(self._run(self._request([('DEP', ['COVERAGE'])]))[0], 0)
+
+
 class HumanOpsStatusWrapperTests(unittest.TestCase):
     def test_wrapper_selects_explicit_local_human_ops_mode(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
