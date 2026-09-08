@@ -10629,6 +10629,21 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         }
         self.assertTrue(supervisor.worker_lease_progress_is_fresh(config, worker, self.now))
 
+    def test_active_provider_loop_cannot_use_quiet_process_grace(self) -> None:
+        config = {
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+            "providers": {"antigravity2": {"antigravity": {"print_timeout": "2h"}}},
+        }
+        worker = {
+            "status": "running",
+            "provider": "antigravity2",
+            "lease_acquired_at": (self.now - timedelta(minutes=45)).isoformat(),
+            "last_work_progress_at": self.stale_event_at,
+            "last_active_process_at": self.fresh_event_at,
+            "last_event_at": self.fresh_event_at,
+        }
+        self.assertFalse(supervisor.worker_lease_progress_is_fresh(config, worker, self.now))
+
     def test_active_child_without_provider_timeout_cannot_renew_quiet_lease(self) -> None:
         worker = {
             "status": "running",
@@ -11249,6 +11264,16 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
 
 
 class ProviderStreamLifecycleTests(unittest.TestCase):
+    def test_streamed_tool_and_text_steps_do_not_extend_work_lease(self) -> None:
+        tool_step = supervisor.normalize_provider_stream_event(
+            {"event": "step_update", "step_update": {"type": "tool", "tool_name": "view_file"}}
+        )
+        text_step = supervisor.normalize_provider_stream_event(
+            {"event": "step_update", "step_update": {"type": "agent_response", "text_delta": "thinking"}}
+        )
+        self.assertFalse(supervisor.provider_stream_event_is_meaningful(tool_step or {}))
+        self.assertFalse(supervisor.provider_stream_event_is_meaningful(text_step or {}))
+
     def test_antigravity_stream_progress_and_result_are_normalized_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "agy.log"
