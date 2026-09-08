@@ -1348,6 +1348,20 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn("accepted by Human/Ops", result.detail)
         self.assertNotIn("approved by Claude", result.detail)
 
+    def test_authority_failure_does_not_publish_recursive_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="INTEGRATION-UNBLOCK-ABC", title="Repair", owner="Codex", reviewer="Claude",
+                branch="task/INTEGRATION-UNBLOCK-ABC",
+                raw_task={"generation": 2, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            for reason in ("review-gate-approval-revoked", "final-review-gate-changed", "canonical-state-refresh-failed"):
+                self.assertIsNone(auto_integrator.open_unblock_task(
+                    candidate, reason, "canonical authority needs resolution",
+                    auto_integrator.Settings(), FakeRunner(), root=root, execute=True))
+            self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
+
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
             os.environ, {}, clear=True

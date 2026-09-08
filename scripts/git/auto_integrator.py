@@ -1743,6 +1743,11 @@ def _write_unblock_request(
             if outcome == "rejected":
                 return UnblockPublicationOutcome("rejected")
             expected_task_id = str(payload.get("unblock_task_id") or "")
+            if receipt.get("coalesced_identity") == unblock_contract.repair_identity(payload):
+                resolved = str(receipt.get("task_id") or "")
+                if not resolved.startswith("INTEGRATION-UNBLOCK-"):
+                    raise AutoIntegratorError("coalesced unblock receipt task ID is invalid")
+                return UnblockPublicationOutcome("processed", resolved)
             if receipt.get("task_id") != expected_task_id:
                 raise AutoIntegratorError(
                     "processed unblock receipt task ID differs from request"
@@ -1793,6 +1798,13 @@ def open_unblock_task(
     except ValueError as exc:
         print(
             f"auto-integrator: unblock request not published for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    if not unblock_contract.requires_repair_task(reason):
+        print(
+            f"auto-integrator: {candidate.task_id} remains blocked by {reason}; "
+            "resolve canonical authority on the source task, no repair task published",
             file=sys.stderr,
         )
         return None

@@ -108,6 +108,27 @@ def task_id(
     return f"{readable[: TASK_ID_LIMIT - len(suffix) - 1].rstrip('-')}-{suffix}"
 
 
+def requires_repair_task(reason: str) -> bool:
+    """Authority/evidence failures stay on the source; they are not code work.
+
+    The candidate still reports blocked. This never grants approval or hides
+    a gate failure; it prevents a failing approval from spawning its own chain
+    of approval-dependent repair tasks. Real CI/rebase repairs remain eligible.
+    """
+    validate_reason(reason)
+    return not (reason.startswith("review-gate-") or reason in {
+        "canonical-authority-lock-failed", "canonical-state-refresh-failed",
+        "final-review-contract-changed", "final-review-gate-changed",
+    })
+
+
+def repair_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """One repair scope per source and immutable delivery, not per retry/reason."""
+    return {key: identity.get(key) for key in (
+        "source_task_id", "repository_slug", "pr", "head_sha",
+    )}
+
+
 def task_id_from_identity(identity: Mapping[str, Any]) -> str:
     """Derive an ID from raw request identity without scalar coercion."""
 

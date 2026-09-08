@@ -5426,6 +5426,18 @@ def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
             f"{task_id} cannot resume integration without matching GitHub approval evidence"
         )
 
+    # Reuse the merge gate's audit interpretation. Restoring a status must
+    # not contradict an outstanding explicit rejection hidden by a later
+    # environment blocker. No synthetic approval or audit rewrite is made.
+    git_scripts = str(ROOT / "scripts" / "git")
+    if git_scripts not in sys.path:
+        sys.path.insert(0, git_scripts)
+    import task_review_merge_gate as review_gate
+    audit_approval = review_gate.load_approval_record(task_id, status_root=STATUS_ROOT)
+    resume_error = review_gate.integration_resume_error(task, audit_approval)
+    if resume_error:
+        raise SystemExit(f"{task_id} cannot resume integration: {resume_error}")
+
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "resume_integration")
     task["last_update"] = timestamp

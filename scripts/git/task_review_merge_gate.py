@@ -116,9 +116,10 @@ OPERATOR_ACCEPTANCE_PROOF_PREFIX = "refs/tags/pantheon-review/operator-accept/"
 INTEGRATION_RESUME_EVENT_TYPE = "integration_resumed"
 #: A `note` is normally commentary, but PRs #4225 and #4222 were merged while
 #: exact-head "do not merge" / "changes required" notes stood in the audit.
-#: A note carrying one of these markers revokes an approval.  This signal can
-#: only ever block a merge, never unlock one, so a false positive costs a
-#: re-approval rather than an unreviewed delivery.
+#: Only explicit merge/review instructions revoke approval. Generic diagnostic
+#: words (rejected/revert) are not decisions: e.g. an owner closeout command
+#: rejected by a metadata gate must not silently revoke the review. Formal
+#: rejection remains the typed `reopen` transition.
 REVOCATION_NOTE_TYPES = {"note"}
 REVOCATION_NOTE_MARKERS = (
     "do not merge",
@@ -126,9 +127,6 @@ REVOCATION_NOTE_MARKERS = (
     "changes required",
     "changes-required",
     "changes requested",
-    "rejects",
-    "rejected",
-    "revert",
 )
 
 #: Claims an owner may record on a task row that describe how risky or how
@@ -461,6 +459,7 @@ class ApprovalRecord:
     revoked_by: str = ""
     revoked_at_text: str = ""
     revocation_type: str = ""
+    non_resumable_revocation: bool = False
     scan_error: str = ""
     approved_pr_number: int | None = None
     approved_head_sha: str = ""
@@ -747,12 +746,40 @@ def load_approval_record(
         revoked_by=revocation[0],
         revoked_at_text=revocation[1],
         revocation_type=revocation[2],
+        non_resumable_revocation=non_resumable_revocation_seen,
         approved_pr_number=approval.approved_pr_number,
         approved_head_sha=approval.approved_head_sha,
         approved_head_branch=approval.approved_head_branch,
         approved_base_branch=approval.approved_base_branch,
         binding_error=approval.binding_error,
     )
+
+
+def integration_resume_error(task: Mapping[str, Any], approval: ApprovalRecord) -> str:
+    """Validate recovery with the same audit decision used by the merge gate.
+
+    Recovery can clear an environment blocker, never a reviewer rejection,
+    assignment change, explicit hold, unreadable audit, or different delivery.
+    This is not a merge grant; the integrator still evaluates the live PR.
+    """
+    if approval.scan_error or not approval.present or approval.binding_error:
+        return "exact approval audit is missing or unreadable"
+    if approval.non_resumable_revocation or (
+        approval.revoked and approval.revocation_type != "blocker"
+    ):
+        return "approval was revoked by a non-resumable decision"
+    binding = task.get("review_binding")
+    if not isinstance(binding, Mapping):
+        return "exact review binding is missing"
+    if any(binding.get(key) != value for key, value in {
+        "pr": approval.approved_pr_number, "head_sha": approval.approved_head_sha,
+        "head_branch": approval.approved_head_branch, "base": approval.approved_base_branch,
+    }.items()):
+        return "approval audit differs from the frozen review binding"
+    expected_actor = "Human/Ops" if approval.is_operator_acceptance else str(task.get("reviewer") or "")
+    if not expected_actor or approval.reviewer.casefold() != expected_actor.casefold():
+        return "approval actor differs from the current acceptance authority"
+    return ""
 
 
 # --------------------------------------------------------------------------

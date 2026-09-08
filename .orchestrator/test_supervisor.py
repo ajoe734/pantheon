@@ -2250,12 +2250,34 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
         self.assertIsNotNone(decision)
         self.assertEqual(decision[0], supervisor.REASON_OWNED_READY)
+
         self.assertEqual(task_map["ABC-001"]["status"], "review_approved")
         self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
         receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
         archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)
         self.assertEqual(len(list(archives.glob("*.json"))), 1)
+
+    def test_same_delivery_different_reason_coalesces_without_mutating_original(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        before = supervisor.load_status(self.config)
+        request = self._publish(reason="final-ci-red", unblock_task_id=self._task_id("final-ci-red"))
+        self.assertFalse(self._materialize())
+        after = supervisor.load_status(self.config)
+        self.assertEqual(before, after)
+        receipt = json.loads((self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+                              / "processed" / request.name).read_text())
+        self.assertEqual(receipt["task_id"], self._task_id())
+        self.assertEqual(receipt["coalesced_identity"]["source_task_id"], "ABC-001")
+
+    def test_review_authority_failure_cannot_materialize_another_repair(self) -> None:
+        reason = "review-gate-approval-revoked"
+        self._publish(reason=reason, unblock_task_id=self._task_id(reason))
+        self.assertFalse(self._materialize())
+        self.assertEqual(len(supervisor.load_status(self.config)["tasks"]), 1)
+        receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
+        self.assertIn("source task", json.loads(next(receipts.glob("*.json")).read_text())["detail"])
 
     def test_existing_canonical_id_requires_exact_request_provenance(self) -> None:
         request = self._publish()
