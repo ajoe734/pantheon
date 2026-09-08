@@ -2346,6 +2346,88 @@ class ManagementService:
             source_kind="live",
         )
 
+    def get_context_monitoring_session(
+        self, runtime_id: str, binding_id: str, *, owner: Optional[str] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_paper_runtime_monitoring_session") or not runtime_id:
+            return None, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id or "paper_runtime_monitoring",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="paper runtime monitoring read surface is unavailable or unconfigured.",
+            )
+        try:
+            session = store.get_paper_runtime_monitoring_session(
+                runtime_id=runtime_id, binding_id=binding_id
+            )
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"paper runtime monitoring read failed: {exc}",
+            )
+        provenance_records = self._record_provenance([session]) if isinstance(session, dict) else []
+        provenance = provenance_records[0] if provenance_records else None
+        if provenance is not None:
+            return session, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id,
+                status=str(provenance.get("status") or "ok"),
+                owner=str(provenance.get("owner") or observation_owner),
+                source_kind=str(provenance.get("source_kind") or "live"),
+                source_version=provenance.get("source_version"),
+                observed_at=provenance.get("observed_at"),
+                degradation_reason=provenance.get("degradation_reason"),
+                correlation_id=provenance.get("correlation_id"),
+            )
+        return session, self._context_observation(
+            subject_type="paper_runtime_monitoring",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
+
+    def get_context_rollbacks(
+        self, runtime_id: str, *, owner: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_rollbacks") or not runtime_id:
+            return [], self._context_observation(
+                subject_type="rollbacks",
+                subject_id=runtime_id or "rollbacks",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="rollback read surface is unavailable or unconfigured.",
+            )
+        try:
+            rollbacks = list(store.get_rollbacks(runtime_id) or [])
+        except Exception as exc:
+            return [], self._context_observation(
+                subject_type="rollbacks",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"rollback read failed: {exc}",
+            )
+        return rollbacks, self._context_observation(
+            subject_type="rollbacks",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
+
     # -----------------------------------------------------------------------
     # 1. Shell Summary
     # -----------------------------------------------------------------------

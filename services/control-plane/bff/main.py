@@ -6312,18 +6312,24 @@ def _project_operator_runtime_state_row(
     telemetry_summary = _project_runtime_state_telemetry_summary(
         raw_telemetry_summary
     )
-    raw_monitoring_session = (
-        monitoring_session_record
-        if prefetched
-        else read_store.get_paper_runtime_monitoring_session(
-            runtime_id=runtime_id,
-            binding_id=str(runtime_binding_id or ""),
+    monitoring_observation: Optional[Dict[str, Any]] = None
+    if prefetched:
+        raw_monitoring_session = monitoring_session_record
+    else:
+        # Same purpose-built accessor pattern as telemetry above: a raised
+        # exception here must not blow past this row and discard every
+        # owner observation already collected by the caller.
+        raw_monitoring_session, monitoring_observation = (
+            _management_ai_context_service.get_context_monitoring_session(
+                runtime_id, str(runtime_binding_id or "")
+            )
         )
-    )
     monitoring_session = _project_runtime_state_monitoring_session(
         raw_monitoring_session
     )
-    rollbacks = read_store.get_rollbacks(runtime_id)
+    rollbacks, rollback_observation = _management_ai_context_service.get_context_rollbacks(
+        runtime_id
+    )
     latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
     artifact_id = binding.get("artifact_id")
     artifact_version = binding.get("artifact_version") or binding.get("version")
@@ -6353,6 +6359,8 @@ def _project_operator_runtime_state_row(
         ),
         "telemetry_summary": telemetry_summary,
         "telemetry_observation": telemetry_observation,
+        "monitoring_observation": monitoring_observation,
+        "rollback_observation": rollback_observation,
         "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
         "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
         "position_count": (telemetry_summary or {}).get("position_count"),
@@ -15077,9 +15085,10 @@ def _mgmt_nl_trading_pulse_snippet(
         if isinstance(row.get("telemetry_summary"), dict)
     ]
     telemetry_observations = [
-        row.get("telemetry_observation")
+        row.get(key)
         for row in runtime_rows
-        if isinstance(row.get("telemetry_observation"), dict)
+        for key in ("telemetry_observation", "monitoring_observation", "rollback_observation")
+        if isinstance(row.get(key), dict)
     ]
     pnl_values = [
         value
@@ -15118,6 +15127,45 @@ def _mgmt_nl_trading_pulse_snippet(
         {"cardId": "execution-quality", "card_id": "execution-quality", "label": "Execution Quality", "value": summary["averageFillRate"]},
     ]
     return {"summary": summary, "cards": cards, "telemetry_observations": telemetry_observations}
+def _mgmt_nl_surface_owner_observation(
+    surface: Optional[Dict[str, Any]],
+    *,
+    subject_type: str,
+    owner: str,
+) -> Dict[str, Any]:
+    """Convert a dataset/aggregate surface-status dict into an owner
+    observation shape so a cockpit source's real availability (e.g. the
+    incident feed, approval queue, or sentinel findings) can be merged the
+    same way as a typed context-service observation instead of being
+    silently dropped because it never went through that service."""
+    surface = surface if isinstance(surface, dict) else {}
+    status = str(surface.get("status") or "unavailable")
+    reason = surface.get("message") or surface.get("note")
+    return {
+        "subject_type": subject_type,
+        "subject_id": subject_type,
+        "status": status,
+        "owner": surface.get("owner") or owner,
+        "source_kind": surface.get("source") or ("live" if status == "ok" else "unavailable"),
+        "degradation_reason": reason if status != "ok" else None,
+        "contributing_observations": [],
+    }
+def _mgmt_nl_payload_surface_observations(
+    payload: Optional[Dict[str, Any]],
+    *,
+    owner: str,
+) -> List[Dict[str, Any]]:
+    """Turn every surface entry in a payload's meta.surfaces into an owner
+    observation. Every contributing surface a cockpit source reports
+    (e.g. incident_feed, approval_queue, sentinel_findings), not only the
+    payload's own top-level aggregate, must be preserved so a healthy
+    runtime/telemetry read cannot mask one of them going unavailable."""
+    surfaces = ((payload or {}).get("meta") or {}).get("surfaces") or {}
+    return [
+        _mgmt_nl_surface_owner_observation(surface, subject_type=key, owner=owner)
+        for key, surface in surfaces.items()
+        if isinstance(surface, dict)
+    ]
 def _mgmt_nl_merge_owner_observations(
     observations: List[Optional[Dict[str, Any]]],
 ) -> Dict[str, Any]:
@@ -15205,7 +15253,17 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "anomalies_summary": {"total": len(anomalies)},
             }
             cockpit_owner_observation = _mgmt_nl_merge_owner_observations(
-                [runtime_bindings_obs, *trading_pulse.get("telemetry_observations", [])]
+                [
+                    runtime_bindings_obs,
+                    *trading_pulse.get("telemetry_observations", []),
+                    # Every cockpit source's own contributing surfaces, not
+                    # just runtime/telemetry: an unavailable incident feed,
+                    # approval queue, or sentinel-findings surface must not be
+                    # masked behind a healthy runtime/telemetry status.
+                    *_mgmt_nl_payload_surface_observations(alerts_payload, owner="operator_alerts"),
+                    *_mgmt_nl_payload_surface_observations(human_inbox_payload, owner="human_inbox"),
+                    *_mgmt_nl_payload_surface_observations(anomalies_payload, owner="management_anomalies"),
+                ]
             )
             surfaces["management_cockpit"] = {
                 "status": cockpit_owner_observation["status"],
