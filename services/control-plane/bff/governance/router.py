@@ -58,16 +58,11 @@ def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
 
 
 def _default_dataset_surface_status(
-    dataset: str, *, snapshot_at: str, source: Optional[str] = None, **_: Any
+    dataset: str, *, snapshot_at: str, source: Optional[str] = None, **kwargs: Any
 ) -> Dict[str, Any]:
-    source = source or "ok"
-    if source in {"missing", "unavailable"}:
-        status = "unavailable"
-    elif source in {"local_snapshot", "degraded"}:
-        status = "degraded"
-    else:
-        status = "ok"
-    return {"status": status, "source": source, "dataset": dataset, "snapshot_at": snapshot_at}
+    return GovernanceService._default_dataset_surface_status(
+        dataset, snapshot_at=snapshot_at, source=source, **kwargs
+    )
 
 
 def _default_read_surface_meta(
@@ -83,7 +78,9 @@ def _default_read_surface_meta(
         "snapshot_at": snapshot_at,
         "surfaces": {
             surface_key: surface
-            or {"status": "ok", "source": "ok", "dataset": dataset, "snapshot_at": snapshot_at}
+            or GovernanceService._default_dataset_surface_status(
+                dataset, snapshot_at=snapshot_at, source="missing"
+            )
         },
     }
     if total is not None:
@@ -94,7 +91,9 @@ def _default_read_surface_meta(
 def _default_redact_evidence_refs(
     identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None
 ) -> Tuple[List[Dict[str, Any]], int]:
-    return list(refs), 0
+    return GovernanceService._fail_closed_redact_evidence_refs(
+        identity, refs, capabilities=capabilities
+    )
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -146,7 +145,19 @@ def create_governance_router(
     _read_meta = read_surface_meta or _default_read_surface_meta
     _staleness = meta_staleness or (lambda: None)
     _redact = redact_evidence_refs or _default_redact_evidence_refs
-    _capabilities = capabilities_for_identity or (lambda identity: None)
+    _capabilities = capabilities_for_identity or (lambda identity: [])
+
+    def _safe_redact(identity: Any, refs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            caps = _capabilities(identity)
+        except Exception:
+            caps = None
+        if caps is None:
+            caps = []
+        try:
+            return _redact(identity, refs, capabilities=caps)
+        except Exception:
+            return GovernanceService._fail_closed_redact_evidence_refs(identity, refs, capabilities=[])
 
     resolved_service = governance_service
 
@@ -496,19 +507,17 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         _identity(authorization)
         snapshot_at = _now()
-        items, next_token, total = _service().list_committees(
+        service = _service()
+        surface_state = service.committee_collection_surface_state(snapshot_at=snapshot_at)
+        items, next_token, total = service.list_committees(
             quorum_state=quorum_state,
             consensus_state=consensus_state,
             page_token=page_token,
             page_size=page_size,
-        )
-        surface = _surface(
-            "consultation_sessions",
             snapshot_at=snapshot_at,
-            source=_service().dataset_source("consult_requests"),
         )
         meta = _snapshot(snapshot_at)
-        meta["surfaces"] = {"committee_board": surface.get("status", "ok")}
+        meta["surfaces"] = {"committee_board": surface_state}
         return {
             "data": items,
             "page_info": {"next_page_token": next_token, "total": total, "page_size": page_size},
@@ -808,7 +817,7 @@ def create_governance_router(
         evidence = _service().get_consultation_evidence(session_id)
         if evidence is None:
             _not_found("Consultation session", session_id)
-        processed, redacted_count = _redact(identity, list(evidence), capabilities=_capabilities(identity))
+        processed, redacted_count = _safe_redact(identity, list(evidence))
         return {"data": processed, "meta": {"total": len(processed), "staleness": _staleness(), "supporting_counts": {"redacted_evidence_count": redacted_count}}}
 
     @router.get("/api/v1/consultations/{session_id}/transcript")
@@ -992,7 +1001,7 @@ def create_governance_router(
         decision = _service().get_approval_detail(clean_id)
         if refs is None or decision is None:
             _not_found("Approval decision", approval_id)
-        processed, redacted_count = _redact(identity, refs, capabilities=_capabilities(identity))
+        processed, redacted_count = _safe_redact(identity, refs)
         return {
             "approval_id": clean_id,
             "evidence": processed,
