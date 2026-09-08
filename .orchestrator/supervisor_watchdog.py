@@ -161,7 +161,19 @@ def supervisor_command_identity(settings: Mapping[str, Any]) -> tuple[list[str],
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
     coord_root = resolved_coordinator_status_root(config)
-    return coord_root / ".orchestrator" / "supervisor.pid"
+    candidate = coord_root / ".orchestrator" / "supervisor.pid"
+    if candidate.exists():
+        return candidate
+    legacy = coord_root / "supervisor.pid"
+    if legacy.exists():
+        return legacy
+    try:
+        state_legacy = config_path(config, "state_file").parent / "supervisor.pid"
+        if state_legacy.exists():
+            return state_legacy
+    except Exception:
+        pass
+    return candidate
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:

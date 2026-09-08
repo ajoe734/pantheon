@@ -1252,3 +1252,154 @@ def test_migrate_storage_paths_enforces_0700_permissions(tmp_path: Path) -> None
     # Check directory permissions is 0o700
     dir_mode = stat.S_IMODE(new_log.parent.stat().st_mode)
     assert dir_mode == 0o700
+
+
+def test_migrate_storage_paths_preflight_rejects_target_lock_collision(tmp_path: Path) -> None:
+    import fcntl
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    new_log.parent.mkdir(parents=True, exist_ok=True)
+    target_lock = new_log.with_name(f"{new_log.name}.lock")
+    target_lock.touch()
+
+    held = os.open(target_lock, os.O_RDWR)
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held_inode = os.fstat(held).st_ino
+
+        incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+        rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+        with pytest.raises(RuntimeError, match="collision: .* already exists"):
+            promotion._migrate_storage_paths(incumbent, rendered)
+
+        # Held lock was not overwritten; same inode still held
+        assert os.fstat(held).st_ino == held_inode
+        assert old_log.exists()
+        assert not new_log.exists()
+    finally:
+        os.close(held)
+
+
+def test_replace_supervisor_restarts_incumbent_with_incumbent_identity_on_launch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    old_log = tmp_path / "runtime" / "task-state-events-v2.jsonl"
+    old_log.write_text("old events\n", encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
+
+    old_state = status_root / ".orchestrator" / "state.json"
+    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_queue = status_root / ".orchestrator" / "approval-queue.json"
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+    incumbent_root = tmp_path / "incumbent-runtime"
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    (incumbent_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    incumbent_supervisor_py = incumbent_root / ".orchestrator" / "supervisor.py"
+    incumbent_supervisor_py.touch()
+
+    incumbent = {
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+        "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+        "watchdog": {
+            "supervisor_command": [
+                sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                "--config", str(live_config), "--verbose"
+            ]
+        },
+        "identity": {
+            "root": str(incumbent_root),
+            "head": "1111111111111111111111111111111111111111",
+            "repository": "ajoe734/pantheon",
+        }
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+
+    calls = []
+
+    def mock_launch(rendered_conf, *, identity, status_root, authority_env_file=None):
+        calls.append({"conf": rendered_conf, "identity": identity})
+        if len(calls) == 1:
+            raise RuntimeError("simulated candidate launch crash")
+        return 777
+
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", mock_launch)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "simulated candidate launch crash" in result["error"]
+    assert result.get("restarted_pid") == 777
+    assert len(calls) == 2
+    # Second launch was incumbent restart with incumbent identity
+    assert calls[1]["identity"]["root"] == str(incumbent_root)
+    assert calls[1]["identity"]["head"] == "1111111111111111111111111111111111111111"
+    # Files rolled back
+    assert old_log.exists()
+    assert old_state.exists()
+    assert old_queue.exists()
+
+
+def test_replace_supervisor_reports_rollback_failure_on_restart_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    old_log = tmp_path / "runtime" / "task-state-events-v2.jsonl"
+    old_log.write_text("old events\n", encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
+
+    old_state = status_root / ".orchestrator" / "state.json"
+    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_queue = status_root / ".orchestrator" / "approval-queue.json"
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+    incumbent = {
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+        "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+
+    def failing_launch(*a, **k):
+        raise RuntimeError("always failing launch")
+
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", failing_launch)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "rollback failures" in result["error"]
+    assert "rollback_errors" in result
+    assert any("incumbent restart failed" in err for err in result["rollback_errors"])

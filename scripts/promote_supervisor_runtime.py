@@ -773,20 +773,27 @@ def _preflight_storage_migration(
         if old_event_log.exists():
             if not old_event_log.is_file():
                 raise ValueError(f"incumbent task-state event log must be a regular file: {old_event_log}")
-            # Destination collision preflight
-            if new_event_log.exists():
-                raise RuntimeError(f"target task-state journal collision: {new_event_log} already exists")
-            new_head = new_event_log.with_name(f"{new_event_log.name}.head.json")
-            if new_head.exists():
-                raise RuntimeError(f"target task-state head collision: {new_head} already exists")
-            new_anchor = new_event_log.with_name(f"{new_event_log.name}.legacy-anchor.json")
-            if new_anchor.exists():
-                raise RuntimeError(f"target task-state legacy anchor collision: {new_anchor} already exists")
+            # Destination collision and symlink preflight for all sidecars
+            for suffix, label in (
+                ("", "journal"),
+                (".head.json", "head"),
+                (".lock", "lock"),
+                (".legacy-anchor.json", "legacy anchor"),
+            ):
+                old_candidate = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
+                new_candidate = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
+                if old_candidate.is_symlink():
+                    raise ValueError(f"incumbent task-state {label} contains symlink: {old_candidate}")
+                if new_candidate.exists() or new_candidate.is_symlink():
+                    raise RuntimeError(f"target task-state {label} collision: {new_candidate} already exists")
 
             # Filesystem constraints: verify same filesystem
             target_ancestor = new_event_log.parent
             while not target_ancestor.exists() and target_ancestor != target_ancestor.parent:
                 target_ancestor = target_ancestor.parent
+            anc_sym = first_symlink_component(target_ancestor)
+            if anc_sym is not None or target_ancestor.is_symlink():
+                raise ValueError(f"target task-state parent contains symlink: {anc_sym or target_ancestor}")
             if old_event_log.stat().st_dev != target_ancestor.stat().st_dev:
                 raise RuntimeError(
                     f"cannot migrate task-state across filesystem boundary: {old_event_log} to {new_event_log}"
@@ -808,17 +815,56 @@ def _preflight_storage_migration(
             new_sym = first_symlink_component(new_p)
             if new_sym is not None or new_p.is_symlink():
                 raise ValueError(f"rendered {key} contains symlink: {new_sym or new_p}")
-            if old_p.exists() and new_p.exists():
+            if old_p.exists() and (new_p.exists() or new_p.is_symlink()):
                 raise RuntimeError(f"target {key} collision: {new_p} already exists")
+
+
+def qualify_incumbent_identity(
+    incumbent: Mapping[str, Any] | None,
+    *,
+    candidate_identity: Mapping[str, str],
+) -> dict[str, str] | None:
+    if not incumbent:
+        return None
+    if "identity" in incumbent and isinstance(incumbent["identity"], Mapping):
+        return dict(incumbent["identity"])
+    watchdog = incumbent.get("watchdog")
+    if isinstance(watchdog, Mapping):
+        cmd = watchdog.get("supervisor_command")
+        if isinstance(cmd, list):
+            for item in cmd:
+                if isinstance(item, str) and item.endswith(".orchestrator/supervisor.py"):
+                    incumbent_root = Path(item).expanduser().resolve().parent.parent
+                    try:
+                        return validated_immutable_command_root(incumbent_root)
+                    except Exception:
+                        return {
+                            "root": str(incumbent_root),
+                            "head": incumbent_root.name,
+                            "repository": candidate_identity.get("repository", "ajoe734/pantheon"),
+                        }
+    if "command_root" in incumbent and isinstance(incumbent["command_root"], str):
+        c_root = Path(incumbent["command_root"]).expanduser().resolve()
+        try:
+            return validated_immutable_command_root(c_root)
+        except Exception:
+            return {
+                "root": str(c_root),
+                "head": c_root.name,
+                "repository": candidate_identity.get("repository", "ajoe734/pantheon"),
+            }
+    return dict(candidate_identity)
 
 
 def _migrate_storage_paths(
     incumbent: Mapping[str, Any] | None,
     rendered: Mapping[str, Any],
+    *,
+    keep_lock: bool = False,
 ) -> dict[str, Any]:
     """Atomically relocate storage files when live config paths change."""
     if not incumbent:
-        return {"migrated": False, "files": []}
+        return {"migrated": False, "files": [], "lock_fd": None}
 
     _preflight_storage_migration(incumbent, rendered)
 
@@ -850,6 +896,17 @@ def _migrate_storage_paths(
                             f"cannot migrate storage paths: task-state store lock {old_lock} is held by another process"
                         ) from exc
 
+                # Double check no collision before moving any files
+                for suffix, label in (
+                    ("", "journal"),
+                    (".head.json", "head"),
+                    (".lock", "lock"),
+                    (".legacy-anchor.json", "legacy anchor"),
+                ):
+                    new_file = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
+                    if new_file.exists() or new_file.is_symlink():
+                        raise RuntimeError(f"target task-state {label} collision: {new_file} already exists")
+
                 new_event_log.parent.mkdir(parents=True, exist_ok=True)
                 os.chmod(new_event_log.parent, 0o700)
                 dirs_to_fsync.add(old_event_log.parent)
@@ -871,6 +928,8 @@ def _migrate_storage_paths(
                 old_p = Path(old_val).expanduser()
                 new_p = Path(new_val).expanduser()
                 if old_p.exists():
+                    if new_p.exists() or new_p.is_symlink():
+                        raise RuntimeError(f"target {key} collision: {new_p} already exists")
                     new_p.parent.mkdir(parents=True, exist_ok=True)
                     os.chmod(new_p.parent, 0o700)
                     dirs_to_fsync.add(old_p.parent)
@@ -884,15 +943,16 @@ def _migrate_storage_paths(
     except Exception as exc:
         # Durable rollback preserving history and one recoverable authority
         for old_file, new_file in reversed(moved_files):
-            if os.path.exists(new_file) and not os.path.exists(old_file):
+            if os.path.exists(new_file):
                 try:
                     os.replace(new_file, old_file)
                 except Exception:
                     pass
         for d in dirs_to_fsync:
-            _fsync_dir(d)
-        raise exc
-    finally:
+            try:
+                _fsync_dir(d)
+            except Exception:
+                pass
         if old_lock_fd is not None:
             try:
                 fcntl.flock(old_lock_fd, fcntl.LOCK_UN)
@@ -902,8 +962,24 @@ def _migrate_storage_paths(
                 os.close(old_lock_fd)
             except OSError:
                 pass
+            old_lock_fd = None
+        raise exc
+    finally:
+        if not keep_lock and old_lock_fd is not None:
+            try:
+                fcntl.flock(old_lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(old_lock_fd)
+            except OSError:
+                pass
 
-    return {"migrated": bool(moved_files), "files": moved_files}
+    return {
+        "migrated": bool(moved_files),
+        "files": moved_files,
+        "lock_fd": old_lock_fd if keep_lock else None,
+    }
 
 
 def _replace_supervisor_locked(
@@ -995,11 +1071,18 @@ def _replace_supervisor_locked(
         )
         result["stopped_pid"] = stopped_pid
 
+        incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
+
         migration_record: dict[str, Any] | None = None
+        lock_fd: int | None = None
         config_written = False
         try:
-            migration_record = _migrate_storage_paths(incumbent, rendered)
-            result["storage_migration"] = migration_record
+            migration_record = _migrate_storage_paths(incumbent, rendered, keep_lock=True)
+            lock_fd = migration_record.get("lock_fd")
+            result["storage_migration"] = {
+                "migrated": migration_record["migrated"],
+                "files": migration_record["files"],
+            }
             ensure_approval_queue_marker(approval_queue_path)
             write_json_atomic(live_config_path, rendered)
             config_written = True
@@ -1010,29 +1093,53 @@ def _replace_supervisor_locked(
                 authority_env_file=authority_env_file,
             )
         except Exception as launch_exc:
+            rollback_errors: list[str] = []
             if config_written and incumbent:
                 try:
                     write_json_atomic(live_config_path, incumbent)
-                except Exception:
-                    pass
+                except Exception as r_exc:
+                    rollback_errors.append(f"config restoration failed: {r_exc}")
             if migration_record:
+                rollback_dirs: set[Path] = set()
                 for old_file, new_file in reversed(migration_record.get("files", [])):
-                    if os.path.exists(new_file) and not os.path.exists(old_file):
+                    if os.path.exists(new_file):
                         try:
                             os.replace(new_file, old_file)
-                        except Exception:
-                            pass
+                            rollback_dirs.add(Path(old_file).parent)
+                            rollback_dirs.add(Path(new_file).parent)
+                        except Exception as r_exc:
+                            rollback_errors.append(f"file rollback failed ({new_file} -> {old_file}): {r_exc}")
+                for d in rollback_dirs:
+                    try:
+                        _fsync_dir(d)
+                    except Exception as r_exc:
+                        rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
             if stopped_pid is not None and incumbent:
                 try:
-                    launch_v2_supervisor(
+                    restarted_pid = launch_v2_supervisor(
                         incumbent,
-                        identity=identity,
+                        identity=incumbent_identity or identity,
                         status_root=status_root,
                         authority_env_file=authority_env_file,
                     )
-                except Exception:
-                    pass
+                    result["restarted_pid"] = restarted_pid
+                except Exception as r_exc:
+                    rollback_errors.append(f"incumbent restart failed: {r_exc}")
+            if rollback_errors:
+                result["rollback_errors"] = rollback_errors
+                err_msg = f"{launch_exc}; rollback failures: {'; '.join(rollback_errors)}"
+                raise RuntimeError(err_msg) from launch_exc
             raise launch_exc
+        finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                try:
+                    os.close(lock_fd)
+                except OSError:
+                    pass
 
         result["outcome"] = "launched"
         result["exit_code"] = 0

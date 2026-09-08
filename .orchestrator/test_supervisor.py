@@ -3674,9 +3674,12 @@ class ExecutionAuthorizationProcessTests(unittest.TestCase):
         status_root = root / "status"
         (status_root / ".orchestrator").mkdir(parents=True)
         self.config = config_fixture(status_root)
-        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(root / "runtime" / "tasks.jsonl")}
+        event_log = root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(event_log)}
         self.task = _synthetic_privileged_task()
-        supervisor.write_status(self.config, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        from rewrite.task_state_store import append_state_commit
+        append_state_commit(event_log, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        supervisor.write_json(supervisor.config_path(self.config, "status_file"), {"tasks": [self.task]})
         self.ctx = multiprocessing.get_context("fork")
         self.marker = root / "effect"
 

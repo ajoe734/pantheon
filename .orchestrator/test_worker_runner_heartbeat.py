@@ -2393,6 +2393,75 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         journal = self.root / "runtime" / "task-state" / "events.jsonl"
         self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
 
+    def test_nested_workspace_under_outer_runtime_bind_worker_sandbox_readonly(self):
+        nested_workspace = self.root / "runtime" / "nested-worktree"
+        nested_workspace.mkdir(parents=True, exist_ok=True)
+        command = wr.bind_worker_sandbox(
+            [sys.executable, "-c", "pass"],
+            command_root=self.command_root,
+            workspace_path=nested_workspace,
+            coordination_root=self.central,
+            sandbox_binary="/bin/true",
+            read_only_worktree=True,
+        )
+        mounts = [command[i:i+3] for i in range(len(command)-2)]
+        self.assertIn(["--ro-bind", str(nested_workspace), str(nested_workspace)], mounts)
+        self.assertNotIn(["--bind", str(nested_workspace), str(nested_workspace)], mounts)
+
+    def test_nested_workspace_under_outer_runtime_denies_reviewer_write(self):
+        nested_workspace = self.root / "runtime" / "nested-worktree"
+        _init_repo(nested_workspace)
+        self.task["status"] = "review"
+        self.task["execution_authorization"]["state"] = "pending_authorization"
+        def review(worker):
+            worker["agent_id"] = worker["logical_agent_id"] = "codex"
+            worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
+        env = {**self.env, "PANTHEON_WORKTREE_ROOT": str(nested_workspace), "ORCH_WORKSPACE_PATH": str(nested_workspace)}
+        command = [sys.executable, "-c", "from pathlib import Path; Path('reviewer-write').write_text('unexpectedly writable')"]
+        argv = [sys.executable, _P, "--run-id", "codex-20260906T000000Z-fixture",
+                "--heartbeat-path", str(self.heartbeat), "--status-path", str(self.runner_status),
+                "--heartbeat-interval-seconds", "1", "--", *command]
+        proc = _run_fixture_worker(argv, env=env, task=self.task, local_stub=False, mutate_receipt=review)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Read-only file system", proc.stderr)
+        self.assertFalse((nested_workspace / "reviewer-write").exists())
+
+    def test_nested_workspace_under_outer_runtime_denies_finalize_write(self):
+        nested_workspace = self.root / "runtime" / "nested-worktree"
+        _init_repo(nested_workspace)
+        self.task["status"] = "review_approved"
+        self.task["execution_authorization"]["state"] = "pending_authorization"
+        def finalize(worker):
+            worker["request_snapshot"]["reason"] = "owned_finalize_dispatch"
+        env = {**self.env, "PANTHEON_WORKTREE_ROOT": str(nested_workspace), "ORCH_WORKSPACE_PATH": str(nested_workspace)}
+        command = [sys.executable, "-c", "from pathlib import Path; Path('finalize-write').write_text('unexpectedly writable')"]
+        argv = [sys.executable, _P, "--run-id", "antigravity-20260906T000000Z-fixture",
+                "--heartbeat-path", str(self.heartbeat), "--status-path", str(self.runner_status),
+                "--heartbeat-interval-seconds", "1", "--", *command]
+        proc = _run_fixture_worker(argv, env=env, task=self.task, local_stub=False, mutate_receipt=finalize)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Read-only file system", proc.stderr)
+        self.assertFalse((nested_workspace / "finalize-write").exists())
+
+    def test_task_store_transient_temp_disappearing_during_scan_is_handled(self):
+        journal = self.root / "runtime" / "task-state" / "events.jsonl"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        append_state_commit(journal, {"tasks": []}, source="fixture")
+        transient = journal.with_name(journal.name + ".head.json.123.456.tmp")
+        transient.write_text("{}")
+        original_iterdir = Path.iterdir
+        def publication_during_enumeration(path):
+            children = list(original_iterdir(path))
+            for child in children:
+                if child == transient:
+                    os.replace(transient, journal.with_name(journal.name + ".head.json"))
+                yield child
+        with mock.patch.object(Path, "iterdir", publication_during_enumeration):
+            bwrap_cmd = []
+            wr._append_task_store_mounts(bwrap_cmd, str(journal))
+            self.assertIn(["--bind", str(journal.parent), str(journal.parent)],
+                          [bwrap_cmd[i:i+3] for i in range(len(bwrap_cmd)-2)])
+
     def test_revocation_after_first_binding_before_popen_has_zero_effect(self):
         proc = self.run_worker(revoke_during_sandbox=True)
         self.assertNotEqual(proc.returncode, 0)

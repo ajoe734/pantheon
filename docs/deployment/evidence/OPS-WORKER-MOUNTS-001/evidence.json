@@ -28,7 +28,7 @@
     }
   ],
   "scope": {
-    "artifacts_count": 21,
+    "artifacts_count": 22,
     "artifacts": [
       ".orchestrator/common.py",
       ".orchestrator/config.example.json",
@@ -40,6 +40,7 @@
       ".orchestrator/supervisor_watchdog.py",
       ".orchestrator/test_common.py",
       ".orchestrator/test_provider_permissions.py",
+      ".orchestrator/test_supervisor.py",
       ".orchestrator/test_worker_runner_heartbeat.py",
       ".orchestrator/worker_runner.py",
       "scripts/ai_status.py",
@@ -99,24 +100,25 @@
       ".orchestrator/permission_broker.py": "5a45b7d1c7feb6e521b987ecad271d1d0655d2bc54ccf28314980632018c11a5",
       ".orchestrator/runtime_state.py": "96774656d5db5ebbd9045f384b45409716280aabc33b857cd26ef4df2bb2e4b2",
       ".orchestrator/supervisor.py": "71fdb6021ff0a40af8f888210504261028e883cea84828819af3ac15d7a8fa74",
-      ".orchestrator/supervisor_watchdog.py": "d370b73df896947dd73c09a4d7585eb0bb4ca77d1df4e4c4e9479e47f3334223",
+      ".orchestrator/supervisor_watchdog.py": "e2030f151f28219d7438435ca95baf70a9efc39ce2ab0be184d20e3a6d4213aa",
       ".orchestrator/test_common.py": "e2d8a310dcee3461206213429f8b2abda5c96cd5766ad147ccfe905831eaaa02",
       ".orchestrator/test_provider_permissions.py": "79944558ca4a933234ebfe8917623656a095abcbe0eb6b0ca0fd939168d35aa4",
-      ".orchestrator/test_worker_runner_heartbeat.py": "f481c80833110b47c9aab463c2da8542bb073f6497a35abad096dcdc6a8b9bf0",
-      ".orchestrator/worker_runner.py": "25c4fefde33727ae7137dbae18cad7b608a735b5a863198bbd9404031441c4f1",
+      ".orchestrator/test_supervisor.py": "57153863f8103afe32f6948d65a55e47114c94c01b2364a382776d708067ebe1",
+      ".orchestrator/test_worker_runner_heartbeat.py": "6c7cbe73ab8115390d4a234fdded5d700c6bae5d11856d292fb6cb9871941f44",
+      ".orchestrator/worker_runner.py": "683a3b5215e21a0b4497dce3c43201e0f171e596177b2a4e22c04b660d32a29e",
       "scripts/ai_status.py": "fd6e42eb8599f1b0ce45feeef808278f108ed24a716df7f4040858718ba57ab0",
-      "scripts/promote_supervisor_runtime.py": "cb4d7259e725a294188af9cf95792d5eeeed6350e9d72dd7114f8b327207c205",
+      "scripts/promote_supervisor_runtime.py": "2e4ab5945ebe513ae18616a48776c64688312c59de00c8db59da834ac2b25d62",
       "scripts/provision_live_supervisor_config.py": "c2252528253ffb8958f4cfa00b6165853bef3e9ee7de9532adb5665e57fd21ed",
       "scripts/supervisor_runtime_health.py": "760af2944435f74dd1406ce69f5040541f918b9ac902b71361d437567a24587b",
       "scripts/test_ai_status.py": "024d7100d78a0271c886d273ead10f04c01ff60e2135f2cb7203ced29b676674",
-      "scripts/test_promote_supervisor_runtime.py": "f1dedef2f508c54efb6325bd58be10096048ac1677358ad85e376673d5ee3c6f",
+      "scripts/test_promote_supervisor_runtime.py": "d7d64534584c3f78988eeb1449791601795e189da621f3e2aaf50fb4cbc034c7",
       "scripts/test_provision_live_supervisor_config.py": "09536e917286516557280c3b9b9800abba6dad8372460c29c3a787fb50d10fb2",
-      "docs/operations/worker-atomic-state-mounts.md": "abf2b384c5b8dbf24da017f24f55fdddbe3b1eacfc64097f2a4a31a9fef90690"
+      "docs/operations/worker-atomic-state-mounts.md": "8baf79a33d92acec836be0217f7a37bb776fde6c1d1ed4ca93b28efaeb2a3c2e"
     },
     "passed": [
       {
         "command": "pytest .orchestrator/test_worker_runner_heartbeat.py",
-        "result": "69 passed",
+        "result": "73 passed",
         "exit_status": 0
       },
       {
@@ -131,7 +133,7 @@
       },
       {
         "command": "pytest .orchestrator/test_provider_permissions.py",
-        "result": "122 passed",
+        "result": "122 passed, 20 subtests passed",
         "exit_status": 0
       },
       {
@@ -141,7 +143,7 @@
       },
       {
         "command": "pytest scripts/test_promote_supervisor_runtime.py",
-        "result": "50 passed",
+        "result": "53 passed",
         "exit_status": 0
       },
       {
@@ -153,6 +155,16 @@
         "command": "pytest scripts/test_ai_status.py",
         "result": "457 passed",
         "exit_status": 0
+      },
+      {
+        "command": "pytest .orchestrator/test_supervisor.py -k ExecutionAuthorizationProcessTests",
+        "result": "7 passed, 3 subtests passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest -q .orchestrator/test_worker_runner_heartbeat.py scripts/test_promote_supervisor_runtime.py .orchestrator/test_common.py .orchestrator/test_runtime_state.py scripts/test_provision_live_supervisor_config.py scripts/test_supervisor_runtime_health.py",
+        "result": "311 passed, 74 subtests passed in 154.16s",
+        "exit_status": 0
       }
     ]
   },
@@ -160,6 +172,11 @@
     "defect_1_mount_builder_layout_qualification_and_sibling_protection": "Enforced parent.name == 'task-state' in _append_task_store_mounts, rejecting legacy or mixed directory layouts. Verified parent directory contains only allowed TaskStore files and transient publication temp files. Applied directory-level read-only protection (--ro-bind-try) on outer_runtime preventing atomic replacement or linking over sibling files (e.g. live-supervisor.json) while preserving --bind writeability on nested leased worktrees.",
     "defect_2_single_writer_cutover_and_watchdog_fencing": "Acquired runtime-admission.lock via fcntl.flock in _replace_supervisor_locked covering shutdown, migration, queue marker, config write, and supervisor launch. Added lock drain in _migrate_storage_paths acquiring nonblocking exclusive flock on events.jsonl.lock before cutover, failing closed if held by another process. Enforced 0o700 permissions on new parent directories.",
     "defect_3_atomic_rollback_and_preflight": "Implemented _preflight_storage_migration verifying absolute paths, symlinks, target collisions, and same-filesystem (st_dev) constraints. Added _fsync_dir for durable directory publication. Implemented reverse-order file rollback with directory fsync on partial rename or launch failure, preserving single recoverable authority.",
-    "defect_4_unit_tests_and_doc_correction": "Replaced dummy string appends in test_worker_runner_heartbeat.py with real TaskStore CAS (append_state_commit) and real runtime_state APIs inside bwrap. Added unit tests for layout qualification, extraneous file rejection, and overlapping worktrees. Added unit tests in test_promote_supervisor_runtime.py for lock contention failure, preflight collision/symlink checks, 0700 permissions, and partial rename rollback. Corrected worker-atomic-state-mounts.md runbook claims and pytest verification command selectors."
+    "defect_4_unit_tests_and_doc_correction": "Replaced dummy string appends in test_worker_runner_heartbeat.py with real TaskStore CAS (append_state_commit) and real runtime_state APIs inside bwrap. Added unit tests for layout qualification, extraneous file rejection, and overlapping worktrees. Added unit tests in test_promote_supervisor_runtime.py for lock contention failure, preflight collision/symlink checks, 0700 permissions, and partial rename rollback. Corrected worker-atomic-state-mounts.md runbook claims and pytest verification command selectors.",
+    "cycle_2_defect_1_nested_workspace_readonly_policy_propagation": "worker_runner._append_task_store_mounts now accepts read_only_worktree: bool and mounts nested workspace_path under outer_runtime as --ro-bind instead of writable --bind when read_only_worktree=True. Regression tests verify reviewer and finalize steps are strictly denied writes in nested worktrees under outer_runtime.",
+    "cycle_2_defect_2_preflight_destination_lock_collision_check": "promote_supervisor_runtime._preflight_storage_migration now validates all target sidecars (.lock, .head.json, .legacy-anchor.json) across destination parent hierarchies, failing closed with target task-state collision error if any target lock or sidecar file exists or is a symlink before any moves occur.",
+    "cycle_2_defect_3_transient_publication_scan_race_handling": "worker_runner._append_task_store_mounts catches FileNotFoundError when checking legitimate transient .tmp publication files that disappear mid-scan due to atomic os.replace, avoiding unqualified layout failures while preserving strict rejection for unrelated sibling files and symlinks.",
+    "cycle_2_defect_4_fixture_seeding_preserves_production_guard": "test_supervisor.ExecutionAuthorizationProcessTests seeds tasks.jsonl explicitly via canonical TaskStore API append_state_commit, preserving the strict production guard snapshot['event_count'] > 0 in common.py:4642.",
+    "cycle_2_defect_5_durable_rollback_retention_and_incumbent_restart": "promote_supervisor_runtime._replace_supervisor_locked keeps single-writer flock exclusion across rollback and restart via keep_lock=True, durably fsyncs rollback directories, qualifies incumbent identity from incumbent config or command arguments, restarts incumbent supervisor with incumbent identity on candidate launch failure, and aggregates and raises rollback errors."
   }
 }
