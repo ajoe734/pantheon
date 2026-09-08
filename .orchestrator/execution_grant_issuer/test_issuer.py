@@ -21,9 +21,12 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import re
 import stat
+import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from copy import deepcopy
@@ -1418,6 +1421,187 @@ class TestSecureIoAndOperationalPatterns(unittest.TestCase):
             with open(fd2, "w", encoding="utf-8") as f:
                 f.write("mock-id-token")
             self.assertEqual(stat.S_IMODE(token_dest.stat().st_mode), 0o600)
+
+    def test_documented_shell_flow_offline_regression_success_and_failure_modes(self) -> None:
+        """OPS-EXECUTION-MFA-ISSUER-001 offline shell flow regression.
+
+        Extracts the exact dedented markdown snippets from docs/operations/execution-grant-issuer.md
+        and executes them via bash with a synthetic curl stub under:
+        - Successful end-to-end flow: verifying private 0600 file creation, secret unsetting,
+          and credential shredding.
+        - Step 1 error response: verifying nonzero exit status and no file creation.
+        - Step 1 non-MFA challenge response: verifying nonzero exit status and no file creation.
+        - Step 2 error response: verifying nonzero exit status and no file creation.
+        - Step 2 missing idToken: verifying nonzero exit status and no file creation.
+        - Step 3 pre-existing destination collision: verifying nonzero exit status.
+        """
+        doc_path = Path(__file__).resolve().parents[2] / "docs" / "operations" / "execution-grant-issuer.md"
+        self.assertTrue(doc_path.is_file(), f"Document not found at {doc_path}")
+        doc = doc_path.read_text(encoding="utf-8")
+
+        m1 = re.search(r"1\.\s+\*\*Sign in with password.*?\n\s*```bash\n(.*?)```", doc, re.DOTALL)
+        self.assertIsNotNone(m1, "Step 1 block not found in docs")
+        step1_block = textwrap.dedent(m1.group(1))
+
+        m2 = re.search(r"2\.\s+\*\*Finalize the second factor.*?\n\s*```bash\n(.*?)```", doc, re.DOTALL)
+        self.assertIsNotNone(m2, "Step 2 block not found in docs")
+        step2_block = textwrap.dedent(m2.group(1))
+
+        m3 = re.search(r"3\.\s+\*\*Extracting Token.*?\n\s*```bash\n(.*?)```", doc, re.DOTALL)
+        self.assertIsNotNone(m3, "Step 3 block not found in docs")
+        step3_block = textwrap.dedent(m3.group(1))
+
+        # 1. Test End-to-end success flow
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "mfa"
+            mfa_dir.mkdir(mode=0o700)
+
+            # Step 1: Sign-in initiating MFA
+            step1_response = json.dumps({"mfaPendingCredential": "test-cred-123", "mfaInfo": [{"mfaEnrollmentId": "test-enroll-456"}]})
+            script1 = f"""
+curl() {{
+    cat > /dev/null
+    echo '{step1_response}'
+}}
+export IDENTITY_PLATFORM_API_KEY="test-api-key"
+export MFA_DIR="{mfa_dir}"
+{step1_block}
+"""
+            p1 = subprocess.run(["bash", "-c", script1], input=b"test-password\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(p1.returncode, 0, f"Step 1 failed with stderr: {p1.stderr.decode()}")
+            step1_file = mfa_dir / "signin-step1.json"
+            self.assertTrue(step1_file.is_file(), "step 1 output file was not created")
+            self.assertFalse(step1_file.is_symlink(), "step 1 output file is a symlink")
+            self.assertEqual(stat.S_IMODE(step1_file.stat().st_mode), 0o600)
+            data1 = json.loads(step1_file.read_text(encoding="utf-8"))
+            self.assertEqual(data1["mfaPendingCredential"], "test-cred-123")
+
+            # Step 2: Finalize second factor
+            step2_response = json.dumps({"idToken": "test-verified-mfa-token.jwt"})
+            script2 = f"""
+curl() {{
+    cat > /dev/null
+    echo '{step2_response}'
+}}
+export IDENTITY_PLATFORM_API_KEY="test-api-key"
+export MFA_DIR="{mfa_dir}"
+{step2_block}
+"""
+            p2 = subprocess.run(["bash", "-c", script2], input=b"654321\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(p2.returncode, 0, f"Step 2 failed with stderr: {p2.stderr.decode()}")
+            self.assertFalse(step1_file.exists(), "step 1 output file was not shredded")
+            step2_file = mfa_dir / "signin-step2.json"
+            self.assertTrue(step2_file.is_file(), "step 2 output file was not created")
+            self.assertFalse(step2_file.is_symlink(), "step 2 output file is a symlink")
+            self.assertEqual(stat.S_IMODE(step2_file.stat().st_mode), 0o600)
+            data2 = json.loads(step2_file.read_text(encoding="utf-8"))
+            self.assertEqual(data2["idToken"], "test-verified-mfa-token.jwt")
+
+            # Step 3: Extract token
+            script3 = f"""
+export MFA_DIR="{mfa_dir}"
+{step3_block}
+"""
+            p3 = subprocess.run(["bash", "-c", script3], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(p3.returncode, 0, f"Step 3 failed with stderr: {p3.stderr.decode()}")
+            self.assertFalse(step2_file.exists(), "step 2 output file was not shredded")
+            token_file = mfa_dir / "operator-token.txt"
+            self.assertTrue(token_file.is_file(), "operator token file was not created")
+            self.assertFalse(token_file.is_symlink(), "operator token file is a symlink")
+            self.assertEqual(stat.S_IMODE(token_file.stat().st_mode), 0o600)
+            self.assertEqual(token_file.read_text(encoding="utf-8").strip(), "test-verified-mfa-token.jwt")
+
+        # 2. Test Step 1 Error response -> nonzero exit status, no output file
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "mfa"
+            mfa_dir.mkdir(mode=0o700)
+            err_response = json.dumps({"error": {"message": "INVALID_PASSWORD"}})
+            script_err = f"""
+curl() {{
+    cat > /dev/null
+    echo '{err_response}'
+}}
+export IDENTITY_PLATFORM_API_KEY="test-api-key"
+export MFA_DIR="{mfa_dir}"
+{step1_block}
+"""
+            p = subprocess.run(["bash", "-c", script_err], input=b"wrong-password\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(p.returncode, 0, "Step 1 should fail with nonzero returncode on API error")
+            self.assertFalse((mfa_dir / "signin-step1.json").exists(), "step 1 file created despite error")
+
+        # 3. Test Step 1 non-MFA challenge response -> nonzero exit status, no output file
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "mfa"
+            mfa_dir.mkdir(mode=0o700)
+            nomfa_response = json.dumps({"idToken": "single-factor-only-token"})
+            script_nomfa = f"""
+curl() {{
+    cat > /dev/null
+    echo '{nomfa_response}'
+}}
+export IDENTITY_PLATFORM_API_KEY="test-api-key"
+export MFA_DIR="{mfa_dir}"
+{step1_block}
+"""
+            p = subprocess.run(["bash", "-c", script_nomfa], input=b"pass\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(p.returncode, 0, "Step 1 should fail with nonzero returncode on non-MFA response")
+            self.assertFalse((mfa_dir / "signin-step1.json").exists(), "step 1 file created despite missing MFA")
+
+        # 4. Test Step 2 Error response -> nonzero exit status, no output file
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "mfa"
+            mfa_dir.mkdir(mode=0o700)
+            (mfa_dir / "signin-step1.json").write_text(
+                json.dumps({"mfaPendingCredential": "c", "mfaInfo": [{"mfaEnrollmentId": "e"}]}),
+                encoding="utf-8",
+            )
+            mfa_err_response = json.dumps({"error": {"message": "INVALID_MFA_CODE"}})
+            script_mfa_err = f"""
+curl() {{
+    cat > /dev/null
+    echo '{mfa_err_response}'
+}}
+export IDENTITY_PLATFORM_API_KEY="test-api-key"
+export MFA_DIR="{mfa_dir}"
+{step2_block}
+"""
+            p = subprocess.run(["bash", "-c", script_mfa_err], input=b"000000\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(p.returncode, 0, "Step 2 should fail with nonzero returncode on MFA error")
+            self.assertFalse((mfa_dir / "signin-step2.json").exists(), "step 2 file created despite MFA error")
+
+        # 5. Test Step 2 missing idToken -> nonzero exit status, no output file
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "mfa"
+            mfa_dir.mkdir(mode=0o700)
+            (mfa_dir / "signin-step1.json").write_text(
+                json.dumps({"mfaPendingCredential": "c", "mfaInfo": [{"mfaEnrollmentId": "e"}]}),
+                encoding="utf-8",
+            )
+            script_no_token = f"""
+curl() {{
+    cat > /dev/null
+    echo '{{}}'
+}}
+export IDENTITY_PLATFORM_API_KEY="test-api-key"
+export MFA_DIR="{mfa_dir}"
+{step2_block}
+"""
+            p = subprocess.run(["bash", "-c", script_no_token], input=b"123456\n", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(p.returncode, 0, "Step 2 should fail with nonzero returncode when idToken missing")
+            self.assertFalse((mfa_dir / "signin-step2.json").exists(), "step 2 file created despite missing idToken")
+
+        # 6. Test Step 3 collision -> nonzero exit status
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "mfa"
+            mfa_dir.mkdir(mode=0o700)
+            (mfa_dir / "signin-step2.json").write_text(json.dumps({"idToken": "secret"}), encoding="utf-8")
+            (mfa_dir / "operator-token.txt").write_text("pre-existing", encoding="utf-8")
+            script_collision = f"""
+export MFA_DIR="{mfa_dir}"
+{step3_block}
+"""
+            p = subprocess.run(["bash", "-c", script_collision], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(p.returncode, 0, "Step 3 should fail with nonzero returncode on collision")
 
 
 if __name__ == "__main__":

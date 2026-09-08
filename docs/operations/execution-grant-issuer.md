@@ -348,33 +348,40 @@ trap 'if [ -n "${MFA_DIR:-}" ] && [ -d "$MFA_DIR" ]; then shred -u "$MFA_DIR"/* 
    echo
    export OPERATOR_PASSWORD
    python3 -c '
-   import json, os
-   print(json.dumps({
-       "email": "operator-chloe@pantheon.trade",
-       "password": os.environ["OPERATOR_PASSWORD"],
-       "returnSecureToken": True,
-   }))
-   ' | curl -sS -X POST \
-     "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
-     -H "Content-Type: application/json" \
-     --data @- | python3 -c '
-   import json, os, sys
-   dest = sys.argv[1]
-   data = sys.stdin.buffer.read()
-   try:
-       parsed = json.loads(data.decode("utf-8"))
-   except Exception as e:
-       sys.exit(f"Failed to parse Identity Platform response: {e}")
-   if "error" in parsed:
-       sys.exit(f"Identity Platform sign-in failed: {parsed['error'].get('message', 'Unknown error')}")
-   if "mfaPendingCredential" not in parsed:
-       sys.exit("Expected MFA challenge response (mfaPendingCredential), but not present")
-   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-   fd = os.open(dest, flags, 0o600)
-   with open(fd, "wb") as f:
-       f.write(data)
-   ' "$MFA_DIR/signin-step1.json"
+import json, os
+print(json.dumps({
+    "email": "operator-chloe@pantheon.trade",
+    "password": os.environ["OPERATOR_PASSWORD"],
+    "returnSecureToken": True,
+}))
+' | curl -sS -X POST \
+      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
+      -H "Content-Type: application/json" \
+      --data @- | python3 -c '
+import json, os, sys
+dest = sys.argv[1]
+data = sys.stdin.buffer.read()
+try:
+    parsed = json.loads(data.decode("utf-8"))
+except Exception as e:
+    sys.exit(f"Failed to parse Identity Platform response: {e}")
+err = parsed.get("error")
+if err is not None:
+    msg = err.get("message", "Unknown error") if isinstance(err, dict) else str(err)
+    sys.exit(f"Identity Platform sign-in failed: {msg}")
+if "mfaPendingCredential" not in parsed:
+    sys.exit("Expected MFA challenge response (mfaPendingCredential), but not present")
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+fd = os.open(dest, flags, 0o600)
+with open(fd, "wb") as f:
+    f.write(data)
+' "$MFA_DIR/signin-step1.json"
+   status=$?
    unset OPERATOR_PASSWORD
+   if [ "$status" -ne 0 ]; then
+       echo "Identity Platform sign-in failed with exit code $status" >&2
+       exit "$status"
+   fi
    ```
    If MFA is enrolled, `$MFA_DIR/signin-step1.json` (exclusive mode `0600`) contains
    `mfaPendingCredential` and the enrolled `mfaEnrollmentId`(s) under `mfaInfo`.
@@ -392,37 +399,46 @@ trap 'if [ -n "${MFA_DIR:-}" ] && [ -d "$MFA_DIR" ]; then shred -u "$MFA_DIR"/* 
    read -r -s -p "Enter TOTP code: " TOTP_CODE
    echo
    export TOTP_CODE
-   python3 - "$MFA_DIR/signin-step1.json" <<'PYEOF' \
-     | curl -sS -X POST \
-       "https://identitytoolkit.googleapis.com/v2/accounts/mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
-       -H "Content-Type: application/json" \
-       --data @- | python3 -c '
-   import json, os, sys
-   dest = sys.argv[1]
-   data = sys.stdin.buffer.read()
-   try:
-       parsed = json.loads(data.decode("utf-8"))
-   except Exception as e:
-       sys.exit(f"Failed to parse MFA finalize response: {e}")
-   if "error" in parsed:
-       sys.exit(f"MFA finalize failed: {parsed['error'].get('message', 'Unknown error')}")
-   if "idToken" not in parsed:
-       sys.exit("Expected idToken in finalize response, but not present")
-   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-   fd = os.open(dest, flags, 0o600)
-   with open(fd, "wb") as f:
-       f.write(data)
-   ' "$MFA_DIR/signin-step2.json"
-   import json, os, sys
-   step1 = json.load(open(sys.argv[1]))
-   print(json.dumps({
-       "mfaPendingCredential": step1["mfaPendingCredential"],
-       "mfaEnrollmentId": step1["mfaInfo"][0]["mfaEnrollmentId"],
-       "totpVerificationInfo": {"verificationCode": os.environ["TOTP_CODE"]},
-   }))
-   PYEOF
+   python3 -c '
+import json, os, sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    step1 = json.load(f)
+print(json.dumps({
+    "mfaPendingCredential": step1["mfaPendingCredential"],
+    "mfaEnrollmentId": step1["mfaInfo"][0]["mfaEnrollmentId"],
+    "totpVerificationInfo": {"verificationCode": os.environ["TOTP_CODE"]},
+}))
+' "$MFA_DIR/signin-step1.json" | curl -sS -X POST \
+      "https://identitytoolkit.googleapis.com/v2/accounts/mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
+      -H "Content-Type: application/json" \
+      --data @- | python3 -c '
+import json, os, sys
+dest = sys.argv[1]
+data = sys.stdin.buffer.read()
+try:
+    parsed = json.loads(data.decode("utf-8"))
+except Exception as e:
+    sys.exit(f"Failed to parse MFA finalize response: {e}")
+err = parsed.get("error")
+if err is not None:
+    msg = err.get("message", "Unknown error") if isinstance(err, dict) else str(err)
+    sys.exit(f"MFA finalize failed: {msg}")
+if "idToken" not in parsed:
+    sys.exit("Expected idToken in finalize response, but not present")
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+fd = os.open(dest, flags, 0o600)
+with open(fd, "wb") as f:
+    f.write(data)
+' "$MFA_DIR/signin-step2.json"
+   status=$?
    unset TOTP_CODE
-   shred -u "$MFA_DIR/signin-step1.json"
+   if [ -f "$MFA_DIR/signin-step1.json" ]; then
+       shred -u "$MFA_DIR/signin-step1.json"
+   fi
+   if [ "$status" -ne 0 ]; then
+       echo "MFA finalize failed with exit code $status" >&2
+       exit "$status"
+   fi
    ```
    The returned `idToken` in `$MFA_DIR/signin-step2.json` (mode `0600`) contains
    the verified `sign_in_second_factor` claim and `auth_time`. Neither the
@@ -434,24 +450,31 @@ trap 'if [ -n "${MFA_DIR:-}" ] && [ -d "$MFA_DIR" ]; then shred -u "$MFA_DIR"/* 
    can be overwritten and there is no post-hoc chmod window:
    ```bash
    python3 -c '
-   import json, os, sys
-   src, dest = sys.argv[1], sys.argv[2]
-   with open(src, "r", encoding="utf-8") as f:
-       data = json.load(f)
-   token = data.get("idToken")
-   if not token:
-       sys.exit("No idToken found in step 2 output")
-   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-   try:
-       fd = os.open(dest, flags, 0o600)
-   except FileExistsError:
-       sys.exit(f"Security error: destination {dest} already exists or is a symlink")
-   except OSError as exc:
-       sys.exit(f"Security error creating exclusive file {dest}: {exc}")
-   with open(fd, "w", encoding="utf-8") as f:
-       f.write(token.strip())
-   ' "$MFA_DIR/signin-step2.json" "$MFA_DIR/operator-token.txt"
-   shred -u "$MFA_DIR/signin-step2.json"
+import json, os, sys
+src, dest = sys.argv[1], sys.argv[2]
+with open(src, "r", encoding="utf-8") as f:
+    data = json.load(f)
+token = data.get("idToken")
+if not token:
+    sys.exit("No idToken found in step 2 output")
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+try:
+    fd = os.open(dest, flags, 0o600)
+except FileExistsError:
+    sys.exit(f"Security error: destination {dest} already exists or is a symlink")
+except OSError as exc:
+    sys.exit(f"Security error creating exclusive file {dest}: {exc}")
+with open(fd, "w", encoding="utf-8") as f:
+    f.write(token.strip())
+' "$MFA_DIR/signin-step2.json" "$MFA_DIR/operator-token.txt"
+   status=$?
+   if [ -f "$MFA_DIR/signin-step2.json" ]; then
+       shred -u "$MFA_DIR/signin-step2.json"
+   fi
+   if [ "$status" -ne 0 ]; then
+       echo "Token extraction failed with exit code $status" >&2
+       exit "$status"
+   fi
    ```
 
    **Option A: Scoped TRACE Request + Automatic Submit via CLI (Recommended):**
