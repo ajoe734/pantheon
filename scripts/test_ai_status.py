@@ -4061,10 +4061,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "base": "dev",
                 "decision": "approve",
                 "actor": "Claude",
-                "mode": "required_commit_status",
-                "status_id": 101,
-                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-                "status_state": "success",
+                "mode": "pull_request_review",
+                "github_review_id": 101,
                 "review_proof_ref": f"refs/tags/pantheon-review/approve/{'a' * 40}",
                 "intent_nonce": nonce,
             }
@@ -4290,10 +4288,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "base": "dev",
                 "decision": "reopen",
                 "actor": "Claude",
-                "mode": "required_commit_status",
-                "status_id": 102,
-                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-                "status_state": "failure",
+                "mode": "pull_request_review",
+                "github_review_id": 102,
                 "review_proof_ref": f"refs/tags/pantheon-review/reopen/{'a' * 40}",
                 "intent_nonce": kwargs["intent_nonce"],
             }
@@ -4622,10 +4618,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "base": "dev",
             "decision": "approve",
             "actor": "Claude",
-            "mode": "required_commit_status",
-            "status_id": 101,
-            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-            "status_state": "success",
+            "mode": "pull_request_review",
+            "github_review_id": 91,
+            "review_proof_ref": f"refs/tags/pantheon-review/approve/{'b' * 40}",
         }
         with (
             mock.patch.dict(
@@ -4669,6 +4664,69 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["review_binding"], expected)
         self.assertEqual(events[0]["github_review_bridge"], bridge_evidence)
+
+    def test_bridge_github_review_decision_rejects_legacy_mode(self) -> None:
+        task = {"id": "REG-002", "repository_id": "pantheon"}
+        binding = {"pr": 4218, "head_sha": "b" * 40, "head_branch": "task/REG-002", "base": "dev"}
+        mock_bridge = mock.MagicMock()
+        mock_bridge.bridge_review_decision.return_value = mock.MagicMock(
+            as_dict=lambda: {
+                "mode": "required_commit_status",
+                "repository": "ajoe734/pantheon",
+                "pr": 4218,
+                "head_sha": "b" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "decision": "approve",
+                "actor": "Claude",
+                "status_id": 101,
+            }
+        )
+        with (
+            mock.patch.object(ai_status, "load_config", return_value={"repositories": [{"id": "pantheon", "github_slug": "ajoe734/pantheon"}]}),
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            ai_status.bridge_github_review_decision(
+                task,
+                actor="Claude",
+                decision="approve",
+                message="Approved.",
+                binding=binding,
+            )
+        self.assertIn("unsupported mode 'required_commit_status'", str(ctx.exception))
+
+    def test_bridge_github_review_decision_accepts_pull_request_review_mode(self) -> None:
+        task = {"id": "REG-002", "repository_id": "pantheon"}
+        binding = {"pr": 4218, "head_sha": "b" * 40, "head_branch": "task/REG-002", "base": "dev"}
+        mock_bridge = mock.MagicMock()
+        expected_payload = {
+            "mode": "pull_request_review",
+            "repository": "ajoe734/pantheon",
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "approve",
+            "actor": "Claude",
+            "github_review_id": 91,
+            "review_proof_ref": f"refs/tags/pantheon-review/approve/{'b' * 40}",
+        }
+        mock_bridge.bridge_review_decision.return_value = mock.MagicMock(
+            as_dict=lambda: dict(expected_payload)
+        )
+        with (
+            mock.patch.object(ai_status, "load_config", return_value={"repositories": [{"id": "pantheon", "github_slug": "ajoe734/pantheon"}]}),
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+        ):
+            payload = ai_status.bridge_github_review_decision(
+                task,
+                actor="Claude",
+                decision="approve",
+                message="Approved.",
+                binding=binding,
+            )
+        self.assertEqual(payload, expected_payload)
 
     def test_operator_accept_records_distinct_exact_head_evidence_without_owner_finalizer(self) -> None:
         self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
@@ -5258,10 +5316,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "base": "dev",
             "decision": "approve",
             "actor": "Claude",
-            "mode": "required_commit_status",
-            "status_id": 202,
-            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-            "status_state": "success",
+            "mode": "pull_request_review",
+            "github_review_id": 202,
+            "review_proof_ref": f"refs/tags/pantheon-review/approve/{'c' * 40}",
         }
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
@@ -8162,10 +8219,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             **binding,
             "decision": "reopen",
             "actor": "Claude",
-            "mode": "required_commit_status",
-            "status_id": 102,
-            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-            "status_state": "failure",
+            "mode": "pull_request_review",
+            "github_review_id": 92,
+            "review_proof_ref": f"refs/tags/pantheon-review/reopen/{'a' * 40}",
         }
         self.state["tasks"][0]["status"] = "review_approved"
         self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
@@ -8303,10 +8359,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task[ai_status.GITHUB_REVIEW_BRIDGE_KEY] = {
             **task[ai_status.APPROVAL_BINDING_KEY],
             "decision": "approve",
-            "mode": "required_commit_status",
-            "status_id": 101,
-            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-            "status_state": "success",
+            "mode": "pull_request_review",
+            "github_review_id": 101,
+            "review_proof_ref": f"refs/tags/pantheon-review/approve/{'a' * 40}",
         }
         self.state["blockers"] = [
             {
@@ -8351,9 +8406,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             for field in ("pr", "head_sha", "head_branch", "base")}
         task[ai_status.GITHUB_REVIEW_BRIDGE_KEY] = {
             **task[ai_status.APPROVAL_BINDING_KEY], "decision": "approve",
-            "mode": "required_commit_status", "status_id": 101,
-            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-            "status_state": "success"}
+            "mode": "pull_request_review", "github_review_id": 101,
+            "review_proof_ref": f"refs/tags/pantheon-review/approve/{'a' * 40}"}
         events = [{"type": "review_approved", "task_id": "REG-002",
                    "agent": task["reviewer"], "ts": "2026-04-06T14:00:00Z",
                    "review_binding": task[ai_status.APPROVAL_BINDING_KEY]},
@@ -10529,14 +10583,13 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             },
             ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
                 "decision": "approve",
-                "mode": "required_commit_status",
+                "mode": "pull_request_review",
                 "pr": 152,
                 "head_sha": approved_head,
                 "head_branch": "task/REG-002",
                 "base": "dev",
-                "status_id": 99,
-                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-                "status_state": "success",
+                "github_review_id": 99,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{approved_head}",
             },
         }
 
@@ -10620,14 +10673,13 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             },
             ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
                 "decision": "approve",
-                "mode": "required_commit_status",
+                "mode": "pull_request_review",
                 "pr": 152,
                 "head_sha": approved_head,
                 "head_branch": "task/REG-002",
                 "base": "dev",
-                "status_id": 99,
-                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-                "status_state": "success",
+                "github_review_id": 99,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{approved_head}",
             },
         }
 
@@ -13791,10 +13843,9 @@ class PortableStateRenderingTests(unittest.TestCase):
                 **binding,
                 "decision": "approve",
                 "actor": "Codex2",
-                "mode": "required_commit_status",
-                "status_id": 101,
-                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
-                "status_state": "success",
+                "mode": "pull_request_review",
+                "github_review_id": 101,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{binding['head_sha']}",
             },
             "last_update": "2026-07-27T21:21:10Z",
         }
