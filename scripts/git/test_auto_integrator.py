@@ -190,7 +190,9 @@ class FakeRunner(auto_integrator.CommandRunner):
                 return completed(command, stdout=auto_integrator.json.dumps(self.tag_payloads[ref]))
             if ref in self.tag_refs:
                 return completed(command, stdout=auto_integrator.json.dumps({"ref": ref, "object": {"sha": self.git_head, "type": "commit"}}))
-            return completed(command, stdout="{}")
+            if check:
+                raise auto_integrator.CommandFailure(command, 1, "Not Found (HTTP 404)")
+            return completed(command, stderr="Not Found (HTTP 404)", returncode=1)
         if (
             command[:2] == ["gh", "api"]
             and "git/tags/" in command[-1]
@@ -199,7 +201,9 @@ class FakeRunner(auto_integrator.CommandRunner):
             tag_sha = command[-1].rsplit("git/tags/", 1)[-1]
             if tag_sha in self.tag_objects:
                 return completed(command, stdout=auto_integrator.json.dumps(self.tag_objects[tag_sha]))
-            return completed(command, stdout="{}")
+            if check:
+                raise auto_integrator.CommandFailure(command, 1, "Not Found (HTTP 404)")
+            return completed(command, stderr="Not Found (HTTP 404)", returncode=1)
         if command[:2] == ["gh", "api"] and "/git/tags" in joined and "POST" in command:
             self._next_tag_sha += 1
             tag_sha = f"{self._next_tag_sha:040x}"
@@ -301,12 +305,14 @@ class FakeRunner(auto_integrator.CommandRunner):
         return completed(["sh", "-lc", command])
 
 
-def completed(command: Sequence[str], stdout: str = "", returncode: int = 0):
+def completed(
+    command: Sequence[str], stdout: str = "", returncode: int = 0, stderr: str = ""
+):
     class Result:
         def __init__(self) -> None:
             self.args = list(command)
             self.stdout = stdout
-            self.stderr = ""
+            self.stderr = stderr
             self.returncode = returncode
 
     return Result()
@@ -4150,6 +4156,54 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             self.assertEqual(result.action, "blocked")
             self.assertEqual(len(runner.dispatches), 0)
             self.assertIsNotNone(result.unblock_task_id)
+
+
+class MakeIntegratorTagLookupTests(unittest.TestCase):
+    def test_lookup_returns_none_on_404(self) -> None:
+        class NotFoundRunner:
+            def run_json(self, args: Sequence[str], **kwargs: Any) -> Any:
+                raise auto_integrator.github_review_bridge.GitHubReviewBridgeError("Not Found (HTTP 404)")
+
+        lookup = auto_integrator.make_integrator_tag_lookup(NotFoundRunner())
+        result = lookup("ajoe734/pantheon", "refs/tags/pantheon-review/approve/xyz")
+        self.assertIsNone(result)
+
+    def test_lookup_returns_malformed_payload_on_none_response(self) -> None:
+        class NoneRunner:
+            def run_json(self, args: Sequence[str], **kwargs: Any) -> Any:
+                return None
+
+        lookup = auto_integrator.make_integrator_tag_lookup(NoneRunner())
+        result = lookup("ajoe734/pantheon", "refs/tags/pantheon-review/approve/xyz")
+        self.assertIsInstance(result, auto_integrator.canonical_review_gate_ci.MalformedPayload)
+        self.assertIsNone(result.raw)
+
+    def test_lookup_returns_empty_mapping_without_collapsing_to_none(self) -> None:
+        class EmptyDictRunner:
+            def run_json(self, args: Sequence[str], **kwargs: Any) -> Any:
+                return {}
+
+        lookup = auto_integrator.make_integrator_tag_lookup(EmptyDictRunner())
+        result = lookup("ajoe734/pantheon", "refs/tags/pantheon-review/approve/xyz")
+        self.assertEqual(result, {})
+
+    def test_lookup_returns_empty_list_without_collapsing_to_none(self) -> None:
+        class EmptyListRunner:
+            def run_json(self, args: Sequence[str], **kwargs: Any) -> Any:
+                return []
+
+        lookup = auto_integrator.make_integrator_tag_lookup(EmptyListRunner())
+        result = lookup("ajoe734/pantheon", "refs/tags/pantheon-review/approve/xyz")
+        self.assertEqual(result, [])
+
+    def test_lookup_raises_on_non_404_error(self) -> None:
+        class ServerErrorRunner:
+            def run_json(self, args: Sequence[str], **kwargs: Any) -> Any:
+                raise auto_integrator.github_review_bridge.GitHubReviewBridgeError("HTTP 500 Internal Server Error")
+
+        lookup = auto_integrator.make_integrator_tag_lookup(ServerErrorRunner())
+        with self.assertRaisesRegex(auto_integrator.github_review_bridge.GitHubReviewBridgeError, "500 Internal Server Error"):
+            lookup("ajoe734/pantheon", "refs/tags/pantheon-review/approve/xyz")
 
 
 if __name__ == "__main__":

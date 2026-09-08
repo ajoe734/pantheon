@@ -802,7 +802,7 @@ def is_canonical_review_gate_green(rollup: Any) -> bool:
 def make_integrator_tag_lookup(
     json_runner: GitHubJsonCommandRunner,
 ) -> canonical_review_gate_ci.TagLookup:
-    def _lookup(repository: str, ref_or_sha: str) -> Mapping[str, Any] | None:
+    def _lookup(repository: str, ref_or_sha: str) -> Any:
         prefix = "refs/tags/"
         if ref_or_sha.startswith(prefix):
             tag_name = ref_or_sha[len(prefix):]
@@ -816,11 +816,9 @@ def make_integrator_tag_lookup(
             if github_review_bridge._is_not_found(exc):
                 return None
             raise
-        if isinstance(data, Mapping):
-            if not data:
-                return None
-            return data
-        return None
+        if data is None:
+            return canonical_review_gate_ci.MalformedPayload(None)
+        return data
 
     return _lookup
 

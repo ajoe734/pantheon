@@ -443,6 +443,50 @@ class DefaultTagLookupTests(unittest.TestCase):
             with self.assertRaises(gate_ci.GitHubReviewBridgeError):
                 gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
 
+    def test_returns_malformed_payload_on_empty_stdout(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with mock.patch("subprocess.run", return_value=completed):
+            result = gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
+        self.assertIsInstance(result, gate_ci.MalformedPayload)
+        self.assertEqual(result.raw, "")
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/pantheon-review/approve/x",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: result,
+        )
+        self.assertEqual(inspection.status, "malformed")
+        self.assertFalse(inspection.is_absent)
+
+    def test_returns_malformed_payload_on_json_null(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="null", stderr="")
+        with mock.patch("subprocess.run", return_value=completed):
+            result = gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
+        self.assertIsInstance(result, gate_ci.MalformedPayload)
+        self.assertIsNone(result.raw)
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/pantheon-review/approve/x",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: result,
+        )
+        self.assertEqual(inspection.status, "malformed")
+        self.assertFalse(inspection.is_absent)
+
+    def test_returns_list_on_json_array(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        with mock.patch("subprocess.run", return_value=completed):
+            result = gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
+        self.assertEqual(result, [])
+        inspection = gate_ci.inspect_proof_tag(
+            repository=REPOSITORY,
+            ref="refs/tags/pantheon-review/approve/x",
+            expected_head_sha=HEAD,
+            lookup=lambda r, t: result,
+        )
+        self.assertEqual(inspection.status, "malformed")
+        self.assertFalse(inspection.is_absent)
+
 
 class InspectProofTagTests(unittest.TestCase):
     def test_confirmed_absent_when_lookup_returns_none(self) -> None:

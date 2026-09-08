@@ -77,48 +77,53 @@
       "interpreter": ".venv-pantheon/bin/python3"
     },
     "checksums": {
-      "scripts/git/canonical_review_gate_ci.py": "7d975850eae738307bcc93dd019c6193f8f043c701561298b71358135c3d0bde",
-      "scripts/git/github_review_bridge.py": "f9c673c3f016a238926dababa81912901736adeb69ccbda3dfd75910cc9bb60b",
-      "scripts/git/auto_integrator.py": "93111a75a2f53d8df370fa97a8b71c9bfad075f7c4de48445a95cb0e94404e2e",
-      "scripts/git/test_canonical_review_gate_workflow.py": "676d052adbf2d6a09c8f5e66dfdb74fcc60f0c26b3f0b8bed781a1fcfa3cce6f",
-      "scripts/git/test_github_review_bridge.py": "6d95c52dd8539bcb4a15b682f12562de46837bc4bb3ed9bd4103ff54a19b9185",
+      "scripts/git/canonical_review_gate_ci.py": "aca4ed2ad374ce91422f1bfc764c98f46e54bfecccd08967fc300197281f26c9",
+      "scripts/git/github_review_bridge.py": "29c5c43b1132c319b94d072bfba08fec06b1e80e33f91d89d18838f68857b785",
+      "scripts/git/auto_integrator.py": "e94a0841744fa9a9039a6ba9365bb73d133a6dc78a2a44b7061bf76ffe092fcb",
+      "scripts/git/test_canonical_review_gate_workflow.py": "7f3b74f5025c75e49498d957ad5f38b192479da589e160c4a1114083a90614e3",
+      "scripts/git/test_github_review_bridge.py": "229674c403c639202aee142a848180b5de0154cc5ba1b550efeb57df1e5bf2de",
       "scripts/git/test_canonical_review_check.py": "6ee8eae665c29ac150116e44d04f001092367e71774f26e94df34742c23dd47d",
-      "scripts/git/test_auto_integrator.py": "54a7a70f7b2ef050e89449ec57cc463be91747b753b636f086f69de26c130497",
+      "scripts/git/test_auto_integrator.py": "d34d0a224fe5bfacb491bcca35d50828a06519f52d22a6262068a3aeaf9d394b",
       ".github/workflows/canonical-review-gate.yml": "14af70bd8b08e6407aadba85f6bcb492d9d701b043fb0c3902e34f37972b2e49",
       ".github/workflows/canonical-review-attestation-audit.yml": "92013c2f717e1c526e292dd78acce6c713c1c77ee5ad81abd5c6a3b4a1c8993e",
-      "docs/operations/review-publication-recovery.md": "4d1660419f7ae2d0037a745f6c298c2bd98579210649166bc78d22f8993ef22f",
+      "docs/operations/review-publication-recovery.md": "a9a99b24a0b2c7a8a26f91e5a131b5f80bd8e256e239b21fbc7a9e003bdee77a",
       "scripts/ai_status.py": "d637ff92dec48ba74348c5e2530f874a3823c7f19738ebd4c66e2dd6d8fb9f6a",
       "scripts/test_ai_status.py": "fb8fd70ed4ea21ae89ff22f01fa2b6119b8634db7b8fa4d5afe700ce2e0e6208"
     },
     "passed": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest scripts/git/test_canonical_review_gate_workflow.py",
-        "result": "47 passed, 7 subtests passed in 5.68s",
+        "command": "pytest scripts/git/test_canonical_review_gate_workflow.py",
+        "result": "50 passed in 4.89s",
         "exit_status": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest scripts/git/test_github_review_bridge.py",
-        "result": "53 passed, 2 subtests passed in 6.00s",
+        "command": "pytest scripts/git/test_github_review_bridge.py",
+        "result": "56 passed in 5.16s",
         "exit_status": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest scripts/git/test_canonical_review_check.py",
-        "result": "39 passed in 4.99s",
+        "command": "pytest scripts/git/test_canonical_review_check.py",
+        "result": "39 passed in 4.42s",
         "exit_status": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest scripts/git/test_auto_integrator.py",
-        "result": "121 passed, 17 subtests passed in 16.36s",
+        "command": "pytest scripts/git/test_auto_integrator.py",
+        "result": "126 passed in 14.43s",
         "exit_status": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest scripts/git/test_canonical_review_gate_workflow.py scripts/git/test_github_review_bridge.py scripts/git/test_canonical_review_check.py scripts/git/test_auto_integrator.py",
-        "result": "260 passed, 26 subtests passed in 36.10s",
+        "command": "pytest scripts/git/test_canonical_review_gate_workflow.py scripts/git/test_github_review_bridge.py scripts/git/test_canonical_review_check.py scripts/git/test_auto_integrator.py",
+        "result": "271 passed in 30.41s",
         "exit_status": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_ai_status.py",
-        "result": "457 passed, 191 subtests passed in 268.32s",
+        "command": "pytest scripts/test_ai_status.py",
+        "result": "457 passed in 309.00s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest /tmp/test_ops_review_proof_001_codex_probes.py",
+        "result": "11 passed in 2.72s",
         "exit_status": 0
       }
     ],

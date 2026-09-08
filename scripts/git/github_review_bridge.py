@@ -912,6 +912,7 @@ def _submit_review(
     decision: str,
     task_id: str = "",
     intent_nonce: str = "",
+    actor: str = "",
 ) -> dict[str, Any]:
     expected_state = REVIEW_STATES[decision]
     all_reviews = _reviews(runner, repository=repository, pr=binding.pr)
@@ -930,15 +931,25 @@ def _submit_review(
                 rev_intent = parsed["intent"]
                 if rev_intent:
                     timeline_nonces.append(rev_intent)
-                if rev_intent == caller_nonce and str(rev.get("state") or "").upper() == expected_state:
+                if (
+                    rev_intent == caller_nonce
+                    and str(rev.get("state") or "").upper() == expected_state
+                    and str(rev.get("commit_id") or "").strip().lower() == binding.head_sha.lower()
+                    and (not actor or parsed.get("actor") == actor)
+                    and parsed.get("decision") == decision
+                ):
                     matching_review = dict(rev)
 
+        if (
+            timeline_nonces
+            and caller_nonce in timeline_nonces
+            and timeline_nonces[-1] != caller_nonce
+        ):
+            raise GitHubReviewBridgeError(
+                f"review intent {caller_nonce} for task {task_id} at {binding.head_sha[:12]} "
+                f"has been superseded by newer review intent {timeline_nonces[-1]}"
+            )
         if matching_review is not None:
-            if timeline_nonces and timeline_nonces[-1] != caller_nonce:
-                raise GitHubReviewBridgeError(
-                    f"review intent {caller_nonce} for task {task_id} at {binding.head_sha[:12]} "
-                    f"has been superseded by newer review intent {timeline_nonces[-1]}"
-                )
             return matching_review
     else:
         existing = _matching_review(
@@ -1279,29 +1290,7 @@ def _push_review_proof_tag(
                 f"cannot delete opposing tag {opp_ref}: task_id {opp_payload.get('task_id')!r} != {task_id!r}"
             )
 
-        if opp_ref == f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=binding.head_sha)}":
-            if str(opp_payload.get("decision") or "").strip().lower() != OPERATOR_ACCEPT:
-                raise GitHubReviewBridgeError(
-                    f"cannot delete opposing operator tag {opp_ref}: unexpected decision {opp_payload.get('decision')!r}"
-                )
-            _delete_ref(runner, repository=repository, ref=opp_ref)
-            continue
-
-        if decision == OPERATOR_ACCEPT:
-            if str(opp_payload.get("decision") or "").strip().lower() != REOPEN:
-                raise GitHubReviewBridgeError(
-                    f"cannot delete opposing review tag {opp_ref}: unexpected decision {opp_payload.get('decision')!r}"
-                )
-            _delete_ref(runner, repository=repository, ref=opp_ref)
-            continue
-
         opp_nonce = str(opp_payload.get("intent_nonce") or "").strip().lower()
-        if not opp_nonce or not caller_nonce:
-            raise GitHubReviewBridgeError(
-                f"cannot delete opposing tag {opp_ref} without established intent ordering "
-                f"(caller_nonce={caller_nonce!r}, opposing_nonce={opp_nonce!r})"
-            )
-        # Check timeline of reviews on the PR
         reviews = _reviews(runner, repository=repository, pr=binding.pr)
         timeline: list[str] = []
         for rev in reviews:
@@ -1314,6 +1303,56 @@ def _push_review_proof_tag(
                 if parsed["intent"]:
                     timeline.append(parsed["intent"])
 
+        if opp_ref == f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=binding.head_sha)}":
+            if str(opp_payload.get("decision") or "").strip().lower() != OPERATOR_ACCEPT:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing operator tag {opp_ref}: unexpected decision {opp_payload.get('decision')!r}"
+                )
+            if timeline and timeline[-1] != caller_nonce:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing tag {opp_ref}: caller intent {caller_nonce} is superseded by {timeline[-1]} in PR #{binding.pr} reviews timeline"
+                )
+            if opp_nonce and opp_nonce in timeline:
+                opp_idx = max(i for i, n in enumerate(timeline) if n == opp_nonce)
+                caller_idx = max(i for i, n in enumerate(timeline) if n == caller_nonce)
+                if caller_idx <= opp_idx:
+                    raise GitHubReviewBridgeError(
+                        f"cannot delete opposing tag {opp_ref}: caller intent {caller_nonce} is not "
+                        f"strictly newer than opposing intent {opp_nonce} in PR #{binding.pr} reviews timeline"
+                    )
+            _delete_ref(runner, repository=repository, ref=opp_ref)
+            continue
+
+        if decision == OPERATOR_ACCEPT:
+            if str(opp_payload.get("decision") or "").strip().lower() != REOPEN:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref}: unexpected decision {opp_payload.get('decision')!r}"
+                )
+            if not opp_nonce or not caller_nonce:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref} without established intent ordering "
+                    f"(caller_nonce={caller_nonce!r}, opposing_nonce={opp_nonce!r})"
+                )
+            if opp_nonce not in timeline or caller_nonce not in timeline:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref}: intent ordering cannot be proven "
+                    f"from PR #{binding.pr} reviews timeline (timeline={timeline})"
+                )
+            opp_idx = max(i for i, n in enumerate(timeline) if n == opp_nonce)
+            caller_idx = max(i for i, n in enumerate(timeline) if n == caller_nonce)
+            if caller_idx <= opp_idx:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref}: caller operator intent {caller_nonce} is not "
+                    f"strictly newer than opposing intent {opp_nonce} in PR #{binding.pr} reviews timeline"
+                )
+            _delete_ref(runner, repository=repository, ref=opp_ref)
+            continue
+
+        if not opp_nonce or not caller_nonce:
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref} without established intent ordering "
+                f"(caller_nonce={caller_nonce!r}, opposing_nonce={opp_nonce!r})"
+            )
         if opp_nonce not in timeline or caller_nonce not in timeline:
             raise GitHubReviewBridgeError(
                 f"cannot delete opposing tag {opp_ref}: intent ordering cannot be proven "
@@ -1784,6 +1823,7 @@ def bridge_review_decision(
             decision=decision,
             task_id=task_id,
             intent_nonce=intent_nonce,
+            actor=actor,
         )
     except GitHubReviewBridgeError as exc:
         review_error = str(exc)[:600]

@@ -1386,6 +1386,199 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             )
         self.assertIn(reopen_ref, runner.tag_refs)
 
+    def test_dismissed_stale_approval_retry_cannot_replace_reopen(self) -> None:
+        runner = FakeRunner()
+        nonce1 = "1" * 32
+        nonce2 = "2" * 32
+
+        # 1. Initial approval
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Initial approval.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=nonce1,
+        )
+        # Mark the review as DISMISSED on GitHub
+        self.assertEqual(len(runner.reviews), 1)
+        runner.reviews[0]["state"] = "DISMISSED"
+
+        # 2. Reopen supersedes approval
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="reopen",
+            message="Changes required.",
+            binding=binding(),
+            runner=runner,
+            intent_nonce=nonce2,
+        )
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+        # 3. Retrying the dismissed approval with nonce1 fails closed
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "has been superseded by newer review intent",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Stale retry.",
+                binding=binding(),
+                runner=runner,
+                intent_nonce=nonce1,
+            )
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+    def test_stale_operator_retry_cannot_delete_newer_reopen_proof_tag(self) -> None:
+        runner = FakeRunner()
+        nonce_op = "1" * 32
+        nonce_reopen = "2" * 32
+
+        marker_op = bridge._review_marker(
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            decision="operator-accept",
+            head_sha=HEAD,
+            intent_nonce=nonce_op,
+        )
+        marker_reopen = bridge._review_marker(
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="reopen",
+            head_sha=HEAD,
+            intent_nonce=nonce_reopen,
+        )
+        # Mock review timeline having operator review then reopen review
+        runner.reviews = [
+            {
+                "id": 1,
+                "state": "APPROVED",
+                "commit_id": HEAD,
+                "body": f"Operator accepted.\n\n{marker_op}",
+            },
+            {
+                "id": 2,
+                "state": "CHANGES_REQUESTED",
+                "commit_id": HEAD,
+                "body": f"Reopened.\n\n{marker_reopen}",
+            },
+        ]
+        # Reopen tag exists
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+        tag_sha = "8" * 40
+        runner.tag_refs[reopen_ref] = {"ref": reopen_ref, "object": {"sha": tag_sha, "type": "tag"}}
+        runner.tag_objects[tag_sha] = {
+            "sha": tag_sha,
+            "tag": reopen_ref.removeprefix("refs/tags/"),
+            "message": json.dumps({
+                "task_id": "AUDIT-001",
+                "actor": "Codex2",
+                "decision": "reopen",
+                "head_sha": HEAD,
+                "intent_nonce": nonce_reopen,
+            }),
+            "object": {"sha": HEAD, "type": "commit"},
+        }
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "caller operator intent .* is not strictly newer than opposing intent",
+        ):
+            bridge.bridge_operator_acceptance(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Human/Ops",
+                message="Retry operator acceptance.",
+                binding=binding(),
+                runner=runner,
+                intent_nonce=nonce_op,
+            )
+        self.assertIn(reopen_ref, runner.tag_refs)
+
+    def test_replay_does_not_reuse_review_with_wrong_actor_or_mismatched_commit_id(self) -> None:
+        runner = FakeRunner()
+        nonce = "1" * 32
+        req_binding = bridge.ReviewBinding.from_mapping(binding())
+
+        marker_a = bridge._review_marker(
+            task_id="AUDIT-001",
+            actor="ActorA",
+            decision="approve",
+            head_sha=HEAD,
+            intent_nonce=nonce,
+        )
+        rev1 = bridge._submit_review(
+            runner,
+            repository=REPOSITORY,
+            binding=req_binding,
+            body=f"Approval from ActorA.\n\n{marker_a}",
+            marker=marker_a,
+            decision="approve",
+            task_id="AUDIT-001",
+            intent_nonce=nonce,
+            actor="ActorA",
+        )
+        self.assertEqual(len(runner.reviews), 1)
+
+        # 1. Replay with ActorA reuses rev1
+        rev1_replay = bridge._submit_review(
+            runner,
+            repository=REPOSITORY,
+            binding=req_binding,
+            body=f"Approval from ActorA.\n\n{marker_a}",
+            marker=marker_a,
+            decision="approve",
+            task_id="AUDIT-001",
+            intent_nonce=nonce,
+            actor="ActorA",
+        )
+        self.assertEqual(len(runner.reviews), 1)
+        self.assertEqual(rev1_replay["id"], rev1["id"])
+
+        # 2. Call with same nonce but different actor (ActorB) must NOT reuse ActorA's review
+        marker_b = bridge._review_marker(
+            task_id="AUDIT-001",
+            actor="ActorB",
+            decision="approve",
+            head_sha=HEAD,
+            intent_nonce=nonce,
+        )
+        rev2 = bridge._submit_review(
+            runner,
+            repository=REPOSITORY,
+            binding=req_binding,
+            body=f"Approval from ActorB.\n\n{marker_b}",
+            marker=marker_b,
+            decision="approve",
+            task_id="AUDIT-001",
+            intent_nonce=nonce,
+            actor="ActorB",
+        )
+        self.assertEqual(len(runner.reviews), 2)
+
+        # 3. Existing review has mismatched commit_id
+        runner.reviews[1]["commit_id"] = "f" * 40
+        rev3 = bridge._submit_review(
+            runner,
+            repository=REPOSITORY,
+            binding=req_binding,
+            body=f"Approval from ActorB.\n\n{marker_b}",
+            marker=marker_b,
+            decision="approve",
+            task_id="AUDIT-001",
+            intent_nonce=nonce,
+            actor="ActorB",
+        )
+        self.assertEqual(len(runner.reviews), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

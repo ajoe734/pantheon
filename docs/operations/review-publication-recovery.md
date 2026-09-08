@@ -44,7 +44,7 @@ In `scripts/git/github_review_bridge.py`:
 
 ### 3. Integrator Reconciliation and Observable Failure Reporting
 In `scripts/git/auto_integrator.py`:
-- `make_integrator_tag_lookup` re-raises non-404 exceptions so API lookup failures result in `api_error` rather than false absence. Empty mappings `{}` are treated as absent.
+- `make_integrator_tag_lookup` re-raises non-404 exceptions so API lookup failures result in `api_error` rather than false absence. Empty mappings, lists, and null payloads are preserved as malformed payloads rather than collapsing to absent, reserving absence for confirmed HTTP 404.
 - In `integrate_candidate`, the reopen tag is inspected using `canonical_review_gate_ci.inspect_proof_tag`. Re-dispatch is only attempted when `reopen_inspection.is_absent` is true and a valid review or operator acceptance tag exists.
 - `_dispatch_canonical_review_gate_workflow` is invoked with `required=True`. If dispatch fails (e.g. transient API failure), the error is recorded in `detail` without falsely claiming `re-dispatched`, and action remains `"waiting"` without blocking unrelated candidates.
 
@@ -74,23 +74,23 @@ In `.github/workflows/canonical-review-attestation-audit.yml`:
 
 2. **Verify Proof Tags on GitHub**:
    ```bash
-   # Check if approved tag exists and points to the exact head commit
-   git ls-remote origin refs/tags/pantheon-review/approved/<head-sha>
+   # Check if approve tag exists and points to the exact head commit
+   git ls-remote origin refs/tags/pantheon-review/approve/<head-sha>
    # Check if reopen tag exists
    git ls-remote origin refs/tags/pantheon-review/reopen/<head-sha>
    ```
    Peel the tag if annotated:
    ```bash
-   git rev-parse refs/tags/pantheon-review/approved/<head-sha>^{commit}
+   git rev-parse refs/tags/pantheon-review/approve/<head-sha>^{commit}
    ```
 
 3. **Manual Gate Re-dispatch (if needed)**:
    If a valid proof tag exists on GitHub but the workflow check was dropped or failed due to GitHub Actions infrastructure issues:
    ```bash
    gh workflow run canonical-review-gate.yml \
-     -f head_sha=<head-sha> \
-     -f target_branch=dev \
-     -f pr_number=<pr-number>
+     --ref dev \
+     -f head_ref=task/<task-id> \
+     -f head_sha=<head-sha>
    ```
    Alternatively, allowing the next cycle of `auto_integrator.py` will automatically detect the valid proof tag, trigger re-dispatch, and wait for the check to turn green.
 

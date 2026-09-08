@@ -72,7 +72,12 @@ OID_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # value never disagree.
 _DESCRIPTION_LIMIT = 140
 
-TagLookup = Callable[[str, str], Mapping[str, Any] | None]
+@dataclass(frozen=True)
+class MalformedPayload:
+    raw: Any = None
+
+
+TagLookup = Callable[[str, str], Any]
 
 
 def resolve_task_id(head_ref: str, *, prefix: str = DEFAULT_TASK_BRANCH_PREFIX) -> str | None:
@@ -96,24 +101,31 @@ def _run_gh_json(args: list[str]) -> Any:
         )
     text = (proc.stdout or "").strip()
     if not text:
-        return None
+        return MalformedPayload("")
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise GitHubReviewBridgeError(
             f"invalid JSON from gh {' '.join(args)}: {exc}"
         ) from exc
+    if parsed is None:
+        return MalformedPayload(None)
+    return parsed
 
 
-def default_tag_lookup(repository: str, ref_or_sha: str) -> Mapping[str, Any] | None:
+def default_tag_lookup(repository: str, ref_or_sha: str) -> Any:
     prefix = "refs/tags/"
     if ref_or_sha.startswith(prefix):
         tag_name = ref_or_sha[len(prefix):]
         encoded_tag_name = quote(tag_name, safe="")
         result = _run_gh_json(["api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"])
-        return result if isinstance(result, Mapping) else None
+        if result is None:
+            return None
+        return result
     result = _run_gh_json(["api", f"repos/{repository}/git/tags/{ref_or_sha}"])
-    return result if isinstance(result, Mapping) else None
+    if result is None:
+        return None
+    return result
 
 
 @dataclass(frozen=True)
