@@ -20,6 +20,11 @@ test fixture that copies this file must also copy those four.
 OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 added a fifth: execution_authorization,
 imported so evaluate_task_delivery_admission can feed the one normalized
 execution-authorization verdict into TaskIntent (see that module's docstring).
+
+OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001 added multi_repo_registry
+and integration_receipt for multi-repository finalization admission.
+To preserve import isolation for lightweight status and bridge tooling, both
+are imported lazily when evaluating multi-repository finalization gates.
 """
 from __future__ import annotations
 
@@ -30,10 +35,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import execution_authorization
-import multi_repo_registry
 from common import display_name_for, normalize_agent_id, utc_now
 from rewrite import dispatch_admission as rewrite_dispatch_admission
-from rewrite import integration_receipt
 from rewrite import task_machine as rewrite_task_machine
 from task_archive import TaskResolver
 
@@ -207,6 +210,8 @@ def task_has_current_canonical_integration_receipt(
     """
     if not isinstance(task, Mapping):
         return False
+    from rewrite import integration_receipt
+
     return integration_receipt.integration_receipt_consumes_candidate(task, config=config)
 
 
@@ -230,6 +235,8 @@ def is_non_default_repository_finalization_pending(
         return False
 
     config_dict = dict(config) if isinstance(config, Mapping) else {}
+    import multi_repo_registry
+
     try:
         repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, task)
     except (ValueError, TypeError, AttributeError):

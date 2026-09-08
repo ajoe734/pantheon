@@ -6,14 +6,15 @@
   "reviewer": "Codex",
   "target_repo": "pantheon",
   "task_class": "development_tooling",
-  "timestamp": "2026-09-08T06:38:00Z",
+  "timestamp": "2026-09-08T07:10:00Z",
   "reviewer_rejection_addressed": {
-    "rejected_head": "7bc18a52f1b10ef7db81a0a5a4d2f29063b10285",
-    "rejection_reason": "Independent review rejected PR #5671 head 7bc18a52f1b10ef7db81a0a5a4d2f29063b10285. P1: config-aware receipt parity is incomplete: scripts/git/auto_integrator.py:574 still calls integration_receipt_consumes_candidate(raw) without config_dict while dispatch_policy.py:210 passes config.",
+    "rejected_head": "ba302fba7d70c7d62903add118e2ee9bbb9ea7ad",
+    "rejection_reason": "Withdraw approval for PR #5671 head ba302fba7d70c7d62903add118e2ee9bbb9ea7ad after required Smoke acceptance completed with a reproducible regression. P1: .orchestrator/dispatch_policy.py:36 adds eager rewrite.integration_receipt import, but isolated status-runtime fixture copy manifests in scripts/test_status_command_runtime_pin.py:_copy_full_status_tooling and scripts/test_ai_status.py do not include that dependency. ai_status.py now raises ImportError before lease/status-root validation. GitHub run 34195642711 job 101962717043 ran 883 tests and failed 23 assertions/subtests. Independently reproduced at exact head: PYTHONPATH=.orchestrator:. timeout 90 .venv-pantheon/bin/python3 -m pytest -q scripts/test_status_command_runtime_pin.py -k test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free => 1 failed, 8 deselected, exit 1 (missing rewrite.integration_receipt).",
     "fixes": [
-      "Passed validated config_dict into integration_receipt.integration_receipt_consumes_candidate(raw, config=config_dict) at scripts/git/auto_integrator.py:574 so auto-integrator candidate selection respects registry configuration identically to scheduler dispatch admission.",
-      "Added end-to-end candidate/admission parity tests in .orchestrator/test_dispatch_policy.py covering changed registry slug, custom repository with unreceipted and receipted states, and malformed configuration (lists, non-mapping overrides, explicit null values).",
-      "Composed cleanly with merged PR #5670 (OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001) so unreceipted cross-repo deliveries do not starve in-progress repair work while remaining visible to the sole auto-integrator without duplicating writer authority."
+      "Preserved import isolation in .orchestrator/dispatch_policy.py by lazily importing rewrite.integration_receipt and multi_repo_registry when evaluating multi-repository finalization gating, eliminating eager import-time weight for lightweight status and development bridge consumers.",
+      "Carried .orchestrator/rewrite/integration_receipt.py in both hermetic runtime fixtures (scripts/test_status_command_runtime_pin.py:_copy_full_status_tooling and scripts/test_ai_status.py:_copy_status_tooling).",
+      "Verified all 9 tests and 14 subtests in scripts/test_status_command_runtime_pin.py pass, including test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free.",
+      "Verified all status-routing and validation tests in scripts/test_ai_status.py pass, and development bridge CLI tests pass."
     ]
   },
   "scope": {
@@ -27,7 +28,9 @@
       "Deterministic starvation regression coverage for OPS-FE-REVIEW-PROOF-001 and OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001",
       "Deterministic malformed-registry admission controls and consumer-admission parity coverage",
       "Passage of validated registry configuration through real auto-integrator candidate consumer",
-      "End-to-end candidate and admission parity across changed slug, custom repo, and malformed config"
+      "End-to-end candidate and admission parity across changed slug, custom repo, and malformed config",
+      "Import isolation preservation in dispatch_policy.py for integration_receipt and multi_repo_registry",
+      "Inclusion of rewrite/integration_receipt.py in hermetic runtime fixtures (test_status_command_runtime_pin.py and test_ai_status.py)"
     ],
     "not_changing": [
       "No second scheduler, queue, cron, receipt store, status API, or integration path",
@@ -40,13 +43,15 @@
     ]
   },
   "source_artifacts": {
-    ".orchestrator/dispatch_policy.py": "41404b2df9ed4be0b967183d7d8483d438c6a775c0adba04e38089e10c6c48d2",
+    ".orchestrator/dispatch_policy.py": "be3009a71313d60c7d51083fd3de61d2af23ff482246bb3ddf5b5017be1fe7fb",
     ".orchestrator/multi_repo_registry.py": "5245f187a4cafe8a680c5362a7959881045334395592959c8c61f14c45f311cf",
     ".orchestrator/supervisor.py": "ead5147667f354751a89c2c69885fdf232a91077919bdb94ad59df13b6a18ec0",
     ".orchestrator/rewrite/integration_receipt.py": "ac7d2b5ea433f68be8f298f3e8f811e7d8ef73fb73fe0806dd7377be726feefc",
     ".orchestrator/test_dispatch_policy.py": "f9628d7ac2dff5558af2221e1320c83ba41eb584e9613098c4ff499d435cd179",
     ".orchestrator/test_supervisor.py": "2c44d5fc2c9d5e67c0030f61fc277a66b8cc94fbee44fd7d22b20ab0b9122d9d",
-    "scripts/git/auto_integrator.py": "99ab2eaa3056af98fcd95c93a5f8794b106e0c127ebaa9c3453f85db4ffa0b26"
+    "scripts/git/auto_integrator.py": "99ab2eaa3056af98fcd95c93a5f8794b106e0c127ebaa9c3453f85db4ffa0b26",
+    "scripts/test_status_command_runtime_pin.py": "070f8ea0af1d0c0010c191edcfae8e07755d1c39b559dc0f6e06ef2b3f05f761",
+    "scripts/test_ai_status.py": "34e337266d790c9d1c7fd737f58c612e53a245b5681a3c06a2c2e02b1e544f3a"
   },
   "acceptance_verification": {
     "criterion_1": {
@@ -78,21 +83,25 @@
   "verification": {
     "status": "passed",
     "commands": [
-      "PYTHONPATH=.orchestrator:. timeout 60 .venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex_finalize_registry_review.py /tmp/test_codex_finalize_config_parity_7bc18.py",
+      "PYTHONPATH=.orchestrator:. timeout 90 .venv-pantheon/bin/python3 -m pytest -q scripts/test_status_command_runtime_pin.py",
+      "PYTHONPATH=.orchestrator:. timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'test_worktree_status_wrapper_reads_and_writes_only_central_root or test_status_root_validation_rejects_invalid_supervisor_bindings or test_status_root_validation_rejects_symlinked_leaves_and_mirror_children'",
+      "PYTHONPATH=.orchestrator:. timeout 60 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py",
+      "PYTHONPATH=.orchestrator:. timeout 180 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
       "PYTHONPATH=.orchestrator:. timeout 60 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py",
-      "PYTHONPATH=.orchestrator:. timeout 180 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py -k 'SharedPlannerContractTests or test_review_approved_waits_for_exact_integration_receipt or test_dispatch_policy'",
-      "PYTHONPATH=.orchestrator:. timeout 180 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_multi_repo_registry.py .orchestrator/rewrite/test_integration_receipt.py",
-      "PYTHONPATH=.orchestrator:. timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py -k 'candidate or receipt'",
-      ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/dispatch_policy.py .orchestrator/multi_repo_registry.py .orchestrator/rewrite/integration_receipt.py scripts/git/auto_integrator.py",
+      "PYTHONPATH=.orchestrator:. timeout 60 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_multi_repo_registry.py .orchestrator/rewrite/test_integration_receipt.py",
+      "PYTHONPATH=.orchestrator:. timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py -k 'candidate or receipt'",
+      ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/dispatch_policy.py .orchestrator/multi_repo_registry.py .orchestrator/rewrite/integration_receipt.py scripts/git/auto_integrator.py scripts/test_status_command_runtime_pin.py scripts/test_ai_status.py",
       "git diff --check"
     ],
     "results": [
-      "7 passed in reviewer fixtures /tmp/test_codex_finalize_registry_review.py and /tmp/test_codex_finalize_config_parity_7bc18.py",
+      "9 passed, 14 subtests passed in scripts/test_status_command_runtime_pin.py (including bytecode-free verification)",
+      "3 passed, 9 subtests passed in status-root routing and validation tests in scripts/test_ai_status.py",
+      "7 passed in development bridge inbox CLI tests in test_dev_bridge_inbox_cli.py",
+      "299 passed, 61 subtests passed in test_supervisor.py",
       "61 passed in test_dispatch_policy.py",
-      "96 passed, 264 deselected in SharedPlannerContractTests and focused supervisor/dispatch tests",
       "112 passed in test_multi_repo_registry.py and test_integration_receipt.py",
       "44 passed, 89 deselected in focused auto-integrator candidate and receipt tests",
-      "all modified runtime modules compiled cleanly with zero syntax or lint errors",
+      "all modified runtime and test modules compiled cleanly with zero syntax or lint errors",
       "git diff --check reported clean diff with no whitespace errors"
     ]
   },
@@ -104,7 +113,9 @@
       "Confirm normal unmerged Pantheon review_approved tasks remain eligible for owner-finalize dispatch",
       "Confirm unknown registry repositories, malformed registry mapping/value/branch data, and generation drift fail closed without crashing the planner",
       "Confirm consumer and dispatch admission parity without duplicating writer or lock authority",
-      "Confirm no second scheduler, queue, cron, or integration path was introduced"
+      "Confirm no second scheduler, queue, cron, or integration path was introduced",
+      "Confirm test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free and full status-command runtime pin tests pass without ImportError",
+      "Confirm import isolation for integration_receipt and multi_repo_registry in dispatch_policy.py"
     ]
   }
 }
