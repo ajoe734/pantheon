@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
+from .receipt import ResearchExecutionReceipt, resolve_run_provenance
+
 logger = logging.getLogger(__name__)
 
 # Allowlisted stages to preferred backends per MASTER_SD_RESPONSE.md §B3 & SD_AGORA_COMPLETE_PRODUCT.md
@@ -75,6 +77,7 @@ class ResearchStageResult:
     lineage_refs: List[str] = field(default_factory=list)
     partial_effects: Dict[str, Any] = field(default_factory=dict)
     checksums: Dict[str, str] = field(default_factory=dict)
+    receipt: Optional[Any] = None
     error_message: Optional[str] = None
 
 
@@ -163,6 +166,26 @@ class DefaultAllowlistedAdapter:
             }
         ]
 
+        run_id = str(context.get("run_id") or stage.get("run_id") or "")
+        correlation_id = str(
+            context.get("correlation_id")
+            or plan.get("correlation_id")
+            or plan.get("trace_id")
+            or ""
+        )
+        receipt = None
+        if run_id:
+            receipt = ResearchExecutionReceipt(
+                receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
+                run_id=run_id,
+                executor=f"{self.preferred_backend}_executor",
+                mode="simulation",
+                correlation_id=correlation_id,
+                completed_at=_utc_now_iso(),
+                backend_reference=f"{self.preferred_backend}://jobs/{backend_job_id}",
+                artifact_digest=checksum,
+            )
+
         return ResearchStageResult(
             outcome="succeeded",
             provenance=provenance,
@@ -181,7 +204,58 @@ class DefaultAllowlistedAdapter:
             lineage_refs=[lineage_ref],
             partial_effects={"backend_job_id": backend_job_id, "backend": self.preferred_backend},
             checksums={artifact_ref: checksum},
+            receipt=receipt,
         )
+
+
+class AuthenticStageAdapter(DefaultAllowlistedAdapter):
+    """Authentic execution owner adapter producing durable real or simulation execution receipts."""
+
+    def __init__(
+        self,
+        stage_type: str,
+        preferred_backend: str,
+        *,
+        executor: Optional[str] = None,
+        mode: Literal["real", "simulation"] = "real",
+        backend_reference: Optional[str] = None,
+    ) -> None:
+        super().__init__(stage_type, preferred_backend, default_provenance=mode)
+        self.executor = executor or f"{preferred_backend}_executor"
+        self.mode = mode
+        self.backend_reference = backend_reference
+
+    def execute(
+        self,
+        *,
+        stage: Dict[str, Any],
+        plan: Dict[str, Any],
+        context: Dict[str, Any],
+        downstream_key: str,
+    ) -> ResearchStageResult:
+        result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
+        run_id = str(context.get("run_id") or stage.get("run_id") or "")
+        correlation_id = str(
+            context.get("correlation_id")
+            or plan.get("correlation_id")
+            or plan.get("trace_id")
+            or ""
+        )
+        checksum = next(iter(result.checksums.values()), None)
+        receipt = ResearchExecutionReceipt(
+            receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
+            run_id=run_id,
+            executor=self.executor,
+            mode=self.mode,
+            correlation_id=correlation_id,
+            completed_at=_utc_now_iso(),
+            backend_reference=self.backend_reference or f"{self.preferred_backend}://runs/{uuid.uuid4().hex[:6]}",
+            artifact_digest=checksum,
+        )
+        result.receipt = receipt
+        result.provenance = self.mode
+        result.warnings = []
+        return result
 
 
 class AdapterRegistry:
@@ -197,6 +271,26 @@ class AdapterRegistry:
 
     def register(self, stage_type: str, adapter: StageAdapter) -> None:
         self._adapters[stage_type] = adapter
+
+    def register_authentic_adapter(
+        self,
+        stage_type: str,
+        *,
+        preferred_backend: Optional[str] = None,
+        executor: Optional[str] = None,
+        mode: Literal["real", "simulation"] = "real",
+        backend_reference: Optional[str] = None,
+    ) -> AuthenticStageAdapter:
+        backend = preferred_backend or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, "unknown_backend")
+        adapter = AuthenticStageAdapter(
+            stage_type,
+            backend,
+            executor=executor,
+            mode=mode,
+            backend_reference=backend_reference,
+        )
+        self.register(stage_type, adapter)
+        return adapter
 
     def get(self, stage_type: str) -> Optional[StageAdapter]:
         return self._adapters.get(stage_type)
@@ -393,11 +487,23 @@ class ResearchDispatcher:
         )
 
         # 5. Invoke adapter with partial effects capture
+        correlation_id = str(plan.get("correlation_id") or plan.get("trace_id") or "")
+        expected_owner = str(
+            getattr(adapter, "executor", None)
+            or stage.get("routing", {}).get("executor")
+            or f"{ALLOWLISTED_STAGE_BACKENDS.get(stage_type, '')}_executor"
+        )
+        stage_context = {
+            "backend_mode": stage.get("routing", {}).get("backend_mode", "real"),
+            "run_id": run_id,
+            "correlation_id": correlation_id,
+            "executor": expected_owner,
+        }
         try:
             result = adapter.execute(  # type: ignore[union-attr]
                 stage=stage,
                 plan=plan,
-                context={"backend_mode": stage.get("routing", {}).get("backend_mode", "real")},
+                context=stage_context,
                 downstream_key=downstream_key,
             )
         except Exception as exc:
@@ -435,6 +541,13 @@ class ResearchDispatcher:
                 )
             return {"status": "failed", "error": err}
 
+        # Durably record execution receipt emitted by authentic execution owner
+        if getattr(result, "receipt", None) is not None:
+            receipt_obj = result.receipt
+            receipt_dict = receipt_obj.to_dict() if hasattr(receipt_obj, "to_dict") else dict(receipt_obj)
+            if hasattr(self.store, "record_execution_receipt"):
+                self.store.record_execution_receipt(receipt_dict)
+
         # 6. Apply completed results and artifact checksum readback
         complete_now = self.utc_now()
         exec_status = "succeeded" if result.outcome == "succeeded" else result.outcome
@@ -446,12 +559,17 @@ class ResearchDispatcher:
                 "execution_status": exec_status,
                 "backend": {"mode": stage.get("routing", {}).get("backend_mode") or "real"},
                 "provenance": result.provenance,
+                "executor": expected_owner,
+                "correlation_id": correlation_id,
             },
-            expected_correlation_id=plan.get("correlation_id") or plan.get("trace_id"),
+            expected_correlation_id=correlation_id or None,
+            expected_owner=expected_owner,
         )
         run_updates = {
             "execution_status": exec_status,
             "outcome": "pass" if result.outcome == "succeeded" else ("fail" if result.outcome == "failed" else result.outcome),
+            "executor": expected_owner,
+            "correlation_id": correlation_id,
             "backend": {
                 "requested": stage.get("routing", {}).get("preferred_backend") or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
                 "effective": ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
@@ -486,13 +604,25 @@ class ResearchDispatcher:
         # Update stage status in the plan
         current_plan = self.store.get_plan(plan_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
         if current_plan:
-            updated_stages = [
-                {**s, "status": "completed" if result.outcome == "succeeded" else "failed"}
-                if s.get("stage_id") == stage_id
-                else s
-                for s in current_plan.get("stages", [])
-            ]
-            all_completed = all(s.get("status") == "completed" for s in updated_stages)
+            raw_stages = current_plan.get("stages", [])
+            updated_stages = []
+            for s in raw_stages:
+                if isinstance(s, dict):
+                    if s.get("stage_id") == stage_id or s.get("stage_type") == stage_type:
+                        updated_stages.append({**s, "status": "completed" if result.outcome == "succeeded" else "failed"})
+                    else:
+                        updated_stages.append(s)
+                elif isinstance(s, str):
+                    if s == stage_id or s == stage_type:
+                        updated_stages.append({"stage_id": s, "stage_type": s, "status": "completed" if result.outcome == "succeeded" else "failed"})
+                    else:
+                        updated_stages.append(s)
+                else:
+                    updated_stages.append(s)
+            all_completed = all(
+                (s.get("status") == "completed") if isinstance(s, dict) else False
+                for s in updated_stages
+            )
             plan_status = "completed" if all_completed else "running"
             self.store.update_plan(
                 plan_id,
@@ -570,7 +700,14 @@ class ResearchDispatcher:
             if not plan:
                 continue
 
-            stage = next((s for s in plan.get("stages", []) if s.get("stage_id") == stage_id), None)
+            stage = None
+            for s in plan.get("stages", []):
+                if isinstance(s, dict) and s.get("stage_id") == stage_id:
+                    stage = s
+                    break
+                elif isinstance(s, str) and s == stage_id:
+                    stage = {"stage_id": s, "stage_type": s, "status": "ready"}
+                    break
             if not stage:
                 continue
 

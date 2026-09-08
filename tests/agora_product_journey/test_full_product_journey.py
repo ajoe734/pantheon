@@ -171,46 +171,101 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
 
     research_store.update_plan(
         plan_id,
-        {"status": "approved", "approved_at": _utc_now()},
+        {
+            "status": "approved",
+            "approved_at": _utc_now(),
+            "correlation_id": trace_id,
+            "executor": "qlib_executor",
+        },
         tenant_id=tenant_id,
         user_id=user_id,
     )
 
-    artifact_checksum = hashlib.sha256(f"research-artifact-{run_id}".encode("utf-8")).hexdigest()
-    run = research_store.create_run(
-        {
-            "run_id": run_id,
-            "plan_id": plan_id,
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "execution_status": "succeeded",
-            "status": "completed",
-            "backend": {"mode": "real"},
-            "metrics": {"sharpe_ratio": 2.1, "max_drawdown": 0.065, "profit_factor": 1.78},
-            "artifact_refs": [f"pantheon://artifacts/research/{run_id}/model.bin"],
-            "artifact_checksum": artifact_checksum,
-            "completed_at": _utc_now(),
-        }
+    # Natural execution chain:
+    # Do NOT manually create succeeded runs or pre-seed receipts.
+    # Connect authentic execution owner (AuthenticStageAdapter) via ResearchDispatcher.
+    from agora.research.dispatcher import ResearchDispatcher
+    from agora.research.routes.common import _build_run_projection
+
+    stage_item = {
+        "stage_id": "walk_forward_oos",
+        "stage_type": "walk_forward_oos",
+        "status": "ready",
+        "dependencies": [],
+        "routing": {
+            "backend_mode": "real",
+            "fallback_policy": "explicit_fixture_only",
+        },
+    }
+
+    dispatcher = ResearchDispatcher(
+        store=research_store,
+        publish_progress_fn=lambda *args, **kwargs: None,
+        utc_now=_utc_now,
     )
-    assert run["status"] == "completed"
-
-    # Emit authentic ResearchExecutionReceipt (SD §6.2)
-    from agora.research.receipt import ResearchExecutionReceipt, resolve_run_provenance
-
-    receipt_id = f"rcpt-{uuid.uuid4().hex[:10]}"
-    research_receipt = ResearchExecutionReceipt(
-        receipt_id=receipt_id,
-        run_id=run_id,
+    dispatcher.registry.register_authentic_adapter(
+        "walk_forward_oos",
+        preferred_backend="vectorbt",
         executor="qlib_executor",
         mode="real",
-        correlation_id=trace_id,
-        completed_at=_utc_now(),
-        artifact_digest=artifact_checksum,
         backend_reference="qlib://runs/42",
     )
-    research_store.record_execution_receipt(research_receipt.to_dict())
+
+    run_obj = _build_run_projection(
+        plan=plan,
+        stage=stage_item,
+        run_id=run_id,
+        now=_utc_now(),
+        scope=scope,
+    )
+    run_obj["correlation_id"] = trace_id
+    run_obj["executor"] = "qlib_executor"
+    run_obj["metrics"] = [
+        {"name": "sharpe_ratio", "value": 2.1, "category": "performance", "gate_result": "pass"},
+        {"name": "max_drawdown", "value": 0.065, "category": "risk", "gate_result": "pass"},
+        {"name": "profit_factor", "value": 1.78, "category": "performance", "gate_result": "pass"},
+    ]
+    research_store.create_run(run_obj)
+
+    outbox_record = dispatcher.create_outbox_record(
+        plan=plan,
+        stage=stage_item,
+        run_id=run_id,
+        scope=scope,
+        now=_utc_now(),
+    )
+    assert outbox_record["outbox_id"] is not None
+    assert outbox_record["run_id"] == run_id
+
+    # Drain outbox via authentic worker adapter (records receipt into research_store without manual pre-seeding)
+    drained = dispatcher.drain_outbox(
+        worker_id="worker-journey-1",
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
+    assert len(drained) == 1
+    assert drained[0]["status"] == "completed"
+
+    # Read back afresh from research_store to prove restart persistence without pre-seeding
+    run = research_store.get_run(run_id)
+    assert run is not None
+    assert run["execution_status"] == "succeeded"
+    assert run["provenance"] == "real"
+    assert run["executor"] == "qlib_executor"
+    assert run["correlation_id"] == trace_id
+
+    receipt = research_store.get_execution_receipt(run_id)
+    assert receipt is not None
+    assert receipt["run_id"] == run_id
+    assert receipt["executor"] == "qlib_executor"
+    assert receipt["mode"] == "real"
+    assert receipt["correlation_id"] == trace_id
+    assert receipt["spec_version"] == "1.0"
+    receipt_id = receipt["receipt_id"]
+    artifact_checksum = receipt["artifact_digest"]
 
     # Server-side provenance resolution verifies owner, correlation, and terminal state
+    from agora.research.receipt import resolve_run_provenance
     prov, resolved_receipt = resolve_run_provenance(
         research_store,
         run,
@@ -402,11 +457,17 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
     # Stage 7: Strategy Performance Index & Governed Suggestions
     # =========================================================================
     # Telemetry-triggered suggestion produced via canonical consumer (SD §6.4, OP-G02)
-    from agora.performance.consumer import consume_telemetry_outcome
+    from agora.performance.consumer import EvaluationTelemetryConsumer
     from agora.performance.store import PerformanceSuggestionStore
+    from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 
     perf_db = str(temp_workspace / "perf.sqlite3")
     perf_store = PerformanceSuggestionStore(path=perf_db)
+
+    # Attach suggestion producer to canonical consumer without adding any new background scheduler
+    telemetry_incident_consumer = ThresholdTelemetryIncidentConsumer(incident_store=None)
+    eval_consumer = EvaluationTelemetryConsumer(store=perf_store)
+    eval_consumer.attach_to(telemetry_incident_consumer)
 
     telemetry_event = {
         "tenant_id": tenant_id,
@@ -423,11 +484,24 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
         "evidence_refs": [f"pantheon://trade-journey/{strategy_id}/drift-decay"],
         "as_of": _utc_now(),
     }
-    suggestion = consume_telemetry_outcome(telemetry_event, store=perf_store, utc_now=_utc_now())
+    # 1. Event-driven consumption produces suggestion into perf_store
+    suggestion = eval_consumer.consume(telemetry_event, utc_now=_utc_now())
     sugg_id = suggestion.suggestion_id
     assert suggestion.strategy_id == strategy_id
     assert suggestion.correlation_id == trace_id
     assert suggestion.provenance.correlation_id == trace_id
+
+    # 2. Prove event-driven durable persistence and readback
+    persisted = perf_store.get_suggestion(tenant_id, strategy_id, sugg_id)
+    assert persisted is not None
+    assert persisted["suggestion_id"] == sugg_id
+    assert persisted["correlation_id"] == trace_id
+
+    # 3. Prove idempotent replay
+    replayed_sugg = eval_consumer.replay(telemetry_event, utc_now=_utc_now())
+    assert replayed_sugg.suggestion_id == sugg_id
+    listed_suggs = perf_store.list_suggestions(tenant_id, strategy_id)
+    assert len(listed_suggs) == 1
 
     act_receipt, replayed = perf_store.act(
         tenant_id=tenant_id,
@@ -628,7 +702,7 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
     # Single continuous correlation chain verified across every stage
     assert lineage["trace_id"] == trace_id
     assert event["trace_id"] == trace_id
-    assert research_receipt.correlation_id == trace_id
+    assert receipt["correlation_id"] == trace_id
     assert handoff["correlation_id"] == trace_id
     assert suggestion.correlation_id == trace_id
     assert suggestion.provenance.correlation_id == trace_id

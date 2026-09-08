@@ -153,3 +153,79 @@ def consume_telemetry_outcome(
             logger.debug("Custom event publisher error: %s", exc)
 
     return suggestion
+
+
+class EvaluationTelemetryConsumer:
+    """Canonical evaluation and telemetry outcome consumer for Agora performance suggestions.
+
+    Implements SD §6.4:
+      Attach PerformanceSuggestionProducer to the canonical evaluation/telemetry
+      consumer that owns the input event. Do not add a new scheduler. The consumer
+      persists the suggestion in the selected performance store and emits its
+      read-model event. The BFF only queries it.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: Optional[PerformanceSuggestionStore] = None,
+        producer: Optional[PerformanceSuggestionProducer] = None,
+        publish_event_fn: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
+    ) -> None:
+        self.store = store or PerformanceSuggestionStore()
+        self.producer = producer or PerformanceSuggestionProducer(store=self.store)
+        self.publish_event_fn = publish_event_fn
+        self._subscriptions: List[Any] = []
+
+    def consume(
+        self,
+        event: Dict[str, Any],
+        *,
+        utc_now: Optional[str] = None,
+    ) -> AdjustmentSuggestion:
+        """Consume an evaluation, paper runtime, or telemetry outcome event."""
+        return consume_telemetry_outcome(
+            event,
+            store=self.store,
+            producer=self.producer,
+            publish_event_fn=self.publish_event_fn,
+            utc_now=utc_now,
+        )
+
+    def replay(
+        self,
+        event: Dict[str, Any],
+        *,
+        utc_now: Optional[str] = None,
+    ) -> AdjustmentSuggestion:
+        """Idempotently replay a previously processed telemetry outcome event."""
+        return self.consume(event, utc_now=utc_now)
+
+    def attach_to(self, telemetry_consumer: Any) -> None:
+        """Attach this consumer's suggestion production to an existing canonical telemetry consumer."""
+        attach_to_telemetry_consumer(
+            telemetry_consumer,
+            store=self.store,
+            producer=self.producer,
+        )
+        self._subscriptions.append(telemetry_consumer)
+
+
+def attach_to_telemetry_consumer(
+    telemetry_consumer: Any,
+    *,
+    store: Optional[PerformanceSuggestionStore] = None,
+    producer: Optional[PerformanceSuggestionProducer] = None,
+) -> None:
+    """Attach PerformanceSuggestionProducer / consume_telemetry_outcome to a canonical telemetry consumer.
+
+    Enables event-driven production of Agora AdjustmentSuggestions whenever the canonical
+    consumer processes a threshold breach or evaluation outcome.
+    """
+    callback = lambda ev: consume_telemetry_outcome(ev, store=store, producer=producer)
+    if hasattr(telemetry_consumer, "attach_suggestion_consumer"):
+        telemetry_consumer.attach_suggestion_consumer(callback)
+    elif hasattr(telemetry_consumer, "add_subscriber"):
+        telemetry_consumer.add_subscriber(callback)
+    else:
+        setattr(telemetry_consumer, "_suggestion_consumer", callback)
