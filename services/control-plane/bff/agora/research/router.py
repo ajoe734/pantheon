@@ -50,6 +50,7 @@ def create_research_router(
 ) -> APIRouter:
     """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
+    _ACTIVE_RESEARCH_STORE = store
     dispatcher = ResearchDispatcher(
         store=store,
         publish_progress_fn=publish_research_progress,
@@ -68,4 +69,6 @@ def create_research_router(
     router.routes.extend(build_candidates_router(ctx).routes)
     router.routes.extend(build_plans_router(ctx).routes)
     router.routes.extend(build_runs_router(ctx).routes)
+    router.store = store
+    router.dispatcher = dispatcher
     return router

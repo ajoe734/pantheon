@@ -150,13 +150,6 @@ def build_runs_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             "stage_id": dispatch_stage["stage_id"],
         })
 
-        # Drain queued outbox records synchronously via ResearchDispatcher leased consumer
-        ctx.dispatcher.drain_outbox(
-            worker_id=f"dispatcher-router-{scope.user_id}",
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
-
         return {
             "status": "queued",
             "data": {

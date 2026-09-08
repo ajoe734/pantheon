@@ -182,3 +182,138 @@ def test_research_run_list_artifacts_and_sse_are_canonical(
         "research.plan.approved",
         "research.run.queued",
     ]
+
+
+def test_route_get_research_run_provenance_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Route-level tests verifying fail-closed schema/version/terminal/owner/correlation receipt validation."""
+    client = _client(monkeypatch)
+    store = getattr(bff_main, "research_store", None)
+    assert store is not None
+
+    workshop_id = "ws-prov-route-test"
+    created = _create_plan(client, workshop_id, "prov-route-create-1")
+    plan_id = created["data"]["plan_id"]
+    _approve_plan(client, plan_id, created["meta"]["etag"], "prov-route-approve-1")
+    approved = _get_plan(client, plan_id)
+    run_id = _dispatch_plan(client, plan_id, approved["meta"]["etag"], "prov-route-dispatch-1")
+
+    # 1. Non-terminal run (queued) without receipt -> unavailable
+    res1 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res1.status_code == 200
+    assert res1.json()["provenance"] == "unavailable"
+
+    # Update run to succeeded with executor and correlation_id in store
+    correlation_id = "corr-prov-route-1"
+    executor = "qlib_executor"
+    now = "2026-09-08T02:00:00Z"
+    run_record = store.get_run(run_id)
+    assert run_record is not None
+    store.update_run(
+        run_id,
+        {
+            "execution_status": "succeeded",
+            "completed_at": now,
+            "correlation_id": correlation_id,
+            "executor": executor,
+            "provenance": "real",
+        },
+    )
+
+    # 2. Succeeded run claiming real but without receipt -> downgraded to simulation, NEVER real
+    res2 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res2.status_code == 200
+    assert res2.json()["provenance"] != "real"
+    assert res2.json()["provenance"] == "simulation"
+
+    # 3. Wrong owner receipt -> unavailable
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}",
+        "run_id": run_id,
+        "executor": "wrong_executor",
+        "mode": "real",
+        "correlation_id": correlation_id,
+        "completed_at": now,
+        "spec_version": "1.0",
+    })
+    res3 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res3.status_code == 200
+    assert res3.json()["provenance"] == "unavailable"
+
+    # 4. Wrong correlation receipt -> unavailable
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": "wrong-correlation",
+        "completed_at": now,
+        "spec_version": "1.0",
+    })
+    res4 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res4.status_code == 200
+    assert res4.json()["provenance"] == "unavailable"
+
+    # 5. Missing receipt_id -> unavailable
+    store.record_execution_receipt({
+        "receipt_id": "",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": correlation_id,
+        "completed_at": now,
+        "spec_version": "1.0",
+    })
+    res5 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res5.status_code == 200
+    assert res5.json()["provenance"] == "unavailable"
+
+    # 6. Missing completed_at -> unavailable
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": correlation_id,
+        "completed_at": "",
+        "spec_version": "1.0",
+    })
+    res6 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res6.status_code == 200
+    assert res6.json()["provenance"] == "unavailable"
+
+    # 7. Invalid spec_version -> unavailable
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": correlation_id,
+        "completed_at": now,
+        "spec_version": "2.0",
+    })
+    res7 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res7.status_code == 200
+    assert res7.json()["provenance"] == "unavailable"
+
+    # 8. Non-terminal run with matching receipt -> unavailable
+    store.update_run(run_id, {"execution_status": "running"})
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": correlation_id,
+        "completed_at": now,
+        "spec_version": "1.0",
+    })
+    res8 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res8.status_code == 200
+    assert res8.json()["provenance"] == "unavailable"
+
+    # 9. Authentic valid receipt on terminal run -> resolves to 'real'
+    store.update_run(run_id, {"execution_status": "succeeded"})
+    res9 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res9.status_code == 200
+    assert res9.json()["provenance"] == "real"

@@ -93,33 +93,47 @@ def resolve_run_provenance(
         receipt_dict = store.get_execution_receipt(run_id)
 
     if receipt_dict is None:
-        # No authentic server-side receipt found
-        # If the run requested real backend, unreceipted output is downgraded to simulation
-        requested_mode = (run.get("backend") or {}).get("mode") or run.get("requested_mode")
-        if requested_mode == "real":
-            return "simulation", None
-        return run.get("provenance") or "simulation", None
+        # No authentic server-side receipt found.
+        # An unreceipted run can NEVER have "real" provenance.
+        stored_prov = run.get("provenance")
+        if stored_prov == "fixture":
+            return "fixture", None
+        return "simulation", None
 
-    # Validate receipt structure and version
-    spec_version = str(receipt_dict.get("spec_version", "1.0"))
+    # Fail-closed schema and version validation
+    receipt_id = str(receipt_dict.get("receipt_id") or "").strip()
+    if not receipt_id:
+        return "unavailable", None
+
+    completed_at = str(receipt_dict.get("completed_at") or "").strip()
+    if not completed_at:
+        return "unavailable", None
+
+    executor = str(receipt_dict.get("executor") or "").strip()
+    if not executor:
+        return "unavailable", None
+
+    correlation_id = str(receipt_dict.get("correlation_id") or "").strip()
+    if not correlation_id:
+        return "unavailable", None
+
+    spec_version = str(receipt_dict.get("spec_version", "1.0")).strip()
     if spec_version != "1.0":
         return "unavailable", None
 
-    if receipt_dict.get("run_id") != run_id:
+    if str(receipt_dict.get("run_id") or "").strip() != str(run_id).strip():
         return "unavailable", None
 
-    receipt_mode = str(receipt_dict.get("mode") or "").lower()
+    receipt_mode = str(receipt_dict.get("mode") or "").lower().strip()
     if receipt_mode not in VALID_MODES:
         return "unavailable", None
 
     if expected_correlation_id is not None:
-        receipt_corr = str(receipt_dict.get("correlation_id") or "")
-        if receipt_corr != expected_correlation_id:
+        if correlation_id != str(expected_correlation_id).strip():
             return "unavailable", None
 
     if expected_owner is not None:
-        receipt_executor = str(receipt_dict.get("executor") or "")
-        if receipt_executor != expected_owner:
+        if executor != str(expected_owner).strip():
             return "unavailable", None
 
     return receipt_mode, receipt_dict

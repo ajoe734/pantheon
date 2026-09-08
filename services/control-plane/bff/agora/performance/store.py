@@ -166,23 +166,70 @@ class PerformanceSuggestionStore:
             conn.commit()
         return record
 
+    def get_suggestion(
+        self,
+        tenant_id: str,
+        strategy_id: Optional[str] = None,
+        suggestion_id: Optional[str] = None,
+        *,
+        owner_user_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        t_id = tenant_id or kwargs.get("tenant_id", "")
+        s_id = strategy_id or kwargs.get("strategy_id")
+        sugg_id = suggestion_id or kwargs.get("suggestion_id")
+        u_id = owner_user_id or kwargs.get("owner_user_id")
+
+        clauses = ["tenant_id = ?"]
+        params: List[Any] = [t_id]
+        if u_id:
+            clauses.append("owner_user_id = ?")
+            params.append(u_id)
+        if s_id:
+            clauses.append("strategy_id = ?")
+            params.append(s_id)
+        if sugg_id:
+            clauses.append("suggestion_id = ?")
+            params.append(sugg_id)
+
+        query = f"SELECT record_json FROM performance_suggestions WHERE {' AND '.join(clauses)}"
+        with self._connect() as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        return json.loads(row["record_json"]) if row else None
+
     def list_suggestions(
         self,
+        tenant_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
         *,
-        tenant_id: str,
-        owner_user_id: str,
-        strategy_id: str,
-        period: str,
+        owner_user_id: Optional[str] = None,
+        period: Optional[str] = None,
+        **kwargs: Any,
     ) -> List[Dict[str, Any]]:
+        t_id = tenant_id or kwargs.get("tenant_id", "")
+        s_id = strategy_id or kwargs.get("strategy_id")
+        u_id = owner_user_id or kwargs.get("owner_user_id")
+        p = period or kwargs.get("period")
+
+        clauses = ["tenant_id = ?"]
+        params: List[Any] = [t_id]
+        if u_id:
+            clauses.append("owner_user_id = ?")
+            params.append(u_id)
+        if s_id:
+            clauses.append("strategy_id = ?")
+            params.append(s_id)
+        if p:
+            clauses.append("period = ?")
+            params.append(p)
+
+        query = f"""
+            SELECT record_json FROM performance_suggestions
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, suggestion_id ASC
+        """
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT record_json FROM performance_suggestions
-                WHERE tenant_id=? AND owner_user_id=? AND strategy_id=? AND period=?
-                ORDER BY updated_at DESC, suggestion_id ASC
-                """,
-                (tenant_id, owner_user_id, strategy_id, period),
-            ).fetchall()
+            rows = conn.execute(query, tuple(params)).fetchall()
         return [json.loads(row["record_json"]) for row in rows]
 
     def get_receipt(

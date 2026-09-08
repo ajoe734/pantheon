@@ -83,10 +83,57 @@ class ThresholdTelemetryIncidentConsumer:
         incident_store: IncidentStore,
         collector: Optional[PostmortemEvidenceCollector] = None,
         reference_validator: Any | None = None,
+        suggestion_consumer: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> None:
         self._store = incident_store
         self._collector = collector or PostmortemEvidenceCollector()
         self._reference_validator = reference_validator
+        self._suggestion_consumer = suggestion_consumer
+
+    def attach_suggestion_consumer(self, consumer_fn: Callable[[Dict[str, Any]], Any]) -> None:
+        """Attach a downstream suggestion consumer callback (SD §6.4)."""
+        self._suggestion_consumer = consumer_fn
+
+    def _dispatch_suggestion(self, payload: Mapping[str, Any], incident: IncidentCase) -> None:
+        if not self._suggestion_consumer:
+            return
+        event = _telemetry_event(payload) if isinstance(payload, Mapping) else {}
+        threshold = _threshold_snapshot(payload) if isinstance(payload, Mapping) else {}
+        strategy_id = (
+            str(payload.get("strategy_id") or "")
+            or str(event.get("strategy_id") or "")
+            or str(incident.runtime_id or "")
+        )
+        if not strategy_id:
+            return
+        correlation_id = str(
+            payload.get("correlation_id")
+            or payload.get("trace_id")
+            or event.get("correlation_id")
+            or event.get("trace_id")
+            or incident.correlation_id
+            or ""
+        )
+        outcome_type = "drawdown_breach" if "drawdown" in str(threshold.get("metric_name", "")).lower() else "execution_drift"
+        outcome_event = {
+            "tenant_id": incident.tenant_id,
+            "owner_user_id": payload.get("owner_user_id") or payload.get("user_id") or "telemetry-engine",
+            "strategy_id": strategy_id,
+            "outcome_type": outcome_type,
+            "period": "latest",
+            "correlation_id": correlation_id,
+            "title": f"Telemetry Incident: {incident.title}",
+            "rationale": f"Threshold breach on {threshold.get('metric_name')}: observed {threshold.get('observed_value')}, threshold {threshold.get('threshold_value')}",
+            "metrics": {
+                "observed_value": threshold.get("observed_value"),
+                "threshold_value": threshold.get("threshold_value"),
+                "metric_name": threshold.get("metric_name"),
+            },
+            "source_id": threshold.get("policy_source") or "telemetry-incident-consumer",
+            "source_type": "telemetry_engine",
+            "as_of": incident.created_at,
+        }
+        self._suggestion_consumer(outcome_event)
 
     def consume(self, payload: Mapping[str, Any]) -> ThresholdIncidentResult:
         try:
@@ -103,6 +150,11 @@ class ThresholdTelemetryIncidentConsumer:
         existing = self._store.get_incident(incident.incident_id)
         if existing is not None:
             _require_same_incident_identity(existing, incident)
+            if self._suggestion_consumer is not None:
+                try:
+                    self._dispatch_suggestion(payload, existing)
+                except Exception:
+                    pass
             return ThresholdIncidentResult(incident=existing, created=False)
 
         try:
@@ -111,8 +163,19 @@ class ThresholdTelemetryIncidentConsumer:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
                 _require_same_incident_identity(existing, incident)
+                if self._suggestion_consumer is not None:
+                    try:
+                        self._dispatch_suggestion(payload, existing)
+                    except Exception:
+                        pass
                 return ThresholdIncidentResult(incident=existing, created=False)
             raise IncidentConsumerError(str(exc)) from exc
+
+        if self._suggestion_consumer is not None:
+            try:
+                self._dispatch_suggestion(payload, created)
+            except Exception:
+                pass
 
         return ThresholdIncidentResult(incident=created, created=True)
 

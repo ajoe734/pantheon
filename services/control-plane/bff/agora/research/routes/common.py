@@ -1076,17 +1076,35 @@ def _run_projection_with_defaults(run: Dict[str, Any], store: Optional[Any] = No
         projected["failure"] = dict(run["failure"])
     if run.get("data_cutoff"):
         projected["data_cutoff"] = run["data_cutoff"]
-    prov = run.get("provenance")
-    if store and hasattr(store, "get_execution_receipt") and run.get("run_id"):
-        receipt = store.get_execution_receipt(run["run_id"])
-        if receipt:
-            from ..receipt import resolve_run_provenance
-            resolved, _ = resolve_run_provenance(store, run)
-            prov = resolved
-    if prov:
-        projected["provenance"] = prov
-    else:
-        projected["provenance"] = "unavailable"
+    from ..receipt import resolve_run_provenance
+
+    plan = None
+    if store and hasattr(store, "get_plan") and run.get("plan_id"):
+        try:
+            plan = store.get_plan(run["plan_id"])
+        except Exception:
+            plan = None
+
+    expected_correlation = (
+        run.get("correlation_id")
+        or run.get("trace_id")
+        or (plan.get("correlation_id") if plan else None)
+        or (plan.get("trace_id") if plan else None)
+    )
+    expected_owner = (
+        run.get("executor")
+        or run.get("owner")
+        or (plan.get("executor") if plan else None)
+        or (plan.get("owner") if plan else None)
+    )
+
+    resolved_prov, _ = resolve_run_provenance(
+        store,
+        run,
+        expected_correlation_id=expected_correlation,
+        expected_owner=expected_owner,
+    )
+    projected["provenance"] = resolved_prov
     return projected
 
 
