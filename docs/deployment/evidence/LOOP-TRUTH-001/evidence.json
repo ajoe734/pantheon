@@ -1,0 +1,125 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-TRUTH-001",
+  "base_ref": "dev@68ca49f8e8dd7b1cec830f922f8f1301049e669c",
+  "depends_on": "AGORA-CHAIN-001 (done), OVERLAY-RETIRE-001 (done)",
+  "normative_plan": "SD §7.2 Twelve-loop truth projector, SA ADR-05, GAP-MGMT-02; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "implementation": {
+    "files_modified": [
+      "docs/deployment/evidence/LOOP-TRUTH-001/evidence.json",
+      "services/control-plane/bff/management_read_models/__init__.py",
+      "services/control-plane/bff/management_read_models/loop_truth.py",
+      "services/control-plane/bff/management_read_models/test_twelve_loop_projector.py",
+      "services/control-plane/bff/management_read_models/twelve_loop_projector.py",
+      "services/control-plane/bff/migrations/002_create_twelve_loop_truth_schema.sql",
+      "services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+      "services/control-plane/bff/migrations/twelve_loop_truth.py"
+    ],
+    "projector_architecture": "TwelveLoopTruthProjector consumes canonical stimulus, terminal, and next_consumer receipts to persist (release_id, correlation_id, loop_id) observations. Terminal plus next-consumer receipt is strictly required for loop completion; unreceipted or pending next_consumer receipts remain open. Deterministic reduction ensures incremental stream ingestion identically equals rebuild from raw receipts across all arrival orderings. Backfill receipts cannot overwrite newer live truth. Downstream next-consumer failure or rejection fails the loop and prevents false completion. Read operations dynamically recompute freshness against current time. Static loop registry supplies labels and order only and never sets runtime completion.",
+    "receipt_storage": "002_create_twelve_loop_truth_schema.sql establishes loop_truth_projection schema with loop_receipts (immutable source receipt store) and twelve_loop_observations (projected truth table). twelve_loop_truth.py exposes TwelveLoopStore, MemoryTwelveLoopStore, and PostgresTwelveLoopStore supporting synchronous and async PostgreSQL persistence and fresh instance reload.",
+    "invariants_enforced": [
+      "Terminal plus next-consumer receipt is required for completion (absent, pending, or unacknowledged next receipt = open)",
+      "Downstream next-consumer rejection or failure prevents false completion and marks loop failed",
+      "Incremental output strictly equals rebuild output via deterministic reduction (_reduce_key)",
+      "Causation continuity binds stimulus, terminal, and next-consumer receipts; mismatched or cross-chain causation prevents false completion",
+      "Conflicting receipt identities across correlations or keys are rejected; duplicate receipts bind strictly to persisted content",
+      "Reduction is serialized against canonical stored receipts; stale projection writers are fenced in both Memory and PostgreSQL stores",
+      "PostgreSQL store removes production sentinel bypass; configured or unreachable database failures raise explicitly",
+      "Persistence failure on store write is explicit and retryable without polluting in-memory idempotency cache",
+      "Freshness and provenance are derived strictly from accepted evidence receipts; ignored backfill cannot refresh live observation",
+      "Backfill never overwrites a newer live observation and cannot complete a live stimulus",
+      "Static registry supplies labels and order only; registry maturity never sets runtime completion",
+      "All writes are idempotent by receipt identity",
+      "Freshness status is evaluated dynamically on read; transitions to stale when age exceeds max_age_seconds",
+      "Fresh projector instances wired to Postgres reload full truth and rebuild identical observations",
+      "Receipt-set ordering CAS fences stale reduction writers in Memory and PostgreSQL stores, preventing interleaved equal-timestamp writes from overwriting failed observations with stale complete status",
+      "Late stimulus arrival properly invalidates old reduction chain, and store receipt-set containment ensures incremental reduction equals rebuild",
+      "Atomic resolution of persisted receipt identity after insert rejects conflicting key/type and prevents projection of unpersisted duplicate content",
+      "Deterministic candidate chain and provenance selection ensures ignored lower-provenance stimulus (replay/backfill) cannot invalidate or replace live terminal chains, preserving incremental equals rebuild and store durability",
+      "MemoryTwelveLoopStore and PostgresTwelveLoopStore enforce receipt_ids containment CAS before provenance fencing, guaranteeing persistence safety across concurrent and out-of-order writes",
+      "Unmatched higher-provenance next-consumer chains are preserved as deterministic candidates even when unrelated terminal/stimulus candidates exist, preserving newer live evidence across all receipt arrival orderings and clean rebuild from source receipts",
+      "Equal-timestamp stimulus arrivals reduce identically between incremental stream ingestion and full rebuild across all receipt arrival permutations",
+      "Older replay or backfill stimulus arrival cannot steal a live next-consumer receipt or regress observed_at timestamps in Memory or PostgreSQL stores",
+      "Provenance-aware candidate selection strictly matches stimuli, terminals, and next-consumers within the same provenance class, preventing lower-provenance candidates from consuming live next-consumer evidence",
+      "rebuild() fences non-durable cache entries: a startup/rebuild observation write failure is never cached as a completed observation, so a subsequent ingest_receipt() of the same receipts retries persistence instead of short-circuiting on an unpersisted 'complete' idempotency cache hit",
+      "project_twelve_canonical_loops release-wide (no correlation filter) selection across correlations sharing a loop breaks equal-observed_at ties deterministically on (observed_at, correlation_id), independent of dict/receipt insertion or reload iteration order, so live and freshly-reloaded projectors resolve to the same winning correlation"
+    ],
+    "mandatory_deletions": {
+      "static_or_incident_derived_success_substitution": "Static or incident-derived success substitution excised; unobserved or failed loops remain explicit without synthetic fallback."
+    },
+    "rollback_plan": "Disable the new read projection while preserving source receipts (via PANTHEON_ENABLE_RECEIPT_LOOP_TRUTH=false or projector.disable_projection())."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=. /tmp/psd-bff-composition-venv/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -q",
+        "result": "42 passed (adds test_rebuild_persistence_failure_does_not_cache_unpersisted_complete for P1 and test_release_wide_correlation_tie_break_is_order_independent for P2, plus prior equal-time stimuli reduction invariance, older stimulus next-consumer protection, unmatched live next-consumer preservation, late lower-provenance stimulus preservation, equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection coverage in memory store)",
+        "executed": 42,
+        "collected": 42
+      },
+      {
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. /tmp/psd-bff-composition-venv/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -q",
+        "result": "20 passed in 134.59s (postgres equal-time stimuli reduction invariance across arrival orders, postgres older stimulus next-consumer protection for replay/backfill, postgres unmatched live next-consumer preservation across both arrival orderings, postgres late lower-provenance stimulus preservation, postgres receipt-set containment and provenance fencing, real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
+        "executed": 20,
+        "collected": 20
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff /tmp/psd-bff-composition-venv/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "result": "43 passed, 137 warnings",
+        "executed": 43,
+        "collected": 43
+      },
+      {
+        "command": "env PYTHONPATH=. REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon /tmp/psd-bff-composition-venv/bin/python -m pytest /tmp/test_loop_truth_040e715_review.py -q --tb=short",
+        "result": "4 passed in 4.94s (independent review reproduction suite for 040e715 P1 rebuild-persistence-failure durability and P2 release-wide equal-timestamp correlation tie-break, on both Memory and real PostgreSQL stores; previously 4 failed in 4.24s before this fix)",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_2f2ccba_review.py -vv",
+        "result": "6 passed (independent review reproduction suite for 2f2ccba addressing unmatched stimulus greedy next-consumer consumption, older replay/backfill stimulus next-consumer theft, and equal-time stimulus arrival permutations on memory and postgres stores)",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_5094dc7_review.py -q --tb=short",
+        "result": "4 passed (prior independent review reproduction suite for replay and backfill on memory and postgres stores)",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_338c381_review.py -q --tb=line",
+        "result": "4 passed (independent review reproduction suite for orphan live next-consumer arrival order and clean rebuild on memory and postgres stores)",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit code 0 (clean)",
+        "executed": 1,
+        "collected": 1
+      }
+    ]
+  },
+  "acceptance_check": {
+    "canonical_receipt_derived_truth": true,
+    "terminal_plus_next_consumer_required_for_completion": true,
+    "incremental_equals_rebuild": true,
+    "backfill_cannot_replace_newer_live_truth": true,
+    "static_registry_supplies_labels_only_never_completion": true,
+    "explicit_freshness_provenance_degradation": true,
+    "mandatory_deletions_verified": true,
+    "rollback_safe_preserves_source_receipts": true,
+    "postgresql_migration_and_store_durability": true
+  },
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review",
+    "prior_review_pr": "https://github.com/ajoe734/pantheon/pull/5676",
+    "prior_review_head": "040e715106f6e19e52c7047393af88b71ed9b5cd",
+    "prior_review_defects": [
+      "P1: twelve_loop_projector.py rebuild() swallowed observation-write failure and cached an unpersisted 'complete' observation; ingest_receipt() then short-circuited duplicate retry on that non-durable cache entry instead of retrying persistence. Fixed by fencing rebuild() so a store write failure (raised exception or a get_observation() miss after upsert) is never cached in self._observations.",
+      "P2: project_twelve_canonical_loops() selected equal-timestamp correlations for a release by dict/receipt insertion order, so live vs. freshly-reloaded projectors could resolve different winners for identical receipts. Fixed by making the tie-break a deterministic (observed_at, correlation_id) total order over the observation values, independent of iteration order."
+    ]
+  }
+}
