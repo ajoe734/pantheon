@@ -378,8 +378,16 @@ def cmd_request(args: argparse.Namespace) -> None:
     }
     challenge_resp = post_json(f"{issuer_url}/v1/challenge", challenge_payload, token)
     cid = challenge_resp.get("challenge_id")
-    if not cid:
-        raise RuntimeError(f"Issuer did not return a challenge_id: {challenge_resp}")
+    if not cid or not isinstance(cid, str):
+        # Never echo the response body or even its key names: an HTTP-200
+        # response is still attacker/issuer-controlled content and may
+        # reflect the submitted bearer token or other sensitive input back
+        # at the operator's terminal or logs (including as a dict key, not
+        # only a value). Only a fixed, non-reflective diagnostic is raised.
+        raise RuntimeError(
+            f"Issuer response to {issuer_url}/v1/challenge did not contain a valid "
+            f"'challenge_id' string (response had {len(challenge_resp)} field(s))"
+        )
 
     # Step 2: Issue
     issue_payload = {
@@ -390,8 +398,12 @@ def cmd_request(args: argparse.Namespace) -> None:
     }
     issue_resp = post_json(f"{issuer_url}/v1/issue", issue_payload, token)
     grant = issue_resp.get("grant")
-    if not grant:
-        raise RuntimeError(f"Issuer did not return a signed grant: {issue_resp}")
+    if not grant or not isinstance(grant, Mapping):
+        # Same non-reflective diagnostic rule as the challenge response above.
+        raise RuntimeError(
+            f"Issuer response to {issuer_url}/v1/issue did not contain a valid 'grant' "
+            f"object (response had {len(issue_resp)} field(s))"
+        )
 
     # Step 3: Local verification (NEVER skipped)
     try:

@@ -133,22 +133,28 @@ def run_service(config: dict[str, Any]) -> None:
             raise FileNotFoundError(f"TLS private key file not found: {ssl_key_file}")
 
     # Initialize Token Verifier. Verification (signature, issuer, audience,
-    # expiry, and revoked/disabled-account denial when check_revocation is
-    # enabled) is performed by the pinned firebase-admin SDK using
-    # Application Default Credentials on this isolated issuer host -- no
-    # downloadable service-account key file is read or required.
+    # expiry, and revoked/disabled-account denial) is performed by the
+    # pinned firebase-admin SDK using Application Default Credentials on this
+    # isolated issuer host -- no downloadable service-account key file is
+    # read or required. Revocation/disabled-account denial is mandatory:
+    # IdentityPlatformTokenVerifier has no parameter to disable it, and this
+    # entrypoint refuses to start if a configuration file tries to.
+    if "check_revocation" in id_cfg and id_cfg.get("check_revocation") is not True:
+        raise ValueError(
+            "identity_platform.check_revocation cannot be set to a non-true value; "
+            "revoked/disabled-account denial is mandatory and is not configurable"
+        )
+
     project_id = id_cfg.get("project_id", "pantheon-dev-20260902")
     allowed_uids = id_cfg.get("allowed_operator_uids", [])
     max_auth_age = int(id_cfg.get("max_auth_age_seconds", 3600))
     allowed_factors = id_cfg.get("allowed_second_factors")
-    check_revocation = bool(id_cfg.get("check_revocation", True))
 
     verifier = IdentityPlatformTokenVerifier(
         project_id=project_id,
         allowed_operator_uids=allowed_uids,
         max_auth_age_seconds=max_auth_age,
         allowed_second_factors=allowed_factors,
-        check_revocation=check_revocation,
     )
 
     # Initialize Signer

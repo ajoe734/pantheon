@@ -77,6 +77,13 @@ def _render_qualified_taskstore_bridge(status_root: Path) -> str:
     is the command, e.g. ``show``, and the remaining args follow), so the
     isolated status root is baked into the rendered script rather than
     passed positionally.
+
+    This bridge is retained only as the lower-level, direct-function
+    coverage referenced by ``test_end_to_end_qualified_chain``.
+    ``test_end_to_end_authoritative_journal_via_real_main_dispatch`` below
+    instead calls the real ``ai_status.main()`` dispatcher (see
+    ``_render_qualified_main_dispatch_bridge``), which is the qualified
+    surface reviewers actually exercise in production.
     """
     return f"""#!/usr/bin/env python3
 import sys
@@ -101,6 +108,63 @@ elif command == "execution-grant-submit":
 else:
     print(f"Unknown command: {{command}}", file=sys.stderr)
     sys.exit(1)
+"""
+
+
+def _render_qualified_main_dispatch_bridge(status_root: Path) -> str:
+    """Render a bridge that delegates to the real ``ai_status.main()``.
+
+    Unlike ``_render_qualified_taskstore_bridge`` above, this does not hand-
+    pick ``command_show`` / ``command_execution_grant_submit`` or call
+    ``save_state`` itself. It configures the isolated status root binding
+    (the one piece of plumbing ``scripts/ai-status.sh`` normally resolves
+    from ``PANTHEON_STATUS_ROOT``, which this fixture instead pins directly
+    to avoid re-deriving the separately-tested git-pinned command-runtime
+    admission control in ``scripts/git/test_status_command_runtime_pin.py``)
+    and then hands off entirely to ``ai_status.main(sys.argv)`` -- the real,
+    unmodified command table, locking order, authoritative-journal
+    transaction, and per-command load/save behavior used in production.
+    """
+    return f"""#!/usr/bin/env python3
+import os
+import sys
+sys.path.insert(0, {str(ROOT_DIR)!r})
+sys.path.insert(0, {str(ORCHESTRATOR_DIR)!r})
+sys.dont_write_bytecode = True
+
+import scripts.ai_status as ai_status
+
+# PANTHEON_COMMAND_ROOT/_RUNTIME_SHA/_REMOTE/_BASE_REF already did their job
+# locating and launching this exact script; clear them before calling the
+# real main() so its own command-runtime-pin admission check does not
+# re-validate this isolated fixture as a git-pinned command runtime (a
+# separately tested concern, see scripts/git/test_status_command_runtime_pin.py).
+# Auto-worker markers are cleared so main() takes the plain (non-auto-worker)
+# admission path. PANTHEON_STATUS_ROOT is deliberately KEPT and left equal to
+# the isolated status root configured below: some canonical mutation paths
+# (dev_bridge_replay_ledger's ai_status.py, imported bare from scripts/ rather
+# than as scripts.ai_status) lazily re-import a second ai_status module
+# instance, whose own module-level configure_status_root_paths() call must
+# resolve PANTHEON_STATUS_ROOT identically, or it silently rebinds the
+# process-wide task_archive module globals back to the real repository root.
+for _key in (
+    "PANTHEON_COMMAND_ROOT",
+    "PANTHEON_COMMAND_RUNTIME_SHA",
+    "PANTHEON_COMMAND_REMOTE",
+    "PANTHEON_COMMAND_BASE_REF",
+    "ORCH_RUN_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
+    "ORCH_RUNNER_STATUS_PATH",
+    "ORCH_HEARTBEAT_PATH",
+):
+    os.environ.pop(_key, None)
+os.environ["PANTHEON_STATUS_ROOT"] = {str(status_root)!r}
+
+root = ai_status.configure_status_root_paths({str(status_root)!r})
+ai_status.CONFIG_FILE = root / ".orchestrator" / "config.json"
+
+sys.exit(ai_status.main(sys.argv))
 """
 
 
@@ -499,6 +563,193 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
             self.assertEqual(len(submit_entries), 1)
             self.assertEqual(submit_entries[0]["agent"], "Human/Ops")
 
+    def test_end_to_end_authoritative_journal_via_real_main_dispatch(self) -> None:
+        """Qualified full-chain proof against the real authoritative journal.
+
+        Unlike ``test_end_to_end_qualified_chain`` above (retained only as
+        lower-level, direct-function coverage of ``command_show`` /
+        ``command_execution_grant_submit``), this test delegates every
+        canonical-state operation to the real, unmodified
+        ``ai_status.main()`` dispatcher -- the real command table, locking
+        order, and per-command load/save behavior -- running against an
+        isolated *authoritative* TaskStore journal (not plain repo-mode
+        JSON files). It additionally proves persisted-grant replay
+        rejection and changed-canonical-generation-binding rejection
+        through that same qualified dispatcher.
+        """
+        service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=[self.task_id],
+            allowed_environments=["pantheon-dev"],
+        )
+        server = create_issuer_server(service, host="127.0.0.1", port=0)
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        issuer_url = f"http://127.0.0.1:{port}"
+
+        import common as orchestrator_common
+        import scripts.ai_status as ai_status
+
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                td_path = Path(td)
+                status_root = td_path / "status_root"
+                (status_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+                (status_root / "ai-status.json").write_text("{}\n", encoding="utf-8")
+                (status_root / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
+                # A real (if minimal) git repository: validate_status_root_binding
+                # requires PANTHEON_STATUS_ROOT to resolve to a git toplevel.
+                subprocess.run(
+                    ["git", "init", "-q"], cwd=status_root, check=True
+                )
+                # The journal must live outside the canonical status root.
+                journal = td_path / "authoritative-runtime" / "task-state-events.jsonl"
+
+                canonical_task_row = {
+                    **deepcopy(self.spec),
+                    "id": self.task_id,
+                    "generation": 3,
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "summary_zh": self.spec["summary"],
+                    "target_repo": "pantheon",
+                    "execution_resources": ["pantheon-dev"],
+                    "artifacts": ["docs/deployment/evidence/DEV502-TRACE-001/"],
+                    "last_update": "2026-09-08T10:00:00Z",
+                    "dev_bridge": {
+                        "work_class": "hosted",
+                        "operator_authorization_required": True,
+                        "task_spec": deepcopy(self.spec),
+                        "task_spec_hash": self.policy["task_spec_hash"],
+                    },
+                    "execution_authorization": {
+                        "state": "pending_authorization",
+                        "policy": self.policy,
+                    },
+                }
+
+                (status_root / ".orchestrator" / "config.json").write_text(
+                    json.dumps(
+                        {
+                            "execution_authorization": {
+                                "mfa_issuer_public_keys": {
+                                    self.signer_key_id: self.signer.public_key_base64url
+                                }
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                seed_state = ai_status.default_state()
+                seed_state["tasks"] = [canonical_task_row]
+                ai_status.append_state_commit(journal, seed_state, source="test_seed")
+
+                identity_json = json.dumps(
+                    orchestrator_common.canonical_task_state_identity_for_paths(
+                        status_root=status_root, event_log=journal
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+
+                cmd_root = td_path / "command_root"
+                scripts_dir = cmd_root / "scripts"
+                scripts_dir.mkdir(parents=True, exist_ok=True)
+                bridge = scripts_dir / "ai-status.sh"
+                bridge.write_text(
+                    _render_qualified_main_dispatch_bridge(status_root), encoding="utf-8"
+                )
+                bridge.chmod(0o755)
+
+                env_patch = {
+                    "PANTHEON_COMMAND_ROOT": str(cmd_root),
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(journal),
+                    "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON": identity_json,
+                    "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                }
+
+                token = self._mint_token()
+                token_file = td_path / "token.txt"
+                token_file.write_text(token, encoding="utf-8")
+                token_file.chmod(0o600)
+                grant_file = td_path / "grant.json"
+
+                with patch.dict(os.environ, env_patch):
+                    # --- Changed-binding rejection: drift the canonical
+                    # generation to 4 before any grant exists for it, and
+                    # prove the real dispatcher's own
+                    # execution_authorization.verify_execution_grant call
+                    # (inside command_execution_grant_submit) refuses a
+                    # grant minted for the stale generation 3.
+                    drifted_row = deepcopy(canonical_task_row)
+                    drifted_row["generation"] = 4
+                    drifted_state = deepcopy(seed_state)
+                    drifted_state["tasks"] = [drifted_row]
+                    ai_status.append_state_commit(journal, drifted_state, source="test_drift")
+
+                    stale_grant = self.signer.sign_grant(
+                        task_id=self.task_id,
+                        generation=3,
+                        policy=self.policy,
+                        actor_uid=self.operator_uid,
+                        now=self.now,
+                    )
+                    with self.assertRaises(RuntimeError) as cm:
+                        cli.submit_grant_via_cli(self.task_id, stale_grant)
+                    self.assertIn("generation mismatch", str(cm.exception).lower())
+
+                    # Restore the canonical generation to 3 for the real
+                    # request/issue/submit flow below.
+                    ai_status.append_state_commit(journal, seed_state, source="test_restore")
+
+                    # --- Real request/issue/submit through the qualified
+                    # main() dispatcher; proves persistence by reloading
+                    # fresh from the journal afterward.
+                    req_args = MagicMock(
+                        task=self.task_id,
+                        issuer_url=issuer_url,
+                        token_file=str(token_file),
+                        token_stdin=False,
+                        config_file=str(status_root / ".orchestrator" / "config.json"),
+                        grant_out=str(grant_file),
+                        submit=True,
+                    )
+                    cli.cmd_request(req_args)
+
+                    self.assertTrue(grant_file.is_file())
+                    saved_grant = json.loads(grant_file.read_text(encoding="utf-8"))
+                    self.assertEqual(saved_grant["task_id"], self.task_id)
+
+                    reloaded_task = cli.fetch_canonical_task(self.task_id)
+                    self.assertEqual(
+                        reloaded_task["execution_authorization"]["state"], "granted"
+                    )
+                    self.assertEqual(
+                        reloaded_task["execution_authorization"]["grant"]["task_id"],
+                        self.task_id,
+                    )
+                    self.assertEqual(
+                        reloaded_task["execution_authorization"]["grant"]["mfa_actor"],
+                        self.operator_uid,
+                    )
+
+                    # --- Replay rejection: resubmitting the exact same
+                    # already-consumed grant through the real dispatcher
+                    # must be refused by the persisted authoritative ledger.
+                    with self.assertRaises(RuntimeError) as cm:
+                        cli.submit_grant_via_cli(self.task_id, saved_grant)
+                    self.assertIn("already consumed", str(cm.exception).lower())
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_empty_trust_rejects_before_request(self) -> None:
         """Verify that empty public trust aborts request before contacting issuer."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as cf:
@@ -559,6 +810,67 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
         cli.validate_issuer_url("http://127.0.0.1:8090")
         cli.validate_issuer_url("http://localhost:8090")
         cli.validate_issuer_url("https://secure-issuer.pantheon.trade:8443")
+
+    def test_malformed_challenge_response_does_not_leak_reflected_content(self) -> None:
+        """An HTTP-200 malformed response must never be echoed to the operator.
+
+        A misbehaving or malicious issuer can return a syntactically valid
+        HTTP 200 JSON body that omits 'challenge_id' while reflecting the
+        submitted bearer token (or other sensitive input) back in the body,
+        either as a value or as a dict key. The error path must not
+        interpolate that body (or its key names) into the raised message.
+        """
+        req_args = MagicMock(
+            task=self.task_id,
+            issuer_url="http://127.0.0.1:8090",
+            token_file=None,
+            token_stdin=True,
+            config_file=None,
+            grant_out=None,
+            submit=False,
+        )
+        secret_sentinel = "SYNTHETIC_SECRET_SENTINEL_TOKEN"
+        malformed_responses = [
+            {"reflected": secret_sentinel},
+            {secret_sentinel: "unexpected-key-reflection"},
+        ]
+        for malformed in malformed_responses:
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={"k": "v"}), \
+                 patch("scripts.request_execution_grant.load_token", return_value=secret_sentinel), \
+                 patch("scripts.request_execution_grant.post_json", return_value=malformed):
+                with self.assertRaises(RuntimeError) as cm:
+                    cli.cmd_request(req_args)
+                self.assertNotIn(secret_sentinel, str(cm.exception))
+                self.assertIn("challenge_id", str(cm.exception))
+
+    def test_malformed_issue_response_does_not_leak_reflected_content(self) -> None:
+        req_args = MagicMock(
+            task=self.task_id,
+            issuer_url="http://127.0.0.1:8090",
+            token_file=None,
+            token_stdin=True,
+            config_file=None,
+            grant_out=None,
+            submit=False,
+        )
+        secret_sentinel = "SYNTHETIC_SECRET_SENTINEL_TOKEN"
+        malformed_responses = [
+            {"reflected": secret_sentinel},
+            {secret_sentinel: "unexpected-key-reflection"},
+        ]
+        for malformed in malformed_responses:
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={"k": "v"}), \
+                 patch("scripts.request_execution_grant.load_token", return_value=secret_sentinel), \
+                 patch(
+                    "scripts.request_execution_grant.post_json",
+                    side_effect=[{"challenge_id": "fixture-challenge"}, malformed],
+                 ):
+                with self.assertRaises(RuntimeError) as cm:
+                    cli.cmd_request(req_args)
+                self.assertNotIn(secret_sentinel, str(cm.exception))
+                self.assertIn("grant", str(cm.exception))
 
     def test_refetch_canonical_detects_concurrent_change(self) -> None:
         """Verify that a concurrent modification to the canonical task aborts submission."""

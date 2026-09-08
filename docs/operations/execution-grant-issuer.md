@@ -195,15 +195,28 @@ Record the public key in `.orchestrator/config.json`:
 }
 ```
 
-### Step 6.3: Runtime Promotion
-`scripts/promote_supervisor_runtime.py` replaces the running supervisor with
-one exact authoritative-V2 runtime; it has no bare invocation and always
-requires an explicit `--status-root`. Run it from the current-host qualified
-source checkout (`$PANTHEON_DEPLOY_ROOT`), against the live status root
-(`$PANTHEON_STATUS_ROOT`), and supply the public-trust-only verifier map via
-`--authority-env-file` -- a mode-`0600` file containing only public verifier
-material (e.g. the `mfa_issuer_public_keys` trust root above), never a
-private signing key or bearer credential:
+### Step 6.3: Publishing The MFA Issuer's Public Trust Root
+
+The execution-grant-issuer's own trust root
+(`execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json`,
+per Step 6.2 above) is an ordinary tracked repository config change: commit
+it through the normal task/PR flow and let it reach the live host the same
+way any other `.orchestrator/config.json` change does. It is **not**
+promoted through `scripts/promote_supervisor_runtime.py --authority-env-file`.
+
+That flag is a distinct, unrelated authority surface: it sets
+`BRIDGE_SIGNING_PUBLIC_KEYS_JSON`, the trust root the supervisor uses to
+verify signed dev-bridge task packets (`operator_authorized_issuer_source_implementation`-style
+dispatch), not the MFA issuer's own public keys. `promote_supervisor_runtime.py`
+has no bare invocation and always requires an explicit `--status-root`; if a
+runtime promotion also needs to (re)supply the dev-bridge trust root, that
+file is a mode-`0600` `NAME=value` file -- each line's value is a JSON object
+mapping bridge-signing key ids to base64url public keys, not the MFA-issuer
+public-key JSON shown in Step 6.2:
+
+```
+BRIDGE_SIGNING_PUBLIC_KEYS_JSON={"bridge-signing-key-id":"<base64url-public-key>"}
+```
 
 ```bash
 # 1. Discover-only: validate the candidate runtime and current live config
@@ -211,7 +224,7 @@ private signing key or bearer credential:
 python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
   --repo "${PANTHEON_DEPLOY_ROOT:?}" \
   --status-root "${PANTHEON_STATUS_ROOT:?}" \
-  --authority-env-file /etc/pantheon/execution-grant-issuer/public-trust-env.json \
+  --authority-env-file /etc/pantheon/dev-bridge/bridge-signing-public-keys-env \
   --discover-only --json
 
 # 2. Promote: stop the incumbent supervisor and launch the validated
@@ -219,7 +232,7 @@ python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
 python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
   --repo "${PANTHEON_DEPLOY_ROOT:?}" \
   --status-root "${PANTHEON_STATUS_ROOT:?}" \
-  --authority-env-file /etc/pantheon/execution-grant-issuer/public-trust-env.json \
+  --authority-env-file /etc/pantheon/dev-bridge/bridge-signing-public-keys-env \
   --promote
 ```
 
@@ -227,6 +240,9 @@ python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
 deployed checkouts on this host -- never a retired or ad-hoc path. Omitting
 `--promote`/`--discover-only` is not a safe default; run discovery first and
 only pass `--promote` once its output confirms the candidate is eligible.
+`--authority-env-file` is required only when a runtime promotion also needs
+to carry the dev-bridge trust root forward; publishing or rotating the MFA
+issuer's own public keys never requires a supervisor promotion at all.
 
 ### Step 6.4: Rollback & Revocation Procedure
 If an issuer key is compromised or needs to be revoked:
@@ -234,9 +250,8 @@ If an issuer key is compromised or needs to be revoked:
    ```bash
    AI_NAME=Human/Ops scripts/ai-status.sh execution-grant-revoke DEV502-TRACE-001 "Key compromised"
    ```
-2. Remove the key ID from `execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json`.
-3. Promote the updated configuration using the qualified current-host invocation from Step 6.3 (`--repo`, `--status-root`, `--authority-env-file`, then `--discover-only` followed by `--promote`).
-4. Stop the issuer service:
+2. Remove the key ID from `execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json` and ship that change through the normal repository config path (see Step 6.3); this does not involve `promote_supervisor_runtime.py`.
+3. Stop the issuer service:
    ```bash
    sudo systemctl stop pantheon-execution-grant-issuer
    ```
@@ -260,7 +275,7 @@ To ensure background auto-workers cannot forge or mint execution grants:
 
 The `/healthz` and `/livez` endpoints expose service health. The service fails closed and marks itself unready under the following conditions:
 1. **Application Default Credentials Unavailable (`identity_platform_credentials`):**
-   - Readiness actually resolves the issuer host's Application Default Credentials (the same credential `firebase-admin`'s `auth.verify_id_token(check_revoked=True)` needs at request time); if ADC cannot be resolved, `/healthz` returns 503 even though `/livez` still reports the process is up.
+   - Readiness resolves the issuer host's Application Default Credentials and then performs one bounded, real refresh against Google's token endpoint (the same credential `firebase-admin`'s `auth.verify_id_token(check_revoked=True)` needs at request time). Obtaining the cached credential object alone does not prove it is still valid -- a process can hold a stale cached credential -- so refresh failure also fails closed. If ADC cannot be resolved or refreshed, `/healthz` returns 503 even though `/livez` still reports the process is up. Refresh failures are reported by exception type only, never by raw exception text, since transport errors can embed request URLs.
 2. **Signer Key Inaccessibility:**
    - Private key file cannot be loaded, has wrong permissions, or does not contain a valid Ed25519 private key.
 3. **Insecure Network Binding:**
@@ -313,23 +328,33 @@ history, or on stdout:
    path used previously does not exist for this operation). The request body
    is `mfaPendingCredential`, `mfaEnrollmentId`, and
    `totpVerificationInfo.verificationCode` -- not the v1-shaped
-   `totpVerificationCode`:
+   `totpVerificationCode`. None of `mfaPendingCredential`, the enrollment id,
+   or the TOTP code are ever passed as a command-line argument (visible to
+   every user on the host via `ps`); the TOTP code is read interactively
+   with the shell's non-echoing `read -s` and handed to the child process
+   only through its environment (visible only to this UID or root via
+   `/proc/<pid>/environ`), and `mfaPendingCredential`/the enrollment id are
+   read directly out of the private step-1 file inside the same Python
+   process rather than being re-serialized onto a command line:
    ```bash
-   PENDING_CRED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mfaPendingCredential"])' /tmp/signin-step1.json)"
-   ENROLLMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mfaInfo"][0]["mfaEnrollmentId"])' /tmp/signin-step1.json)"
    umask 0177
-   python3 -c '
-   import json, sys
-   print(json.dumps({
-       "mfaPendingCredential": sys.argv[1],
-       "mfaEnrollmentId": sys.argv[2],
-       "totpVerificationInfo": {"verificationCode": sys.argv[3]},
-   }))
-   ' "$PENDING_CRED" "$ENROLLMENT_ID" "REPLACE_WITH_TOTP_CODE" \
+   read -r -s -p "Enter TOTP code: " TOTP_CODE
+   echo
+   export TOTP_CODE
+   python3 - /tmp/signin-step1.json <<'PYEOF' \
      | curl -sS -X POST \
        "https://identitytoolkit.googleapis.com/v2/accounts/mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
        -H "Content-Type: application/json" \
        --data @- -o /tmp/signin-step2.json
+   import json, os, sys
+   step1 = json.load(open(sys.argv[1]))
+   print(json.dumps({
+       "mfaPendingCredential": step1["mfaPendingCredential"],
+       "mfaEnrollmentId": step1["mfaInfo"][0]["mfaEnrollmentId"],
+       "totpVerificationInfo": {"verificationCode": os.environ["TOTP_CODE"]},
+   }))
+   PYEOF
+   unset TOTP_CODE
    shred -u /tmp/signin-step1.json
    ```
    The returned `idToken` in `/tmp/signin-step2.json` (mode `0600`) contains

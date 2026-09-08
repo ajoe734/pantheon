@@ -27,10 +27,16 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jwt
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.x509.oid import NameOID
+from firebase_admin import _token_gen as firebase_token_gen
+from firebase_admin import _user_mgt as firebase_user_mgt
 from firebase_admin import auth as firebase_auth
 
 # Ensure .orchestrator is in sys.path
@@ -70,6 +76,164 @@ def _decode_unverified_claims(token_str: str) -> Mapping[str, Any]:
             "verify_exp": False,
         },
     )
+
+
+def _self_signed_cert_pem(private_key: rsa.RSAPrivateKey) -> str:
+    """Wrap an RSA public key in a self-signed x509 cert, as Google's real
+    ID-token cert endpoint returns (``{kid: x509 PEM cert}``)."""
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "pantheon-test-cert")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime(2020, 1, 1, tzinfo=timezone.utc))
+        .not_valid_after(datetime(2040, 1, 1, tzinfo=timezone.utc))
+        .sign(private_key, hashes.SHA256())
+    )
+    return cert.public_bytes(Encoding.PEM).decode("utf-8")
+
+
+class _FakeTransportResponse:
+    """Mimics ``google.auth.transport.Response`` for the certificate fetch."""
+
+    def __init__(self, data: bytes, status: int = 200) -> None:
+        self.status = status
+        self.data = data
+        self.headers: dict[str, str] = {}
+
+
+class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
+    """Genuine ``firebase_admin.auth`` cryptographic verification tests.
+
+    Only the two real network dependencies -- the ID-token certificate
+    endpoint and the account-lookup (revocation/disabled) REST call -- are
+    mocked, at the exact transport boundary. Signature verification,
+    audience/issuer checking, and revoked/disabled-account denial are all
+    performed by the real, unmodified ``firebase_admin``/``google-auth``
+    code paths, proving genuine SDK wiring beyond the structurally-malformed
+    token case covered by ``test_malformed_token_is_rejected_by_real_sdk``.
+    """
+
+    PROJECT_ID = "pantheon-dev-20260902"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rsa_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.other_rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.cert_kid = "real-sdk-test-kid-1"
+        cls.cert_pem = _self_signed_cert_pem(cls.rsa_private_key)
+
+    def setUp(self) -> None:
+        # The real (unmocked) google-auth JWT decoder checks `iat`/`exp`
+        # against the actual wall clock, not an injectable `now`, so this
+        # class must mint tokens against real current time rather than the
+        # fixed synthetic dates used elsewhere in this file.
+        self.now = datetime.now(timezone.utc)
+        self.operator_uid = "operator-real-sdk-uid"
+        self.verifier = IdentityPlatformTokenVerifier(
+            project_id=self.PROJECT_ID,
+            allowed_operator_uids=[self.operator_uid],
+        )
+
+        # Mock only the certificate-fetch transport, at the exact boundary
+        # where the real SDK issues its outbound HTTP GET. Everything above
+        # this (JWT signature check, aud/iss validation) is real.
+        cert_response = _FakeTransportResponse(
+            json.dumps({self.cert_kid: self.cert_pem}).encode("utf-8")
+        )
+        self._cert_fetch_patch = patch.object(
+            firebase_token_gen.CertificateFetchRequest,
+            "__call__",
+            return_value=cert_response,
+        )
+        self._cert_fetch_patch.start()
+        self.addCleanup(self._cert_fetch_patch.stop)
+
+        # Mock only the account-lookup (revocation/disabled) REST transport,
+        # not the real_check_jwt_revoked_or_disabled logic that consumes it.
+        self._user_record_response: dict[str, Any] = {
+            "localId": self.operator_uid,
+            "disabled": False,
+            "validSince": str(int(self.now.timestamp()) - 1000),
+        }
+        self._get_user_patch = patch.object(
+            firebase_user_mgt.UserManager,
+            "get_user",
+            side_effect=lambda **kwargs: dict(self._user_record_response),
+        )
+        self._get_user_patch.start()
+        self.addCleanup(self._get_user_patch.stop)
+
+    def _mint(self, *, key=None, kid: str | None = None, aud: str | None = None, iss: str | None = None) -> str:
+        current_ts = int(self.now.timestamp())
+        claims: dict[str, Any] = {
+            "iss": iss if iss is not None else f"https://securetoken.google.com/{self.PROJECT_ID}",
+            "aud": aud if aud is not None else self.PROJECT_ID,
+            "sub": self.operator_uid,
+            "email": "operator-real-sdk@pantheon.trade",
+            "email_verified": True,
+            "auth_time": current_ts,
+            "iat": current_ts,
+            "exp": current_ts + 3600,
+            "firebase": {
+                "sign_in_provider": "password",
+                "sign_in_second_factor": "totp",
+            },
+        }
+        effective_key = key if key is not None else self.rsa_private_key
+        effective_kid = kid if kid is not None else self.cert_kid
+        return jwt.encode(claims, effective_key, algorithm="RS256", headers={"kid": effective_kid})
+
+    def test_real_sdk_accepts_correctly_signed_and_verified_token(self) -> None:
+        token = self._mint()
+        operator = self.verifier.verify_token(token, now=self.now)
+        self.assertEqual(operator.uid, self.operator_uid)
+        self.assertEqual(operator.second_factor, "totp")
+
+    def test_real_sdk_rejects_wrong_signature(self) -> None:
+        # Signed by a key that does not match the fetched certificate's
+        # public key -- the real SDK's signature check must fail.
+        token = self._mint(key=self.other_rsa_key)
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("token verification failed", str(cm.exception).lower())
+
+    def test_real_sdk_rejects_unknown_kid(self) -> None:
+        token = self._mint(kid="unknown-kid-not-in-certs")
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("token verification failed", str(cm.exception).lower())
+
+    def test_real_sdk_rejects_wrong_audience(self) -> None:
+        token = self._mint(aud="some-other-project")
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("token verification failed", str(cm.exception).lower())
+
+    def test_real_sdk_rejects_wrong_issuer(self) -> None:
+        token = self._mint(iss="https://securetoken.google.com/some-other-project")
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("token verification failed", str(cm.exception).lower())
+
+    def test_real_sdk_denies_revoked_account_via_genuine_revocation_check(self) -> None:
+        # tokens_valid_after is after this token's issued-at time, so the
+        # real (unmocked) revocation comparison in
+        # Client._check_jwt_revoked_or_disabled denies it.
+        self._user_record_response["validSince"] = str(int(self.now.timestamp()) + 1000)
+        token = self._mint()
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("revoked", str(cm.exception).lower())
+
+    def test_real_sdk_denies_disabled_account_via_genuine_lookup(self) -> None:
+        self._user_record_response["disabled"] = True
+        token = self._mint()
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("disabled", str(cm.exception).lower())
 
 
 class TestExecutionGrantIssuer(unittest.TestCase):
@@ -282,18 +446,32 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             self.verifier.verify_token(token, now=self.now)
         self.assertIn("token verification failed", str(cm.exception).lower())
 
-    def test_check_revocation_flag_is_passed_through_to_sdk(self) -> None:
+    def test_check_revocation_cannot_be_disabled(self) -> None:
+        """Revocation/disabled-account denial has no disable switch at all.
+
+        There is no ``check_revocation`` constructor parameter to pass, and
+        every real verification call is hardcoded to ``check_revoked=True``
+        regardless of how the verifier is constructed. See also
+        ``deploy/execution-grant-issuer/test_run_server.py`` for proof that
+        the real ``run_service`` entrypoint refuses to start if a
+        configuration file tries to disable this.
+        """
+        with self.assertRaises(TypeError):
+            IdentityPlatformTokenVerifier(
+                project_id=self.project_id,
+                allowed_operator_uids=[self.operator_uid],
+                check_revocation=False,
+            )
         v = IdentityPlatformTokenVerifier(
             project_id=self.project_id,
             allowed_operator_uids=[self.operator_uid],
-            check_revocation=False,
         )
         with patch(
             "execution_grant_issuer.token_verifier.firebase_auth.verify_id_token",
             side_effect=self._verify_id_token_stub,
         ) as mock_verify:
             v.verify_token(self._mint_id_token(), now=self.now)
-        self.assertFalse(mock_verify.call_args.kwargs["check_revoked"])
+        self.assertTrue(mock_verify.call_args.kwargs["check_revoked"])
 
     # -------------------------------------------------------------------------
     # 2. Domain Policy Layered On Top Of Verified Claims
@@ -414,9 +592,36 @@ class TestExecutionGrantIssuer(unittest.TestCase):
                 self.verifier.check_identity_platform_readiness()
             self.assertIn("application default credentials", str(cm.exception).lower())
 
-    def test_readiness_succeeds_when_adc_resolves(self) -> None:
-        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=object()):
+    def test_readiness_succeeds_when_adc_resolves_and_refreshes(self) -> None:
+        credential = MagicMock()
+        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=credential):
             self.verifier.check_identity_platform_readiness()  # does not raise
+        credential.refresh.assert_called_once()
+
+    def test_readiness_fails_closed_when_credential_refresh_fails(self) -> None:
+        """A cached-but-stale credential object must not report ready.
+
+        Reproduces the exact reviewer-found gap: obtaining the cached ADC
+        object alone said nothing about whether it can still actually be
+        refreshed against Google's token endpoint.
+        """
+        credential = MagicMock()
+        credential.refresh.side_effect = RuntimeError("synthetic refresh failure")
+        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=credential):
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.check_identity_platform_readiness()
+            self.assertIn("application default credentials", str(cm.exception).lower())
+        credential.refresh.assert_called_once()
+
+    def test_readiness_failure_message_never_echoes_raw_exception_text(self) -> None:
+        """Only the exception type name is reported, never str(exc)."""
+        credential = MagicMock()
+        credential.refresh.side_effect = RuntimeError("SYNTHETIC_SECRET_SENTINEL_IN_URL")
+        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=credential):
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.check_identity_platform_readiness()
+        self.assertNotIn("SYNTHETIC_SECRET_SENTINEL_IN_URL", str(cm.exception))
+        self.assertIn("RuntimeError", str(cm.exception))
 
     def test_service_readiness_returns_503_shape_on_adc_failure(self) -> None:
         with patch.object(
@@ -429,7 +634,9 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.assertIn("unavailable", result["checks"]["identity_platform_credentials"])
 
     def test_service_readiness_ok_when_all_dependencies_healthy(self) -> None:
-        with patch.object(self.verifier._firebase_app.credential, "get_credential", return_value=object()):
+        with patch.object(
+            self.verifier._firebase_app.credential, "get_credential", return_value=MagicMock()
+        ):
             result = self.service.get_readiness()
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["checks"]["identity_platform_credentials"], "ok")

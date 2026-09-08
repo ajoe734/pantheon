@@ -4,9 +4,12 @@ OPS-EXECUTION-MFA-ISSUER-001.
 Verifies fresh genuine Identity Platform user MFA tokens against configured
 project, allowed operator UIDs, second factor claims, and freshness limits.
 
-Signature, issuer, audience, expiry, and (when ``check_revocation`` is
-enabled) revoked/disabled-account denial are delegated entirely to the
-pinned ``firebase-admin`` SDK's ``auth.verify_id_token(check_revoked=True)``,
+Signature, issuer, audience, expiry, and revoked/disabled-account denial are
+delegated entirely to the pinned ``firebase-admin`` SDK's
+``auth.verify_id_token(check_revoked=True)``, always invoked with
+``check_revoked=True`` -- there is no configuration path in this module,
+``run_server.py``, or any caller that can disable the revocation/disabled-
+account check.
 authenticated with Application Default Credentials on the isolated issuer
 host. This module never re-implements token cryptography, never talks to
 Google endpoints directly, and never requires a downloadable service-account
@@ -22,6 +25,7 @@ from typing import Any, Mapping, Sequence
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials as firebase_credentials
+from google.auth.transport import requests as google_auth_transport_requests
 
 from .models import AuthenticationError, VerifiedOperator
 
@@ -50,7 +54,6 @@ class IdentityPlatformTokenVerifier:
         max_auth_age_seconds: int = DEFAULT_MAX_AUTH_AGE_SECONDS,
         allowed_second_factors: Sequence[str] | None = None,
         expected_tenant_id: str | None = None,
-        check_revocation: bool = True,
         clock_skew_seconds: int = CLOCK_SKEW_TOLERANCE_SECONDS,
     ) -> None:
         if not project_id or not project_id.strip():
@@ -70,7 +73,6 @@ class IdentityPlatformTokenVerifier:
         self.expected_tenant_id = (
             expected_tenant_id.strip() if expected_tenant_id and expected_tenant_id.strip() else None
         )
-        self.check_revocation = check_revocation
         self.clock_skew_seconds = clock_skew_seconds
         self._firebase_app = self._get_or_init_firebase_app(self.project_id)
 
@@ -98,15 +100,25 @@ class IdentityPlatformTokenVerifier:
         """Exercise the real ADC dependency the verifier relies on.
 
         Readiness must fail closed if Application Default Credentials are
-        not actually resolvable on this host, since that is precisely the
-        condition under which ``check_revoked=True`` verification (and any
-        live token verification at all) would fail at request time.
+        not actually resolvable *and refreshable* on this host, since that
+        is precisely the condition under which the mandatory
+        ``check_revoked=True`` verification (and any live token
+        verification at all) would fail at request time. Obtaining the
+        cached credential object alone (without ``refresh()``) does not
+        prove it is currently valid -- a credential can be cached from an
+        earlier, now-expired process lifetime -- so this performs one
+        bounded, real refresh call against Google's token endpoint. Any
+        exception is reported by type only, never by ``str(exc)``, since
+        google-auth transport errors can embed the outbound request URL
+        (including query parameters).
         """
         try:
-            self._firebase_app.credential.get_credential()
+            credential = self._firebase_app.credential.get_credential()
+            credential.refresh(google_auth_transport_requests.Request())
         except Exception as exc:
             raise AuthenticationError(
-                f"Application Default Credentials are not available: {exc}"
+                "Application Default Credentials are not available or could "
+                f"not be refreshed ({type(exc).__name__})"
             ) from exc
 
     def verify_token(self, token_str: str, *, now: datetime | None = None) -> VerifiedOperator:
@@ -125,7 +137,7 @@ class IdentityPlatformTokenVerifier:
             claims: Mapping[str, Any] = firebase_auth.verify_id_token(
                 token_str,
                 app=self._firebase_app,
-                check_revoked=self.check_revocation,
+                check_revoked=True,
                 clock_skew_seconds=self.clock_skew_seconds,
             )
         except firebase_auth.RevokedIdTokenError as exc:
