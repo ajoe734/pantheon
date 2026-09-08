@@ -538,6 +538,8 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             except Exception:
                 time.sleep(0.05)
 
+        old_vbt_env = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+        os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
         try:
             worker_store = MemoryResearchPlanStore()
             plan_id = "plan-real-http"
@@ -550,6 +552,26 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
                 "stage_id": "stage-proto-http",
                 "stage_type": "prototype_backtest",
                 "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+                "dataset": [
+                    {
+                        "symbol": "BTC-USD",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "open": 50000.0,
+                        "high": 50500.0,
+                        "low": 49500.0,
+                        "close": 50200.0,
+                        "volume": 120.0,
+                    },
+                    {
+                        "symbol": "BTC-USD",
+                        "timestamp": "2026-01-02T00:00:00Z",
+                        "open": 50200.0,
+                        "high": 51000.0,
+                        "low": 50000.0,
+                        "close": 50800.0,
+                        "volume": 150.0,
+                    },
+                ],
             }
             plan = {
                 "plan_id": plan_id,
@@ -635,6 +657,10 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             self.assertEqual(prov, "real")
             self.assertIsNotNone(resolved_receipt)
         finally:
+            if old_vbt_env is None:
+                os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+            else:
+                os.environ["PANTHEON_VECTORBT_BACKEND"] = old_vbt_env
             server.should_exit = True
             server_thread.join(timeout=3)
 

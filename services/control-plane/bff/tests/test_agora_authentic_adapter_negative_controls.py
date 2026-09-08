@@ -13,7 +13,10 @@ Verifies:
 """
 from __future__ import annotations
 
+import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from typing import Any, Dict
 import pytest
@@ -998,3 +1001,149 @@ def test_authentic_research_backend_client_missing_completed_at_raises() -> None
             context=_context(run_id="run-cm-2", correlation_id="corr-cm-2"),
             downstream_key="key-cm-2",
         )
+
+
+def test_authentic_research_backend_client_fails_on_endpoint_400_missing_dataset() -> None:
+    """AuthenticResearchBackendClient must fail closed when research endpoint returns HTTP 400."""
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+    from fastapi.testclient import TestClient
+
+    module = _load_service_module()
+    app_client = TestClient(module.app)
+
+    def transport(req: urllib.request.Request):
+        payload = json.loads(req.data.decode("utf-8")) if req.data else {}
+        resp = app_client.post(f"/stages/{payload.get('stage_type')}/execute", json=payload)
+        if resp.status_code != 200:
+            raise urllib.error.HTTPError(
+                req.full_url, resp.status_code, resp.text, resp.headers, None  # type: ignore
+            )
+        return resp.content
+
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://test-research-svc",
+        transport=transport,
+    )
+    # Call without dataset in stage/plan/body -> endpoint returns 400 -> client raises RuntimeError
+    with pytest.raises(RuntimeError, match="submission/readback failed"):
+        client.execute(
+            stage={"stage_id": "st-no-ds", "stage_type": "prototype_backtest"},
+            plan={"plan_id": "pl-no-ds", "strategy_id": "strat-1"},
+            context={"run_id": "run-no-ds", "correlation_id": "corr-no-ds"},
+            downstream_key="key-no-ds",
+        )
+
+
+def test_authentic_research_backend_client_fails_on_unimplemented_owner_503() -> None:
+    """AuthenticResearchBackendClient must fail closed when research endpoint returns HTTP 503 for absent owner."""
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+    from fastapi.testclient import TestClient
+
+    module = _load_service_module()
+    app_client = TestClient(module.app)
+
+    def transport(req: urllib.request.Request):
+        payload = json.loads(req.data.decode("utf-8")) if req.data else {}
+        resp = app_client.post(f"/stages/{payload.get('stage_type')}/execute", json=payload)
+        if resp.status_code != 200:
+            raise urllib.error.HTTPError(
+                req.full_url, resp.status_code, resp.text, resp.headers, None  # type: ignore
+            )
+        return resp.content
+
+    client = AuthenticResearchBackendClient(
+        stage_type="alpha_training",
+        preferred_backend="qlib",
+        base_url="http://test-research-svc",
+        transport=transport,
+    )
+    with pytest.raises(RuntimeError, match="submission/readback failed"):
+        client.execute(
+            stage={"stage_id": "st-alpha", "stage_type": "alpha_training", "dataset": {"dummy": True}},
+            plan={"plan_id": "pl-alpha", "strategy_id": "strat-alpha"},
+            context={"run_id": "run-alpha", "correlation_id": "corr-alpha"},
+            downstream_key="key-alpha",
+        )
+
+
+def test_authentic_research_backend_client_real_owner_integration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AuthenticResearchBackendClient wired to endpoint in real mode receives genuine real receipt."""
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+    from services.research.vectorbt.adapter.vectorbt_adapter import BacktestRunResult
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    real_run_result = BacktestRunResult(
+        backend="vectorbt_portfolio",
+        run_id="vbt-real-integration",
+        per_instrument_metrics={
+            "AAA": {"total_return": 0.20, "sharpe_ratio": 2.1, "max_drawdown": 0.05, "trade_count": 10, "num_bars": 35, "final_portfolio_value": 120000.0},
+            "BBB": {"total_return": 0.15, "sharpe_ratio": 1.8, "max_drawdown": 0.04, "trade_count": 8, "num_bars": 35, "final_portfolio_value": 115000.0},
+        },
+        aggregate_metrics={
+            "num_instruments": 2,
+            "mean_total_return": 0.175,
+            "mean_sharpe_ratio": 1.95,
+            "mean_max_drawdown": 0.045,
+            "total_trades": 18,
+        },
+        notes=("genuine real integration",),
+    )
+    monkeypatch.setattr(
+        "services.research.vectorbt.adapter.vectorbt_adapter.VectorbtBackend.run",
+        lambda self, prepared, config: real_run_result,
+    )
+
+    module = _load_service_module()
+    app_client = TestClient(module.app)
+
+    def transport(req: urllib.request.Request):
+        payload = json.loads(req.data.decode("utf-8")) if req.data else {}
+        resp = app_client.post(f"/stages/{payload.get('stage_type')}/execute", json=payload)
+        if resp.status_code != 200:
+            raise urllib.error.HTTPError(
+                req.full_url, resp.status_code, resp.text, resp.headers, None  # type: ignore
+            )
+        return resp.content
+
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://test-research-svc",
+        transport=transport,
+    )
+    adapter = AuthenticStageAdapter("prototype_backtest", "vectorbt", execution_owner=client, mode="real")
+
+    from datetime import date, timedelta
+    start = date(2026, 1, 1)
+    records = []
+    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
+        for i in range(35):
+            d = (start + timedelta(days=i)).isoformat()
+            p = base + i * 0.5
+            records.append({"instrument": inst, "date": d, "open": p, "high": p + 1.0, "low": p - 0.5, "close": p + 0.2, "volume": 1000.0})
+
+    dataset = {
+        "dataset_id": "dataset:strat-integ",
+        "strategy_id": "strat-integ",
+        "source_dataset_refs": ["dataset:seed:strat-integ"],
+        "data_frequency": "daily",
+        "records": records,
+    }
+
+    result = adapter.execute(
+        stage={"stage_id": "st-integ", "stage_type": "prototype_backtest", "dataset": dataset},
+        plan={"plan_id": "pl-integ", "strategy_id": "strat-integ"},
+        context={"run_id": "run-integ-real", "correlation_id": "corr-integ-real"},
+        downstream_key="key-integ-real",
+    )
+
+    assert result.outcome == "succeeded"
+    assert result.provenance == "real"
+    assert result.receipt is not None
+    assert result.receipt.mode == "real"
+    assert result.receipt.run_id == "run-integ-real"
+    for m in result.metrics:
+        assert m.get("provenance") == "real"

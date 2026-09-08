@@ -3,7 +3,7 @@
   "task_id": "AGORA-CHAIN-001",
   "base_ref": "dev@c99204a9a93fa87015dfb8ebe0839478a0482c08",
   "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done), OVERLAY-RETIRE-001 (done)",
-  "normative_plan": "SD §6 Agora design, §12.4, GAP-AGORA-01, GAP-AGORA-02, GAP-AGORA-03, GAP-AGORA-05, GAP-AGORA-06; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "normative_plan": "SD \u00a76 Agora design, \u00a712.4, GAP-AGORA-01, GAP-AGORA-02, GAP-AGORA-03, GAP-AGORA-05, GAP-AGORA-06; pkt-pantheon-structural-closure-functional-v2-20260903",
   "implementation": {
     "files_modified": [
       "docker-compose.control.yml",
@@ -50,12 +50,12 @@
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
     "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
-    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in 'real' mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. Research orchestrator HTTP service (/stages/{stage_type}/execute) executes actual allowlisted engines (vectorbt, statsmodels, quantlib), derives genuine non-synthetic metrics, durably persists artifacts in research store, enforces durable idempotency caching, and fails closed with 400 on missing required input and 503 when the execution owner is unavailable. AgoraInteractionWorker launcher (scripts/run_agora_interaction_worker.py) and docker-compose.yml wire AGORA_RESEARCH_STORE_BACKEND/DSN/SCHEMA, AGORA_RESEARCH_BACKEND_URL, depends_on research-orchestrator-svc (healthy), build_authentic_adapter_registry(), and fail fast on unconstructable stores or missing backend URLs.",
+    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in \"real\" mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. Research orchestrator HTTP service (/stages/{stage_type}/execute) strictly rejects non-allowlisted stage types (400), enforces presence of governed datasets/inputs without synthetic fabrication (400 on missing input), dispatches only to configured execution owners failing closed (503) for unimplemented or unavailable backends, and strictly preserves simulation provenance (provenance=\"simulation\", receipt.mode=\"simulation\") whenever running stub engines rather than relabeling them as real.",
     "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer.",
     "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Wired CanonicalPerformanceEventTransport with acknowledged delivery: unacknowledged events when no subscribers are active fail closed (RuntimeError) and surface HTTP 503 retryable; outage failures propagate without marking published and successfully recover on replay; retry-safe durable identity prevents duplicate events. In incidents service, suggestions are durably stored in isolated incident-data volume (/data/incidents/agora_performance.sqlite3) and queried by BFF over HTTP (PANTHEON_INCIDENTS_API_URL), eliminating shared/injected SQLite across containers.",
     "mandatory_deletions": {
       "client_supplied_real_provenance_flags": "Deleted routing.get('backend_mode', 'real') default in _build_run_projection; initial projection defaults to unavailable until authentic ResearchExecutionReceipt is recorded and validated.",
-      "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; verified fail-closed lease, retry, DLQ, and crash recovery mechanics without fake synchronous fallback.",
+      "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; removed generic synchronous fallback and hard-coded 0.88/0.92 metric generation for arbitrary stage types in research orchestrator; verified fail-closed lease, retry, DLQ, and crash recovery mechanics without fake synchronous fallback.",
       "manual_only_suggestion_production": "Replaced manual suggestion injection with EvaluationTelemetryConsumer attached to canonical ThresholdTelemetryIncidentConsumer."
     },
     "rollback_plan": "Disable new consumers and deploy the prior exact paper-safe release without deleting canonical receipts."
@@ -63,28 +63,46 @@
   "verification": {
     "commands": [
       {
-        "command": "python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 11.47s",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest /tmp/test_agora_chain_001_review_provenance.py -v",
+        "result": "5 passed, 1 warning in 4.91s",
+        "executed": 5,
+        "collected": 5
+      },
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/research/tests/ -q",
+        "result": "24 passed, 1 warning in 8.98s",
+        "executed": 24,
+        "collected": 24
+      },
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
+        "result": "33 passed in 11.02s",
         "executed": 33,
         "collected": 33
       },
       {
-        "command": "python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/agora/performance/ services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_research_store_backend.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py -q",
-        "result": "102 passed, 2 skipped in 55.69s",
-        "executed": 102,
-        "collected": 104
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -q",
+        "result": "38 passed, 1 warning in 5.92s",
+        "executed": 38,
+        "collected": 38
       },
       {
-        "command": "python3 -m pytest scripts/test_run_agora_interaction_worker.py services/incidents/test_main_routes.py services/incidents/test_agora_performance_routes.py -q",
-        "result": "72 passed in 34.01s",
-        "executed": 72,
-        "collected": 72
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest scripts/test_run_agora_interaction_worker.py -q",
+        "result": "14 passed in 23.68s",
+        "executed": 14,
+        "collected": 14
       },
       {
-        "command": "python3 -m pytest services/research/tests/ -q",
-        "result": "21 passed in 8.68s",
-        "executed": 21,
-        "collected": 21
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/incidents/test_main_routes.py services/incidents/test_agora_performance_routes.py -q",
+        "result": "58 passed, 3 warnings in 14.25s",
+        "executed": 58,
+        "collected": 58
+      },
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
+        "result": "18 passed, 139 warnings in 17.81s",
+        "executed": 18,
+        "collected": 18
       },
       {
         "command": "git diff --check",
@@ -116,7 +134,10 @@
     "p1_authentic_research_backend_endpoints_and_compose_wiring": true,
     "p1_execute_research_stage_real_engine_artifacts_and_durable_idempotency": true,
     "p1_backend_receipt_provenance_consistency_enforced": true,
-    "p1_receipt_completed_at_preserved_and_fail_closed_validation": true
+    "p1_receipt_completed_at_preserved_and_fail_closed_validation": true,
+    "p1_fail_closed_missing_dataset_and_unimplemented_owner": true,
+    "p1_simulation_provenance_preservation": true,
+    "p1_allowlisted_stage_types_enforced_no_synthetic_metrics": true
   },
   "review": {
     "reviewer": "Codex",

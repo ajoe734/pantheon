@@ -1548,7 +1548,7 @@ def execute_research_stage(
     if not correlation_id:
         raise HTTPException(status_code=400, detail="Missing required execution field: 'correlation_id'")
 
-    if stage_type not in ALLOWLISTED_STAGE_TYPES and not any(stage_type.startswith(p) for p in ("stage_", "custom_")):
+    if stage_type not in ALLOWLISTED_STAGE_TYPES:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown or non-allowlisted research stage '{stage_type}'. Allowed: {sorted(ALLOWLISTED_STAGE_TYPES)}",
@@ -1559,6 +1559,20 @@ def execute_research_stage(
         raise HTTPException(
             status_code=503,
             detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable",
+        )
+
+    SUPPORTED_EXECUTION_STAGES = {"prototype_backtest", "econometric_validation", "derivatives_pricing_risk"}
+    if stage_type not in SUPPORTED_EXECUTION_STAGES and backend_name not in {"vectorbt", "statsmodels", "quantlib"}:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
+        )
+
+    dataset_input = stage.get("dataset") or plan.get("dataset") or body.get("dataset")
+    if not dataset_input:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required governed dataset or input for stage '{stage_type}'",
         )
 
     downstream_key = str(body.get("downstream_key") or body.get("idempotency_key") or f"stage:{stage_type}:{run_id}")
@@ -1578,25 +1592,16 @@ def execute_research_stage(
 
     if backend_name == "vectorbt" or stage_type == "prototype_backtest":
         try:
-            from services.research.vectorbt.test_adapter import _make_records
             from services.research.vectorbt.adapter.vectorbt_adapter import (
                 BacktestConfig,
                 StubVectorbtBackend,
                 VectorbtBackend,
                 run_vectorbt_workflow,
+                VectorbtWorkflowError,
             )
-            dataset_input = stage.get("dataset") or plan.get("dataset") or body.get("dataset")
-            strategy_id = str(plan.get("strategy_id") or "agora-strategy")
-            if not dataset_input:
-                dataset_input = {
-                    "dataset_id": f"dataset:{strategy_id}",
-                    "strategy_id": strategy_id,
-                    "source_dataset_refs": [f"dataset:seed:{strategy_id}"],
-                    "data_frequency": "daily",
-                    "records": _make_records("AAA", base=100.0, n=35) + _make_records("BBB", base=50.0, n=35),
-                }
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
             backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
+            provenance = "real" if use_real else "simulation"
             vbt_config = BacktestConfig(
                 version="1.0.0",
                 requested_by=executor,
@@ -1606,11 +1611,16 @@ def execute_research_stage(
             artifact_bundle = workflow_res.artifact_bundle
             agg_m = workflow_res.backtest_result.aggregate_metrics
             metrics = [
-                {"metric": "mean_total_return", "value": float(agg_m.get("mean_total_return", 0.0)), "provenance": "real"},
-                {"metric": "mean_sharpe_ratio", "value": float(agg_m.get("mean_sharpe_ratio", 0.0)), "provenance": "real"},
-                {"metric": "mean_max_drawdown", "value": float(agg_m.get("mean_max_drawdown", 0.0)), "provenance": "real"},
-                {"metric": "total_trades", "value": float(agg_m.get("total_trades", 0)), "provenance": "real"},
+                {"metric": "mean_total_return", "value": float(agg_m.get("mean_total_return", 0.0)), "provenance": provenance},
+                {"metric": "mean_sharpe_ratio", "value": float(agg_m.get("mean_sharpe_ratio", 0.0)), "provenance": provenance},
+                {"metric": "mean_max_drawdown", "value": float(agg_m.get("mean_max_drawdown", 0.0)), "provenance": provenance},
+                {"metric": "total_trades", "value": float(agg_m.get("total_trades", 0)), "provenance": provenance},
             ]
+        except (VectorbtWorkflowError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governed input validation error for {stage_type}: {exc}",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
@@ -1622,18 +1632,26 @@ def execute_research_stage(
             from services.research.statsmodels.adapter.statsmodels_adapter import (
                 GovernedDataset,
                 GovernedStatsmodelsInputAdapter,
+                StatsmodelsBackend,
                 StubStatsmodelsBackend,
+                StatsmodelsWorkflowError,
             )
-            dataset_input = stage.get("dataset") or plan.get("dataset") or body.get("dataset")
-            if not dataset_input:
-                dataset_input = GovernedDataset(
-                    price_series={"asset_1": [100.0 + i for i in range(20)], "asset_2": [50.0 + i * 0.5 for i in range(20)]},
-                    factor_series={"factor_1": [1.0 + (i % 3) for i in range(20)]},
-                    metadata={"governed": True},
+            if isinstance(dataset_input, dict) and not isinstance(dataset_input, GovernedDataset):
+                dataset_obj = GovernedDataset(
+                    price_series=dataset_input.get("price_series", {}),
+                    factor_series=dataset_input.get("factor_series", {}),
+                    metadata=dataset_input.get("metadata", {}),
                 )
+            else:
+                dataset_obj = dataset_input
+
             adapter = GovernedStatsmodelsInputAdapter()
-            validated_ds = adapter.validate(dataset_input)
-            backend_runner = StubStatsmodelsBackend()
+            validated_ds = adapter.validate(dataset_obj)
+
+            use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
+            backend_runner = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
+            provenance = "real" if use_real else "simulation"
+
             coint_res = backend_runner.run_cointegration(validated_ds)
             var_res = backend_runner.run_var_vecm(validated_ds)
             artifact_bundle = {
@@ -1643,9 +1661,14 @@ def execute_research_stage(
                 "results": {"cointegration": coint_res, "var_vecm": var_res},
             }
             metrics = [
-                {"metric": "cointegration_p_value", "value": float(coint_res.get("p_value", 0.02)), "provenance": "real"},
-                {"metric": "var_aic", "value": float(var_res.get("aic", -100.0)), "provenance": "real"},
+                {"metric": "cointegration_p_value", "value": float(coint_res.get("p_value", 0.02)), "provenance": provenance},
+                {"metric": "var_aic", "value": float(var_res.get("aic", -100.0)), "provenance": provenance},
             ]
+        except (StatsmodelsWorkflowError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governed input validation error for {stage_type}: {exc}",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
@@ -1659,74 +1682,74 @@ def execute_research_stage(
                 GovernedOptionSpec,
                 GovernedBondSpec,
                 GovernedQuantLibInputAdapter,
+                QuantLibBackend,
                 StubQuantLibBackend,
+                run_quantlib_workflow,
+                QuantLibWorkflowError,
             )
-            snapshot = stage.get("dataset") or plan.get("dataset")
-            if not snapshot:
+            if isinstance(dataset_input, dict) and not isinstance(dataset_input, GovernedMarketSnapshot):
+                option_specs_raw = dataset_input.get("option_specs") or []
+                bond_specs_raw = dataset_input.get("bond_specs") or []
+                opt_specs = []
+                for o in option_specs_raw:
+                    if isinstance(o, GovernedOptionSpec):
+                        opt_specs.append(o)
+                    elif isinstance(o, dict):
+                        opt_specs.append(GovernedOptionSpec(**o))
+                bond_specs = []
+                for b in bond_specs_raw:
+                    if isinstance(b, GovernedBondSpec):
+                        bond_specs.append(b)
+                    elif isinstance(b, dict):
+                        bond_specs.append(GovernedBondSpec(**b))
                 snapshot = GovernedMarketSnapshot(
-                    dataset_id="ds-quantlib-agora",
-                    source_dataset_refs=("ref-1",),
-                    valuation_date="2026-09-08",
-                    option_specs=(
-                        GovernedOptionSpec(
-                            option_id="opt-1",
-                            style="european",
-                            option_type="call",
-                            spot=100.0,
-                            strike=100.0,
-                            volatility=0.2,
-                            risk_free_rate=0.05,
-                            dividend_yield=0.0,
-                            maturity_days=30,
-                        ),
-                    ),
-                    bond_specs=(
-                        GovernedBondSpec(
-                            instrument_id="bond-1",
-                            face_value=1000.0,
-                            coupon_rate=0.05,
-                            market_rate=0.05,
-                            maturity_years=5,
-                        ),
-                    ),
-                    metadata={"governed": True},
+                    dataset_id=str(dataset_input.get("dataset_id") or ""),
+                    source_dataset_refs=tuple(dataset_input.get("source_dataset_refs") or ()),
+                    valuation_date=str(dataset_input.get("valuation_date") or ""),
+                    option_specs=tuple(opt_specs),
+                    bond_specs=tuple(bond_specs),
+                    metadata=dataset_input.get("metadata") or {},
                 )
-            adapter = GovernedQuantLibInputAdapter()
-            val_ds = adapter.validate(snapshot)
-            ql_res = StubQuantLibBackend().run_derivatives_pricing_and_risk(val_ds)
-            artifact_bundle = {
-                "schema_version": "1.0",
-                "artifact_family": "pricing_risk_sheet",
-                "framework": "quantlib",
-                "results": ql_res,
-            }
-            opt_metrics = ql_res.get("option_metrics", {}).get("opt-1", {})
-            metrics = [
-                {"metric": "option_npv", "value": float(opt_metrics.get("npv", 2.5)), "provenance": "real"},
-                {"metric": "option_delta", "value": float(opt_metrics.get("delta", 0.5)), "provenance": "real"},
-            ]
+            else:
+                snapshot = dataset_input
+
+            use_real = os.environ.get("PANTHEON_QUANTLIB_BACKEND", "stub").lower() == "real"
+            backend_runner = QuantLibBackend() if use_real else StubQuantLibBackend()
+            provenance = "real" if use_real else "simulation"
+
+            ql_bundle = run_quantlib_workflow(snapshot, backend=backend_runner)
+            artifact_bundle = ql_bundle
+            results_summary = ql_bundle.get("results_summary", {})
+            opt_res = results_summary.get("options_pricing", {})
+            fi_res = results_summary.get("fixed_income", {})
+
+            metrics = []
+            for opt_id, m in opt_res.items():
+                metrics.append({"metric": f"option_{opt_id}_npv", "value": float(m.get("npv", 0.0)), "provenance": provenance})
+                metrics.append({"metric": f"option_{opt_id}_delta", "value": float(m.get("delta", 0.0)), "provenance": provenance})
+            for bond_id, b in fi_res.items():
+                metrics.append({"metric": f"bond_{bond_id}_clean_price", "value": float(b.get("clean_price", 0.0)), "provenance": provenance})
+                metrics.append({"metric": f"bond_{bond_id}_duration", "value": float(b.get("duration", 0.0)), "provenance": provenance})
+            if not metrics:
+                metrics = [
+                    {"metric": "derivatives_pricing_npv", "value": 0.0, "provenance": provenance},
+                    {"metric": "derivatives_pricing_delta", "value": 0.0, "provenance": provenance},
+                ]
+        except (QuantLibWorkflowError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governed input validation error for {stage_type}: {exc}",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
                 detail=f"QuantLib execution owner failure: {exc}",
             ) from exc
-
     else:
-        artifact_bundle = {
-            "schema_version": "1.0",
-            "artifact_family": f"{stage_type}_report",
-            "backend": backend_name,
-            "stage_type": stage_type,
-            "run_id": run_id,
-            "correlation_id": correlation_id,
-            "stage": stage,
-            "plan_id": plan.get("plan_id"),
-            "executed_at": now_iso,
-        }
-        metrics = [
-            {"metric": f"{stage_type}_execution_score", "value": 0.88, "provenance": "real"},
-            {"metric": f"{stage_type}_confidence", "value": 0.92, "provenance": "real"},
-        ]
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
+        )
 
     artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
     artifact_record = {
@@ -1741,7 +1764,7 @@ def execute_research_stage(
         "title": f"Execution artifact for {stage_type} ({run_id})",
         "payload": artifact_bundle,
         "created_at": now_iso,
-        "provenance": "real",
+        "provenance": provenance,
     }
     persisted_art = store.put_artifact(artifact_record)
     artifact_bytes = json.dumps(persisted_art, sort_keys=True, default=str).encode("utf-8")
@@ -1754,7 +1777,7 @@ def execute_research_stage(
         "receipt_id": receipt_id,
         "run_id": run_id,
         "executor": executor,
-        "mode": "real",
+        "mode": provenance,
         "correlation_id": correlation_id,
         "completed_at": now_iso,
         "backend_reference": backend_ref,
@@ -1765,7 +1788,7 @@ def execute_research_stage(
     result = {
         "status": "succeeded",
         "outcome": "succeeded",
-        "provenance": "real",
+        "provenance": provenance,
         "backend_reference": backend_ref,
         "artifact_digest": digest,
         "metrics": metrics,
