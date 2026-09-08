@@ -829,8 +829,15 @@ def _own_process_start_ticks() -> int:
 
 
 def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, Any] | None:
+    runtime_state = coordination_root / ".orchestrator" / "worker-runtime" / "state.json"
+    # The V2 supervisor owns its receipt in worker-runtime.  Retain the
+    # retired path only for isolated legacy fixtures that have no V2 file; a
+    # worker must never fail entry binding merely because the canonical state
+    # moved into its runtime directory.
+    if not runtime_state.exists():
+        runtime_state = coordination_root / ".orchestrator" / "state.json"
     state = json.loads(read_regular_file_bytes(
-        coordination_root / ".orchestrator" / "state.json", source="worker launch receipt"
+        runtime_state, source="worker launch receipt"
     ))
     if not isinstance(state, dict):
         raise RuntimeError("worker_runner: runtime launch state is malformed")
