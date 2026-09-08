@@ -1033,7 +1033,7 @@ def _plan_detail_envelope(
     }
 
 
-def _run_projection_with_defaults(run: Dict[str, Any]) -> Dict[str, Any]:
+def _run_projection_with_defaults(run: Dict[str, Any], store: Optional[Any] = None) -> Dict[str, Any]:
     backend = dict(run.get("backend") or {})
     backend.setdefault("requested", _STAGE_TO_BACKEND.get(run.get("stage_type", ""), ""))
     backend.setdefault("effective", _STAGE_TO_BACKEND.get(run.get("stage_type", ""), ""))
@@ -1076,6 +1076,17 @@ def _run_projection_with_defaults(run: Dict[str, Any]) -> Dict[str, Any]:
         projected["failure"] = dict(run["failure"])
     if run.get("data_cutoff"):
         projected["data_cutoff"] = run["data_cutoff"]
+    prov = run.get("provenance")
+    if store and hasattr(store, "get_execution_receipt") and run.get("run_id"):
+        receipt = store.get_execution_receipt(run["run_id"])
+        if receipt:
+            from ..receipt import resolve_run_provenance
+            resolved, _ = resolve_run_provenance(store, run)
+            prov = resolved
+    if prov:
+        projected["provenance"] = prov
+    else:
+        projected["provenance"] = "unavailable"
     return projected
 
 
@@ -1113,7 +1124,7 @@ def _build_run_projection(
             "effective": backend or _STAGE_TO_BACKEND.get(stage["stage_type"], ""),
             "mode": routing.get("backend_mode", "real"),
         },
-        "provenance": routing.get("backend_mode", "real"),
+        "provenance": "unavailable",
         "no_order_route_proof": _RUN_NO_ORDER_ROUTE_PROOF,
         "created_at": now,
         "updated_at": now,
@@ -1589,8 +1600,12 @@ class AgoraResearchRouteContext:
                 else:
                     metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
         elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
-            # Explicit demo/test profile allows fixture prototype candidates
-            for candidate in _default_registry_candidates(now):
+            try:
+                import agora.research.router as _r_router
+                _cand_fn = getattr(_r_router, "_default_registry_candidates", _default_registry_candidates)
+            except Exception:
+                _cand_fn = _default_registry_candidates
+            for candidate in _cand_fn(now):
                 if not _candidate_matches_filter(candidate, pool_filter):
                     continue
                 public_candidate = _candidate_public_member(candidate)

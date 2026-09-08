@@ -130,6 +130,10 @@ class PerformanceSuggestionStore:
     ) -> Dict[str, Any]:
         """Persist a source-owned suggestion; no public BFF route calls this."""
         record = suggestion.model_dump(mode="json")
+        if suggestion.correlation_id:
+            record["correlation_id"] = suggestion.correlation_id
+        if suggestion.provenance and suggestion.provenance.correlation_id:
+            record.setdefault("provenance", {})["correlation_id"] = suggestion.provenance.correlation_id
         updated_at = suggestion.updated_at or suggestion.as_of
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -300,6 +304,10 @@ class PerformanceSuggestionStore:
             )
             validated_suggestion = AdjustmentSuggestion.model_validate(suggestion)
             suggestion = validated_suggestion.model_dump(mode="json")
+            if validated_suggestion.correlation_id:
+                suggestion["correlation_id"] = validated_suggestion.correlation_id
+            if validated_suggestion.provenance and validated_suggestion.provenance.correlation_id:
+                suggestion.setdefault("provenance", {})["correlation_id"] = validated_suggestion.provenance.correlation_id
             receipt_id = f"agperf-receipt-{uuid.uuid4().hex}"
             audit_event_id = f"agperf-audit-{uuid.uuid4().hex}"
             receipt = SuggestionActionReceipt(

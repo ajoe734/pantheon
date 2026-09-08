@@ -749,7 +749,10 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                background_tasks: BackgroundTasks,
                authorization: Optional[str] = Header(default=None),
                x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-               idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")) -> Dict[str, Any]:
+               idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+               x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+               x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+               x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id")) -> Dict[str, Any]:
         resolved = scope(authorization, x_tenant_id, write=True)
         if not idempotency_key:
             from services.control_plane.bff.models import ErrorCode
@@ -789,7 +792,13 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         command_scope = f"command:{resolved.tenant_id}:{resolved.user_id}"
         request_payload = body.model_dump(mode="json")
         command_fingerprint = payload_fingerprint(request_payload)
-        trace_id = session.get("openclaw_session_id") or f"trace-{uuid.uuid4().hex[:12]}"
+        trace_id = (
+            x_trace_id
+            or x_correlation_id
+            or session.get("trace_id")
+            or session.get("openclaw_session_id")
+            or f"trace-{uuid.uuid4().hex[:12]}"
+        )
 
         if body.human_request and body.human_request.operator_id != resolved.operator_id:
             from services.control_plane.bff.models import ErrorCode

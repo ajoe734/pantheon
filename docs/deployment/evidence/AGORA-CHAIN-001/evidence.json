@@ -1,0 +1,93 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "AGORA-CHAIN-001",
+  "base_ref": "dev@ac9da4ce022696fcfdbad63dc61207e1bd57acc6",
+  "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done), OVERLAY-RETIRE-001 (done)",
+  "normative_plan": "SD §6 Agora design, §12.4, GAP-AGORA-01, GAP-AGORA-02, GAP-AGORA-03, GAP-AGORA-05, GAP-AGORA-06; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/agora/interaction/router.py",
+      "services/control-plane/bff/agora/interaction/runner.py",
+      "services/control-plane/bff/agora/interaction/test_worker.py",
+      "services/control-plane/bff/agora/performance/__init__.py",
+      "services/control-plane/bff/agora/performance/consumer.py",
+      "services/control-plane/bff/agora/performance/models.py",
+      "services/control-plane/bff/agora/performance/producer.py",
+      "services/control-plane/bff/agora/performance/store.py",
+      "services/control-plane/bff/agora/research/__init__.py",
+      "services/control-plane/bff/agora/research/dispatcher.py",
+      "services/control-plane/bff/agora/research/receipt.py",
+      "services/control-plane/bff/agora/research/routes/candidates.py",
+      "services/control-plane/bff/agora/research/routes/common.py",
+      "services/control-plane/bff/agora/research/routes/runs.py",
+      "services/control-plane/bff/agora/research/store.py",
+      "services/control-plane/bff/agora/strategy_workshop/routes/session.py",
+      "services/control-plane/bff/agora/strategy_workshop/schemas.py",
+      "services/control-plane/bff/agora/strategy_workshop/test_reconstruction.py",
+      "services/control-plane/bff/agora/strategy_workshop/test_reconstruction_worker.py",
+      "tests/agora_product_journey/test_full_product_journey.py",
+      "docs/deployment/evidence/AGORA-CHAIN-001/evidence.json"
+    ],
+    "receipt_and_provenance_architecture": "Added ResearchExecutionReceipt dataclass and resolve_run_provenance() in services/control-plane/bff/agora/research/receipt.py. Server resolves provenance from authentic receipts by run_id, verifying owner, correlation_id, and terminal status. Unknown receipt versions return unavailable. Initial run projections default to unavailable without trusting client parameters.",
+    "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members, Trading Room decisions, Outbox handoffs, and telemetry-triggered AdjustmentSuggestions.",
+    "performance_suggestion_consumer": "Added consume_telemetry_outcome in services/control-plane/bff/agora/performance/consumer.py attaching PerformanceSuggestionProducer directly to canonical evaluation/telemetry outcome events without adding any new background scheduler.",
+    "mandatory_deletions": {
+      "client_supplied_real_provenance_flags": "Deleted routing.get('backend_mode', 'real') default in _build_run_projection; initial projection defaults to unavailable until authentic ResearchExecutionReceipt is recorded and validated.",
+      "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; verified fail-closed lease, retry, DLQ, and crash recovery mechanics.",
+      "manual_only_suggestion_production": "Replaced manual suggestion injection with consume_telemetry_outcome attached to evaluation/telemetry events."
+    },
+    "rollback_plan": "Disable new consumers and deploy the prior exact paper-safe release without deleting canonical receipts."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/",
+        "result": "33 passed in 9.96s",
+        "executed": 33,
+        "collected": 33
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/agora/performance/",
+        "result": "23 passed, 1 warning in 7.78s",
+        "executed": 23,
+        "collected": 23
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py",
+        "result": "11 passed, 70 warnings in 11.29s",
+        "executed": 11,
+        "collected": 11
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/agora/strategy_workshop/",
+        "result": "12 passed, 2 skipped, 1 warning in 4.35s",
+        "executed": 12,
+        "collected": 14
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/agora/trading_room/ services/control-plane/bff/agora/candidate_decisions/ services/control-plane/bff/agora/dataset_extraction/ services/control-plane/bff/agora/decision_projection/ services/control-plane/bff/agora/governance/",
+        "result": "158 passed, 14 skipped, 3 warnings in 45.66s",
+        "executed": 158,
+        "collected": 172
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_candidate_pool.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_store_backend.py",
+        "result": "25 passed, 2 skipped in 30.17s",
+        "executed": 25,
+        "collected": 27
+      }
+    ]
+  },
+  "acceptance_check": {
+    "continuous_correlation_chain": true,
+    "authentic_research_execution_receipt": true,
+    "server_side_provenance_enforced": true,
+    "telemetry_triggered_suggestions_no_new_scheduler": true,
+    "mandatory_deletions_verified": true,
+    "rollback_safe": true
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review"
+  }
+}
