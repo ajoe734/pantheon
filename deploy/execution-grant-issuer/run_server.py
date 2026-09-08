@@ -132,6 +132,12 @@ def run_service(config: dict[str, Any]) -> None:
         if not ssl_key_file or not Path(ssl_key_file).is_file():
             raise FileNotFoundError(f"TLS private key file not found: {ssl_key_file}")
 
+    if os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
+        raise ValueError(
+            "FIREBASE_AUTH_EMULATOR_HOST environment variable is set; "
+            "running the execution grant issuer in Firebase Auth emulator mode is strictly prohibited"
+        )
+
     # Initialize Token Verifier. Verification (signature, issuer, audience,
     # expiry, and revoked/disabled-account denial) is performed by the
     # pinned firebase-admin SDK using Application Default Credentials on this

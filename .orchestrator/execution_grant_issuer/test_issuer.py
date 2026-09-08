@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import os
 import sys
 import time
 import unittest
@@ -27,8 +28,10 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
+import base64
 from unittest.mock import MagicMock, patch
 
+import google.auth.credentials
 import jwt
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
@@ -137,6 +140,32 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
             allowed_operator_uids=[self.operator_uid],
         )
 
+        # Supply synthetic SDK credentials in fixture so tests never depend
+        # on ambient ADC (e.g. absent GOOGLE_APPLICATION_CREDENTIALS) while
+        # keeping the real firebase-admin SDK cryptography and revocation code
+        # fully real and exercised.
+        self._cred_patch = patch.object(
+            self.verifier._firebase_app.credential,
+            "get_credential",
+            return_value=google.auth.credentials.AnonymousCredentials(),
+        )
+        self.mock_cred = self._cred_patch.start()
+        self.addCleanup(self._cred_patch.stop)
+
+        # Ensure the cached client is reset so it inherits synthetic credentials
+        app = self.verifier._firebase_app
+        if hasattr(app, "_auth"):
+            delattr(app, "_auth")
+        if hasattr(app, "_services") and "_auth" in app._services:
+            app._services.pop("_auth", None)
+
+        def _cleanup_cached_client():
+            if hasattr(app, "_auth"):
+                delattr(app, "_auth")
+            if hasattr(app, "_services") and "_auth" in app._services:
+                app._services.pop("_auth", None)
+        self.addCleanup(_cleanup_cached_client)
+
         # Mock only the certificate-fetch transport, at the exact boundary
         # where the real SDK issues its outbound HTTP GET. Everything above
         # this (JWT signature check, aud/iss validation) is real.
@@ -148,7 +177,7 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
             "__call__",
             return_value=cert_response,
         )
-        self._cert_fetch_patch.start()
+        self.mock_cert_fetch = self._cert_fetch_patch.start()
         self.addCleanup(self._cert_fetch_patch.stop)
 
         # Mock only the account-lookup (revocation/disabled) REST transport,
@@ -163,7 +192,7 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
             "get_user",
             side_effect=lambda **kwargs: dict(self._user_record_response),
         )
-        self._get_user_patch.start()
+        self.mock_get_user = self._get_user_patch.start()
         self.addCleanup(self._get_user_patch.stop)
 
     def _mint(self, *, key=None, kid: str | None = None, aud: str | None = None, iss: str | None = None) -> str:
@@ -191,6 +220,9 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
         operator = self.verifier.verify_token(token, now=self.now)
         self.assertEqual(operator.uid, self.operator_uid)
         self.assertEqual(operator.second_factor, "totp")
+        # Assert genuine SDK transport and code-path execution
+        self.assertEqual(self.mock_cert_fetch.call_count, 1)
+        self.assertEqual(self.mock_get_user.call_count, 1)
 
     def test_real_sdk_rejects_wrong_signature(self) -> None:
         # Signed by a key that does not match the fetched certificate's
@@ -198,25 +230,34 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
         token = self._mint(key=self.other_rsa_key)
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("token verification failed", str(cm.exception).lower())
+        self.assertIn("could not verify token signature", str(cm.exception).lower())
+        # Certificate fetch was executed, but revocation check was not reached
+        self.assertEqual(self.mock_cert_fetch.call_count, 1)
+        self.assertEqual(self.mock_get_user.call_count, 0)
 
     def test_real_sdk_rejects_unknown_kid(self) -> None:
         token = self._mint(kid="unknown-kid-not-in-certs")
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("token verification failed", str(cm.exception).lower())
+        self.assertIn("certificate for key id", str(cm.exception).lower())
+        self.assertEqual(self.mock_cert_fetch.call_count, 1)
+        self.assertEqual(self.mock_get_user.call_count, 0)
 
     def test_real_sdk_rejects_wrong_audience(self) -> None:
         token = self._mint(aud="some-other-project")
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("token verification failed", str(cm.exception).lower())
+        self.assertIn('incorrect "aud"', str(cm.exception).lower())
+        self.assertEqual(self.mock_cert_fetch.call_count, 0)
+        self.assertEqual(self.mock_get_user.call_count, 0)
 
     def test_real_sdk_rejects_wrong_issuer(self) -> None:
         token = self._mint(iss="https://securetoken.google.com/some-other-project")
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
-        self.assertIn("token verification failed", str(cm.exception).lower())
+        self.assertIn('incorrect "iss"', str(cm.exception).lower())
+        self.assertEqual(self.mock_cert_fetch.call_count, 0)
+        self.assertEqual(self.mock_get_user.call_count, 0)
 
     def test_real_sdk_denies_revoked_account_via_genuine_revocation_check(self) -> None:
         # tokens_valid_after is after this token's issued-at time, so the
@@ -227,6 +268,8 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
         self.assertIn("revoked", str(cm.exception).lower())
+        self.assertEqual(self.mock_cert_fetch.call_count, 1)
+        self.assertEqual(self.mock_get_user.call_count, 1)
 
     def test_real_sdk_denies_disabled_account_via_genuine_lookup(self) -> None:
         self._user_record_response["disabled"] = True
@@ -234,6 +277,117 @@ class TestRealFirebaseSdkCryptographicVerification(unittest.TestCase):
         with self.assertRaises(AuthenticationError) as cm:
             self.verifier.verify_token(token, now=self.now)
         self.assertIn("disabled", str(cm.exception).lower())
+        self.assertEqual(self.mock_cert_fetch.call_count, 1)
+        self.assertEqual(self.mock_get_user.call_count, 1)
+
+    def test_real_sdk_rejects_firebase_auth_emulator_host_env_var(self) -> None:
+        """P1 regression: refuse emulator host before app/client creation & verification."""
+        with patch.dict(os.environ, {"FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099"}):
+            # Construction refuses emulator configuration before app creation
+            with self.assertRaises(AuthenticationError) as cm:
+                IdentityPlatformTokenVerifier(
+                    project_id=self.PROJECT_ID,
+                    allowed_operator_uids=[self.operator_uid],
+                )
+            self.assertIn("FIREBASE_AUTH_EMULATOR_HOST", str(cm.exception))
+
+            # Verification refuses emulator configuration before calling SDK
+            token = self._mint()
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.verify_token(token, now=self.now)
+            self.assertIn("FIREBASE_AUTH_EMULATOR_HOST", str(cm.exception))
+
+            # Readiness check refuses emulator configuration
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.check_identity_platform_readiness()
+            self.assertIn("FIREBASE_AUTH_EMULATOR_HOST", str(cm.exception))
+
+    def test_real_sdk_rejects_cached_emulated_auth_client(self) -> None:
+        """P1 regression: refuse cached emulator auth client reuse."""
+        app = self.verifier._firebase_app
+        client = firebase_auth._get_client(app)
+        client.emulated = True
+        token = self._mint()
+        try:
+            with self.assertRaises(AuthenticationError) as cm:
+                self.verifier.verify_token(token, now=self.now)
+            self.assertIn("emulator", str(cm.exception).lower())
+        finally:
+            client.emulated = False
+
+    def test_real_sdk_probe_alg_none_and_emulator_cannot_obtain_challenge_or_sign_grant(self) -> None:
+        """Exact reproduction of Codex P1 reviewer probe:
+        Attempts to bypass signature verification via alg=none or emulator
+        MUST NOT result in challenge creation or grant signing.
+        """
+        def _b64url(d: Mapping[str, Any]) -> str:
+            return base64.urlsafe_b64encode(json.dumps(d).encode("utf-8")).decode("utf-8").rstrip("=")
+
+        current_ts = int(self.now.timestamp())
+        raw_header = {"alg": "none", "typ": "JWT"}
+        raw_payload = {
+            "iss": f"https://securetoken.google.com/{self.PROJECT_ID}",
+            "aud": self.PROJECT_ID,
+            "sub": self.operator_uid,
+            "email": "operator-real-sdk@pantheon.trade",
+            "email_verified": True,
+            "auth_time": current_ts,
+            "iat": current_ts,
+            "exp": current_ts + 3600,
+            "firebase": {
+                "sign_in_provider": "password",
+                "sign_in_second_factor": "totp",
+            },
+        }
+        alg_none_token = f"{_b64url(raw_header)}.{_b64url(raw_payload)}."
+
+        # Case A: alg=none token under standard configuration fails cryptographic check
+        # Case A1: Without kid, SDK rejects missing kid
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(alg_none_token, now=self.now)
+        self.assertIn("kid", str(cm.exception).lower())
+
+        # Case A2: With kid supplied, SDK rejects invalid algorithm
+        raw_header_with_kid = {"alg": "none", "typ": "JWT", "kid": "some-kid"}
+        alg_none_token_with_kid = f"{_b64url(raw_header_with_kid)}.{_b64url(raw_payload)}."
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(alg_none_token_with_kid, now=self.now)
+        self.assertIn("algorithm", str(cm.exception).lower())
+
+        # Case B: If FIREBASE_AUTH_EMULATOR_HOST is set in environment,
+        # create_challenge and issue_grant MUST fail before challenge/signing.
+        service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=Ed25519GrantSigner(ed25519.Ed25519PrivateKey.generate(), key_id="probe-key"),
+            allowed_tasks=["DEV502-TRACE-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        task_policy = ea.derive_execution_policy(
+            task_id="DEV502-TRACE-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/DEV502-TRACE-001/"],
+            task_spec={"id": "DEV502-TRACE-001", "phase": "trace"},
+        )
+
+        with patch.dict(os.environ, {"FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099"}):
+            with self.assertRaises(AuthenticationError):
+                service.handle_create_challenge(
+                    alg_none_token,
+                    {"task_id": "DEV502-TRACE-001", "generation": 1, "policy_snapshot": task_policy},
+                    now=self.now,
+                )
+            self.assertEqual(len(service.challenge_store._challenges), 0)
+
+            with self.assertRaises(AuthenticationError):
+                service.handle_issue_grant(
+                    alg_none_token,
+                    {"challenge_id": "cid-none", "task_id": "DEV502-TRACE-001", "generation": 1, "policy_snapshot": task_policy},
+                    now=self.now,
+                )
 
 
 class TestExecutionGrantIssuer(unittest.TestCase):

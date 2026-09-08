@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 DEPLOY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DEPLOY_DIR.parents[1]
@@ -118,6 +119,16 @@ class TestRunServiceRevocationCannotBeDisabled(unittest.TestCase):
                 allowed_operator_uids=["operator-1"],
                 check_revocation=False,
             )
+
+    def test_run_service_rejects_firebase_auth_emulator_host(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+            config = self._base_config(priv_path)
+            with patch.dict(os.environ, {"FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099"}):
+                with self.assertRaises(ValueError) as cm:
+                    run_server.run_service(config)
+                self.assertIn("FIREBASE_AUTH_EMULATOR_HOST", str(cm.exception))
 
     def test_generate_key_pair_writes_private_key_mode_0600(self) -> None:
         with tempfile.TemporaryDirectory() as td:

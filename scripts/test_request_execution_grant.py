@@ -903,6 +903,102 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
             self.assertIn("generation changed", str(cm.exception).lower())
             mock_submit.assert_not_called()
 
+    def test_secrets_rejected_on_argv(self) -> None:
+        """Passing --token, --grant, or --grant-json on argv must exit immediately."""
+        forbidden_argvs = [
+            ["request_execution_grant.py", "--token", "secret-token"],
+            ["request_execution_grant.py", "--token=secret-token"],
+            ["request_execution_grant.py", "submit", "--grant", '{"raw": "grant"}'],
+            ["request_execution_grant.py", "submit", "--grant-json", '{"raw": "grant"}'],
+            ["request_execution_grant.py", "submit", "--grant-json={'raw':'grant'}"],
+        ]
+        for fake_argv in forbidden_argvs:
+            with patch.object(sys, "argv", fake_argv):
+                with self.assertRaises(SystemExit) as cm:
+                    cli._check_no_secrets_in_argv()
+                self.assertEqual(cm.exception.code, 2)
+
+    def test_cmd_submit_from_file_success(self) -> None:
+        fake_grant = {
+            "task_id": self.task_id,
+            "audience": self.task_id,
+            "signature": {"key_id": self.signer_key_id, "algorithm": "Ed25519", "value": "dummy"},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            grant_file = Path(td) / "private-grant.json"
+            fd = os.open(str(grant_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with open(fd, "w", encoding="utf-8") as f:
+                json.dump(fake_grant, f)
+
+            submit_args = MagicMock(
+                task=self.task_id,
+                grant_file=str(grant_file),
+                grant_stdin=False,
+                config_file=None,
+            )
+
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}), \
+                 patch("scripts.request_execution_grant.verify_grant_locally", return_value="test-fp"), \
+                 patch("scripts.request_execution_grant.submit_grant_via_cli") as mock_submit:
+                cli.cmd_submit(submit_args)
+                mock_submit.assert_called_once_with(self.task_id, fake_grant)
+
+    def test_cmd_submit_from_stdin_success(self) -> None:
+        fake_grant = {
+            "task_id": self.task_id,
+            "audience": self.task_id,
+            "signature": {"key_id": self.signer_key_id, "algorithm": "Ed25519", "value": "dummy"},
+        }
+        submit_args = MagicMock(
+            task=self.task_id,
+            grant_file=None,
+            grant_stdin=True,
+            config_file=None,
+        )
+
+        with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+             patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}), \
+             patch("scripts.request_execution_grant.verify_grant_locally", return_value="test-fp"), \
+             patch("sys.stdin", io.StringIO(json.dumps(fake_grant))), \
+             patch("scripts.request_execution_grant.submit_grant_via_cli") as mock_submit:
+            cli.cmd_submit(submit_args)
+            mock_submit.assert_called_once_with(self.task_id, fake_grant)
+
+    def test_cmd_submit_unsafe_file_permissions_rejected(self) -> None:
+        fake_grant = {"task_id": self.task_id}
+        with tempfile.TemporaryDirectory() as td:
+            grant_file = Path(td) / "unsafe-grant.json"
+            # Mode 0644 (group/other readable) must be rejected
+            grant_file.write_text(json.dumps(fake_grant), encoding="utf-8")
+            grant_file.chmod(0o644)
+
+            submit_args = MagicMock(
+                task=self.task_id,
+                grant_file=str(grant_file),
+                grant_stdin=False,
+                config_file=None,
+            )
+
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}):
+                with self.assertRaises(ValueError) as cm:
+                    cli.cmd_submit(submit_args)
+                self.assertIn("mode", str(cm.exception).lower())
+
+    def test_cmd_submit_missing_trusted_keys_rejected(self) -> None:
+        submit_args = MagicMock(
+            task=self.task_id,
+            grant_file="some-grant.json",
+            grant_stdin=False,
+            config_file=None,
+        )
+        with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+             patch("scripts.request_execution_grant.load_trusted_keys", return_value={}):
+            with self.assertRaises(RuntimeError) as cm:
+                cli.cmd_submit(submit_args)
+            self.assertIn("missing trusted mfa issuer", str(cm.exception).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

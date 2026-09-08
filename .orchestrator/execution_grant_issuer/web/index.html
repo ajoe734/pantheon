@@ -96,6 +96,11 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .btn-secondary {
+      background-color: var(--accent);
+      margin-top: 8px;
+      margin-bottom: 16px;
+    }
     .output-area {
       margin-top: 24px;
       display: none;
@@ -153,13 +158,28 @@
     <div id="outputArea" class="output-area">
       <label>Signed Execution Grant JSON</label>
       <pre id="grantOutput"></pre>
+      <button id="downloadBtn" class="btn-secondary" onclick="downloadGrantFile()">Download Private Grant JSON File</button>
 
-      <label>CLI Submission Command</label>
+      <label>Governed CLI Submission Command (No Secrets in Shell History)</label>
       <pre id="cliCommand"></pre>
     </div>
   </div>
 
   <script>
+    let latestGrant = null;
+    let latestTaskId = '';
+
+    function downloadGrantFile() {
+      if (!latestGrant) return;
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(latestGrant, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `grant-${latestTaskId || 'task'}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
     async function issueGrant() {
       const btn = document.getElementById('submitBtn');
       const status = document.getElementById('statusMsg');
@@ -229,14 +249,20 @@
           throw new Error(issueData.error || 'Grant issuance failed');
         }
 
+        latestGrant = issueData.grant;
+        latestTaskId = taskId;
+
         status.textContent = '✓ Execution-authorization grant successfully signed and issued.';
         status.className = 'status-msg status-ok';
 
         const grantStr = JSON.stringify(issueData.grant, null, 2);
         grantOut.textContent = grantStr;
 
-        const compactJson = JSON.stringify(issueData.grant);
-        cliOut.textContent = `AI_NAME=Human/Ops EXECUTION_GRANT_JSON='${compactJson}' scripts/ai-status.sh execution-grant-submit ${taskId}`;
+        cliOut.textContent = `# Securely submit via the qualified client (reads from private file or stdin):\n` +
+          `# Option 1: Submit downloaded file:\n` +
+          `python3 scripts/request_execution_grant.py submit --task ${taskId} --grant-file ~/Downloads/grant-${taskId}.json\n\n` +
+          `# Option 2: Pipe via stdin from a private file:\n` +
+          `python3 scripts/request_execution_grant.py submit --task ${taskId} --grant-stdin < /path/to/private-grant.json`;
         outArea.style.display = 'block';
 
       } catch (err) {

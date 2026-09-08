@@ -54,7 +54,7 @@ sudo systemctl status pantheon-execution-grant-issuer
 ```
 
 ### Step 2.5: Configure Public Trust in Pantheon
-Promote the issuer public key into `.orchestrator/config.json`:
+Record the issuer public key into `.orchestrator/config.json`:
 ```json
 {
   "execution_authorization": {
@@ -64,10 +64,18 @@ Promote the issuer public key into `.orchestrator/config.json`:
   }
 }
 ```
-Deploy / promote this configuration into the live supervisor runtime using the
-qualified current-host invocation documented in
-`docs/operations/execution-grant-issuer.md` § 6.3 (`--repo`, `--status-root`,
-`--authority-env-file`, `--discover-only` then `--promote`).
+**Command-Runtime Immutability & Supervisor Promotion:**
+`PANTHEON_COMMAND_ROOT` is an immutable runtime whose `scripts/ai_status.py:311` loads its own committed `.orchestrator/config.json` (`CONFIG_FILE = ROOT / ".orchestrator" / "config.json"`). Simply committing the key to the repository or updating the status root does not update what `scripts/ai-status.sh execution-grant-submit` trusts.
+
+Publishing or rotating issuer keys requires materializing a new immutable command runtime under `$DEPLOY_ROOT/command-runtimes/<TARGET_SHA>` and promoting it via `scripts/promote_supervisor_runtime.py`:
+1. Run `--discover-only --json` to validate candidate invariants and live config.
+2. Run `--promote` to replace the supervisor runtime and update `PANTHEON_COMMAND_ROOT`.
+3. Verify **both** effective key fingerprints:
+   - The active signer fingerprint from the issuer service (`--inspect-key` or startup log).
+   - The promoted runtime config fingerprint from `$PANTHEON_COMMAND_ROOT/.orchestrator/config.json`.
+4. For rollback or key revocation, follow this exact same qualified promotion path (promoting a new runtime with the key removed, or re-promoting a prior known-good command runtime). Never mutate or patch immutable runtimes in place.
+
+See full operational procedure in `docs/operations/execution-grant-issuer.md` § 6.3 and § 6.4.
 
 ## 3. Health & Verification Probes
 - Health endpoint: `curl -s http://127.0.0.1:8090/healthz`

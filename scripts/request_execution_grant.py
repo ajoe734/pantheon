@@ -44,13 +44,19 @@ DEFAULT_ALLOWED_ENV = "pantheon-dev"
 DEFAULT_ISSUER_URL = "http://127.0.0.1:8090"
 
 
-def _check_no_token_in_argv() -> None:
-    """Refuse execution if token is passed directly on command-line argument."""
+def _check_no_secrets_in_argv() -> None:
+    """Refuse execution if token or raw grant is passed directly on command-line argument."""
     for arg in sys.argv[1:]:
         if arg == "--token" or arg.startswith("--token="):
             sys.stderr.write(
                 "ERROR: Passing ID tokens directly via command-line arguments leaks credentials "
                 "in process listings (ps). Use --token-file <path> or --token-stdin instead.\n"
+            )
+            sys.exit(2)
+        if arg in ("--grant", "--grant-json") or arg.startswith(("--grant=", "--grant-json=")):
+            sys.stderr.write(
+                "ERROR: Passing execution grants directly via command-line arguments leaks bearer secrets "
+                "in process listings (ps) and shell history. Use --grant-file <path> or --grant-stdin instead.\n"
             )
             sys.exit(2)
 
@@ -446,8 +452,73 @@ def cmd_request(args: argparse.Namespace) -> None:
             print("✓ Grant issued and locally verified successfully. (Specify --grant-out to save or --submit to submit)")
 
 
+def cmd_submit(args: argparse.Namespace) -> None:
+    task = fetch_canonical_task(args.task)
+    policy, generation = validate_task_eligibility(task)
+
+    trusted_keys = load_trusted_keys(Path(args.config_file) if args.config_file else None)
+    if not trusted_keys:
+        raise RuntimeError(
+            "Missing trusted MFA issuer public keys in configuration; "
+            "cannot proceed with grant submission without configured trust"
+        )
+
+    if args.grant_stdin:
+        raw_text = sys.stdin.read().strip()
+        if not raw_text:
+            raise ValueError("Grant JSON from stdin is empty")
+        try:
+            grant = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Malformed grant JSON from stdin: {exc}") from exc
+    elif args.grant_file:
+        grant_path = Path(args.grant_file).expanduser()
+        try:
+            grant_bytes = read_private_file_strict(grant_path, description="Execution grant file")
+        except UnsafeCredentialFileError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            grant = json.loads(grant_bytes.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Malformed grant JSON from {grant_path}: {exc}") from exc
+    else:
+        raise ValueError("Must provide either --grant-file <path> or --grant-stdin")
+
+    if not isinstance(grant, Mapping):
+        raise ValueError("Execution grant must be a JSON object")
+
+    # Local verification
+    try:
+        fp = verify_grant_locally(grant, task, policy, trusted_keys)
+        key_id = grant.get("signature", {}).get("key_id", "unknown")
+        print(f"✓ Grant locally verified against trusted issuer {key_id!r} (fp: {fp[:16]}...)")
+    except Exception as exc:
+        raise RuntimeError(f"Local grant verification FAILED: {exc}") from exc
+
+    # CAS refetch checks
+    task_refetched = fetch_canonical_task(task["id"])
+    policy_refetched, gen_refetched = validate_task_eligibility(task_refetched)
+
+    if task_refetched.get("id") != task.get("id"):
+        raise RuntimeError("Canonical task ID mismatch on refetch before submission")
+    if gen_refetched != generation:
+        raise RuntimeError(
+            f"Canonical task generation changed from {generation} to {gen_refetched} before submission"
+        )
+    if task_refetched.get("owner") != task.get("owner"):
+        raise RuntimeError(
+            f"Canonical task owner changed from {task.get('owner')!r} to {task_refetched.get('owner')!r} before submission"
+        )
+    if _canonical_json(policy_refetched) != _canonical_json(policy):
+        raise RuntimeError("Canonical task policy changed concurrently before submission")
+
+    print(f"Submitting execution grant for {task['id']} via governed CLI...")
+    submit_grant_via_cli(task["id"], grant)
+    print(f"✓ Execution grant successfully verified and submitted for {task['id']}.")
+
+
 def main() -> None:
-    _check_no_token_in_argv()
+    _check_no_secrets_in_argv()
 
     parser = argparse.ArgumentParser(
         description="Scoped CLI client for Pantheon execution grant requests."
@@ -469,6 +540,13 @@ def main() -> None:
     req_p.add_argument("--grant-out", help="Save downloaded grant to file")
     req_p.add_argument("--submit", action="store_true", help="Submit grant to Human/Ops CLI immediately")
 
+    # submit
+    sub_p = subparsers.add_parser("submit", help="Locally verify and submit grant from private file or stdin")
+    sub_p.add_argument("--task", default=DEFAULT_ALLOWED_TASK, help="Task ID (default: %(default)s)")
+    sub_p.add_argument("--grant-file", help="Path to private file containing execution grant JSON")
+    sub_p.add_argument("--grant-stdin", action="store_true", help="Read execution grant JSON from standard input")
+    sub_p.add_argument("--config-file", help="Path to config.json containing trusted issuer keys")
+
     args = parser.parse_args()
 
     try:
@@ -476,6 +554,8 @@ def main() -> None:
             cmd_prepare(args)
         elif args.command == "request":
             cmd_request(args)
+        elif args.command == "submit":
+            cmd_submit(args)
     except Exception as exc:
         sys.stderr.write(f"ERROR: {exc}\n")
         sys.exit(1)

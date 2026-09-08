@@ -195,66 +195,77 @@ Record the public key in `.orchestrator/config.json`:
 }
 ```
 
-### Step 6.3: Publishing The MFA Issuer's Public Trust Root
+### Step 6.3: Publishing The MFA Issuer's Public Trust Root & Command-Runtime Promotion
 
-The execution-grant-issuer's own trust root
-(`execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json`,
-per Step 6.2 above) is an ordinary tracked repository config change: commit
-it through the normal task/PR flow and let it reach the live host the same
-way any other `.orchestrator/config.json` change does. It is **not**
-promoted through `scripts/promote_supervisor_runtime.py --authority-env-file`.
-
-That flag is a distinct, unrelated authority surface: it sets
-`BRIDGE_SIGNING_PUBLIC_KEYS_JSON`, the trust root the supervisor uses to
-verify signed dev-bridge task packets (`operator_authorized_issuer_source_implementation`-style
-dispatch), not the MFA issuer's own public keys. `promote_supervisor_runtime.py`
-has no bare invocation and always requires an explicit `--status-root`; if a
-runtime promotion also needs to (re)supply the dev-bridge trust root, that
-file is a mode-`0600` `NAME=value` file -- each line's value is a JSON object
-mapping bridge-signing key ids to base64url public keys, not the MFA-issuer
-public-key JSON shown in Step 6.2:
-
+The supervisor and governed status commands (including `scripts/ai-status.sh execution-grant-submit`) execute from an immutable command runtime (`PANTHEON_COMMAND_ROOT`, pointing to `$DEPLOY_ROOT/command-runtimes/<HEAD>`).
+`scripts/ai_status.py:311` binds its configuration from its own root:
+```python
+CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 ```
-BRIDGE_SIGNING_PUBLIC_KEYS_JSON={"bridge-signing-key-id":"<base64url-public-key>"}
-```
+Because `ROOT` is the immutable runtime checkout, committing the public key to `.orchestrator/config.json` in the repository or dev branch does **not** take effect on the live supervisor or the pinned submit command until a new command runtime is materialized and promoted.
+
+Therefore, publishing or rotating the MFA issuer's public trust root requires:
+1. Committing the updated `execution_authorization.mfa_issuer_public_keys` map into `.orchestrator/config.json` and integrating it into `dev`.
+2. Materializing a new immutable command runtime under `$DEPLOY_ROOT/command-runtimes/<TARGET_SHA>` (e.g. via `scripts/sync-dev-root.sh` or dedicated deployment automation).
+3. Promoting the candidate runtime to update `PANTHEON_COMMAND_ROOT` and refresh the live supervisor configuration via `scripts/promote_supervisor_runtime.py`:
 
 ```bash
-# 1. Discover-only: validate the candidate runtime and current live config
-#    without stopping anything.
+# 1. Discover-only: validate candidate runtime invariants, barrier preflights,
+#    and live config without stopping anything.
 python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
-  --repo "${PANTHEON_DEPLOY_ROOT:?}" \
+  --repo "${CANDIDATE_COMMAND_ROOT:?}" \
   --status-root "${PANTHEON_STATUS_ROOT:?}" \
   --authority-env-file /etc/pantheon/dev-bridge/bridge-signing-public-keys-env \
   --discover-only --json
 
-# 2. Promote: stop the incumbent supervisor and launch the validated
-#    candidate. Only run this after step 1 reports every invariant passed.
+# 2. Promote: stop the incumbent supervisor and atomically launch the candidate
+#    runtime with the new configuration. Only run after step 1 passes all checks.
 python3 -B "${PANTHEON_DEPLOY_ROOT:?}/scripts/promote_supervisor_runtime.py" \
-  --repo "${PANTHEON_DEPLOY_ROOT:?}" \
+  --repo "${CANDIDATE_COMMAND_ROOT:?}" \
   --status-root "${PANTHEON_STATUS_ROOT:?}" \
   --authority-env-file /etc/pantheon/dev-bridge/bridge-signing-public-keys-env \
   --promote
 ```
 
-`--repo` and `--status-root` must both resolve to the qualified, currently
-deployed checkouts on this host -- never a retired or ad-hoc path. Omitting
-`--promote`/`--discover-only` is not a safe default; run discovery first and
-only pass `--promote` once its output confirms the candidate is eligible.
-`--authority-env-file` is required only when a runtime promotion also needs
-to carry the dev-bridge trust root forward; publishing or rotating the MFA
-issuer's own public keys never requires a supervisor promotion at all.
+Note on `--authority-env-file`: This parameter sets `BRIDGE_SIGNING_PUBLIC_KEYS_JSON`, the trust root used for dev-bridge task packet verification. It must be carried forward during runtime promotion if dev bridge is active. The MFA issuer keys themselves reside in the promoted runtime's `.orchestrator/config.json`.
+
+4. **Verify Both Key Fingerprints:**
+   After promotion, verify that the active signer fingerprint matches the promoted runtime config fingerprint:
+   - **Active Signer Fingerprint:** Read from the issuer service startup log or query the signer directly:
+     ```bash
+     python3 deploy/execution-grant-issuer/run_server.py --inspect-key /etc/pantheon/execution-grant-issuer/ed25519-private.pem
+     ```
+   - **Promoted Runtime Config Fingerprint:** Verify the fingerprint calculated from the promoted runtime's `.orchestrator/config.json`:
+     ```bash
+     python3 -c '
+     import json, base64, hashlib
+     cfg = json.load(open("'"${PANTHEON_COMMAND_ROOT}"'" + "/.orchestrator/config.json"))
+     keys = cfg["execution_authorization"]["mfa_issuer_public_keys"]
+     for kid, b64 in keys.items():
+         raw = base64.urlsafe_b64decode(b64 + "==")
+         fp = hashlib.sha256(raw).hexdigest()
+         print(f"{kid}: {fp}")
+     '
+     ```
+   Both fingerprints must match identically before submitting grants.
 
 ### Step 6.4: Rollback & Revocation Procedure
-If an issuer key is compromised or needs to be revoked:
-1. Revoke the outstanding grant immediately via CLI:
+
+If an issuer key is compromised, superseded, or needs to be revoked:
+1. **Revoke Outstanding Grants Immediately:**
    ```bash
-   AI_NAME=Human/Ops scripts/ai-status.sh execution-grant-revoke DEV502-TRACE-001 "Key compromised"
+   AI_NAME=Human/Ops scripts/ai-status.sh execution-grant-revoke DEV502-TRACE-001 "Key compromised or rotated"
    ```
-2. Remove the key ID from `execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json` and ship that change through the normal repository config path (see Step 6.3); this does not involve `promote_supervisor_runtime.py`.
-3. Stop the issuer service:
+2. **Stop The Issuer Service:**
    ```bash
    sudo systemctl stop pantheon-execution-grant-issuer
    ```
+3. **Roll Back or Revoke via Runtime Promotion:**
+   Remove the revoked key ID from `execution_authorization.mfa_issuer_public_keys` in `.orchestrator/config.json`.
+   Materialize a new command runtime containing the updated config and promote it using `promote_supervisor_runtime.py` (or re-promote a known-good prior immutable command runtime from `$DEPLOY_ROOT/command-runtimes/<PRIOR_SHA>`).
+   **CRITICAL:** Never attempt to patch files inside an immutable command runtime (`command-runtimes/<SHA>`) in place. Command runtimes are strictly immutable; rollback and revocation must always flow through runtime promotion.
+4. **Verify Revocation:**
+   Confirm that the revoked key ID no longer exists in `$PANTHEON_COMMAND_ROOT/.orchestrator/config.json` and that grants signed by that key fail verification with `Unknown key ID`.
 
 ---
 
@@ -307,23 +318,35 @@ operator's own workstation, without ever putting a password, pending
 credential, or the resulting `idToken` on the command line, in shell
 history, or on stdout:
 
-1. Sign in with password to initiate the MFA challenge. Provide the password
-   over stdin (`--data @-`) instead of as a shell argument, and capture only
-   the response body to a private file (`-o`, created with a restrictive
-   umask) so a pending credential is never printed to the terminal:
+1. Sign in with password to initiate the MFA challenge. The password is read
+   interactively with the shell's non-echoing `read -s` and passed to Python
+   strictly via the process environment (never typed into an interactive heredoc,
+   which Bash history records despite stdin redirection), formatted to JSON, and
+   piped directly into `curl --data @-` before unsetting the variable immediately.
+   The response body is captured to an exclusive private file (`-o`, mode `0600`
+   via restrictive `umask 0177`), so neither the password nor the pending credential
+   is ever recorded in shell history or printed to stdout:
    ```bash
    umask 0177
-   curl -sS -X POST \
+   read -r -s -p "Enter operator password: " OPERATOR_PASSWORD
+   echo
+   export OPERATOR_PASSWORD
+   python3 -c '
+   import json, os
+   print(json.dumps({
+       "email": "operator-chloe@pantheon.trade",
+       "password": os.environ["OPERATOR_PASSWORD"],
+       "returnSecureToken": True,
+   }))
+   ' | curl -sS -X POST \
      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
      -H "Content-Type: application/json" \
-     --data @- -o /tmp/signin-step1.json <<'EOF'
-   {"email":"operator-chloe@pantheon.trade","password":"REPLACE_INTERACTIVELY","returnSecureToken":true}
-   EOF
+     --data @- -o /tmp/signin-step1.json
+   unset OPERATOR_PASSWORD
    ```
    If MFA is enrolled, `/tmp/signin-step1.json` (mode `0600` from the
    `umask` above) contains `mfaPendingCredential` and the enrolled
-   `mfaEnrollmentId`(s) under `mfaInfo`. Replace the literal password in the
-   heredoc interactively; do not leave it in a saved script or shell history.
+   `mfaEnrollmentId`(s) under `mfaInfo`.
 2. Finalize the second factor using the official **v2** endpoint (the v1
    path used previously does not exist for this operation). The request body
    is `mfaPendingCredential`, `mfaEnrollmentId`, and
@@ -361,11 +384,11 @@ history, or on stdout:
    the verified `sign_in_second_factor` claim and `auth_time`. Neither the
    TOTP code nor the resulting `idToken` is ever printed to the terminal by
    this sequence.
-3. **Feeding the Token to the CLI:**
+3. **Feeding the Token or Grant to the Qualified Client:**
+   Extract only the `idToken` into its own private `0600` file; the file is
+   created with the restrictive umask still in effect, so there is no
+   echo-then-chmod window during which the token is world/group readable:
    ```bash
-   # Extract only the idToken into its own private 0600 file; the file is
-   # created with the restrictive umask still in effect, so there is no
-   # echo-then-chmod window during which the token is world/group readable.
    umask 0177
    python3 -c '
    import json, sys
@@ -373,14 +396,35 @@ history, or on stdout:
        f.write(json.load(open(sys.argv[1]))["idToken"])
    ' /tmp/signin-step2.json /tmp/operator-token.txt
    shred -u /tmp/signin-step2.json
+   ```
 
-   # Run the scoped TRACE client:
+   **Option A: Scoped TRACE Request + Automatic Submit via CLI:**
+   ```bash
    python3 scripts/request_execution_grant.py request \
      --task DEV502-TRACE-001 \
      --token-file /tmp/operator-token.txt \
      --submit
    shred -u /tmp/operator-token.txt
    ```
+
+   **Option B: Submitting a Grant File from the Tooling Web UI:**
+   If the operator obtained an execution grant via the web tooling interface (`/tooling`),
+   download the private grant JSON file to a mode-`0600` location and submit via the qualified client
+   (which performs local Ed25519 signature verification against `.orchestrator/config.json`,
+   validates the task policy snapshot, checks CAS generation, and submits via the governed CLI):
+   ```bash
+   # Submit from private file (verifies mode 0600):
+   python3 scripts/request_execution_grant.py submit \
+     --task DEV502-TRACE-001 \
+     --grant-file ~/Downloads/grant-DEV502-TRACE-001.json
+
+   # Or submit via stdin from private file without shell history:
+   python3 scripts/request_execution_grant.py submit \
+     --task DEV502-TRACE-001 \
+     --grant-stdin < ~/Downloads/grant-DEV502-TRACE-001.json
+   ```
+
+   **No Secrets in Command Arguments:** Never pass raw token or grant JSON directly as command-line arguments (such as `--token <secret>` or `--grant '<json>'`). The client strictly enforces `_check_no_secrets_in_argv` to prevent credential exposure in `ps`, system audit logs, or shell history.
 
 ---
 
