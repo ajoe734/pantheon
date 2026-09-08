@@ -647,7 +647,11 @@ def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) 
 
 
 @contextmanager
-def runtime_state_update(config: dict[str, Any]):
+def runtime_state_update(
+    config: dict[str, Any],
+    *,
+    nonblocking: bool = False,
+):
     """Yield one cache snapshot and persist it under one exclusive lock.
 
     This is deliberately the only read-modify-write primitive for bootstrap:
@@ -655,7 +659,7 @@ def runtime_state_update(config: dict[str, Any]):
     later overwrite a worker's concurrent progress update with that old copy.
     """
 
-    with runtime_state_lock(config, shared=False):
+    with runtime_state_lock(config, shared=False, nonblocking=nonblocking):
         state = _load_runtime_state_unlocked(config)
         yield state
         _save_runtime_state_unlocked(config, state)

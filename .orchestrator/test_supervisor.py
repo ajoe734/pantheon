@@ -16768,16 +16768,12 @@ class SchedulerCadenceTelemetryTests(unittest.TestCase):
 
     def test_completion_skips_runtime_lock_contention(self) -> None:
         @contextmanager
-        def contended_lock(*_args: Any, **kwargs: Any):
+        def contended_update(*_args: Any, **kwargs: Any):
             self.assertTrue(kwargs["nonblocking"])
             raise common.LockContentionError(11, "contended", "runtime-admission.lock")
             yield
 
-        with (
-            mock.patch.object(supervisor, "runtime_state_lock", contended_lock),
-            mock.patch.object(supervisor, "load_runtime_state") as load_state,
-            mock.patch.object(supervisor, "save_runtime_state") as save_state,
-        ):
+        with mock.patch.object(supervisor, "runtime_state_update", contended_update):
             self.assertFalse(
                 supervisor.publish_scheduler_cadence_completion(
                     {},
@@ -16785,26 +16781,20 @@ class SchedulerCadenceTelemetryTests(unittest.TestCase):
                 )
             )
 
-        load_state.assert_not_called()
-        save_state.assert_not_called()
-
     def test_completion_persists_when_runtime_lock_is_available(self) -> None:
         state: dict[str, Any] = {"supervisor": {"scheduler_cycle_elapsed_peak_seconds": 2.0}}
 
-        def available_lock(*_args: Any, **_kwargs: Any):
-            return nullcontext()
+        @contextmanager
+        def available_update(*_args: Any, **kwargs: Any):
+            self.assertTrue(kwargs["nonblocking"])
+            yield state
 
-        with (
-            mock.patch.object(supervisor, "runtime_state_lock", available_lock),
-            mock.patch.object(supervisor, "load_runtime_state", return_value=state),
-            mock.patch.object(supervisor, "save_runtime_state") as save_state,
-        ):
+        with mock.patch.object(supervisor, "runtime_state_update", available_update):
             self.assertTrue(supervisor.publish_scheduler_cadence_completion({}, self._SAMPLE))
 
         self.assertEqual(state["supervisor"]["scheduler_cycle_elapsed_seconds"], 1.0)
         self.assertEqual(state["supervisor"]["scheduler_cycle_elapsed_peak_seconds"], 2.0)
         self.assertEqual(state["supervisor"]["cadence_next_deadline_monotonic"], 2.0)
-        save_state.assert_called_once_with({}, state)
 
 
 if __name__ == "__main__":

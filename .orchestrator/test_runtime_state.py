@@ -10,6 +10,7 @@ import signal
 import tempfile
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -18,6 +19,32 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import common
 import runtime_state
+
+
+class RuntimeStateUpdateLockTests(unittest.TestCase):
+    def test_nonblocking_update_uses_one_nonblocking_exclusive_lock(self) -> None:
+        state = runtime_state.default_state()
+        saved: list[dict[str, object]] = []
+
+        @contextmanager
+        def lock(_config: dict[str, object], **kwargs: object):
+            self.assertFalse(kwargs["shared"])
+            self.assertTrue(kwargs["nonblocking"])
+            yield None
+
+        with (
+            mock.patch.object(runtime_state, "runtime_state_lock", lock),
+            mock.patch.object(runtime_state, "_load_runtime_state_unlocked", return_value=state),
+            mock.patch.object(
+                runtime_state,
+                "_save_runtime_state_unlocked",
+                side_effect=lambda _config, value: saved.append(value),
+            ),
+        ):
+            with runtime_state.runtime_state_update({}, nonblocking=True) as current:
+                current["supervisor"]["cadence_next_deadline_monotonic"] = 2.0
+
+        self.assertEqual(saved, [state])
 
 
 class TerminalQueueCompactionTests(unittest.TestCase):
