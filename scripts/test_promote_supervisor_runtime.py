@@ -461,7 +461,7 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     assert events == ["stop", "launch"]
     installed = json.loads(live_config.read_text(encoding="utf-8"))
     assert installed["task_state_store"]["mode"] == "authoritative"
-    assert json.loads((status_root / ".orchestrator" / "approval-queue.json").read_text(encoding="utf-8"))["version"] == 2
+    assert json.loads((status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").read_text(encoding="utf-8"))["version"] == 2
     assert not hasattr(promotion, "migrate_task_state_store_v2")
     assert not hasattr(promotion, "PromotionTransaction")
 
@@ -1030,3 +1030,105 @@ def test_replace_supervisor_refuses_old_runtime_rollback_without_barriers(
     assert "authorization barriers" in result["error"]
     # The healthy incumbent must never be stopped once this preflight fails.
     assert stop_calls == []
+
+
+def test_migrate_storage_paths_moves_task_state_and_worker_runtime_files(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    coord = tmp_path / "coord"
+    runtime.mkdir(parents=True)
+    coord.mkdir(parents=True)
+
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+    (runtime / "events.jsonl.legacy-anchor.json").write_text('{"anchor": 1}\n', encoding="utf-8")
+
+    (coord / ".orchestrator").mkdir(parents=True)
+    old_state = coord / ".orchestrator" / "state.json"
+    old_state.write_text('{"workers": {}}\n', encoding="utf-8")
+    old_queue = coord / ".orchestrator" / "approval-queue.json"
+    old_queue.write_text('{"version": 2}\n', encoding="utf-8")
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    new_state = coord / ".orchestrator" / "worker-runtime" / "state.json"
+    new_queue = coord / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+
+    incumbent = {
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+        "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+    }
+    rendered = {
+        "task_state_store": {"mode": "authoritative", "event_log": str(new_log)},
+        "paths": {"state_file": str(new_state), "approval_queue": str(new_queue)},
+    }
+
+    record = promotion._migrate_storage_paths(incumbent, rendered)
+    assert record["migrated"] is True
+    assert not old_log.exists()
+    assert new_log.exists()
+    assert new_log.read_text(encoding="utf-8") == "event data\n"
+    assert (runtime / "task-state" / "events.jsonl.head.json").read_text(encoding="utf-8") == '{"seq": 1}\n'
+    assert (runtime / "task-state" / "events.jsonl.lock").exists()
+    assert (runtime / "task-state" / "events.jsonl.legacy-anchor.json").exists()
+
+    assert not old_state.exists()
+    assert new_state.exists()
+    assert json.loads(new_state.read_text(encoding="utf-8")) == {"workers": {}}
+
+    assert not old_queue.exists()
+    assert new_queue.exists()
+    assert json.loads(new_queue.read_text(encoding="utf-8")) == {"version": 2}
+
+
+def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    old_log = tmp_path / "runtime" / "task-state-events-v2.jsonl"
+    old_log.write_text("old events\n", encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
+
+    old_state = status_root / ".orchestrator" / "state.json"
+    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_queue = status_root / ".orchestrator" / "approval-queue.json"
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+    incumbent = {
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+        "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+
+    def failing_launch(*a, **k):
+        raise RuntimeError("simulated launch crash")
+
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", failing_launch)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "simulated launch crash" in result["error"]
+    # Files should be rolled back to their incumbent locations
+    assert old_log.exists()
+    assert old_log.read_text(encoding="utf-8") == "old events\n"
+    assert (tmp_path / "runtime" / f"{old_log.name}.head.json").exists()
+    assert old_state.exists()
+    assert old_state.read_text(encoding="utf-8") == '{"old": true}\n'
+    assert old_queue.exists()
+    assert json.loads(old_queue.read_text(encoding="utf-8")) == {"version": 2, "pending": [], "history": []}
+    # Live config should be restored to incumbent
+    restored = json.loads(live_config.read_text(encoding="utf-8"))
+    assert restored["paths"]["state_file"] == str(old_state)

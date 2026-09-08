@@ -1,0 +1,159 @@
+{
+  "schema_version": "pantheon.worker-mounts-evidence.v1",
+  "task_id": "OPS-WORKER-MOUNTS-001",
+  "title": "Align worker sandbox mounts with atomic canonical state publication",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "base_sha_at_dispatch": "1b39676c12182e15602bcb85a72244f2b31b0116",
+  "task_branch": "task/OPS-WORKER-MOUNTS-001",
+  "depends_on": [
+    "OPS-REVIEW-PROOF-001"
+  ],
+  "depends_on_status_at_dispatch": "done, satisfied=true",
+  "delivery_state": "ready_for_review",
+  "plan": {
+    "path": "/tmp/pantheon-tooling-root-repair-20260907/WORKER_MOUNTS_PLAN.md",
+    "sha256": "5ddbf06b8dd8f4e7e0374e05a9363e11e663cbb31b70fccaf7b126893cecd1bf"
+  },
+  "supplements": [
+    {
+      "path": "/tmp/pantheon-tooling-root-repair-20260907/mount-identity-audit/REPORT.md",
+      "sha256": "240695f0311f5c4c41dbb88e77a2deb40574e70d360e1c232c2f9c6ab3e9939b"
+    },
+    {
+      "path": "/tmp/pantheon-tooling-root-repair-20260907/mount-identity-audit/LOCK-BOUNDARY-SUPPLEMENT.md",
+      "sha256": "d751a0b5dae35bab0079aeee7c8ab69a943d11b8dd1093347cab502f360452ae"
+    }
+  ],
+  "scope": {
+    "artifacts_count": 21,
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/config.example.json",
+      ".orchestrator/config.json",
+      ".orchestrator/model_rotation.py",
+      ".orchestrator/permission_broker.py",
+      ".orchestrator/runtime_state.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/supervisor_watchdog.py",
+      ".orchestrator/test_common.py",
+      ".orchestrator/test_provider_permissions.py",
+      ".orchestrator/test_worker_runner_heartbeat.py",
+      ".orchestrator/worker_runner.py",
+      "scripts/ai_status.py",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/provision_live_supervisor_config.py",
+      "scripts/supervisor_runtime_health.py",
+      "scripts/test_ai_status.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "scripts/test_provision_live_supervisor_config.py",
+      "docs/operations/worker-atomic-state-mounts.md",
+      "docs/deployment/evidence/OPS-WORKER-MOUNTS-001/evidence.json"
+    ],
+    "owned": [
+      "Worker sandbox filesystem mount alignment: moving state.json and approval-queue.json into dedicated mutable directory (.orchestrator/worker-runtime/) mounted via --bind while retaining read-only enclosing .orchestrator/ mount via --ro-bind.",
+      "Task-store publication race resolution: moving V2 TaskStore files (task-state-events-v2.jsonl, head.json, lock, legacy-anchor.json) into dedicated directory (task-state/) mounted via --bind, eliminating transient head tmp scan failures.",
+      "Strict authority precondition in common.write_status under exclusive snapshot_transaction lock (event_count > 0) preventing stale host writers from recreating retired/uninitialized journals.",
+      "Supervisor control files (PID, lock, watchdog state, rotation cooldowns) anchored strictly to canonical status_root/.orchestrator coordination root.",
+      "Runtime promotion single-writer storage migration and transactional rollback in promote_supervisor_runtime.py.",
+      "Permission broker canonical status path binding with fallback defaults in permission_broker.py."
+    ],
+    "not_changing": [
+      "No bypass of bubblewrap isolation or sandbox boundaries.",
+      "No alteration to V2 TaskStore commit schema or journal hashes.",
+      "No removal of canonical review gates or reviewer policies."
+    ],
+    "composes_with": [
+      "OPS-REVIEW-PROOF-001",
+      "V2 TaskStore canonical journal and event log",
+      "Supervisor auto-worker process manager"
+    ]
+  },
+  "failure_reproduction": {
+    "case_1_erofs_atomic_state_write": "Worker atomic file replacement in sandbox failed with EROFS because state.json was an inode bind mount inside a read-only directory.",
+    "case_2_transient_head_publication_enoent": "bwrap failed on worker launch with ENOENT when scanning transient publication temp files in task store parent directory.",
+    "case_3_stale_journal_recreation": "common.write_status without existing-authority check recreated empty/retired journals when invoked with legacy configs.",
+    "case_4_control_file_drift": "Moving state_file risked drifting supervisor control files into worker-writable directories if derived from state_file parent."
+  },
+  "implementation": {
+    "worker_runner": "Replaced individual file mounts for state.json and approval-queue.json with a directory bind mount for .orchestrator/worker-runtime/. Replaced task store sibling scan with a directory bind mount for task-state/.",
+    "common": "Added canonical_status_paths with fill_defaults; added existing-authority precondition in write_status under snapshot_transaction.",
+    "supervisor": "Anchored supervisor.pid, supervisor.lock, watchdog state, and rotation cooldowns to status_root / .orchestrator.",
+    "promote_supervisor_runtime": "Added _migrate_storage_paths and transactional rollback during supervisor promotion.",
+    "permission_broker": "Updated runtime config loading to bind paths using canonical_status_paths.",
+    "provision_live_supervisor_config": "Set default task_state_store paths under task-state/ directory."
+  },
+  "verification": {
+    "environment": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "interpreter": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python"
+    },
+    "checksums": {
+      ".orchestrator/common.py": "ccc1c9ab3edc4779422217b951a94b2b7305fb17ce23bfbc48c53bf39552f542",
+      ".orchestrator/config.example.json": "f15d65a825010eaa5873fd85203651560d11e2a06fe38a5ef4fd639b7149a23a",
+      ".orchestrator/config.json": "d6827446afc82cdfd86d89b01b8187187a607b2306c5c5b100c7d738803c7e8e",
+      ".orchestrator/model_rotation.py": "e79e6cda2a77555bc54642b256ed12a71c9800a50234b9a6f8308a9f3e25de9c",
+      ".orchestrator/permission_broker.py": "5a45b7d1c7feb6e521b987ecad271d1d0655d2bc54ccf28314980632018c11a5",
+      ".orchestrator/runtime_state.py": "96774656d5db5ebbd9045f384b45409716280aabc33b857cd26ef4df2bb2e4b2",
+      ".orchestrator/supervisor.py": "71fdb6021ff0a40af8f888210504261028e883cea84828819af3ac15d7a8fa74",
+      ".orchestrator/supervisor_watchdog.py": "d370b73df896947dd73c09a4d7585eb0bb4ca77d1df4e4c4e9479e47f3334223",
+      ".orchestrator/test_common.py": "e2d8a310dcee3461206213429f8b2abda5c96cd5766ad147ccfe905831eaaa02",
+      ".orchestrator/test_provider_permissions.py": "79944558ca4a933234ebfe8917623656a095abcbe0eb6b0ca0fd939168d35aa4",
+      ".orchestrator/test_worker_runner_heartbeat.py": "aab8e91ff6f92894649c3eff9d514b4e34ceebd7bb20700f6c4a87901a5cdf1f",
+      ".orchestrator/worker_runner.py": "ce8919631c3fc3e27af37f8369a03722edb60cba31b1421177cfba3fd287a744",
+      "scripts/ai_status.py": "fd6e42eb8599f1b0ce45feeef808278f108ed24a716df7f4040858718ba57ab0",
+      "scripts/promote_supervisor_runtime.py": "0516a5906faa95d634848150bff2ea9ec3df7f5506589ee1159c6ab06c8d0dd4",
+      "scripts/provision_live_supervisor_config.py": "c2252528253ffb8958f4cfa00b6165853bef3e9ee7de9532adb5665e57fd21ed",
+      "scripts/supervisor_runtime_health.py": "760af2944435f74dd1406ce69f5040541f918b9ac902b71361d437567a24587b",
+      "scripts/test_ai_status.py": "024d7100d78a0271c886d273ead10f04c01ff60e2135f2cb7203ced29b676674",
+      "scripts/test_promote_supervisor_runtime.py": "53502d2a3b20307be0239eff166cb23850cf241071a53fda7f471f57b792042f",
+      "scripts/test_provision_live_supervisor_config.py": "09536e917286516557280c3b9b9800abba6dad8372460c29c3a787fb50d10fb2",
+      "docs/operations/worker-atomic-state-mounts.md": "093d4ed7fd10892d9225a10217be813fc67f5e2958e8acf1050677ed7c69fd7e"
+    },
+    "passed": [
+      {
+        "command": "pytest .orchestrator/test_worker_runner_heartbeat.py",
+        "result": "66 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest .orchestrator/test_runtime_state.py",
+        "result": "29 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest .orchestrator/test_common.py",
+        "result": "106 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest .orchestrator/test_provider_permissions.py",
+        "result": "122 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/test_provision_live_supervisor_config.py",
+        "result": "37 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/test_promote_supervisor_runtime.py",
+        "result": "45 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/test_supervisor_runtime_health.py",
+        "result": "13 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/test_ai_status.py",
+        "result": "457 passed",
+        "exit_status": 0
+      }
+    ]
+  }
+}

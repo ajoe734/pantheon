@@ -26,6 +26,7 @@ from common import (
     TASK_STATE_STORE_MODE_ENV,
     ROOT,
     approval_tool_input_signature,
+    canonical_status_paths,
     canonical_task_state_identity_from_environment,
     load_config,
     load_json,
@@ -166,24 +167,7 @@ def load_broker_runtime_config() -> dict[str, Any]:
     )
 
     rebound = dict(config)
-    paths = dict(config.get("paths") or {})
-    paths.update(
-        {
-            "status_file": str(status_root / "ai-status.json"),
-            "activity_log": str(status_root / "ai-activity-log.jsonl"),
-            "current_work": str(status_root / "current-work.md"),
-            "dashboard": str(status_root / "docs-site" / "index.html"),
-            "state_file": str(status_root / ".orchestrator" / "state.json"),
-            "approval_queue": str(status_root / ".orchestrator" / "approval-queue.json"),
-            "provider_capabilities": str(
-                status_root / ".orchestrator" / "provider_capabilities.json"
-            ),
-            "claude_mcp_config": str(
-                status_root / ".orchestrator" / "claude-approval-broker.mcp.json"
-            ),
-        }
-    )
-    rebound["paths"] = paths
+    rebound["paths"] = canonical_status_paths(config, status_root, fill_defaults=True)
     rebound["task_state_store"] = {
         "mode": "authoritative",
         "event_log": str(event_log),

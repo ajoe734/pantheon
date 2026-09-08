@@ -214,9 +214,15 @@ def _pid_path(rendered: Mapping[str, Any]) -> Path:
     paths = rendered.get("paths")
     if not isinstance(paths, Mapping):
         raise ValueError("V2 config must define paths")
+    status_file = str(paths.get("status_file") or "").strip()
+    if status_file:
+        status_root = Path(status_file).expanduser().resolve().parent
+        return status_root / ".orchestrator" / "supervisor.pid"
     state_file = Path(str(paths.get("state_file") or "")).expanduser()
     if not state_file.is_absolute():
         raise ValueError("rendered V2 state_file must be absolute")
+    if state_file.parent.name == "worker-runtime" and state_file.parent.parent.name == ".orchestrator":
+        return state_file.parent.parent / "supervisor.pid"
     return state_file.parent / "supervisor.pid"
 
 
@@ -232,7 +238,15 @@ def _incumbent_pid_path(live_config_path: Path, rendered: Mapping[str, Any]) -> 
     if not live_config_path.exists():
         return _pid_path(rendered)
     incumbent = _load_json(live_config_path, label="installed live config")
-    return _pid_path(incumbent)
+    candidate = _pid_path(incumbent)
+    if not candidate.exists():
+        paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+        state_file = str(paths.get("state_file") or "").strip()
+        if state_file:
+            legacy_pid = Path(state_file).expanduser().parent / "supervisor.pid"
+            if legacy_pid.exists():
+                return legacy_pid
+    return candidate
 
 
 def _read_pid(path: Path) -> int | None:
@@ -713,6 +727,48 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
     }
 
 
+def _migrate_storage_paths(
+    incumbent: Mapping[str, Any] | None,
+    rendered: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Atomically relocate storage files when live config paths change."""
+    if not incumbent:
+        return {"migrated": False, "files": []}
+
+    moved_files: list[tuple[str, str]] = []
+
+    old_store = incumbent.get("task_state_store") if isinstance(incumbent.get("task_state_store"), Mapping) else {}
+    new_store = rendered.get("task_state_store") if isinstance(rendered.get("task_state_store"), Mapping) else {}
+    old_log_raw = str(old_store.get("event_log") or "").strip()
+    new_log_raw = str(new_store.get("event_log") or "").strip()
+    if old_log_raw and new_log_raw and old_log_raw != new_log_raw:
+        old_event_log = Path(old_log_raw).expanduser()
+        new_event_log = Path(new_log_raw).expanduser()
+        if old_event_log.exists():
+            new_event_log.parent.mkdir(parents=True, exist_ok=True)
+            for suffix in ("", ".head.json", ".lock", ".legacy-anchor.json"):
+                old_file = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
+                new_file = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
+                if old_file.exists():
+                    os.replace(old_file, new_file)
+                    moved_files.append((str(old_file), str(new_file)))
+
+    old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+    new_paths = rendered.get("paths") if isinstance(rendered.get("paths"), Mapping) else {}
+    for key in ("state_file", "approval_queue"):
+        old_val = str(old_paths.get(key) or "").strip()
+        new_val = str(new_paths.get(key) or "").strip()
+        if old_val and new_val and old_val != new_val:
+            old_p = Path(old_val).expanduser()
+            new_p = Path(new_val).expanduser()
+            if old_p.exists() and not new_p.exists():
+                new_p.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(old_p, new_p)
+                moved_files.append((str(old_p), str(new_p)))
+
+    return {"migrated": bool(moved_files), "files": moved_files}
+
+
 def _replace_supervisor_locked(
     repo_root: Path,
     *,
@@ -748,6 +804,7 @@ def _replace_supervisor_locked(
     if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
         raise ValueError("rendered V2 config must define paths.approval_queue")
     approval_queue_path = Path(approval_queue_value).expanduser().absolute()
+    incumbent = _load_json(live_config_path, label="installed live config") if live_config_path.exists() else None
     incumbent_pid_path = _incumbent_pid_path(live_config_path, rendered)
     result: dict[str, Any] = {
         "schema_version": 2,
@@ -788,18 +845,28 @@ def _replace_supervisor_locked(
                 Path(identity["root"]), python_executable=python_executable,
             )
         )
-        ensure_approval_queue_marker(approval_queue_path)
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
         )
         result["stopped_pid"] = stopped_pid
+        migration_record = _migrate_storage_paths(incumbent, rendered)
+        result["storage_migration"] = migration_record
+        ensure_approval_queue_marker(approval_queue_path)
         write_json_atomic(live_config_path, rendered)
-        result["launched_pid"] = launch_v2_supervisor(
-            rendered,
-            identity=identity,
-            status_root=status_root,
-            authority_env_file=authority_env_file,
-        )
+        try:
+            result["launched_pid"] = launch_v2_supervisor(
+                rendered,
+                identity=identity,
+                status_root=status_root,
+                authority_env_file=authority_env_file,
+            )
+        except Exception as launch_exc:
+            for old_file, new_file in reversed(migration_record.get("files", [])):
+                if os.path.exists(new_file) and not os.path.exists(old_file):
+                    os.replace(new_file, old_file)
+            if incumbent:
+                write_json_atomic(live_config_path, incumbent)
+            raise launch_exc
         result["outcome"] = "launched"
         result["exit_code"] = 0
         try:

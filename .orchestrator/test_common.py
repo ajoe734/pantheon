@@ -3056,5 +3056,62 @@ class CommitSubjectPrefixVariantsTests(unittest.TestCase):
         self.assertEqual(compacted_prefix, "REG-002")
 
 
+class TestWriteStatusPrecondition(unittest.TestCase):
+    def test_write_status_rejects_empty_canonical_events(self):
+        with tempfile.TemporaryDirectory(prefix="test-write-status-empty-") as temp_dir:
+            root = Path(temp_dir)
+            status_root = root / "coord"
+            status_root.mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            event_log = root / "runtime" / "task-state" / "events.jsonl"
+            event_log.parent.mkdir(parents=True)
+            event_log.touch()
+
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "state_file": str(status_root / ".orchestrator" / "worker-runtime" / "state.json"),
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
+            }
+            with self.assertRaisesRegex(RuntimeError, "runtime mutation requires existing canonical events"):
+                common.write_status(config, {"tasks": []}, source="test-empty")
+
+    def test_write_status_succeeds_when_canonical_events_exist(self):
+        from rewrite import task_state_store
+
+        with tempfile.TemporaryDirectory(prefix="test-write-status-ok-") as temp_dir:
+            root = Path(temp_dir)
+            status_root = root / "coord"
+            status_root.mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            event_log = root / "runtime" / "task-state" / "events.jsonl"
+            event_log.parent.mkdir(parents=True)
+
+            task_state_store.append_state_commit(
+                event_log, {"tasks": [{"id": "TASK-1", "status": "in_progress"}]}, source="genesis-bootstrap"
+            )
+
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "state_file": str(status_root / ".orchestrator" / "worker-runtime" / "state.json"),
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
+            }
+            payload = {"tasks": [{"id": "TASK-1", "status": "done"}]}
+            common.write_status(config, payload, source="test-update")
+            self.assertEqual(json.loads(status_file.read_text()), payload)
+            snapshot = task_state_store.load_snapshot(event_log)
+            self.assertEqual(snapshot["event_count"], 2)
+            self.assertEqual(snapshot["state"], payload)
+
+
 if __name__ == "__main__":
     unittest.main()

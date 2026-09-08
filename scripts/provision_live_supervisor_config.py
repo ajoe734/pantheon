@@ -709,7 +709,13 @@ def apply_task_state_store(
         raise ValueError(
             f"task-state store runtime parent contains a symlink component: {parent_symlink}"
         )
-    event_log_candidate = runtime_parent / filename
+    task_state_dir = runtime_parent / "task-state"
+    dir_symlink = first_symlink_component(task_state_dir)
+    if dir_symlink is not None:
+        raise ValueError(
+            f"task-state store directory contains a symlink component: {dir_symlink}"
+        )
+    event_log_candidate = task_state_dir / filename
     event_symlink = first_symlink_component(event_log_candidate)
     if event_symlink is not None:
         raise ValueError(f"task-state event log contains a symlink component: {event_symlink}")
@@ -834,6 +840,7 @@ def ensure_approval_queue_marker(path: Path) -> bool:
     parent_symlink = first_symlink_component(path.parent)
     if parent_symlink is not None:
         raise ValueError(f"approval queue marker parent contains a symlink component: {parent_symlink}")
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not path.parent.is_dir():
         raise ValueError(f"approval queue marker parent is not a directory: {path.parent}")
 

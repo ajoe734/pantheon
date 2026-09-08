@@ -160,7 +160,8 @@ def supervisor_command_identity(settings: Mapping[str, Any]) -> tuple[list[str],
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.pid"
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor.pid"
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:
@@ -218,10 +219,11 @@ def watchdog_metrics_path(config: dict[str, Any], settings: dict[str, Any] | Non
 def intentional_restart_path(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
     settings = settings or watchdog_settings(config)
     configured = settings.get("intentional_restart_file")
+    coord_root = resolved_coordinator_status_root(config)
     if configured:
         raw = Path(str(configured))
-        return raw if raw.is_absolute() else config_path(config, "state_file").parent / raw
-    return config_path(config, "state_file").parent / "supervisor-restart-intent.json"
+        return raw if raw.is_absolute() else coord_root / ".orchestrator" / raw
+    return coord_root / ".orchestrator" / "supervisor-restart-intent.json"
 
 
 def _assert_regular_watchdog_leaf(path: Path, descriptor: int, *, label: str) -> None:
@@ -966,7 +968,8 @@ def enter_watchdog_safe_mode(config: dict[str, Any], runtime_state: dict[str, An
 
 
 def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: datetime) -> tuple[int, Path]:
-    log_dir = config_path(config, "state_file").parent / "logs"
+    coord_root = resolved_coordinator_status_root(config)
+    log_dir = coord_root / ".orchestrator" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"supervisor-watchdog-restart-{stamp}.log"
