@@ -33,6 +33,7 @@ import time
 import uuid
 from pathlib import Path
 import threading
+import urllib.parse
 from typing import Any, Dict, List, Optional, Sequence
 
 from .record_store import (
@@ -382,10 +383,38 @@ def domain_creation_idempotency_key(
     entry_id: str,
 ) -> str:
     """Format a collision-free idempotency key for domain-layer entry creation transactions."""
-    clean_tenant = str(tenant_id or "").strip()
-    clean_actor = str(actor_id or "").strip()
-    clean_id = str(entry_id or "").strip()
+    clean_tenant = urllib.parse.quote(str(tenant_id or "").strip(), safe="-_.~")
+    clean_actor = urllib.parse.quote(str(actor_id or "").strip(), safe="-_.~")
+    clean_id = urllib.parse.quote(str(entry_id or "").strip(), safe="-_.~")
     return f"domain:create:{clean_tenant}:{clean_actor}:{clean_id}"
+
+
+def create_idempotency_key(
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    idempotency_key: str,
+) -> str:
+    """Format an unambiguous structured scope key for BFF create requests."""
+    clean_tenant = urllib.parse.quote(str(tenant_id or "").strip(), safe="-_.~")
+    clean_user = urllib.parse.quote(str(user_id or "").strip(), safe="-_.~")
+    clean_key = urllib.parse.quote(str(idempotency_key or "").strip(), safe="-_.~")
+    return f"create:{clean_tenant}:{clean_user}:{clean_key}"
+
+
+def patch_idempotency_key(
+    *,
+    tenant_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    idempotency_key: str,
+) -> str:
+    """Format an unambiguous structured scope key for patch mutations."""
+    clean_tenant = urllib.parse.quote(str(tenant_id or "").strip(), safe="-_.~")
+    clean_actor = urllib.parse.quote(str(actor_id or "").strip(), safe="-_.~")
+    clean_key = urllib.parse.quote(str(idempotency_key or "").strip(), safe="-_.~")
+    if clean_tenant or clean_actor:
+        return f"{clean_tenant}:{clean_actor}:{clean_key}"
+    return clean_key
 
 
 def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[str, Any]]) -> None:
@@ -393,7 +422,11 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
     if not isinstance(entry, dict):
         return
 
-    # If bundle lock is held, a live writer is actively in progress; never coordinate or finalize
+    clean_id = str(entry.get("id") or "").strip()
+    if not clean_id:
+        return
+
+    # If bundle lock is held by another process/thread, a live writer is actively in progress; never coordinate
     if stores.is_bundle_locked():
         return
 
@@ -403,15 +436,11 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
         evt_id = str(creation_outbox.get("event_id") or creation_outbox.get("id") or "")
         clean_tenant = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
         clean_actor = str(entry.get("createdBy") or entry.get("actor_id") or "").strip()
-        clean_id = str(entry.get("id") or "").strip()
         create_idem_key = domain_creation_idempotency_key(
             tenant_id=clean_tenant,
             actor_id=clean_actor,
             entry_id=clean_id,
         )
-        idem_rec = None
-        if stores.idempotency is not None:
-            idem_rec = stores.idempotency.get(create_idem_key)
 
         secondary_ok = True
         if stores.outbox is not None and creation_outbox:
@@ -422,65 +451,75 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
                     secondary_ok = False
 
         if secondary_ok:
-            if stores.idempotency is not None and idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
-                try:
-                    stores.idempotency.put({
-                        **idem_rec,
-                        "status": _IDEM_STATUS_SUCCEEDED,
-                    })
-                except Exception:
-                    pass
-            if "_creation_outbox" in entry:
-                committed_entry = dict(entry)
-                committed_entry.pop("_creation_outbox", None)
-                try:
-                    stores.entries.put(committed_entry)
-                except Exception:
-                    pass
+            with stores.bundle_lock(), stores._tx_lock:
+                fresh = stores.entries.get(clean_id)
+                if isinstance(fresh, dict):
+                    fresh_outbox = fresh.get("_creation_outbox")
+                    if fresh_outbox is not None:
+                        fresh_evt_id = str(fresh_outbox.get("event_id") or fresh_outbox.get("id") or "")
+                        if not evt_id or not fresh_evt_id or evt_id == fresh_evt_id:
+                            committed_fresh = dict(fresh)
+                            committed_fresh.pop("_creation_outbox", None)
+                            updated, _ = stores.entries.compare_and_set(fresh, committed_fresh)
+                            if updated:
+                                if stores.idempotency is not None:
+                                    idem_rec = stores.idempotency.get(create_idem_key)
+                                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
+                                        try:
+                                            stores.idempotency.put({
+                                                **idem_rec,
+                                                "status": _IDEM_STATUS_SUCCEEDED,
+                                            })
+                                        except Exception:
+                                            pass
 
     # 2. Coordinate patch transaction history
-    tx_history = entry.get("_tx_history")
-    if not tx_history or not isinstance(tx_history, list):
-        return
+    with stores.bundle_lock(), stores._tx_lock:
+        fresh_entry = stores.entries.get(clean_id)
+        if not isinstance(fresh_entry, dict):
+            return
+        tx_history = fresh_entry.get("_tx_history")
+        if not tx_history or not isinstance(tx_history, list):
+            return
 
-    for tx in tx_history:
-        if not isinstance(tx, dict):
-            continue
-        audit = tx.get("audit")
-        audit_id = tx.get("audit_id")
-        outbox = tx.get("outbox")
-        outbox_id = tx.get("outbox_id")
-        idem_key = tx.get("idempotency_key")
+        for tx in tx_history:
+            if not isinstance(tx, dict):
+                continue
+            audit = tx.get("audit")
+            audit_id = tx.get("audit_id")
+            outbox = tx.get("outbox")
+            outbox_id = tx.get("outbox_id")
+            idem_key = tx.get("idempotency_key")
 
-        # Never finalize with failed secondary writes
-        secondary_ok = True
-        if audit and audit_id and stores.audit is not None:
-            if stores.audit.get(audit_id) is None:
-                try:
-                    stores.audit.put({"audit_id": audit_id, **audit})
-                except Exception:
-                    secondary_ok = False
+            # Never finalize with failed secondary writes
+            secondary_ok = True
+            if audit and audit_id and stores.audit is not None:
+                if stores.audit.get(audit_id) is None:
+                    try:
+                        stores.audit.put({"audit_id": audit_id, **audit})
+                    except Exception:
+                        secondary_ok = False
 
-        if outbox and outbox_id and stores.outbox is not None:
-            if stores.outbox.get(outbox_id) is None:
-                try:
-                    stores.outbox.put(outbox)
-                except Exception:
-                    secondary_ok = False
+            if outbox and outbox_id and stores.outbox is not None:
+                if stores.outbox.get(outbox_id) is None:
+                    try:
+                        stores.outbox.put(outbox)
+                    except Exception:
+                        secondary_ok = False
 
-        if secondary_ok and idem_key and stores.idempotency is not None:
-            idem_rec = stores.idempotency.get(idem_key)
-            if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
-                try:
-                    stores.idempotency.put({
-                        **idem_rec,
-                        "status": _IDEM_STATUS_SUCCEEDED,
-                        "patch_id": audit_id,
-                        "audit": audit,
-                        "entry": tx.get("entry") or idem_rec.get("candidate_entry"),
-                    })
-                except Exception:
-                    pass
+            if secondary_ok and idem_key and stores.idempotency is not None:
+                idem_rec = stores.idempotency.get(idem_key)
+                if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
+                    try:
+                        stores.idempotency.put({
+                            **idem_rec,
+                            "status": _IDEM_STATUS_SUCCEEDED,
+                            "patch_id": audit_id,
+                            "audit": audit,
+                            "entry": tx.get("entry") or idem_rec.get("candidate_entry"),
+                        })
+                    except Exception:
+                        pass
 
 
 def create_entry(
@@ -1193,7 +1232,11 @@ def patch_entry(
         return None
 
     # Scope-bound idempotency reservation key
-    scoped_idem_key = f"{clean_tenant}:{clean_actor}:{idempotency_key}" if clean_tenant or clean_actor else idempotency_key
+    scoped_idem_key = patch_idempotency_key(
+        tenant_id=clean_tenant,
+        actor_id=clean_actor,
+        idempotency_key=idempotency_key,
+    )
 
     reservation = {
         "idempotency_key": scoped_idem_key,

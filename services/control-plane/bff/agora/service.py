@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
@@ -1602,7 +1603,10 @@ class AgoraService:
 
         scoped_idem_key: Optional[str] = None
         if resolved_key and not dry_run:
-            scoped_idem_key = f"create:{resolved_tenant}:{resolved_user}:{resolved_key}"
+            clean_tenant_q = urllib.parse.quote(str(resolved_tenant or "").strip(), safe="-_.~")
+            clean_user_q = urllib.parse.quote(str(resolved_user or "").strip(), safe="-_.~")
+            clean_key_q = urllib.parse.quote(str(resolved_key or "").strip(), safe="-_.~")
+            scoped_idem_key = f"create:{clean_tenant_q}:{clean_user_q}:{clean_key_q}"
             entry_id = str(
                 payload.get("id")
                 or payload.get("entryId")
@@ -1635,36 +1639,66 @@ class AgoraService:
                 reserved, existing = owner.stores.idempotency.insert_if_absent(reservation)
                 if reserved:
                     idem_check = None
-                elif existing.get("request_hash") != request_hash:
-                    idem_check = {"conflict": True, "record": existing}
-                elif existing.get("status") == "pending":
-                    created_pid = existing.get("created_pid")
-                    is_dead = False
-                    if created_pid and created_pid != os.getpid():
-                        try:
-                            os.kill(created_pid, 0)
-                        except ProcessLookupError:
-                            is_dead = True
-                        except PermissionError:
-                            pass
-                    if is_dead:
-                        if hasattr(owner, "_recover_committed_entry_result"):
-                            recovered = owner._recover_committed_entry_result(existing, entry_id=entry_id, raw_key=resolved_key)
-                            if recovered is not None:
-                                idem_check = {"conflict": False, "result": recovered}
+                else:
+                    rec_tenant = str(existing.get("tenant_id") or "").strip()
+                    rec_user = str(existing.get("user_id") or existing.get("actor_id") or "").strip()
+                    rec_entry = str(existing.get("entry_id") or "").strip()
+                    req_tenant = str(resolved_tenant or "").strip()
+                    req_user = str(resolved_user or "").strip()
+                    req_entry = str(entry_id or "").strip()
+                    if (req_tenant and rec_tenant and req_tenant != rec_tenant) or \
+                       (req_user and rec_user and req_user != rec_user) or \
+                       (req_entry and rec_entry and req_entry != rec_entry):
+                        idem_check = {"conflict": True, "record": existing, "reason": "scope_mismatch"}
+                    elif existing.get("request_hash") != request_hash:
+                        idem_check = {"conflict": True, "record": existing}
+                    elif existing.get("status") == "pending":
+                        created_pid = existing.get("created_pid")
+                        is_dead = False
+                        if created_pid and created_pid != os.getpid():
+                            try:
+                                os.kill(created_pid, 0)
+                            except ProcessLookupError:
+                                is_dead = True
+                            except PermissionError:
+                                pass
+                        if is_dead:
+                            if hasattr(owner, "_recover_committed_entry_result"):
+                                recovered = owner._recover_committed_entry_result(
+                                    existing,
+                                    entry_id=entry_id,
+                                    raw_key=resolved_key,
+                                    tenant_id=resolved_tenant,
+                                    user_id=resolved_user,
+                                )
+                                if recovered is not None:
+                                    idem_check = {"conflict": False, "result": recovered}
+                                else:
+                                    owner.stores.idempotency.put(reservation)
+                                    idem_check = None
                             else:
                                 owner.stores.idempotency.put(reservation)
                                 idem_check = None
                         else:
-                            owner.stores.idempotency.put(reservation)
-                            idem_check = None
+                            idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
+                    elif existing.get("status") == "failed":
+                        owner.stores.idempotency.put(reservation)
+                        idem_check = None
                     else:
-                        idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
-                elif existing.get("status") == "failed":
-                    owner.stores.idempotency.put(reservation)
-                    idem_check = None
-                else:
-                    idem_check = {"conflict": False, "result": existing.get("result")}
+                        result = existing.get("result")
+                        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+                            d = result["data"]
+                            d_tenant = str(d.get("tenant_id") or d.get("tenantId") or "").strip()
+                            d_user = str(d.get("userId") or d.get("user_id") or d.get("createdBy") or "").strip()
+                            d_id = str(d.get("id") or d.get("entryId") or "").strip()
+                            if (req_tenant and d_tenant and req_tenant != d_tenant) or \
+                               (req_user and d_user and req_user != d_user) or \
+                               (req_entry and d_id and req_entry != d_id):
+                                idem_check = {"conflict": True, "record": existing, "reason": "scope_mismatch"}
+                            else:
+                                idem_check = {"conflict": False, "result": result}
+                        else:
+                            idem_check = {"conflict": False, "result": result}
             else:
                 idem_check = None
 

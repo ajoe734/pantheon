@@ -176,6 +176,8 @@ class DecisionJournalOwnerAdapter:
         record: Dict[str, Any],
         entry_id: Optional[str] = None,
         raw_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if not hasattr(self, "_stores") or self._stores is None or not hasattr(self._stores, "entries"):
             return None
@@ -217,18 +219,29 @@ class DecisionJournalOwnerAdapter:
         p_user = str(persisted.get("userId") or persisted.get("user_id") or persisted.get("createdBy") or "").strip()
         p_actor = str(persisted.get("createdBy") or persisted.get("actor_id") or p_user).strip()
 
+        req_tenant = str(tenant_id or "").strip()
+        req_user = str(user_id or "").strip()
+
         if rec_tenant and p_tenant and rec_tenant != p_tenant:
             return None
         if rec_user and p_user and rec_user != p_user and rec_user != p_actor:
+            return None
+        if req_tenant and rec_tenant and req_tenant != rec_tenant:
+            return None
+        if req_user and rec_user and req_user != rec_user:
+            return None
+        if req_tenant and p_tenant and req_tenant != p_tenant:
+            return None
+        if req_user and p_user and req_user != p_user and req_user != p_actor:
             return None
 
         # 4. Scoped get_entry must succeed (fail-closed tenant/visibility/isolation check)
         scoped_entry = get_entry(
             self._stores,
             clean_target_id,
-            tenant_id=rec_tenant or p_tenant,
-            actor_id=rec_user or p_actor,
-            user_id=rec_user or p_user,
+            tenant_id=req_tenant or rec_tenant or p_tenant,
+            actor_id=req_user or rec_user or p_actor,
+            user_id=req_user or rec_user or p_user,
         )
         if scoped_entry is None:
             return None
@@ -306,6 +319,21 @@ class DecisionJournalOwnerAdapter:
         if reserved:
             return None
 
+        # Scope validation on existing record
+        rec_tenant = str(existing.get("tenant_id") or "").strip()
+        rec_user = str(existing.get("user_id") or existing.get("actor_id") or "").strip()
+        rec_entry = str(existing.get("entry_id") or "").strip()
+        req_tenant = str(tenant_id or "").strip()
+        req_user = str(user_id or "").strip()
+        req_entry = str(entry_id or "").strip()
+
+        if req_tenant and rec_tenant and req_tenant != rec_tenant:
+            return {"conflict": True, "record": existing, "reason": "cross_tenant_scope_mismatch"}
+        if req_user and rec_user and req_user != rec_user:
+            return {"conflict": True, "record": existing, "reason": "cross_user_scope_mismatch"}
+        if req_entry and rec_entry and req_entry != rec_entry:
+            return {"conflict": True, "record": existing, "reason": "entry_id_scope_mismatch"}
+
         if existing.get("request_hash") != request_hash:
             return {"conflict": True, "record": existing}
 
@@ -324,7 +352,13 @@ class DecisionJournalOwnerAdapter:
             if is_dead:
                 target_id = entry_id or existing.get("entry_id")
                 if target_id:
-                    recovered = self._recover_committed_entry_result(existing, entry_id=target_id, raw_key=raw_key)
+                    recovered = self._recover_committed_entry_result(
+                        existing,
+                        entry_id=target_id,
+                        raw_key=raw_key,
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                    )
                     if recovered is not None:
                         return {"conflict": False, "result": recovered}
                 # Previous creator crashed before durable entry was committed: reclaim reservation
@@ -336,6 +370,21 @@ class DecisionJournalOwnerAdapter:
         if status == "failed":
             self._stores.idempotency.put(reservation)
             return None
+
+        if status == "succeeded":
+            result = existing.get("result")
+            if isinstance(result, dict) and isinstance(result.get("data"), dict):
+                d = result["data"]
+                d_tenant = str(d.get("tenant_id") or d.get("tenantId") or "").strip()
+                d_user = str(d.get("userId") or d.get("user_id") or d.get("createdBy") or "").strip()
+                d_id = str(d.get("id") or d.get("entryId") or "").strip()
+                if req_tenant and d_tenant and req_tenant != d_tenant:
+                    return {"conflict": True, "record": existing, "reason": "cross_tenant_scope_mismatch"}
+                if req_user and d_user and req_user != d_user:
+                    return {"conflict": True, "record": existing, "reason": "cross_user_scope_mismatch"}
+                if req_entry and d_id and req_entry != d_id:
+                    return {"conflict": True, "record": existing, "reason": "entry_id_scope_mismatch"}
+            return {"conflict": False, "result": result}
 
         return {"conflict": False, "result": existing.get("result")}
 
@@ -350,15 +399,41 @@ class DecisionJournalOwnerAdapter:
         user_id: Optional[str] = None,
         timeout: float = 10.0,
     ) -> Dict[str, Any]:
+        req_tenant = str(tenant_id or "").strip()
+        req_user = str(user_id or "").strip()
+        req_entry = str(entry_id or "").strip()
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             record = self._stores.idempotency.get(scoped_key)
             if record is not None:
+                rec_tenant = str(record.get("tenant_id") or "").strip()
+                rec_user = str(record.get("user_id") or record.get("actor_id") or "").strip()
+                rec_entry = str(record.get("entry_id") or "").strip()
+                if req_tenant and rec_tenant and req_tenant != rec_tenant:
+                    return {"conflict": True, "record": record, "reason": "cross_tenant_scope_mismatch"}
+                if req_user and rec_user and req_user != rec_user:
+                    return {"conflict": True, "record": record, "reason": "cross_user_scope_mismatch"}
+                if req_entry and rec_entry and req_entry != rec_entry:
+                    return {"conflict": True, "record": record, "reason": "entry_id_scope_mismatch"}
+
                 if record.get("request_hash") != request_hash:
                     return {"conflict": True, "record": record}
                 status = str(record.get("status") or "")
                 if status == "succeeded":
-                    return {"conflict": False, "result": record.get("result")}
+                    res = record.get("result")
+                    if isinstance(res, dict) and isinstance(res.get("data"), dict):
+                        d = res["data"]
+                        d_tenant = str(d.get("tenant_id") or d.get("tenantId") or "").strip()
+                        d_user = str(d.get("userId") or d.get("user_id") or d.get("createdBy") or "").strip()
+                        d_id = str(d.get("id") or d.get("entryId") or "").strip()
+                        if req_tenant and d_tenant and req_tenant != d_tenant:
+                            return {"conflict": True, "record": record, "reason": "cross_tenant_scope_mismatch"}
+                        if req_user and d_user and req_user != d_user:
+                            return {"conflict": True, "record": record, "reason": "cross_user_scope_mismatch"}
+                        if req_entry and d_id and req_entry != d_id:
+                            return {"conflict": True, "record": record, "reason": "entry_id_scope_mismatch"}
+                    return {"conflict": False, "result": res}
                 if status == "failed":
                     return {"conflict": False, "failed": True}
 
@@ -369,7 +444,13 @@ class DecisionJournalOwnerAdapter:
                     except ProcessLookupError:
                         target_id = entry_id or record.get("entry_id")
                         if target_id:
-                            recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
+                            recovered = self._recover_committed_entry_result(
+                                record,
+                                entry_id=target_id,
+                                raw_key=raw_key,
+                                tenant_id=tenant_id,
+                                user_id=user_id,
+                            )
                             if recovered is not None:
                                 return {"conflict": False, "result": recovered}
                         return {"conflict": False, "failed": True}
@@ -380,11 +461,35 @@ class DecisionJournalOwnerAdapter:
         # Final deadline check
         record = self._stores.idempotency.get(scoped_key)
         if record is not None:
+            rec_tenant = str(record.get("tenant_id") or "").strip()
+            rec_user = str(record.get("user_id") or record.get("actor_id") or "").strip()
+            rec_entry = str(record.get("entry_id") or "").strip()
+            if (req_tenant and rec_tenant and req_tenant != rec_tenant) or \
+               (req_user and rec_user and req_user != rec_user) or \
+               (req_entry and rec_entry and req_entry != rec_entry):
+                return {"conflict": True, "record": record, "reason": "scope_mismatch"}
+
             if str(record.get("status") or "") == "succeeded":
-                return {"conflict": False, "result": record.get("result")}
+                res = record.get("result")
+                if isinstance(res, dict) and isinstance(res.get("data"), dict):
+                    d = res["data"]
+                    d_tenant = str(d.get("tenant_id") or d.get("tenantId") or "").strip()
+                    d_user = str(d.get("userId") or d.get("user_id") or d.get("createdBy") or "").strip()
+                    d_id = str(d.get("id") or d.get("entryId") or "").strip()
+                    if (req_tenant and d_tenant and req_tenant != d_tenant) or \
+                       (req_user and d_user and req_user != d_user) or \
+                       (req_entry and d_id and req_entry != d_id):
+                        return {"conflict": True, "record": record, "reason": "scope_mismatch"}
+                return {"conflict": False, "result": res}
             target_id = entry_id or record.get("entry_id")
             if target_id:
-                recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
+                recovered = self._recover_committed_entry_result(
+                    record,
+                    entry_id=target_id,
+                    raw_key=raw_key,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
                 if recovered is not None:
                     return {"conflict": False, "result": recovered}
 

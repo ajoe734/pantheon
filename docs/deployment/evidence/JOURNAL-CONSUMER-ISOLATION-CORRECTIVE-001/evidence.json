@@ -11,7 +11,7 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Domain creation transactions use domain_creation_idempotency_key ('domain:create:{tenant}:{actor}:{entry_id}'), fully separated from BFF request identity ('create:{tenant}:{user}:{key}'). Creation outbox recovery strictly requires durable secondary success before finalization, preventing false promotion to succeeded when secondary writes fail. Read and replay fail closed while creation remains incomplete. DecisionJournalOwnerAdapter._recover_committed_entry_result and check/await_create_idempotency strictly bind replay to actual committed creation transactions with successful secondary writes, never promoting live provisional rows to succeeded."
+      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Domain creation transactions use domain_creation_idempotency_key ('domain:create:{quoted_tenant}:{quoted_actor}:{quoted_entry}'), fully separated from BFF request identity ('create:{quoted_tenant}:{quoted_user}:{quoted_key}'). Recovery coordinates secondary writes outside locks, then acquires bundle_lock() and _tx_lock, re-reads fresh entry, verifies _creation_outbox is still present, and commits via compare_and_set, preserving any concurrent committed patches without clobbering. Read and replay fail closed while creation remains incomplete. DecisionJournalOwnerAdapter._recover_committed_entry_result and check/await_create_idempotency strictly bind replay to actual committed creation transactions with successful secondary writes and exact tenant/user scope matches, never promoting live provisional rows to succeeded or leaking cross-scope results."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). Recovery and replay strictly recheck result access so crashed unauthorized reservations never replay other principals' private entries."
+      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -83,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 51,
+        "tests": 53,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 26,
+        "tests": 28,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -127,9 +127,17 @@
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-6ebb1654.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
       }
     ],
-    "total_tests_passed": 105
+    "total_tests_passed": 109
   },
   "artifacts": [
     "services/governance/decision_journal.py",

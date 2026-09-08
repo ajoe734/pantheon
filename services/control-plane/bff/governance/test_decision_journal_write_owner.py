@@ -909,6 +909,65 @@ sys.exit(0)
             self.assertIsNotNone(owner.get_decision_journal_entry("entry-z", tenant_id="tenant-a", user_id="alice"))
             self.assertIsNotNone(owner.get_decision_journal_entry("key-x", tenant_id="tenant-a", user_id="alice"))
 
+    def test_create_replay_must_not_cross_ambiguous_scope_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            owner = DecisionJournalOwnerAdapter(stores=build_decision_journal_stores(path))
+            service = AgoraService(journal_write_owner=owner)
+            payload = {"title": "private record", "body": "private content"}
+            first = service.create_journal_entry(
+                payload=payload,
+                identity=OperatorIdentity(operator_id="bob", roles=["operator"], mfa_verified=True),
+                tenant_id="tenant:alice",
+                user_id="bob",
+                idempotency_key="key",
+                x_idempotency_key=None,
+            )
+            second = service.create_journal_entry(
+                payload=payload,
+                identity=OperatorIdentity(operator_id="alice:bob", roles=["operator"], mfa_verified=True),
+                tenant_id="tenant",
+                user_id="alice:bob",
+                idempotency_key="key",
+                x_idempotency_key=None,
+            )
+            self.assertNotEqual(first["data"]["id"], second["data"]["id"], "different tenant/user returned the first principal record")
+            self.assertEqual(second["data"]["tenant_id"], "tenant")
+            self.assertEqual(first["data"]["tenant_id"], "tenant:alice")
+
+    def test_idempotency_scope_mismatch_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            forged_key = "create:tenant-a:alice:key-mismatch"
+            stores.idempotency.put({
+                "idempotency_key": forged_key,
+                "raw_idempotency_key": "key-mismatch",
+                "tenant_id": "tenant-a",
+                "user_id": "alice",
+                "actor_id": "alice",
+                "request_hash": "somehash",
+                "entry_id": "entry-mismatch",
+                "status": "succeeded",
+                "created_pid": os.getpid(),
+                "created_at": 100.0,
+                "result": {
+                    "data": {
+                        "id": "entry-mismatch",
+                        "tenant_id": "tenant-b",
+                        "createdBy": "alice",
+                    }
+                },
+            })
+            checked = owner.check_create_idempotency(
+                scoped_key=forged_key,
+                request_hash="somehash",
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertIsNotNone(checked)
+            self.assertTrue(checked.get("conflict"))
+            self.assertEqual(checked.get("reason"), "cross_tenant_scope_mismatch")
+
 
 if __name__ == "__main__":
     unittest.main()

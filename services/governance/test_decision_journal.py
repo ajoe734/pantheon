@@ -18,9 +18,12 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import unittest.mock
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from services.governance.decision_journal import (
     CANONICAL_WRITE_AUTHORITY,
@@ -1546,6 +1549,78 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
         )
         self.assertEqual(key, "domain:create:tenant-alpha:alice:entry-100")
         self.assertTrue(key.startswith("domain:create:"))
+
+    def test_domain_creation_idempotency_key_quoted_scope_isolation(self) -> None:
+        key1 = domain_creation_idempotency_key(
+            tenant_id="tenant:alice",
+            actor_id="bob",
+            entry_id="entry-1",
+        )
+        key2 = domain_creation_idempotency_key(
+            tenant_id="tenant",
+            actor_id="alice:bob",
+            entry_id="entry-1",
+        )
+        self.assertNotEqual(key1, key2)
+        self.assertEqual(key1, "domain:create:tenant%3Aalice:bob:entry-1")
+        self.assertEqual(key2, "domain:create:tenant:alice%3Abob:entry-1")
+
+    def test_recovery_must_not_overwrite_successful_concurrent_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            create_args = dict(
+                entry_id="entry",
+                title="initial",
+                body="body",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08",
+            )
+
+            class Crash(BaseException):
+                pass
+
+            put = stores.outbox.put
+
+            def crash(_: Any) -> None:
+                raise Crash()
+
+            stores.outbox.put = crash  # type: ignore[assignment]
+            with self.assertRaises(Crash):
+                create_entry(stores, **create_args)
+
+            entered, release = threading.Event(), threading.Event()
+
+            def paused_put(event: Any) -> None:
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("probe barrier timeout")
+                put(event)
+
+            stores.outbox.put = paused_put  # type: ignore[assignment]
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                read = pool.submit(get_entry, stores, "entry", tenant_id="tenant-a", actor_id="alice")
+                try:
+                    self.assertTrue(entered.wait(5))
+                    writer = build_decision_journal_stores(path)
+                    create_entry(writer, **create_args)
+                    result = patch_entry(
+                        writer,
+                        "entry",
+                        patch={"title": "committed update"},
+                        actor_id="alice",
+                        tenant_id="tenant-a",
+                        idempotency_key="patch",
+                        request_hash="patch",
+                        patched_at="2026-09-08",
+                    )
+                    self.assertEqual(result["status"], "updated")
+                finally:
+                    release.set()
+                read.result(timeout=5)
+            fresh = get_entry(build_decision_journal_stores(path), "entry", tenant_id="tenant-a", actor_id="alice")
+            self.assertIsNotNone(fresh)
+            self.assertEqual(fresh["title"], "committed update", "recovery overwrote a successful concurrent patch")
 
     def test_fresh_process_persistent_outbox_failure_and_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_path:
