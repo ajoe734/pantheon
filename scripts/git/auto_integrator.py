@@ -236,12 +236,25 @@ class AmbiguousPullRequests(AutoIntegratorError):
 
 
 class CommandFailure(AutoIntegratorError):
-    def __init__(self, args: Sequence[str] | str, returncode: int, output: str = "") -> None:
+    def __init__(
+        self,
+        args: Sequence[str] | str,
+        returncode: int,
+        output: str = "",
+        *,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
         rendered = args if isinstance(args, str) else " ".join(args)
-        super().__init__(f"command failed ({returncode}): {rendered}\n{output.strip()}")
+        combined_output = output
+        if not combined_output:
+            combined_output = f"{stderr}\n{stdout}".strip() if (stderr or stdout) else ""
+        super().__init__(f"command failed ({returncode}): {rendered}\n{combined_output.strip()}")
         self.args_rendered = rendered
         self.returncode = returncode
-        self.output = output
+        self.output = combined_output
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class CommandRunner:

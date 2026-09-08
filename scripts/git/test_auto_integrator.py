@@ -4136,7 +4136,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             original_run = runner.run
             def run_with_reopen_api_error(cmd, *args, **kwargs):
                 if any("git/refs/tags/" in str(arg) and "reopen" in str(arg) for arg in cmd):
-                    raise auto_integrator.CommandFailure(cmd, 1, stdout="", stderr="API 500 Internal Server Error")
+                    raise auto_integrator.CommandFailure(cmd, 1, output="API 500 Internal Server Error")
                 return original_run(cmd, *args, **kwargs)
 
             runner.run = run_with_reopen_api_error
@@ -4204,6 +4204,21 @@ class MakeIntegratorTagLookupTests(unittest.TestCase):
         lookup = auto_integrator.make_integrator_tag_lookup(ServerErrorRunner())
         with self.assertRaisesRegex(auto_integrator.github_review_bridge.GitHubReviewBridgeError, "500 Internal Server Error"):
             lookup("ajoe734/pantheon", "refs/tags/pantheon-review/approve/xyz")
+
+    def test_integrator_http_503_is_not_absence_even_when_head_contains_404(self) -> None:
+        head = "404" + "a" * 37
+        repo = "ajoe734/pantheon"
+        ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=head)}"
+        runner = auto_integrator.CommandRunner()
+        client = auto_integrator.GitHubJsonCommandRunner(runner, root=Path.cwd())
+        with mock.patch.object(auto_integrator.subprocess, "run", return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="gh: Service Unavailable (HTTP 503)")):
+            result = auto_integrator.canonical_review_gate_ci.inspect_proof_tag(
+                repository=repo,
+                ref=ref,
+                expected_head_sha=head,
+                lookup=auto_integrator.make_integrator_tag_lookup(client),
+            )
+        self.assertEqual(result.status, "api_error")
 
 
 if __name__ == "__main__":

@@ -1329,6 +1329,28 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             )
         self.assertIn(reopen_ref, runner.tag_refs)
 
+    def test_bridge_does_not_approve_when_opposing_ref_payload_is_malformed(self) -> None:
+        for malformed in [{}, {"object": {}}, None]:
+            with self.subTest(malformed=malformed):
+                class MalformedReopenRunner(FakeRunner):
+                    def run_json(self, args, **kwargs):
+                        if len(args) == 3 and "git/refs/tags/" in args[-1] and "reopen" in args[-1]:
+                            return malformed
+                        return super().run_json(args, **kwargs)
+
+                runner = MalformedReopenRunner()
+                with self.assertRaises(bridge.GitHubReviewBridgeError):
+                    bridge.bridge_review_decision(
+                        repository=REPOSITORY,
+                        task_id="AUDIT-001",
+                        actor="Codex2",
+                        decision="approve",
+                        message="Offline malformed opposing proof probe",
+                        binding=binding(),
+                        runner=runner,
+                        intent_nonce="1" * 32,
+                    )
+
     def test_opposing_tag_mismatched_target_fails_closed(self) -> None:
         runner = FakeRunner()
         reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"

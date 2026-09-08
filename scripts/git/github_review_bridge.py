@@ -66,9 +66,57 @@ REQUIRED_REVIEW_MERGE_METHOD = "MERGE"
 GITHUB_REVIEW_MODES = frozenset({"pull_request_review"})
 
 
-def _is_not_found(exc: Exception) -> bool:
-    detail = str(exc).casefold()
-    return "not found" in detail or "404" in detail
+_HTTP_STATUS_CODE_RE = re.compile(
+    r"\b(?:HTTP(?:/\d(?:\.\d)?)?(?:\s*status)?\s*[:/]?\s*|\(HTTP\s*|API\s+|['\"]status['\"]\s*:\s*['\"]?)(\d{3})\b",
+    re.IGNORECASE,
+)
+_SERVER_TRANSPORT_ERROR_PHRASES = (
+    "service unavailable",
+    "internal server error",
+    "bad gateway",
+    "gateway timeout",
+    "connection refused",
+    "connection reset",
+    "timed out",
+    "timeout",
+    "could not resolve host",
+    "network is unreachable",
+    "tls handshake",
+    "bad credentials",
+    "resource not accessible",
+    "rate limit",
+)
+
+
+def _is_not_found(exc: Exception | str) -> bool:
+    """Recognize actual HTTP 404 only; retain HTTP 5xx/auth/transport failures as api_error."""
+    text = str(exc or "").strip()
+    if not text:
+        return False
+
+    codes = [int(m) for m in _HTTP_STATUS_CODE_RE.findall(text)]
+    if codes:
+        if any(code != 404 for code in codes):
+            return False
+        if any(code == 404 for code in codes):
+            return True
+
+    text_lower = text.casefold()
+    for phrase in _SERVER_TRANSPORT_ERROR_PHRASES:
+        if phrase in text_lower:
+            return False
+
+    if (
+        re.search(r"\b404\s+not\s+found\b", text_lower)
+        or re.search(r"['\"]status['\"]\s*:\s*['\"]?404\b", text_lower)
+        or re.search(r"['\"]message['\"]\s*:\s*['\"]not found['\"]", text_lower)
+    ):
+        return True
+
+    if re.search(r"(?:^|\b)(?:gh:\s*)?not\s+found\b", text_lower):
+        return True
+
+    return False
 
 
 class GitHubReviewBridgeError(RuntimeError):
@@ -532,8 +580,7 @@ def _review_manifest_identity(
     try:
         base_payload = runner.run_json(["gh", "api", base_endpoint])
     except GitHubReviewBridgeError as exc:
-        detail = str(exc).casefold()
-        if "not found" in detail or "404" in detail:
+        if _is_not_found(exc):
             return path, blob_sha
         if not exact_pr_file_change():
             raise GitHubReviewBridgeError(
@@ -1125,8 +1172,7 @@ def _delete_ref(runner: JsonRunner, *, repository: str, ref: str) -> None:
             ["gh", "api", "--method", "DELETE", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
         )
     except GitHubReviewBridgeError as exc:
-        detail = str(exc).casefold()
-        if "not found" in detail or "404" in detail:
+        if _is_not_found(exc):
             return
         raise
 
@@ -1138,11 +1184,23 @@ def _read_tag_payload(
     ref: str,
     max_peel_depth: int = 5,
 ) -> dict[str, Any] | None:
+    def _malformed(detail: str) -> dict[str, Any]:
+        return {
+            "status": "malformed",
+            "ref": ref,
+            "raw_ref": ref_payload if isinstance(ref_payload, Mapping) else None,
+            "target_commit": None,
+            "payload": None,
+            "tag_sha": None,
+            "detail": detail,
+        }
+
     prefix = "refs/tags/"
     if not ref.startswith(prefix):
-        return None
+        return _malformed(f"ref {ref!r} does not start with {prefix}")
     tag_name = ref[len(prefix):]
     encoded_tag_name = quote(tag_name, safe="")
+    ref_payload = None
     try:
         ref_payload = runner.run_json(
             ["gh", "api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
@@ -1151,18 +1209,20 @@ def _read_tag_payload(
         if _is_not_found(exc):
             return None
         raise
+    if ref_payload is None:
+        return _malformed("ref payload is None")
     if not isinstance(ref_payload, Mapping):
-        return None
+        return _malformed(f"ref payload is not a mapping: {type(ref_payload).__name__}")
     if str(ref_payload.get("ref") or "").strip() != ref:
-        return None
+        return _malformed(f"ref payload ref mismatch: {ref_payload.get('ref')!r} != {ref!r}")
 
     obj = ref_payload.get("object")
     if not isinstance(obj, Mapping):
-        return None
+        return _malformed("ref object is missing or not a mapping")
     obj_type = str(obj.get("type") or "").strip().lower()
     obj_sha = str(obj.get("sha") or "").strip().lower()
     if not OID_RE.fullmatch(obj_sha):
-        return None
+        return _malformed(f"ref object sha is invalid: {obj_sha!r}")
 
     target_commit: str | None = None
     parsed_payload: dict[str, Any] | None = None
@@ -1180,10 +1240,10 @@ def _read_tag_payload(
                 )
             except GitHubReviewBridgeError as exc:
                 if _is_not_found(exc):
-                    return None
+                    return _malformed(f"tag object {current_sha} not found during peel")
                 raise
             if not isinstance(tag_obj, Mapping):
-                return None
+                return _malformed(f"tag object {current_sha} is not a mapping: {type(tag_obj).__name__}")
             if parsed_payload is None:
                 raw_message = str(tag_obj.get("message") or "").strip()
                 if raw_message:
@@ -1195,22 +1255,25 @@ def _read_tag_payload(
                         parsed_payload = None
             target = tag_obj.get("object")
             if not isinstance(target, Mapping):
-                return None
+                return _malformed(f"tag object {current_sha} target is missing or not a mapping")
             target_type = str(target.get("type") or "").strip().lower()
             target_sha = str(target.get("sha") or "").strip().lower()
             if not OID_RE.fullmatch(target_sha):
-                return None
+                return _malformed(f"tag object {current_sha} target sha is invalid: {target_sha!r}")
             if target_type == "commit":
                 target_commit = target_sha
                 break
             if target_type == "tag":
                 current_sha = target_sha
                 continue
-            return None
+            return _malformed(f"tag object {current_sha} target type is unsupported: {target_type!r}")
+        else:
+            return _malformed(f"tag peel exceeded depth {max_peel_depth}")
     else:
-        return None
+        return _malformed(f"ref object type is unsupported: {obj_type!r}")
 
     return {
+        "status": "valid",
         "ref": ref,
         "raw_ref": ref_payload,
         "target_commit": target_commit,
@@ -1229,7 +1292,7 @@ def _resolve_ref_target_commit(
     ref = str(ref_payload.get("ref") or "")
     if ref:
         info = _read_tag_payload(runner, repository=repository, ref=ref, max_peel_depth=max_peel_depth)
-        if info:
+        if info and info.get("status") != "malformed":
             return info.get("target_commit")
     return None
 
@@ -1273,6 +1336,10 @@ def _push_review_proof_tag(
         opp_info = _read_tag_payload(runner, repository=repository, ref=opp_ref)
         if opp_info is None:
             continue
+        if opp_info.get("status") == "malformed":
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: tag payload is missing or malformed ({opp_info.get('detail', '')})"
+            )
         # Opposing tag exists! Fail closed if malformed, mismatched, or not proven strictly newer.
         opp_target = opp_info.get("target_commit")
         if opp_target != binding.head_sha.lower():
@@ -1371,6 +1438,10 @@ def _push_review_proof_tag(
     ref = f"refs/tags/{tag_name}"
     existing_info = _read_tag_payload(runner, repository=repository, ref=ref)
     if existing_info is not None:
+        if existing_info.get("status") == "malformed":
+            raise GitHubReviewBridgeError(
+                f"cannot evaluate existing tag {ref}: tag payload is missing or malformed ({existing_info.get('detail', '')})"
+            )
         target_commit = existing_info.get("target_commit")
         payload = existing_info.get("payload")
         if (

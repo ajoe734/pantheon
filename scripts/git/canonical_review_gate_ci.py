@@ -54,6 +54,7 @@ from github_review_bridge import (  # noqa: E402
     CANONICAL_REVIEW_CONTEXT,
     GitHubReviewBridgeError,
     REOPEN,
+    _is_not_found,
     operator_acceptance_proof_tag_name,
     review_proof_tag_name,
 )
@@ -93,8 +94,8 @@ def _run_gh_json(args: list[str]) -> Any:
     if proc.returncode != 0:
         err = (proc.stderr or "").strip()
         out = (proc.stdout or "").strip()
-        combined = f"{err} {out}".casefold()
-        if "not found" in combined or "404" in combined:
+        combined = f"{err}\n{out}".strip()
+        if _is_not_found(combined):
             return None
         raise GitHubReviewBridgeError(
             f"gh {' '.join(args)} failed (exit {proc.returncode}): {err or out}"

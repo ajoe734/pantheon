@@ -284,6 +284,44 @@ class BuildStatusPayloadTests(unittest.TestCase):
         )
         self.assertLessEqual(len(payload["description"]), 140)
 
+    def test_gate_http_503_url_containing_404_must_fail_closed(self) -> None:
+        from urllib.parse import unquote
+        head = "404" + "a" * 37
+        reopen_ref = f"refs/tags/{gate_ci.review_proof_tag_name(decision='reopen', head_sha=head)}"
+        approve_ref = f"refs/tags/{gate_ci.review_proof_tag_name(decision='approve', head_sha=head)}"
+
+        def api(args, **kwargs):
+            endpoint = unquote(args[-1])
+            if endpoint.endswith(approve_ref):
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps({"ref": approve_ref, "object": {"type": "commit", "sha": head}}),
+                    stderr="",
+                )
+            if endpoint.endswith(reopen_ref):
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=1,
+                    stdout="",
+                    stderr=f"gh: Service Unavailable (HTTP 503) (https://api.github.com/{args[-1]})",
+                )
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stdout="",
+                stderr="gh: Not Found (HTTP 404)",
+            )
+
+        with mock.patch("subprocess.run", side_effect=api):
+            result = gate_ci.build_status_payload(
+                repository=REPOSITORY,
+                head_ref="task/AUDIT-001",
+                head_sha=head,
+                target_url="https://example.invalid/offline",
+            )
+        self.assertEqual(result["state"], "failure")
+
 
 class MainDryRunTests(unittest.TestCase):
     """`--dry-run` must never shell out to `gh`."""
