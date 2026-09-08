@@ -469,6 +469,97 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     assert not hasattr(promotion, "PromotionTransaction")
 
 
+def test_replace_quiesces_incumbent_before_draining_its_writers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The incumbent cannot dispatch a new queue reservation after drain."""
+
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+    live_config.parent.mkdir(parents=True)
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        promotion,
+        "qualify_incumbent_identity",
+        lambda *_args, **_kwargs: {"root": str(candidate), "head": "incumbent"},
+    )
+    monkeypatch.setattr(
+        promotion,
+        "stop_existing_supervisor",
+        lambda *_args, **_kwargs: events.append("stop") or 41,
+    )
+    monkeypatch.setattr(
+        promotion,
+        "qualify_and_drain_incumbent_writers",
+        lambda *_args, **_kwargs: events.append("drain") or {"drained": True},
+    )
+    monkeypatch.setattr(
+        promotion,
+        "launch_v2_supervisor",
+        lambda *_args, **_kwargs: events.append("launch") or 42,
+    )
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "launched"
+    assert events == ["stop", "drain", "launch"]
+
+
+def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+    live_config.parent.mkdir(parents=True)
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        promotion,
+        "qualify_incumbent_identity",
+        lambda *_args, **_kwargs: {"root": str(candidate), "head": "incumbent"},
+    )
+    monkeypatch.setattr(
+        promotion,
+        "stop_existing_supervisor",
+        lambda *_args, **_kwargs: events.append("stop") or 41,
+    )
+
+    def fail_drain(*_args: object, **_kwargs: object) -> dict[str, object]:
+        events.append("drain")
+        raise RuntimeError("active supervisor reservations exist")
+
+    monkeypatch.setattr(promotion, "qualify_and_drain_incumbent_writers", fail_drain)
+    monkeypatch.setattr(
+        promotion,
+        "launch_v2_supervisor",
+        lambda *_args, **_kwargs: events.append("restart") or 42,
+    )
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "active supervisor reservations exist" in result["error"]
+    assert events == ["stop", "drain", "restart"]
+    assert json.loads(live_config.read_text(encoding="utf-8")) == incumbent
+
+
 def test_promotion_locks_before_candidate_validation_or_config_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2360,5 +2451,4 @@ common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-w
     assert new_log.read_bytes() == before
     assert result.returncode != 0
     assert not old_log.exists()
-
 
