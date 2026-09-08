@@ -331,22 +331,6 @@ def _assert_canonical_runtime_data_leaf(path: Path, *, source_id: str) -> None:
         )
 
 
-def _canonical_runtime_source_path(config: dict[str, Any], key: str) -> Path:
-    raw = config_path(config, key).expanduser()
-    if raw.parent.name == ".orchestrator":
-        worker_runtime_path = raw.parent / "worker-runtime" / raw.name
-        if worker_runtime_path.exists() or (not raw.exists() and (raw.parent / "worker-runtime").is_dir()):
-            return worker_runtime_path
-    elif raw.parent.name != "worker-runtime":
-        status_file = config.get("paths", {}).get("status_file")
-        if status_file:
-            status_root = Path(status_file).expanduser().parent
-            worker_runtime_path = status_root / ".orchestrator" / "worker-runtime" / raw.name
-            if worker_runtime_path.exists() or (not raw.exists() and (status_root / ".orchestrator" / "worker-runtime").is_dir()):
-                return worker_runtime_path
-    return raw
-
-
 def _runtime_source_layout(
     config: dict[str, Any],
     *,
@@ -374,7 +358,7 @@ def _runtime_source_layout(
         key = key_by_source[source_id]
         if not configured.get(key):
             continue
-        requested = _canonical_runtime_source_path(config, key)
+        requested = config_path(config, key).expanduser()
         if validate_data_leaves:
             _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
         if not requested.parent.exists():
@@ -535,7 +519,7 @@ def runtime_state_lock(
 
 def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     state = normalize_v2_runtime_cache(
-        load_json(_canonical_runtime_source_path(config, "state_file"), default=None)
+        load_json(config_path(config, "state_file").expanduser(), default=None)
     )
 
     valid_pending_event_ids = set(
@@ -570,7 +554,7 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
 
 def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) -> None:
     _write_runtime_json_unlocked(
-        _canonical_runtime_source_path(config, "state_file"),
+        config_path(config, "state_file").expanduser(),
         normalize_v2_runtime_cache(state),
         source_id="runtime_state",
     )
@@ -604,7 +588,7 @@ def load_runtime_state_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     """
 
     return normalize_v2_runtime_cache(
-        load_json(_canonical_runtime_source_path(config, "state_file"), default=None)
+        load_json(config_path(config, "state_file").expanduser(), default=None)
     )
 
 
@@ -783,7 +767,7 @@ def _normalize_approval_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def _load_approval_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     raw = load_json(
-        _canonical_runtime_source_path(config, "approval_queue"),
+        config_path(config, "approval_queue").expanduser(),
         default=default_approval_state(),
     )
     state = deepcopy(default_approval_state())
@@ -818,7 +802,7 @@ def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         payload["version"] = 2
         payload["updated_at"] = utc_now()
         _write_runtime_json_unlocked(
-            _canonical_runtime_source_path(config, "approval_queue"),
+            config_path(config, "approval_queue").expanduser(),
             payload,
             source_id="approval_queue",
         )

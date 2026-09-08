@@ -536,8 +536,40 @@ def test_status_root_replacement_stops_pid_from_installed_config(
     old_pid.write_text("73\n", encoding="utf-8")
     live_config = tmp_path / "runtime" / "live.json"
     live_config.parent.mkdir()
-    live_config.write_text(json.dumps({"paths": {"state_file": str(old_state)}}), encoding="utf-8")
+    incumbent_supervisor_py = old_status_root / ".orchestrator" / "supervisor.py"
+    incumbent_supervisor_py.touch()
+    live_config.write_text(
+        json.dumps({
+            "paths": {"state_file": str(old_state)},
+            "watchdog": {
+                "supervisor_command": [
+                    sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                    "--config", str(live_config), "--verbose",
+                ]
+            },
+            "identity": {
+                "root": str(old_status_root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            },
+        }),
+        encoding="utf-8",
+    )
     stopped: list[Path] = []
+    real_validate = promotion.validated_immutable_command_root
+    monkeypatch.setattr(
+        promotion,
+        "validated_immutable_command_root",
+        lambda root, **kwargs: (
+            {
+                "root": str(root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            }
+            if Path(root) == old_status_root
+            else real_validate(root, **kwargs)
+        ),
+    )
     monkeypatch.setattr(
         promotion,
         "stop_existing_supervisor",
@@ -1074,11 +1106,13 @@ def test_migrate_storage_paths_moves_task_state_and_worker_runtime_files(tmp_pat
     assert (runtime / "task-state" / "events.jsonl.lock").exists()
     assert (runtime / "task-state" / "events.jsonl.legacy-anchor.json").exists()
 
-    assert not old_state.exists()
+    assert not old_state.is_file()
+    assert old_state.is_fifo()
     assert new_state.exists()
     assert json.loads(new_state.read_text(encoding="utf-8")) == {"workers": {}}
 
-    assert not old_queue.exists()
+    assert not old_queue.is_file()
+    assert old_queue.is_fifo()
     assert new_queue.exists()
     assert json.loads(new_queue.read_text(encoding="utf-8")) == {"version": 2}
 
@@ -1100,18 +1134,53 @@ def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
+    incumbent_root = tmp_path / "incumbent-runtime"
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    (incumbent_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    incumbent_supervisor_py = incumbent_root / ".orchestrator" / "supervisor.py"
+    incumbent_supervisor_py.touch()
+
     incumbent = {
         "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
         "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+        "watchdog": {
+            "supervisor_command": [
+                sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                "--config", str(live_config), "--verbose",
+            ]
+        },
+        "identity": {
+            "root": str(incumbent_root),
+            "head": "1111111111111111111111111111111111111111",
+            "repository": "ajoe734/pantheon",
+        },
     }
     live_config.write_text(json.dumps(incumbent), encoding="utf-8")
 
     monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
 
-    def failing_launch(*a, **k):
-        raise RuntimeError("simulated launch crash")
+    real_validate = promotion.validated_immutable_command_root
 
-    monkeypatch.setattr(promotion, "launch_v2_supervisor", failing_launch)
+    def mock_validate(root, **kwargs):
+        if Path(root) == incumbent_root:
+            return {
+                "root": str(incumbent_root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            }
+        return real_validate(root, **kwargs)
+
+    monkeypatch.setattr(promotion, "validated_immutable_command_root", mock_validate)
+
+    launched_configs = []
+
+    def maybe_failing_launch(cfg, *a, **k):
+        launched_configs.append(cfg)
+        if len(launched_configs) == 1:
+            raise RuntimeError("simulated launch crash")
+        return 999
+
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", maybe_failing_launch)
 
     result = promotion.replace_supervisor(
         candidate,
@@ -1702,4 +1771,222 @@ def test_replace_supervisor_qualifies_incumbent_before_stopping(
     assert result["outcome"] == "failed"
     assert "incumbent command root validation failed" in result["error"]
     assert len(stopped) == 0
+
+
+def test_replace_supervisor_refuses_shutdown_when_incumbent_identity_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    # Incumbent has no watchdog command or identity metadata
+    incumbent = {
+        "paths": {"state_file": str(status_root / ".orchestrator" / "state.json")},
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    stopped = []
+    monkeypatch.setattr(
+        promotion, "stop_existing_supervisor", lambda *a, **k: stopped.append(True) or 41
+    )
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "existing incumbent identity is not qualified for rollback" in result["error"]
+    assert len(stopped) == 0
+
+
+def test_post_rename_config_directory_fsync_failure_restores_and_verifies_incumbent_config_before_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    old_log = tmp_path / "runtime" / "task-state-events-v2.jsonl"
+    old_log.write_text("old events\n", encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
+
+    old_state = status_root / ".orchestrator" / "state.json"
+    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_queue = status_root / ".orchestrator" / "approval-queue.json"
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+    incumbent_root = tmp_path / "incumbent-runtime"
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    (incumbent_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    incumbent_supervisor_py = incumbent_root / ".orchestrator" / "supervisor.py"
+    incumbent_supervisor_py.touch()
+
+    incumbent = {
+        "marker": "incumbent",
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+        "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+        "watchdog": {
+            "supervisor_command": [
+                sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                "--config", str(live_config), "--verbose",
+            ]
+        },
+        "identity": {
+            "root": str(incumbent_root),
+            "head": "1111111111111111111111111111111111111111",
+            "repository": "ajoe734/pantheon",
+        },
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    stopped = []
+    monkeypatch.setattr(
+        promotion, "stop_existing_supervisor", lambda *a, **k: stopped.append(True) or 41
+    )
+
+    real_validate = promotion.validated_immutable_command_root
+
+    def mock_validate(root, **kwargs):
+        if Path(root) == incumbent_root:
+            return {
+                "root": str(incumbent_root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            }
+        return real_validate(root, **kwargs)
+
+    monkeypatch.setattr(promotion, "validated_immutable_command_root", mock_validate)
+
+    restarted_configs = []
+
+    def mock_launch(cfg, *a, **k):
+        restarted_configs.append(cfg)
+        return 999
+
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", mock_launch)
+
+    real_fsync = os.fsync
+    injected = []
+
+    def fail_config_dir_fsync(fd):
+        if (
+            not injected
+            and stat.S_ISDIR(os.fstat(fd).st_mode)
+            and Path(os.readlink(f"/proc/self/fd/{fd}")) == live_config.parent
+        ):
+            injected.append(True)
+            raise OSError(errno.EIO, "review injected config directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_config_dir_fsync)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert bool(injected) is True
+    assert result["outcome"] == "failed"
+    assert "review injected config directory fsync failure" in result["error"]
+    assert result["restoration_verified"] is True
+    assert result["restarted_pid"] == 999
+
+    on_disk_config = json.loads(live_config.read_text(encoding="utf-8"))
+    assert on_disk_config["marker"] == "incumbent"
+
+    assert old_log.exists()
+    assert old_state.exists()
+    assert old_queue.exists()
+
+    assert len(restarted_configs) == 1
+    assert restarted_configs[0]["marker"] == "incumbent"
+
+
+def test_retained_immutable_writer_fails_closed_and_does_not_recreate_retired_state(
+    tmp_path: Path,
+) -> None:
+    status = tmp_path / "status"
+    orch = status / ".orchestrator"
+    orch.mkdir(parents=True)
+    old_state = orch / "state.json"
+    old_queue = orch / "approval-queue.json"
+    new_state = orch / "worker-runtime" / "state.json"
+    new_queue = orch / "worker-runtime" / "approval-queue.json"
+
+    import runtime_state
+    state = runtime_state.default_state()
+    state["auto_commit_archive"]["pending_token"] = "before-migration"
+    old_state.write_text(json.dumps(state))
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}')
+
+    old_cfg = {
+        "paths": {
+            "status_file": str(status / "ai-status.json"),
+            "state_file": str(old_state),
+            "approval_queue": str(old_queue),
+        }
+    }
+    new_cfg = {
+        "paths": dict(
+            old_cfg["paths"],
+            state_file=str(new_state),
+            approval_queue=str(new_queue),
+        )
+    }
+
+    record = promotion._migrate_storage_paths(old_cfg, new_cfg)
+    assert record["migrated"] is True
+    assert old_state.is_fifo()
+    assert not old_state.is_file()
+
+    old_root = Path(os.environ.get("PANTHEON_COMMAND_ROOT", Path.cwd()))
+    program = """import sys, json
+sys.path.insert(0, sys.argv[1])
+import runtime_state
+cfg = json.loads(sys.argv[2])
+with runtime_state.runtime_state_update(cfg) as s:
+    s["auto_commit_archive"]["pending_token"] = "old-runtime-after-cutover"
+"""
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith(("PANTHEON_", "AI_"))}
+    proc = subprocess.run(
+        [sys.executable, "-c", program, str(old_root / ".orchestrator"), json.dumps(old_cfg)],
+        env=clean_env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+
+    assert proc.returncode != 0
+    assert old_state.is_fifo()
+    assert not old_state.is_file()
+    new_token = json.loads(new_state.read_text())["auto_commit_archive"]["pending_token"]
+    assert new_token == "before-migration"
+
+
+def test_qualify_and_drain_incumbent_writers_fails_closed_on_active_reservations(
+    tmp_path: Path,
+) -> None:
+    incumbent_state = {
+        "supervisor": {
+            "runtime_phase_reservations": {
+                "phase-1": {"status": "active"}
+            }
+        },
+        "workers": {},
+    }
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps(incumbent_state))
+    incumbent = {"paths": {"state_file": str(state_file)}}
+
+    with pytest.raises(RuntimeError, match="active supervisor reservations exist"):
+        promotion.qualify_and_drain_incumbent_writers(incumbent, timeout_seconds=1.0)
 

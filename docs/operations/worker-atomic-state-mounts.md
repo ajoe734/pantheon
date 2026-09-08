@@ -91,12 +91,16 @@ When promoting a new supervisor runtime version:
    - If rollback cannot be verified or leaves split storage, `_replace_supervisor_locked` retains the single-writer lock exclusion and refuses incumbent restart against unverified restoration.
    - If candidate supervisor launch fails after verified migration, `_replace_supervisor_locked` restores migrated files, writes back incumbent configuration, fsyncs rollback directories, and restarts the qualified incumbent supervisor. Any rollback or restart errors are accumulated and raised rather than silently swallowed.
 5. **Strict Incumbent Source Qualification**:
-   - `qualify_incumbent_identity` validates exact immutable command roots using `validated_immutable_command_root` prior to shutdown, failing closed if validation rejects the incumbent root.
+   - `qualify_incumbent_identity` validates exact immutable command roots using `validated_immutable_command_root` prior to shutdown, failing closed if validation rejects the incumbent root or if incumbent identity is absent or unqualified.
    - Fabricated heads from directory basenames and silent candidate identity substitutions are removed.
    - `_replace_supervisor_locked` validates the incumbent identity before calling `stop_existing_supervisor`, failing closed before any shutdown.
-6. **Retained Old-Path Writer Qualification and Fencing**:
-   - `runtime_state._canonical_runtime_source_path` transparently redirects legacy `.orchestrator/` state and queue paths to canonical `.orchestrator/worker-runtime/` files when worker-runtime authority exists.
-   - Direct writes to retired `.orchestrator/` state or approval-queue files are hard-fenced in `_write_runtime_bytes_unlocked`, preventing split storage or divergent tokens without compatibility copies.
+6. **Retained Old-Path Writer Drain and Anti-Recreation Fencing**:
+   - Prior to storage migration and incumbent shutdown, `qualify_and_drain_incumbent_writers` drains running worker processes and fails closed on active reservations or in-flight queue events.
+   - `_migrate_storage_paths` creates non-regular FIFO fences at retired state and queue paths, causing old writers running prior immutable code to fail closed on leaf regular-file assertions without recreating state files.
+   - `runtime_state` strictly adheres to configured authority (`config_path(config, key)`), preserving symlink, split-root, and outside-root leaf validation without existence-based path redirection.
+7. **Post-Rename Config Durability and Rollback Verification**:
+   - In case of directory fsync EIO after atomic replacement of live config, the rollback handler restores and verifies incumbent config on disk, rolls back migrated storage files, and verifies disk state before restarting incumbent supervisor.
+   - If restoration or verification fails, incumbent supervisor restart is refused and the single-writer exclusion lock is retained.
 
 ### Verification Commands
 ```bash

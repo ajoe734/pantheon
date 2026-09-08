@@ -7,6 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "base_branch": "dev",
   "base_sha_at_dispatch": "1b39676c12182e15602bcb85a72244f2b31b0116",
+  "current_base": "36dcc95aafadf76c4779eabe08f35c8784aa45e2",
   "task_branch": "task/OPS-WORKER-MOUNTS-001",
   "depends_on": [
     "OPS-REVIEW-PROOF-001"
@@ -99,23 +100,23 @@
       ".orchestrator/config.json": "d6827446afc82cdfd86d89b01b8187187a607b2306c5c5b100c7d738803c7e8e",
       ".orchestrator/model_rotation.py": "e79e6cda2a77555bc54642b256ed12a71c9800a50234b9a6f8308a9f3e25de9c",
       ".orchestrator/permission_broker.py": "5a45b7d1c7feb6e521b987ecad271d1d0655d2bc54ccf28314980632018c11a5",
-      ".orchestrator/runtime_state.py": "2f1c0eb516e441f4eacfbc4d1c1a3ae7f7d421c9bcb575d2b2720848899e0e52",
+      ".orchestrator/runtime_state.py": "e362e11cc162abb7677b948a27130bcbf6a69326973f11f731cfcda77211dfa9",
       ".orchestrator/supervisor.py": "71fdb6021ff0a40af8f888210504261028e883cea84828819af3ac15d7a8fa74",
       ".orchestrator/supervisor_watchdog.py": "e2030f151f28219d7438435ca95baf70a9efc39ce2ab0be184d20e3a6d4213aa",
       ".orchestrator/test_common.py": "e2d8a310dcee3461206213429f8b2abda5c96cd5766ad147ccfe905831eaaa02",
       ".orchestrator/test_provider_permissions.py": "79944558ca4a933234ebfe8917623656a095abcbe0eb6b0ca0fd939168d35aa4",
-      ".orchestrator/test_runtime_state.py": "0f14b5ae605857f6258c513d33e25245c6076ecf4f7b0f59d4b8dce8314b0b98",
+      ".orchestrator/test_runtime_state.py": "f42012f9285fce550b10366a92a09da557d8d800f91c63b6df540648fc18b019",
       ".orchestrator/test_supervisor.py": "57153863f8103afe32f6948d65a55e47114c94c01b2364a382776d708067ebe1",
       ".orchestrator/test_worker_runner_heartbeat.py": "6c7cbe73ab8115390d4a234fdded5d700c6bae5d11856d292fb6cb9871941f44",
       ".orchestrator/worker_runner.py": "683a3b5215e21a0b4497dce3c43201e0f171e596177b2a4e22c04b660d32a29e",
       "scripts/ai_status.py": "fd6e42eb8599f1b0ce45feeef808278f108ed24a716df7f4040858718ba57ab0",
-      "scripts/promote_supervisor_runtime.py": "e4a84431d1261ba7d6ac5410d154f59e5f1ef0d44bff0cd66950057a8b7031ef",
+      "scripts/promote_supervisor_runtime.py": "2a72f33f1a0c63733c1d58e80b9b229dfd5a9e9f11184237ccc3af9e8b5c2dfb",
       "scripts/provision_live_supervisor_config.py": "c2252528253ffb8958f4cfa00b6165853bef3e9ee7de9532adb5665e57fd21ed",
       "scripts/supervisor_runtime_health.py": "760af2944435f74dd1406ce69f5040541f918b9ac902b71361d437567a24587b",
       "scripts/test_ai_status.py": "024d7100d78a0271c886d273ead10f04c01ff60e2135f2cb7203ced29b676674",
-      "scripts/test_promote_supervisor_runtime.py": "cc570d42d416fecfa1f58ffa20cda6a4baaf7d8f583ada3f8bd2657c97b5a421",
+      "scripts/test_promote_supervisor_runtime.py": "ff29153bf738ef66b07cbc304b8a15877a19e812eee5cdffe9b324604cc405dc",
       "scripts/test_provision_live_supervisor_config.py": "09536e917286516557280c3b9b9800abba6dad8372460c29c3a787fb50d10fb2",
-      "docs/operations/worker-atomic-state-mounts.md": "21c2e489c7f97885f16663cfa411aaff1ae99df0336b2aef3ab16d9eac6020c2"
+      "docs/operations/worker-atomic-state-mounts.md": "89a3774eda6ea6dee012cc2309ceff9e4cde0e09fd709b92e61ea66165294e84"
     },
     "passed": [
       {
@@ -125,7 +126,7 @@
       },
       {
         "command": "pytest .orchestrator/test_runtime_state.py",
-        "result": "30 passed",
+        "result": "30 passed, 22 subtests passed",
         "exit_status": 0
       },
       {
@@ -145,7 +146,7 @@
       },
       {
         "command": "pytest scripts/test_promote_supervisor_runtime.py",
-        "result": "59 passed",
+        "result": "63 passed",
         "exit_status": 0
       },
       {
@@ -165,7 +166,7 @@
       },
       {
         "command": "pytest -q .orchestrator/test_worker_runner_heartbeat.py .orchestrator/test_runtime_state.py .orchestrator/test_common.py scripts/test_ai_status.py scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py",
-        "result": "775 passed, 265 subtests passed in 462.58s",
+        "result": "779 passed, 265 subtests passed",
         "exit_status": 0
       }
     ]
@@ -183,6 +184,10 @@
     "cycle_3_defect_1_partial_migration_rollback_propagation_and_lock_retention": "scripts/promote_supervisor_runtime.py now raises StorageMigrationError carrying forward_error, migration_record, rollback_errors, restoration_verified, and lock_fd. In _replace_supervisor_locked, recovery diagnostics are extracted, single-writer lock exclusion is retained across rollback when restoration is not verified, and incumbent restart is refused against incomplete restoration / split storage.",
     "cycle_3_defect_2_retained_old_path_writer_qualification_and_fencing": ".orchestrator/runtime_state.py resolves legacy .orchestrator paths to .orchestrator/worker-runtime/ via _canonical_runtime_source_path when worker-runtime authority exists. Direct write attempts to retired .orchestrator state/queue paths are hard-fenced in _write_runtime_bytes_unlocked, preventing split authority or divergent tokens without compatibility copies.",
     "cycle_3_defect_3_incumbent_source_qualification_and_fail_closed": "promote_supervisor_runtime.qualify_incumbent_identity validates exact immutable command root via validated_immutable_command_root before supervisor shutdown, verifies expected git head against incumbent identity when specified, removes arbitrary unvalidated mappings and directory basename head fabrication, and does not substitute candidate identity when absent. _replace_supervisor_locked validates incumbent identity prior to calling stop_existing_supervisor, failing closed before shutdown.",
-    "cycle_3_defect_4_durability_error_propagation_and_destination_publication": "promote_supervisor_runtime._fsync_dir removes OSError suppression so directory durability errors propagate directly into rollback and caller evidence. Destination directory hierarchy publication fsyncs new_event_log.parent.parent and new_p.parent.parent, and all fsynced directories are tracked and reported in migration evidence."
+    "cycle_3_defect_4_durability_error_propagation_and_destination_publication": "promote_supervisor_runtime._fsync_dir removes OSError suppression so directory durability errors propagate directly into rollback and caller evidence. Destination directory hierarchy publication fsyncs new_event_log.parent.parent and new_p.parent.parent, and all fsynced directories are tracked and reported in migration evidence.",
+    "cycle_4_defect_1_retained_immutable_writer_drain_and_fifo_fencing": "qualify_and_drain_incumbent_writers drains running worker processes with timeout and fails closed if active supervisor phase reservations or in-flight queue events exist before cutover. _migrate_storage_paths establishes non-regular FIFO fences at retired state and approval queue paths, ensuring retained immutable writers fail closed on regular-file leaf assertions without recreating state files.",
+    "cycle_4_defect_2_configured_authority_preserves_leaf_and_symlink_validation": "Removed _canonical_runtime_source_path and implicit existence-based compatibility redirection. runtime_state strictly uses config_path(config, key), preserving direct validation of configured paths and rejecting symlinks, split-roots, or outside-roots fail-closed even if worker-runtime/state.json exists.",
+    "cycle_4_defect_3_post_rename_config_durability_and_incumbent_restoration": "In _replace_supervisor_locked, if write_json_atomic encounters a directory fsync error (EIO) after rename, the rollback handler restores and verifies incumbent config on disk, rolls back migrated storage files, and only restarts the incumbent supervisor once on-disk verification succeeds. If restoration or verification fails, restart is refused and single-writer exclusion is retained.",
+    "cycle_4_defect_4_absent_incumbent_identity_fails_closed_before_shutdown": "In _replace_supervisor_locked, if qualify_incumbent_identity returns None (e.g. incumbent config lacks identity and watchdog commands), promotion fails closed immediately with RuntimeError before calling stop_existing_supervisor, preventing shutdown of incumbents without a qualified rollback target."
   }
 }

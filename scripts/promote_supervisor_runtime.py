@@ -876,6 +876,131 @@ def qualify_incumbent_identity(
     return ident
 
 
+def _create_retired_path_fence(path: Path) -> None:
+    p = Path(path)
+    if p.exists() or p.is_symlink():
+        return
+    if hasattr(os, "mkfifo"):
+        try:
+            os.mkfifo(str(p), 0o600)
+            return
+        except OSError:
+            pass
+    try:
+        p.mkdir(mode=0o700, exist_ok=True)
+    except OSError:
+        pass
+
+
+def _remove_retired_path_fence(path: Path) -> None:
+    p = Path(path)
+    try:
+        if p.is_dir():
+            p.rmdir()
+        else:
+            p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def qualify_and_drain_incumbent_writers(
+    incumbent: Mapping[str, Any] | None,
+    *,
+    timeout_seconds: float = 15.0,
+) -> dict[str, Any]:
+    """Qualify incumbent runtime state and drain active worker processes before cutover."""
+    if not incumbent:
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+    old_state_val = str(old_paths.get("state_file") or "").strip()
+    if not old_state_val:
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    state_path = Path(old_state_val).expanduser()
+    if not state_path.exists() or not state_path.is_file() or state_path.is_symlink():
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    try:
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"cannot inspect incumbent runtime state: {exc}") from exc
+
+    if not isinstance(raw_state, Mapping):
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    # 1. Check reservations
+    supervisor_info = raw_state.get("supervisor") if isinstance(raw_state.get("supervisor"), Mapping) else {}
+    reservations = supervisor_info.get("runtime_phase_reservations") if isinstance(supervisor_info.get("runtime_phase_reservations"), Mapping) else {}
+    active_reservations = [
+        str(k) for k, v in reservations.items()
+        if isinstance(v, Mapping) and str(v.get("status") or "").strip() in {
+            "prepared", "pending", "active", "dispatched", "running", "started", "admitted", ""
+        }
+    ]
+    if active_reservations:
+        raise RuntimeError(
+            f"cannot promote runtime: active supervisor reservations exist: {active_reservations}"
+        )
+
+    # 2. Check and drain workers
+    workers = raw_state.get("workers") if isinstance(raw_state.get("workers"), Mapping) else {}
+    workers_drained: list[int] = []
+    conflict_statuses = {
+        "queued",
+        "started",
+        "running",
+        "waiting_approval",
+        "suspended_approval",
+        "retry_backoff",
+        "stalled",
+        "admitted",
+    }
+    for run_id, worker in workers.items():
+        if not isinstance(worker, Mapping):
+            continue
+        pid = worker.get("pid")
+        status = str(worker.get("status") or "").strip()
+        if isinstance(pid, int) and pid > 0 and _pid_alive(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+            deadline = time.monotonic() + timeout_seconds
+            while _pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if _pid_alive(pid):
+                raise RuntimeError(
+                    f"worker process {pid} ({run_id}) did not stop within {timeout_seconds:g}s"
+                )
+            workers_drained.append(pid)
+        elif status in conflict_statuses:
+            raise RuntimeError(
+                f"cannot promote runtime: active worker {run_id} in un-drainable status {status}"
+            )
+
+    # 3. Check in-flight queue events
+    queue_events = (
+        raw_state.get("queue", {}).get("events", {})
+        if isinstance(raw_state.get("queue"), Mapping) and isinstance(raw_state.get("queue", {}).get("events"), Mapping)
+        else {}
+    )
+    in_flight_events = [
+        str(eid) for eid, ev in queue_events.items()
+        if isinstance(ev, Mapping) and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
+    ]
+    if in_flight_events:
+        raise RuntimeError(
+            f"cannot promote runtime: in-flight queue events exist: {in_flight_events}"
+        )
+
+    return {
+        "drained": True,
+        "workers_drained": workers_drained,
+        "reservations": [],
+    }
+
+
 def _migrate_storage_paths(
     incumbent: Mapping[str, Any] | None,
     rendered: Mapping[str, Any],
@@ -960,6 +1085,7 @@ def _migrate_storage_paths(
                         dirs_to_fsync.add(new_p.parent.parent)
                     os.replace(old_p, new_p)
                     moved_files.append((str(old_p), str(new_p)))
+                    _create_retired_path_fence(old_p)
 
         for d in dirs_to_fsync:
             _fsync_dir(d)
@@ -970,6 +1096,7 @@ def _migrate_storage_paths(
         unrestored_files: list[tuple[str, str]] = []
 
         for old_file, new_file in reversed(moved_files):
+            _remove_retired_path_fence(Path(old_file))
             if os.path.exists(new_file):
                 try:
                     os.replace(new_file, old_file)
@@ -1126,7 +1253,15 @@ def _replace_supervisor_locked(
                 Path(identity["root"]), python_executable=python_executable,
             )
         )
-        incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
+        if incumbent:
+            incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
+            if incumbent_identity is None:
+                raise RuntimeError("existing incumbent identity is not qualified for rollback")
+            result["writer_drain"] = qualify_and_drain_incumbent_writers(
+                incumbent, timeout_seconds=termination_timeout
+            )
+        else:
+            incumbent_identity = None
 
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
@@ -1165,15 +1300,10 @@ def _replace_supervisor_locked(
             if getattr(launch_exc, "rollback_errors", None):
                 rollback_errors.extend(launch_exc.rollback_errors)
 
-            if config_written and incumbent:
-                try:
-                    write_json_atomic(live_config_path, incumbent)
-                except Exception as r_exc:
-                    rollback_errors.append(f"config restoration failed: {r_exc}")
-
             if migration_record and not getattr(launch_exc, "restoration_verified", False):
                 rollback_dirs: set[Path] = set()
                 for old_file, new_file in reversed(migration_record.get("files", [])):
+                    _remove_retired_path_fence(Path(old_file))
                     if os.path.exists(new_file):
                         try:
                             os.replace(new_file, old_file)
@@ -1187,16 +1317,43 @@ def _replace_supervisor_locked(
                     except Exception as r_exc:
                         rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
 
-            if migration_record:
-                restoration_verified = (
-                    len(rollback_errors) == 0
-                    and all(
-                        Path(old_file).exists() and not Path(new_file).exists()
-                        for old_file, new_file in migration_record.get("files", [])
-                    )
-                )
+            config_restored_and_verified = False
+            if incumbent:
+                try:
+                    write_json_atomic(live_config_path, incumbent)
+                except Exception as r_exc:
+                    rollback_errors.append(f"config restoration failed: {r_exc}")
+                try:
+                    if live_config_path.exists() and not live_config_path.is_symlink():
+                        on_disk_config = json.loads(live_config_path.read_text(encoding="utf-8"))
+                        if on_disk_config == incumbent:
+                            config_restored_and_verified = True
+                        else:
+                            rollback_errors.append(
+                                f"live config does not match incumbent after restoration: {live_config_path}"
+                            )
+                    else:
+                        rollback_errors.append(
+                            f"live config missing or symlink after restoration: {live_config_path}"
+                        )
+                except Exception as v_exc:
+                    rollback_errors.append(f"config verification read failed: {v_exc}")
             else:
-                restoration_verified = len(rollback_errors) == 0
+                config_restored_and_verified = True
+
+            storage_verified = True
+            if migration_record:
+                storage_verified = all(
+                    Path(old_file).exists() and not Path(new_file).exists()
+                    for old_file, new_file in migration_record.get("files", [])
+                )
+
+            restoration_verified = (
+                len(rollback_errors) == 0
+                and config_restored_and_verified
+                and storage_verified
+            )
+            result["restoration_verified"] = restoration_verified
 
             if stopped_pid is not None and incumbent:
                 if not restoration_verified:

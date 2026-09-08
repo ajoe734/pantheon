@@ -1168,53 +1168,60 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 ):
                     self.fail("reverse-order runtime lock was acquired")
 
-    def test_runtime_state_canonical_qualification_and_fencing_after_storage_migration(self) -> None:
+    def test_configured_authority_preserves_leaf_validation_and_rejects_symlink(self) -> None:
         status_root = self.root / "status"
         orchestrator_dir = status_root / ".orchestrator"
         worker_runtime_dir = orchestrator_dir / "worker-runtime"
         worker_runtime_dir.mkdir(parents=True, exist_ok=True)
         (status_root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
 
-        incumbent_state = orchestrator_dir / "state.json"
-        incumbent_queue = orchestrator_dir / "approval-queue.json"
+        configured_state = orchestrator_dir / "state.json"
         migrated_state = worker_runtime_dir / "state.json"
         migrated_queue = worker_runtime_dir / "approval-queue.json"
 
         migrated_state.write_text(json.dumps(runtime_state.default_state()) + "\n", encoding="utf-8")
         migrated_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
-        incumbent_config = {
+        unrelated = self.root / "unrelated.json"
+        unrelated.write_text('{"unrelated": true}\n', encoding="utf-8")
+        configured_state.symlink_to(unrelated)
+
+        cfg = {
             "paths": {
                 "status_file": str(status_root / "ai-status.json"),
-                "state_file": str(incumbent_state),
-                "approval_queue": str(incumbent_queue),
+                "state_file": str(configured_state),
+                "approval_queue": str(migrated_queue),
             }
         }
 
-        # 1. Verification of canonical qualification
-        resolved_state = runtime_state._canonical_runtime_source_path(incumbent_config, "state_file")
-        self.assertEqual(resolved_state, migrated_state)
-        resolved_queue = runtime_state._canonical_runtime_source_path(incumbent_config, "approval_queue")
-        self.assertEqual(resolved_queue, migrated_queue)
-
-        # 2. Worker state update using old config transparently writes to worker-runtime
-        with runtime_state.runtime_state_update(incumbent_config) as state:
-            state["auto_commit_archive"]["pending_token"] = "fenced-update-token"
-
-        # The old path must NOT be recreated
-        self.assertFalse(incumbent_state.exists())
-
-        # The migrated path must have the new token
-        loaded = runtime_state.load_runtime_state(incumbent_config)
-        self.assertEqual(loaded["auto_commit_archive"]["pending_token"], "fenced-update-token")
-
-        # 3. Direct write attempt to retired old path is hard-fenced
+        # 1. Configured symlink MUST NOT be masked by existence of worker-runtime/state.json
         with self.assertRaisesRegex(
             RuntimeError,
-            r"cannot write to retired runtime .* path .*retained old-path writers must use canonical authority",
+            r"canonical runtime_state data leaf cannot be a symlink",
         ):
-            runtime_state._write_runtime_bytes_unlocked(
-                incumbent_state,
-                b'{"version": 2}\n',
-                source_id="runtime_state",
-            )
+            runtime_state.load_runtime_state(cfg)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"canonical runtime_state data leaf cannot be a symlink",
+        ):
+            with runtime_state.runtime_state_update(cfg):
+                pass
+
+        # 2. No implicit compatibility fallback function exists
+        self.assertFalse(hasattr(runtime_state, "_canonical_runtime_source_path"))
+
+        # 3. Clean configured path in worker-runtime loads and updates successfully
+        valid_cfg = {
+            "paths": {
+                "status_file": str(status_root / "ai-status.json"),
+                "state_file": str(migrated_state),
+                "approval_queue": str(migrated_queue),
+            }
+        }
+        loaded = runtime_state.load_runtime_state(valid_cfg)
+        self.assertIsNotNone(loaded)
+        with runtime_state.runtime_state_update(valid_cfg) as st:
+            st["auto_commit_archive"]["pending_token"] = "valid-token"
+        reloaded = runtime_state.load_runtime_state(valid_cfg)
+        self.assertEqual(reloaded["auto_commit_archive"]["pending_token"], "valid-token")
