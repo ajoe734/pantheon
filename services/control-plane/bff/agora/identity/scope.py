@@ -185,9 +185,7 @@ def resolve_agora_user_scope(
     )
     allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
     if not allowed_tenants:
-        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [
-            requested_tenant_id or default_tenant
-        ]
+        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
     tenant_id = _first_nonblank(requested_tenant_id, default_tenant)
 
     if not tenant_id or not user_id:

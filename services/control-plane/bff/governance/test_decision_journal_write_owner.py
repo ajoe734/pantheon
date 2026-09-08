@@ -429,7 +429,10 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
             svc = AgoraService(journal_write_owner=owner)
             first = svc.create_journal_entry(
                 payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
-                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant-a"},
+                ),
                 idempotency_key="same-key",
                 x_idempotency_key=None,
                 tenant_id="tenant-a",
@@ -437,7 +440,10 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
             )
             second = svc.create_journal_entry(
                 payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
-                identity=OperatorIdentity(operator_id="bob", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="bob", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant-b"},
+                ),
                 idempotency_key="same-key",
                 x_idempotency_key=None,
                 tenant_id="tenant-b",
@@ -450,7 +456,10 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
             first_svc = AgoraService(journal_write_owner=build_decision_journal_write_owner(data_dir=tmp))
             first = first_svc.create_journal_entry(
                 payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
-                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant-a"},
+                ),
                 idempotency_key="same-key",
                 x_idempotency_key=None,
                 tenant_id="tenant-a",
@@ -459,7 +468,10 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
             second_svc = AgoraService(journal_write_owner=build_decision_journal_write_owner(data_dir=tmp))
             second = second_svc.create_journal_entry(
                 payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
-                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant-a"},
+                ),
                 idempotency_key="same-key",
                 x_idempotency_key=None,
                 tenant_id="tenant-a",
@@ -473,7 +485,10 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
             svc = AgoraService(journal_write_owner=build_decision_journal_write_owner(data_dir=tmp))
             svc.create_journal_entry(
                 payload={"title": "Original Title", "body": "Body", "visibility": "private"},
-                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant-a"},
+                ),
                 idempotency_key="conflict-key",
                 x_idempotency_key=None,
                 tenant_id="tenant-a",
@@ -482,7 +497,10 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 svc.create_journal_entry(
                     payload={"title": "Different Title", "body": "Body", "visibility": "private"},
-                    identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                    identity=OperatorIdentity(
+                        operator_id="alice", roles=["operator"], mfa_verified=True,
+                        claims={"tenant_id": "tenant-a"},
+                    ),
                     idempotency_key="conflict-key",
                     x_idempotency_key=None,
                     tenant_id="tenant-a",
@@ -607,7 +625,10 @@ sys.exit(0)
                 service = AgoraService(journal_write_owner=owner)
                 return service.create_journal_entry(
                     payload={"title": "Synthetic", "body": "Private synthetic body"},
-                    identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                    identity=OperatorIdentity(
+                        operator_id="alice", roles=["operator"], mfa_verified=True,
+                        claims={"tenant_id": "tenant-a"},
+                    ),
                     idempotency_key="same-key",
                     x_idempotency_key=None,
                     tenant_id="tenant-a",
@@ -675,7 +696,7 @@ sys.exit(0)
                 "owner.record_create_idempotency = lambda **kwargs: os._exit(74)\n"
                 "AgoraService(journal_write_owner=owner).create_journal_entry(\n"
                 "    payload={'title': 'Initial', 'body': 'body'},\n"
-                "    identity=OperatorIdentity(operator_id='alice', roles=['operator'], mfa_verified=True),\n"
+                "    identity=OperatorIdentity(operator_id='alice', roles=['operator'], mfa_verified=True, claims={'tenant_id': 'tenant'}),\n"
                 "    idempotency_key='request-1',\n"
                 "    x_idempotency_key=None,\n"
                 "    tenant_id='tenant',\n"
@@ -693,7 +714,10 @@ sys.exit(0)
             service = AgoraService(journal_write_owner=owner)
             result = service.create_journal_entry(
                 payload={"title": "Initial", "body": "body"},
-                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant"},
+                ),
                 idempotency_key="request-1",
                 x_idempotency_key=None,
                 tenant_id="tenant",
@@ -720,7 +744,10 @@ sys.exit(0)
             stores.outbox.put = blocked_failure  # type: ignore[assignment]
             args = dict(
                 payload={"id": "entry-1", "title": "provisional", "body": "synthetic"},
-                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant-a"},
+                ),
                 idempotency_key="request-1",
                 x_idempotency_key=None,
                 tenant_id="tenant-a",
@@ -767,7 +794,10 @@ sys.exit(0)
             owner = DecisionJournalOwnerAdapter(stores=stores)
             service = AgoraService(journal_write_owner=owner)
 
-            identity = OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True)
+            identity = OperatorIdentity(
+                operator_id="alice", roles=["operator"], mfa_verified=True,
+                claims={"tenant_id": "tenant-a"},
+            )
 
             # 1. Create entry-a with idempotency key request-a
             res1 = service.create_journal_entry(
@@ -854,7 +884,10 @@ sys.exit(0)
             owner = DecisionJournalOwnerAdapter(stores=stores)
             service = AgoraService(journal_write_owner=owner)
 
-            identity = OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True)
+            identity = OperatorIdentity(
+                operator_id="alice", roles=["operator"], mfa_verified=True,
+                claims={"tenant_id": "tenant-a"},
+            )
 
             # Create entry with supplied ID "key-x" and request key "key-y"
             res = service.create_journal_entry(
@@ -921,7 +954,10 @@ sys.exit(0)
             payload = {"title": "private record", "body": "private content"}
             first = service.create_journal_entry(
                 payload=payload,
-                identity=OperatorIdentity(operator_id="bob", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="bob", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant:alice"},
+                ),
                 tenant_id="tenant:alice",
                 user_id="bob",
                 idempotency_key="key",
@@ -929,7 +965,10 @@ sys.exit(0)
             )
             second = service.create_journal_entry(
                 payload=payload,
-                identity=OperatorIdentity(operator_id="alice:bob", roles=["operator"], mfa_verified=True),
+                identity=OperatorIdentity(
+                    operator_id="alice:bob", roles=["operator"], mfa_verified=True,
+                    claims={"tenant_id": "tenant"},
+                ),
                 tenant_id="tenant",
                 user_id="alice:bob",
                 idempotency_key="key",
@@ -1443,6 +1482,90 @@ patch_entry(
                         # Authorized requested tenant succeeds through router
                         res_auth_hdr = client.get("/bff/agora/journal", headers={"X-Tenant-Id": "tenant-a"})
                         self.assertEqual(res_auth_hdr.status_code, 200)
+
+    def test_missing_tenant_claims_cannot_be_elevated_by_request_input(self) -> None:
+        """Regression for the PR #5667 review finding: with no tenant claims and
+        no PANTHEON_BFF_ALLOWED_TENANTS, the caller-supplied X-Tenant-Id header
+        or body tenant_id must never become the authorized tenant set."""
+        from unittest.mock import patch
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+        from services.control_plane.bff.agora.router import create_agora_router
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"PANTHEON_BFF_DEFAULT_TENANT_ID": "tenant-a"}, clear=True):
+                owner = DecisionJournalOwnerAdapter(stores=build_decision_journal_stores(tmp))
+                reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+                service = AgoraService(get_read_store=lambda: reader, journal_write_owner=owner)
+                identity = OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True)
+
+                # Seed a private tenant-b record via a direct owner write (out of band from the
+                # unauthenticated-claims caller under test).
+                owner.create_decision_journal_entry(
+                    title="B original",
+                    body="synthetic tenant B private",
+                    entry_id="private-b",
+                    actor_id="alice",
+                    tenant_id="tenant-b",
+                    user_id="alice",
+                    created_at="2026-09-08T00:00:00Z",
+                )
+
+                app = FastAPI()
+                app.include_router(create_agora_router(
+                    extract_identity=lambda *a, **k: identity,
+                    require_read_role=lambda *a, **k: None,
+                    require_write_role=lambda *a, **k: None,
+                    bff_error=lambda status, code, msg, details=None, **k: HTTPException(status_code=status, detail=msg),
+                    utc_now=lambda: "2026-09-08T00:00:00Z",
+                    sync_servant_agent=lambda payload: payload,
+                    get_read_store=lambda: reader,
+                    service=service,
+                ))
+                client = TestClient(app)
+
+                # Negative: header cannot request membership in an unclaimed tenant.
+                res_get_hdr = client.get("/bff/agora/journal", headers={"X-Tenant-Id": "tenant-b"})
+                self.assertEqual(res_get_hdr.status_code, 403)
+
+                # Negative: PATCH body/path cannot mutate another tenant's record.
+                res_patch = client.patch(
+                    "/bff/agora/journal/private-b",
+                    headers={
+                        "X-Tenant-Id": "tenant-b",
+                        "Content-Type": "application/merge-patch+json",
+                        "Idempotency-Key": "unauthorized-b-patch",
+                    },
+                    json={"title": "A changed B"},
+                )
+                self.assertEqual(res_patch.status_code, 403)
+
+                # Negative: POST body tenant_id cannot create a record in an unclaimed tenant.
+                res_post = client.post(
+                    "/bff/agora/journal",
+                    headers={"Idempotency-Key": "unauthorized-b-create"},
+                    json={"id": "unauthorized-new-b", "title": "Injected", "body": "synthetic", "tenant_id": "tenant-b"},
+                )
+                self.assertEqual(res_post.status_code, 403)
+
+                persisted = owner.get_decision_journal_entry("private-b", tenant_id="tenant-b", user_id="alice")
+                self.assertEqual(persisted["title"], "B original")
+
+                # Positive: the same caller, targeting their own (default/claimed) tenant, succeeds.
+                res_post_own = client.post(
+                    "/bff/agora/journal",
+                    headers={"Idempotency-Key": "authorized-a-create"},
+                    json={"title": "Own tenant entry", "body": "synthetic", "visibility": "private"},
+                )
+                self.assertEqual(res_post_own.status_code, 201)
+                self.assertEqual(res_post_own.json()["data"]["tenant_id"], "tenant-a")
+
+                res_get_own = client.get("/bff/agora/journal")
+                self.assertEqual(res_get_own.status_code, 200)
+                self.assertEqual(
+                    {row["id"] for row in res_get_own.json()["data"]},
+                    {res_post_own.json()["data"]["id"]},
+                )
 
     def test_fail_closed_cross_tenant_and_cross_user_isolation(self) -> None:
         from unittest.mock import patch
