@@ -37,6 +37,7 @@ from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
 from adapters.base import DeliveryRequest
 from common import (
+    LockContentionError,
     agent_config_for,
     bound_commit_subject,
     canonical_task_state_lock_file,
@@ -16400,30 +16401,42 @@ def run_deadline_scheduler(
 def publish_scheduler_cadence_completion(
     config: dict[str, Any],
     sample: Mapping[str, Any],
-) -> None:
-    """Persist one scalar scheduler completion sample in a short transaction."""
+) -> bool:
+    """Persist cadence telemetry without delaying the next scheduler cycle."""
 
-    with runtime_state_lock(config, shared=False, nonblocking=False):
-        state = load_runtime_state(config)
-        supervisor_state = state.setdefault("supervisor", {})
-        elapsed = round(max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3)
-        supervisor_state["scheduler_cycle_elapsed_seconds"] = elapsed
-        supervisor_state["scheduler_cycle_elapsed_peak_seconds"] = round(
-            max(
-                elapsed,
-                float(supervisor_state.get("scheduler_cycle_elapsed_peak_seconds", 0.0)),
-            ),
-            3,
-        )
-        supervisor_state["cadence_skipped_deadlines"] = max(
-            0,
-            int(sample.get("skipped_deadlines_after_cycle", 0)),
-        )
-        supervisor_state["cadence_next_deadline_monotonic"] = round(
-            float(sample.get("next_deadline", 0.0)),
-            6,
-        )
-        save_runtime_state(config, state)
+    try:
+        with runtime_state_lock(config, shared=False, nonblocking=True):
+            state = load_runtime_state(config)
+            supervisor_state = state.setdefault("supervisor", {})
+            elapsed = round(
+                max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3
+            )
+            supervisor_state["scheduler_cycle_elapsed_seconds"] = elapsed
+            supervisor_state["scheduler_cycle_elapsed_peak_seconds"] = round(
+                max(
+                    elapsed,
+                    float(
+                        supervisor_state.get(
+                            "scheduler_cycle_elapsed_peak_seconds", 0.0
+                        )
+                    ),
+                ),
+                3,
+            )
+            supervisor_state["cadence_skipped_deadlines"] = max(
+                0,
+                int(sample.get("skipped_deadlines_after_cycle", 0)),
+            )
+            supervisor_state["cadence_next_deadline_monotonic"] = round(
+                float(sample.get("next_deadline", 0.0)),
+                6,
+            )
+            save_runtime_state(config, state)
+    except LockContentionError:
+        # Completion samples are observability only. The next scheduler cycle
+        # must never wait behind an unrelated runtime writer to publish them.
+        return False
+    return True
 
 
 def main() -> int:
