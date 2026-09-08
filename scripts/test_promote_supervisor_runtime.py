@@ -491,11 +491,12 @@ def test_replace_quiesces_incumbent_before_draining_its_writers(
         "stop_existing_supervisor",
         lambda *_args, **_kwargs: events.append("stop") or 41,
     )
-    monkeypatch.setattr(
-        promotion,
-        "qualify_and_drain_incumbent_writers",
-        lambda *_args, **_kwargs: events.append("drain") or {"drained": True},
-    )
+    def drain(*_args: object, **kwargs: object) -> dict[str, object]:
+        assert kwargs["recover_stopped_reservations"] is True
+        events.append("drain")
+        return {"drained": True}
+
+    monkeypatch.setattr(promotion, "qualify_and_drain_incumbent_writers", drain)
     monkeypatch.setattr(
         promotion,
         "launch_v2_supervisor",
@@ -535,7 +536,8 @@ def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
         lambda *_args, **_kwargs: events.append("stop") or 41,
     )
 
-    def fail_drain(*_args: object, **_kwargs: object) -> dict[str, object]:
+    def fail_drain(*_args: object, **kwargs: object) -> dict[str, object]:
+        assert kwargs["recover_stopped_reservations"] is True
         events.append("drain")
         raise RuntimeError("active supervisor reservations exist")
 
@@ -2451,4 +2453,3 @@ common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-w
     assert new_log.read_bytes() == before
     assert result.returncode != 0
     assert not old_log.exists()
-

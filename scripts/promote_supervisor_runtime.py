@@ -28,7 +28,12 @@ GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
 if str(GIT_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(GIT_SCRIPTS_DIR))
 
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1] / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
 import auto_integrator  # noqa: E402  (shared stable integration lock)
+import supervisor  # noqa: E402  (existing reserved-phase recovery authority)
 
 from provision_live_supervisor_config import (
     build_live_config,
@@ -1077,10 +1082,35 @@ def _rollback_storage_files(
     return restoration_verified, rollback_errors, unrestored_files, sorted(str(d) for d in rollback_dirs)
 
 
+def _recover_stopped_runtime_phase_reservations(
+    incumbent: Mapping[str, Any],
+    active_reservations: list[str],
+) -> list[str]:
+    """Reuse the supervisor's recovery protocol after its process is stopped.
+
+    Only reservations without a launch intent are cleared directly by that
+    protocol. Launch reservations are adopted or remain fail-closed under the
+    existing exact worker/process identity checks in ``supervisor.py``.
+    """
+
+    recovered: list[str] = []
+    config = dict(incumbent)
+    for phase_name in active_reservations:
+        outcome = supervisor._recover_runtime_phase_reservation(config, phase_name)
+        if outcome is False:
+            raise RuntimeError(
+                "cannot promote runtime: supervisor reservation could not be "
+                f"safely recovered: {phase_name}"
+            )
+        recovered.append(phase_name)
+    return recovered
+
+
 def qualify_and_drain_incumbent_writers(
     incumbent: Mapping[str, Any] | None,
     *,
     timeout_seconds: float = 15.0,
+    recover_stopped_reservations: bool = False,
 ) -> dict[str, Any]:
     """Qualify incumbent runtime state and drain active worker processes before cutover."""
     if not incumbent:
@@ -1112,6 +1142,27 @@ def qualify_and_drain_incumbent_writers(
             "prepared", "pending", "active", "dispatched", "running", "started", "admitted", ""
         }
     ]
+    recovered_reservations: list[str] = []
+    if active_reservations and recover_stopped_reservations:
+        recovered_reservations = _recover_stopped_runtime_phase_reservations(
+            incumbent, active_reservations
+        )
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+        supervisor_info = (
+            raw_state.get("supervisor")
+            if isinstance(raw_state.get("supervisor"), Mapping)
+            else {}
+        )
+        reservations = (
+            supervisor_info.get("runtime_phase_reservations")
+            if isinstance(supervisor_info.get("runtime_phase_reservations"), Mapping)
+            else {}
+        )
+        active_reservations = [
+            str(key) for key, value in reservations.items()
+            if isinstance(value, Mapping) and str(value.get("status") or "").strip()
+            in {"prepared", "pending", "active", "dispatched", "running", "started", "admitted", ""}
+        ]
     if active_reservations:
         raise RuntimeError(
             f"cannot promote runtime: active supervisor reservations exist: {active_reservations}"
@@ -1220,7 +1271,7 @@ def qualify_and_drain_incumbent_writers(
     return {
         "drained": True,
         "workers_drained": workers_drained,
-        "reservations": [],
+        "reservations": recovered_reservations,
     }
 
 
@@ -1477,7 +1528,9 @@ def _replace_supervisor_locked(
         if incumbent:
             try:
                 result["writer_drain"] = qualify_and_drain_incumbent_writers(
-                    incumbent, timeout_seconds=termination_timeout
+                    incumbent,
+                    timeout_seconds=termination_timeout,
+                    recover_stopped_reservations=True,
                 )
             except Exception as drain_exc:
                 if stopped_pid is not None:
