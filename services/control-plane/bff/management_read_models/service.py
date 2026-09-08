@@ -2022,6 +2022,102 @@ class ManagementService:
         return None
 
     # -----------------------------------------------------------------------
+    # Purpose-built Management AI context accessors (MGMT-READ-001).
+    #
+    # These replace bare/generic read-surface access from Management AI
+    # context collection with typed, owner-projection observations: an
+    # unavailable domain returns an explicit degraded row instead of being
+    # silently omitted or backed by seed data.
+    # -----------------------------------------------------------------------
+    def _context_observation(
+        self,
+        *,
+        subject_type: str,
+        status: str,
+        owner: str,
+        source_kind: str,
+        degradation_reason: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "subject_type": subject_type,
+            "subject_id": subject_type,
+            "status": status,
+            "owner": owner,
+            "source_kind": source_kind,
+            "source_version": None,
+            "observed_at": self._utc_now(),
+            "freshness_seconds": 0.0 if source_kind in ("live", "replayed", "backfill") else None,
+            "degradation_reason": degradation_reason,
+            "correlation_id": correlation_id,
+        }
+
+    def _typed_context_list(
+        self,
+        method_name: str,
+        *,
+        subject_type: str,
+        owner: str,
+        args: Tuple[Any, ...] = (),
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        store = self._resolve_store()
+        if store is None or not hasattr(store, method_name):
+            return [], self._context_observation(
+                subject_type=subject_type,
+                status="unavailable",
+                owner=owner,
+                source_kind="unavailable",
+                degradation_reason=f"{subject_type} read surface is unavailable or unconfigured.",
+            )
+        try:
+            items = list(getattr(store, method_name)(*args) or [])
+        except Exception as exc:
+            return [], self._context_observation(
+                subject_type=subject_type,
+                status="unavailable",
+                owner=owner,
+                source_kind="unavailable",
+                degradation_reason=f"{subject_type} read failed: {exc}",
+            )
+        return items, self._context_observation(
+            subject_type=subject_type,
+            status="ok",
+            owner=owner,
+            source_kind="live",
+        )
+
+    def get_context_runtime_bindings(
+        self, *, owner: str = "management_ai_context"
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list("list_runtime_bindings", subject_type="runtime_bindings", owner=owner)
+
+    def get_context_capital_pools(
+        self, *, owner: str = "management_ai_context"
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list("list_capital_pools", subject_type="capital_pools", owner=owner)
+
+    def get_context_incidents(
+        self, *, owner: str = "management_ai_context"
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list("list_incidents", subject_type="incidents", owner=owner)
+
+    def get_context_evolution_decisions(
+        self, *, owner: str = "management_ai_context"
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_evolution_decisions", subject_type="evolution_decisions", owner=owner
+        )
+
+    def get_context_telemetry_summary(self, runtime_id: str) -> Optional[Dict[str, Any]]:
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_telemetry_summary") or not runtime_id:
+            return None
+        try:
+            return store.get_telemetry_summary(runtime_id)
+        except Exception:
+            return None
+
+    # -----------------------------------------------------------------------
     # 1. Shell Summary
     # -----------------------------------------------------------------------
     def build_shell_summary_counts(self, ttl_seconds: float = 5.0) -> Dict[str, Any]:

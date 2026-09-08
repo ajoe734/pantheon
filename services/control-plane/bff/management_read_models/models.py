@@ -24,6 +24,26 @@ class PageInfo(BaseModel):
     total: int
 
 
+class ManagementObservation(BaseModel):
+    """Typed owner-projection row (SD sec7.1, pkt-pantheon-structural-closure-functional-v2-20260903).
+
+    Unavailable owners are represented as an explicit row with
+    ``source_kind="unavailable"`` and a ``degradation_reason`` -- they are
+    never silently omitted and never populated from seed/synthetic data.
+    """
+
+    subject_type: str
+    subject_id: str
+    status: str
+    owner: str
+    source_kind: str  # live, replayed, backfill, unavailable
+    source_version: Optional[str] = None
+    observed_at: Optional[str] = None
+    freshness_seconds: Optional[float] = None
+    degradation_reason: Optional[str] = None
+    correlation_id: Optional[str] = None
+
+
 # Formula jobs models
 class FormulaJobItem(BaseModel):
     job_id: str

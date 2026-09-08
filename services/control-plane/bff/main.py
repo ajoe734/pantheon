@@ -987,6 +987,14 @@ persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutation
 )
 read_store: ReadSurfacePorts = app_deps.read_surface
 
+from .management_read_models.service import ManagementService as _ManagementServiceForContext
+
+# Management AI context collection (_mgmt_nl_collect_context) must reach the
+# Management domain through purpose-built queries rather than bare
+# ReadSurfacePorts calls; MGMT-READ-001 mandatory deletion: generic store
+# access and migrated overlay reads.
+_management_ai_context_service = _ManagementServiceForContext(read_store=read_store, utc_now=utc_now)
+
 
 def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     """Route mutation audits to the dedicated writer.
@@ -15125,10 +15133,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(anomalies_payload.get("items") or []),
                 tenant_id,
             )
-            runtime_bindings = _mgmt_nl_filter_tenant_records(
-                list(read_store.list_runtime_bindings() or []),
-                tenant_id,
-            )
+            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
+            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
             trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "human_inbox", "id", "item_id")
@@ -15148,16 +15154,18 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "human_inbox_summary": {"total": len(inbox_items)},
                 "anomalies_summary": {"total": len(anomalies)},
             }
-            surfaces["management_cockpit"] = {"status": "ok", "source": "bff_composed"}
+            surfaces["management_cockpit"] = {
+                "status": runtime_bindings_obs["status"],
+                "source": "bff_composed",
+                "owner_observation": runtime_bindings_obs,
+            }
         except Exception:
             surfaces["management_cockpit"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "trading_pulse":
         try:
-            runtime_bindings = _mgmt_nl_filter_tenant_records(
-                list(read_store.list_runtime_bindings() or []),
-                tenant_id,
-            )
+            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
+            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
             pulse_data = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             evidence_source_types.update({"runtime", "runtime_binding", "telemetry", "paper_live_drift"})
             snippets["trading_pulse"] = {
@@ -15165,21 +15173,24 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "cards": pulse_data.get("cards"),
             }
             surfaces["management_trading_pulse"] = {
-                "status": "ok" if runtime_bindings else "unavailable",
+                "status": runtime_bindings_obs["status"] if not runtime_bindings else "ok",
                 "source": "bff_composed",
+                "owner_observation": runtime_bindings_obs,
             }
         except Exception:
             surfaces["management_trading_pulse"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "portfolio":
         try:
-            pools = _mgmt_nl_filter_tenant_records(list(read_store.list_capital_pools() or []), tenant_id)
-            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
+            pools_raw, pools_obs = _management_ai_context_service.get_context_capital_pools()
+            pools = _mgmt_nl_filter_tenant_records(pools_raw, tenant_id)
+            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
+            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
             telemetry_values = [
-                read_store.get_telemetry_summary(
+                _management_ai_context_service.get_context_telemetry_summary(
                     str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
                 )
                 for r in runtime_bindings
@@ -15195,17 +15206,24 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
                 "total_trades": portfolio_rollup.get("total_trades"),
             }
-            portfolio_status = "ok" if pools or runtime_bindings else "unavailable"
-            surfaces["portfolio_book"] = {"status": portfolio_status, "source": "bff_composed"}
+            portfolio_status = "ok" if pools or runtime_bindings else pools_obs["status"]
+            surfaces["portfolio_book"] = {
+                "status": portfolio_status,
+                "source": "bff_composed",
+                "owner_observations": [pools_obs, runtime_bindings_obs],
+            }
         except Exception:
             surfaces["portfolio_book"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "persona_fleet":
         try:
             personas = _mgmt_nl_filter_tenant_records(_list_persona_records(tenant_id), tenant_id)
-            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
-            incidents = _mgmt_nl_filter_tenant_records(list(read_store.list_incidents() or []), tenant_id)
-            evolution_decisions = _mgmt_nl_filter_tenant_records(list(read_store.list_evolution_decisions() or []), tenant_id)
+            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
+            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
+            incidents_raw, incidents_obs = _management_ai_context_service.get_context_incidents()
+            incidents = _mgmt_nl_filter_tenant_records(incidents_raw, tenant_id)
+            evolution_decisions_raw, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions()
+            evolution_decisions = _mgmt_nl_filter_tenant_records(evolution_decisions_raw, tenant_id)
             fleet_items = [
                 _project_persona_fleet_item(
                     persona,
@@ -15234,7 +15252,11 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": fleet_summary,
                 "items": fleet_items,
             }
-            surfaces["persona_fleet"] = {"status": "ok" if personas else "unavailable", "source": "bff_composed"}
+            surfaces["persona_fleet"] = {
+                "status": "ok" if personas else "unavailable",
+                "source": "bff_composed",
+                "owner_observations": [runtime_bindings_obs, incidents_obs, evolution_decisions_obs],
+            }
         except Exception:
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
 

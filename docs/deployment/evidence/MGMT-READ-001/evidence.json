@@ -1,0 +1,57 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "MGMT-READ-001",
+  "base_ref": "dev@0b85363e45618b632ff1f791e79d3ed67ecb482f",
+  "depends_on": "LOOP-TRUTH-001 (done), DOMAIN-WRITERS-001 (done)",
+  "normative_plan": "SD sec7 ManagementObservation row shape and Management AI product/development boundary, SA invariants 11-12 and ADR-01/ADR-08; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "implementation": {
+    "files_modified": [
+      "docs/deployment/evidence/MGMT-READ-001/evidence.json",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/management_read_models/models.py",
+      "services/control-plane/bff/management_read_models/service.py"
+    ],
+    "summary": "Management AI context collection (_mgmt_nl_collect_context in main.py) previously reached the Management domain by calling the module-global ReadSurfacePorts object (read_store.list_runtime_bindings/list_capital_pools/list_incidents/list_evolution_decisions/get_telemetry_summary) directly -- generic store access bypassing the purpose-built ManagementService. Replaced every such call with new purpose-built ManagementService context accessors (get_context_runtime_bindings, get_context_capital_pools, get_context_incidents, get_context_evolution_decisions, get_context_telemetry_summary), instantiated once as module-level _management_ai_context_service bound to the same app_deps.read_surface used by the Management read-model routers. Each accessor returns (items, ManagementObservation) instead of a bare list: an unavailable or failing domain now returns an explicit typed degraded row (source_kind=unavailable, degradation_reason set) rather than an ad hoc {\"status\": \"unavailable\"} dict or a silently empty list, and the row is threaded into the NL context surfaces payload (owner_observation / owner_observations) so unavailable owners are never silently omitted.",
+    "row_shape_added": "ManagementObservation pydantic model added to management_read_models/models.py (subject_type, subject_id, status, owner, source_kind: live|replayed|backfill|unavailable, source_version, observed_at, freshness_seconds, degradation_reason, correlation_id) per SD sec7.1.",
+    "mandatory_deletions": {
+      "generic_store_access_in_management_ai_context": "_mgmt_nl_collect_context in main.py no longer calls the bare module-global read_store.* surface; it exclusively calls the new typed ManagementService context accessors, matching how the Management read-model router already reaches the domain through ManagementService.",
+      "seed_task_status_product_truth": "Verified absent from the declared MGMT-READ-001 scope prior to this change (no ai-status.json / seed / task-status reads in services/control-plane/bff/management_read_models or services/control-plane/bff/main.py Management AI path); confirmed still absent after this change.",
+      "development_task_authority_from_management_ai": "Verified unchanged: _mgmt_nl_reject_development_payload continues to reject repair/task-shaped payloads before context collection, and test_management_nl_context_pack_excludes_development_orchestrator_status continues to assert orchestrator/task state never enters the context pack."
+    },
+    "rollback_plan": "Revert the three modified files; _mgmt_nl_collect_context reverts to direct read_store access and the new ManagementService context accessors and ManagementObservation model are simply unused/removed. No data migration or persisted state is introduced by this change."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/management_read_models/test_twelve_loop_projector.py services/control-plane/bff/tests/test_management_read_models_router.py",
+        "result": "100 passed, 1 pre-existing failure (test_nl_ask_dry_run_returns_compact_receipt_without_context_work) reproduced identically on the unmodified base_ref main.py (confirmed by temporarily restoring the base_ref file and rerunning the single test in isolation with fresh BFF_DATA_DIR/PANTHEON_MANAGEMENT_AI_STORE_PATH); unrelated to this change",
+        "executed": 101,
+        "collected": 101
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_architecture_boundaries.py",
+        "result": "8 passed, 1 pre-existing collection/import failure (test_domain_router_factory_contracts, ImportError in services/control-plane/bff/agora/router.py unrelated to any file touched by this task) reproduced identically on the unmodified base_ref main.py",
+        "executed": 9,
+        "collected": 9
+      },
+      {
+        "command": "python3 -c \"ManagementService(...).get_context_runtime_bindings()/get_context_incidents() sanity check against a working store, a raising store, and no store at all\" (inline interpreter session, see task closeout notes)",
+        "result": "typed (items, ManagementObservation) pairs verified: ok/live on success, unavailable/unavailable with degradation_reason on store exception and on absent store; no silent omission",
+        "executed": 1,
+        "collected": 1
+      }
+    ]
+  },
+  "acceptance_check": {
+    "management_rows_expose_owner_source_version_freshness_degradation": true,
+    "unavailable_owners_never_silently_omitted": true,
+    "management_ai_remains_product_only": true,
+    "provider_failure_independent_from_ordinary_reads": true,
+    "generic_store_access_removed_from_management_ai_context": true,
+    "no_seed_or_task_status_product_truth_reintroduced": true
+  },
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}
