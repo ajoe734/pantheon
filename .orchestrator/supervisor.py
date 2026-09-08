@@ -16405,8 +16405,10 @@ def publish_scheduler_cadence_completion(
     """Persist cadence telemetry without delaying the next scheduler cycle."""
 
     try:
-        with runtime_state_lock(config, shared=False, nonblocking=True):
-            state = load_runtime_state(config)
+        # ``runtime_state_update`` owns one read-modify-write lock.  Do not
+        # call load_runtime_state/save_runtime_state inside a separately held
+        # runtime lock: both acquire that same sidecar and can self-deadlock.
+        with runtime_state_update(config, nonblocking=True) as state:
             supervisor_state = state.setdefault("supervisor", {})
             elapsed = round(
                 max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3
@@ -16431,7 +16433,6 @@ def publish_scheduler_cadence_completion(
                 float(sample.get("next_deadline", 0.0)),
                 6,
             )
-            save_runtime_state(config, state)
     except LockContentionError:
         # Completion samples are observability only. The next scheduler cycle
         # must never wait behind an unrelated runtime writer to publish them.
