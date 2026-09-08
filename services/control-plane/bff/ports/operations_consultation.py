@@ -79,6 +79,36 @@ except ImportError:  # pragma: no cover
         ConsultPriority = None  # type: ignore[assignment,misc]
         MemoStatus = None  # type: ignore[assignment,misc]
 
+try:
+    from services.governance.decision_journal import (
+        DecisionJournalStores,
+        build_decision_journal_stores,
+        get_entry as governance_get_journal_entry,
+        list_entries as governance_list_journal_entries,
+    )
+except ImportError:  # pragma: no cover
+    try:
+        from governance.decision_journal import (  # type: ignore[no-redef]
+            DecisionJournalStores,
+            build_decision_journal_stores,
+            get_entry as governance_get_journal_entry,
+            list_entries as governance_list_journal_entries,
+        )
+    except ImportError:  # pragma: no cover
+        DecisionJournalStores = None  # type: ignore[assignment,misc]
+        build_decision_journal_stores = None  # type: ignore[assignment,misc]
+        governance_get_journal_entry = None  # type: ignore[assignment,misc]
+        governance_list_journal_entries = None  # type: ignore[assignment,misc]
+
+
+def resolve_decision_journal_data_dir() -> str:
+    return (
+        os.getenv("PANTHEON_DECISION_JOURNAL_DATA_DIR")
+        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        or os.getenv("GOVERNANCE_DATA_DIR")
+        or "/tmp/pantheon/governance"
+    )
+
 
 # =====================================================================
 # Constants & Helper Mappings
@@ -455,13 +485,37 @@ class ConsultationReaderPort(Protocol):
 
 
 @runtime_checkable
+class DecisionJournalReaderPort(Protocol):
+    """Typed query port for canonical governance Decision Journal reads."""
+
+    def list_decision_journal_entries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        include_unscoped_legacy: bool = False,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]: ...
+
+    def get_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]: ...
+
+
+@runtime_checkable
 class OperationsConsultationPort(
     WorkflowHookCatalogReaderPort,
     OpenClawOperationsReaderPort,
     ConsultationReaderPort,
+    DecisionJournalReaderPort,
     Protocol,
 ):
-    """Combined typed port for Operations, OpenClaw, Workflows/Catalog, and Consultation."""
+    """Combined typed port for Operations, OpenClaw, Workflows/Catalog, Consultation, and Decision Journal."""
     pass
 
 
@@ -2476,6 +2530,61 @@ class DomainConsultationPort:
         }
 
 
+class DomainDecisionJournalReaderPort:
+    """Decision journal query provider reading from the canonical governance store."""
+
+    def __init__(
+        self,
+        *,
+        stores: Optional[DecisionJournalStores] = None,
+        data_dir: Optional[str] = None,
+    ) -> None:
+        self._data_dir = data_dir or resolve_decision_journal_data_dir()
+        self._stores = stores
+
+    @property
+    def stores(self) -> Optional[DecisionJournalStores]:
+        if self._stores is None and build_decision_journal_stores is not None:
+            self._stores = build_decision_journal_stores(self._data_dir)
+        return self._stores
+
+    def list_decision_journal_entries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        include_unscoped_legacy: bool = False,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        stores = self.stores
+        if stores is None or governance_list_journal_entries is None:
+            return []
+        return governance_list_journal_entries(
+            stores,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            include_unscoped_legacy=include_unscoped_legacy,
+        )
+
+    def get_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        stores = self.stores
+        if stores is None or governance_get_journal_entry is None:
+            return None
+        return governance_get_journal_entry(
+            stores,
+            entry_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+
+
 # =====================================================================
 # Composite & In-Memory Ports
 # =====================================================================
@@ -2486,13 +2595,15 @@ class CompositeOperationsConsultationPort:
     def __init__(
         self,
         *,
-        workflow_port: WorkflowHookCatalogReaderPort,
-        openclaw_port: OpenClawOperationsReaderPort,
-        consultation_port: ConsultationReaderPort,
+        workflow_port: Optional[WorkflowHookCatalogReaderPort] = None,
+        openclaw_port: Optional[OpenClawOperationsReaderPort] = None,
+        consultation_port: Optional[ConsultationReaderPort] = None,
+        decision_journal_port: Optional[DecisionJournalReaderPort] = None,
     ) -> None:
         self._workflow = workflow_port
         self._openclaw = openclaw_port
         self._consultation = consultation_port
+        self._decision_journal = decision_journal_port or DomainDecisionJournalReaderPort()
 
     # Workflow / Hook / Catalog delegation
     def list_workflow_templates(self) -> List[Dict[str, Any]]:
@@ -2682,7 +2793,39 @@ class CompositeOperationsConsultationPort:
     def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._consultation.get_committee(committee_id)
 
+    def list_decision_journal_entries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        include_unscoped_legacy: bool = False,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        return self._decision_journal.list_decision_journal_entries(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            include_unscoped_legacy=include_unscoped_legacy,
+            **kwargs,
+        )
+
+    def get_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        return self._decision_journal.get_decision_journal_entry(
+            entry_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            **kwargs,
+        )
+
     def dataset_source(self, dataset: str) -> str:
+        if dataset in ("decision_journal_entries", "decision_journal"):
+            return "governance_decision_journal"
         if dataset in ("workflow_templates", "hook_registry", "governance_permissions", "memory_governance_rules", "consult_rules", "route_policies", "alpha_factory_cards", "skills", "tools", "mcp_servers", "mcp_tools"):
             return self._workflow.dataset_source(dataset)
         return self._consultation.dataset_source(dataset)
@@ -2712,6 +2855,7 @@ class InMemoryOperationsConsultationPort:
         consult_memos: Optional[List[Dict[str, Any]]] = None,
         consult_transcripts: Optional[List[Dict[str, Any]]] = None,
         consult_sessions: Optional[List[Dict[str, Any]]] = None,
+        decision_journal_entries: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         self.workflow_templates = list(workflow_templates or [])
         self.hook_registry = list(hook_registry or [])
@@ -2731,6 +2875,11 @@ class InMemoryOperationsConsultationPort:
         self.consult_memos = {m["memo_id"]: dict(m) for m in (consult_memos or []) if "memo_id" in m}
         self.consult_transcripts = {t["session_id"]: dict(t) for t in (consult_transcripts or []) if "session_id" in t}
         self.consult_sessions = {s["session_id"]: dict(s) for s in (consult_sessions or []) if "session_id" in s}
+        self.decision_journal_entries = {
+            str(e.get("id") or e.get("entryId") or ""): dict(e)
+            for e in (decision_journal_entries or [])
+            if str(e.get("id") or e.get("entryId") or "")
+        }
 
     def dataset_source(self, dataset: str) -> str:
         return "in_memory"
@@ -3096,6 +3245,50 @@ class InMemoryOperationsConsultationPort:
             "service_handoff": json.loads(json.dumps(consult.get("service_handoff") or {})),
         }
 
+    def list_decision_journal_entries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        include_unscoped_legacy: bool = False,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        results = []
+        for e in self.decision_journal_entries.values():
+            rec_tenant = str(e.get("tenant_id") or e.get("tenantId") or "").strip()
+            if not rec_tenant and not include_unscoped_legacy:
+                continue
+            if tenant_id and rec_tenant and rec_tenant != tenant_id:
+                continue
+            vis = str(e.get("visibility") or "private").strip().lower()
+            if vis == "private":
+                owner = str(e.get("createdBy") or e.get("created_by") or e.get("author") or e.get("actor_id") or e.get("user_id") or "").strip()
+                if user_id and owner and owner != user_id:
+                    continue
+            results.append(dict(e))
+        return results
+
+    def get_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        e = self.decision_journal_entries.get(entry_id)
+        if not e:
+            return None
+        rec_tenant = str(e.get("tenant_id") or e.get("tenantId") or "").strip()
+        if tenant_id and rec_tenant and rec_tenant != tenant_id:
+            return None
+        vis = str(e.get("visibility") or "private").strip().lower()
+        if vis == "private":
+            owner = str(e.get("createdBy") or e.get("created_by") or e.get("author") or e.get("actor_id") or e.get("user_id") or "").strip()
+            if user_id and owner and owner != user_id:
+                return None
+        return dict(e)
+
 
 def create_operations_consultation_port(
     *,
@@ -3104,6 +3297,8 @@ def create_operations_consultation_port(
     consultation_client: Optional[ConsultationServiceClient] = None,
     consultation_store: Optional[ConsultationStore] = None,
     consultation_data_dir: Optional[str] = None,
+    decision_journal_port: Optional[DecisionJournalReaderPort] = None,
+    decision_journal_data_dir: Optional[str] = None,
     persona_provider: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
 ) -> OperationsConsultationPort:
     """Factory creating a production-grade CompositeOperationsConsultationPort."""
@@ -3115,10 +3310,12 @@ def create_operations_consultation_port(
         data_dir=consultation_data_dir,
         persona_provider=persona_provider,
     )
+    dj_port = decision_journal_port or DomainDecisionJournalReaderPort(data_dir=decision_journal_data_dir)
     return CompositeOperationsConsultationPort(
         workflow_port=workflow_port,
         openclaw_port=openclaw_port,
         consultation_port=consultation_port,
+        decision_journal_port=dj_port,
     )
 
 

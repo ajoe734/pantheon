@@ -330,42 +330,22 @@ class AgoraWriteService:
 
     def create_journal_entry(
         self,
-        entry_id: str,
-        title: str,
-        decision: str,
-        actor_id: str,
-        actor_roles: Union[Sequence[str], str],
-        payload: Optional[Dict[str, Any]] = None,
-        created_at: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> DictRecord:
-        assert_authorized("DecisionJournalEntry", "create", actor_roles)
-        return self.store.create_journal_entry(
-            entry_id=entry_id,
-            title=title,
-            decision=decision,
-            actor_id=actor_id,
-            payload=payload,
-            created_at=created_at,
+        raise RuntimeError(
+            "Agora decision journal writer slice is retired; "
+            "use canonical governance decision journal owner (services.governance.decision_journal)."
         )
 
     def patch_journal_entry(
         self,
-        entry_id: str,
-        patch: Dict[str, Any],
-        actor_id: str,
-        idempotency_key: str,
-        actor_roles: Union[Sequence[str], str],
-        correlation_id: Optional[str] = None,
-        patched_at: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> Optional[DictRecord]:
-        assert_authorized("DecisionJournalEntry", "patch", actor_roles)
-        return self.store.patch_journal_entry(
-            entry_id=entry_id,
-            patch=patch,
-            actor_id=actor_id,
-            idempotency_key=idempotency_key,
-            correlation_id=correlation_id,
-            patched_at=patched_at,
+        raise RuntimeError(
+            "Agora decision journal writer slice is retired; "
+            "use canonical governance decision journal owner (services.governance.decision_journal)."
         )
 
     def create_workshop(

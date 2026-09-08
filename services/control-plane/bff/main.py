@@ -8245,13 +8245,28 @@ def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
             suggestion="Escalate to a user with analyst-level Agora write access",
         )
 def _agora_private_record_owner(record: Dict[str, Any]) -> str:
-    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId"):
+    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId", "author"):
         clean = str(record.get(key) or "").strip()
         if clean:
             return clean
     owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
     return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
 def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+    identity_tenant = str(
+        getattr(identity, "tenant_id", "")
+        or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
+        or (identity.claims.get("tenant") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
+        or os.getenv("PANTHEON_BFF_TENANT_ID")
+        or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID")
+        or os.getenv("PANTHEON_TENANT_ID")
+        or "pantheon-dev"
+    ).strip()
+    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+    if identity_tenant:
+        if not record_tenant or record_tenant != identity_tenant:
+            return False
+    elif record_tenant:
+        return False
     visibility = str(record.get("visibility") or "private").strip().lower()
     owner = _agora_private_record_owner(record)
     if visibility != "private" or not owner:
@@ -22791,8 +22806,14 @@ def _resolve_agora_interaction_context_ref(
             )
             return {"row": episode, "audience_verified": audience_verified}
 
+        scoped_tenant = getattr(identity, "tenant_id", None) or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
+        scoped_user = getattr(identity, "user_id", None) or getattr(identity, "operator_id", None)
+        try:
+            journal_entries = read_store.list_decision_journal_entries(tenant_id=scoped_tenant, user_id=scoped_user)
+        except TypeError:
+            journal_entries = read_store.list_decision_journal_entries()
         journal_rows = _agora_filter_private_records(
-            read_store.list_decision_journal_entries(), identity,
+            journal_entries, identity,
         )
         journal = next(
             (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),

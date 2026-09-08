@@ -39,15 +39,30 @@ def test_agora_store_uses_postgres_json_owner_store() -> None:
     assert isinstance(store._feedback, PostgresJsonOwnerStore)
     assert isinstance(store._handoffs, PostgresJsonOwnerStore)
     assert isinstance(store._audit_events, PostgresJsonOwnerStore)
-    assert isinstance(store._journal, PostgresJsonOwnerStore)
     assert isinstance(store._workshops, PostgresJsonOwnerStore)
     assert isinstance(store._proposals, PostgresJsonOwnerStore)
     assert isinstance(store._interactions, PostgresJsonOwnerStore)
 
+    # JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001: journal slice retired
+    assert store._journal is None
+    assert store._journal_audit is None
+    assert store._journal_idempotency is None
+
     assert store._sessions.table_name == "agora.sessions"
     assert store._memos.table_name == "agora.memos"
     assert store._signals.table_name == "agora.signals"
-    assert store._journal.table_name == "agora.journal_entries"
+
+
+def test_agora_store_journal_writer_slice_is_retired() -> None:
+    store = AgoraStore(dsn="postgresql://writer@example/db", schema="agora")
+    with pytest.raises(RuntimeError, match="retired"):
+        store.create_journal_entry("id", "title", "decision", "actor")
+    with pytest.raises(RuntimeError, match="retired"):
+        store.patch_journal_entry("id", {}, "actor", "key")
+    with pytest.raises(RuntimeError, match="retired"):
+        store.list_journal_entries()
+    with pytest.raises(RuntimeError, match="retired"):
+        store.get_journal_entry("id")
 
 
 def test_builder_configuration_validation() -> None:

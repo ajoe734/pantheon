@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import re
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -52,6 +53,19 @@ except ImportError:
 
         def to_dict(self) -> Dict[str, Any]:
             return dict(self._data)
+
+try:
+    from services.governance.decision_journal import (
+        DecisionJournalAccessDeniedError,
+        DecisionJournalCollisionError,
+        DecisionJournalConcurrencyError,
+        DecisionJournalValidationError,
+    )
+except ImportError:
+    class DecisionJournalCollisionError(ValueError): pass  # type: ignore[no-redef]
+    class DecisionJournalAccessDeniedError(PermissionError): pass  # type: ignore[no-redef]
+    class DecisionJournalConcurrencyError(RuntimeError): pass  # type: ignore[no-redef]
+    class DecisionJournalValidationError(ValueError): pass  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -181,10 +195,13 @@ class AgoraService:
         bff_error: Optional[Callable[..., HTTPException]] = None,
         publish_event_fn: Optional[Callable[..., None]] = None,
         handle_sse_stream: Optional[Callable[..., Any]] = None,
+        journal_write_owner: Optional[Any] = None,
+        get_journal_write_owner: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._get_read_store = get_read_store or (lambda: None)
         self._get_audit_store = get_audit_store or (lambda: None)
         self._get_command_store = get_command_store or (lambda: None)
+        self._get_journal_write_owner = get_journal_write_owner or (lambda: journal_write_owner)
         self._idempotency = idempotency_store if idempotency_store is not None else {}
         self._sse_buffers = sse_buffers if sse_buffers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
         self._sse_subscribers = sse_subscribers if sse_subscribers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
@@ -207,6 +224,16 @@ class AgoraService:
     @property
     def read_store(self) -> Any:
         return self._get_read_store()
+
+    @property
+    def journal_write_owner(self) -> Any:
+        if self._get_journal_write_owner is not None:
+            owner = self._get_journal_write_owner()
+            if owner is not None:
+                return owner
+        if self.read_store is not None and hasattr(self.read_store, "create_decision_journal_entry"):
+            return self.read_store
+        return None
 
     @property
     def audit_store(self) -> Any:
@@ -554,6 +581,25 @@ class AgoraService:
         return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
 
     def _private_record_visible(self, record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+        identity_tenant = str(
+            getattr(identity, "tenant_id", "")
+            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
+            or (identity.claims.get("tenant") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else "")
+            or os.getenv("PANTHEON_BFF_TENANT_ID")
+            or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID")
+            or os.getenv("PANTHEON_TENANT_ID")
+            or "pantheon-dev"
+        ).strip()
+        record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+
+        # Tenant isolation:
+        if identity_tenant:
+            # Legacy row missing tenant scope must NOT default to globally visible
+            if not record_tenant or record_tenant != identity_tenant:
+                return False
+        elif record_tenant:
+            return False
+
         visibility = str(record.get("visibility") or "private").strip().lower()
         owner = self._private_record_owner(record)
         if visibility != "private" or not owner:
@@ -750,39 +796,81 @@ class AgoraService:
         resolved_key: str,
         correlation_id: Optional[str] = None,
         x_request_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> CommandResponse[DecisionJournalEntryDTO]:
         request_hash = self.stable_json_hash({
             "route": f"PATCH /bff/agora/journal/{entry_id}",
             "entryId": entry_id,
             "patch": patch,
         })
+        resolved_tenant = (
+            tenant_id
+            or getattr(identity, "tenant_id", None)
+            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
+            or "pantheon-dev"
+        )
+        resolved_user = (
+            user_id
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "operator_id", None)
+            or ""
+        )
         store = self.read_store
         if store is not None and hasattr(store, "list_decision_journal_entries"):
-            existing = [
-                e for e in store.list_decision_journal_entries()
-                if str(e.get("id") or e.get("entry_id") or "") == entry_id
-            ]
+            try:
+                existing = [
+                    e for e in store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
+                    if str(e.get("id") or e.get("entry_id") or "") == entry_id
+                ]
+            except TypeError:
+                existing = [
+                    e for e in store.list_decision_journal_entries()
+                    if str(e.get("id") or e.get("entry_id") or "") == entry_id
+                ]
             if existing and not self._private_record_visible(existing[0], identity):
                 self.raise_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
 
         now = self.utc_now()
-        if store is None or not hasattr(store, "patch_decision_journal_entry"):
+        owner = self.journal_write_owner
+        if owner is None or not hasattr(owner, "patch_decision_journal_entry"):
             raise self.bff_error(
                 503,
                 ErrorCode.DEPENDENCY_UNAVAILABLE,
                 "Decision Journal write owner is not configured",
-                "The canonical Decision Journal owner adapter was not composed onto this read store",
+                "The canonical Decision Journal owner adapter was not composed onto this service",
                 precondition_failed="decision_journal_write_owner",
             )
-        result = store.patch_decision_journal_entry(
-            entry_id,
-            patch=patch,
-            actor_id=identity.operator_id,
-            correlation_id=correlation_id,
-            idempotency_key=resolved_key,
-            request_hash=request_hash,
-            patched_at=now,
-        )
+        try:
+            result = owner.patch_decision_journal_entry(
+                entry_id,
+                patch=patch,
+                actor_id=identity.operator_id,
+                correlation_id=correlation_id,
+                idempotency_key=resolved_key,
+                request_hash=request_hash,
+                patched_at=now,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            )
+        except DecisionJournalAccessDeniedError:
+            self.raise_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
+        except DecisionJournalCollisionError as exc:
+            raise self.bff_error(
+                409,
+                ErrorCode.CONFLICT,
+                "Decision journal collision",
+                str(exc),
+                precondition_failed="entry_id",
+            )
+        except DecisionJournalConcurrencyError as exc:
+            raise self.bff_error(
+                409,
+                ErrorCode.CONCURRENCY_CONFLICT,
+                "Concurrent update conflict on decision journal entry",
+                str(exc),
+                precondition_failed="version",
+            )
 
         if result is None:
             raise self.bff_error(
@@ -1401,10 +1489,29 @@ class AgoraService:
         identity: OperatorIdentity,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
+        resolved_tenant = (
+            tenant_id
+            or getattr(identity, "tenant_id", None)
+            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
+            or "pantheon-dev"
+        )
+        resolved_user = (
+            user_id
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "operator_id", None)
+            or ""
+        )
         store = self.read_store
-        entries = store.list_decision_journal_entries() if store and hasattr(store, "list_decision_journal_entries") else []
+        entries = []
+        if store and hasattr(store, "list_decision_journal_entries"):
+            try:
+                entries = store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
+            except TypeError:
+                entries = store.list_decision_journal_entries()
         visible_entries = self.filter_private_records(entries, identity)
         return self.agora_list_response(
             dataset="decision_journal_entries",
@@ -1423,9 +1530,25 @@ class AgoraService:
         idempotency_key: Optional[str],
         x_idempotency_key: Optional[str],
         x_dry_run: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Any:
         self.reject_body_idempotency_key(payload)
         resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_tenant = (
+            tenant_id
+            or getattr(identity, "tenant_id", None)
+            or (identity.claims.get("tenant_id") if hasattr(identity, "claims") and isinstance(identity.claims, dict) else None)
+            or payload.get("tenant_id")
+            or payload.get("tenantId")
+            or "pantheon-dev"
+        )
+        resolved_user = (
+            user_id
+            or getattr(identity, "user_id", None)
+            or getattr(identity, "operator_id", None)
+            or ""
+        )
         title = self.agora_required_text(payload, "title")
         body_text = str(payload.get("body") or payload.get("decision") or payload.get("rationale") or "").strip()
         visibility = str(payload.get("visibility") or "private").strip().lower()
@@ -1466,30 +1589,51 @@ class AgoraService:
                     **journal_payload,
                     "createdBy": identity.operator_id,
                     "author": identity.operator_id,
+                    "tenant_id": resolved_tenant,
+                    "user_id": resolved_user,
                     "createdAt": snapshot_at,
-                    "canonicalWriteAuthority": "agora_journal_service",
+                    "canonicalWriteAuthority": "governance-decision-journal-svc",
                 },
                 snapshot_at=snapshot_at,
                 idempotency_key=resolved_key,
                 evidence_kind="agora.journal.create",
             )
 
-        store = self.read_store
-        if store is None or not hasattr(store, "create_decision_journal_entry"):
+        owner = self.journal_write_owner
+        if owner is None or not hasattr(owner, "create_decision_journal_entry"):
             raise self.bff_error(
                 503,
                 ErrorCode.DEPENDENCY_UNAVAILABLE,
                 "Decision Journal write owner is not configured",
-                "The canonical Decision Journal owner adapter was not composed onto this read store",
+                "The canonical Decision Journal owner adapter was not composed onto this service",
                 precondition_failed="decision_journal_write_owner",
             )
-        created = store.create_decision_journal_entry(
-            title=title,
-            body=body_text,
-            actor_id=identity.operator_id,
-            payload=journal_payload,
-            created_at=snapshot_at,
-        )
+        try:
+            created = owner.create_decision_journal_entry(
+                title=title,
+                body=body_text,
+                actor_id=identity.operator_id,
+                payload=journal_payload,
+                created_at=snapshot_at,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            )
+        except DecisionJournalCollisionError as exc:
+            raise self.bff_error(
+                409,
+                ErrorCode.CONFLICT,
+                "Decision journal entry ID collision across tenant or actor boundary",
+                str(exc),
+                precondition_failed="entry_id",
+            )
+        except DecisionJournalAccessDeniedError as exc:
+            raise self.bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Decision journal access denied",
+                str(exc),
+                precondition_failed="tenant_scope",
+            )
 
         result = {
             "data": created,

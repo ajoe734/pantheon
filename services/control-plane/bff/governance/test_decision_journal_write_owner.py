@@ -19,10 +19,22 @@ from fastapi import HTTPException
 from services.control_plane.bff.agora.service import AgoraService
 from services.control_plane.bff.governance.decision_journal_write_owner import (
     DecisionJournalOwnerAdapter,
+    DecisionJournalWriteOwner,
     build_decision_journal_owner_adapter,
+    build_decision_journal_write_owner,
     wrap_get_read_store_with_decision_journal_owner,
 )
 from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.ports.operations_consultation import (
+    CompositeOperationsConsultationPort,
+    DomainDecisionJournalReaderPort,
+)
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from services.governance.decision_journal import (
+    DecisionJournalAccessDeniedError,
+    DecisionJournalCollisionError,
+    DecisionJournalValidationError,
+)
 
 
 class _BareInnerReadStore:
@@ -62,11 +74,209 @@ class TestDecisionJournalOwnerAdapter(unittest.TestCase):
             self.assertEqual(patched["status"], "updated")
             self.assertEqual(patched["entry"]["title"], "Delay promotion (updated)")
 
-    def test_proxies_unrelated_reads_to_inner_store(self) -> None:
+    def test_does_not_proxy_unrelated_attributes_via_getattr(self) -> None:
+        """SD §5.3: Adapter does not dynamically proxy unrelated attributes via __getattr__."""
         with tempfile.TemporaryDirectory() as tmp:
             inner = _BareInnerReadStore()
             adapter = build_decision_journal_owner_adapter(inner, data_dir=tmp)
-            self.assertEqual(adapter.some_unrelated_read(), "unrelated")
+            with self.assertRaises(AttributeError):
+                adapter.some_unrelated_read()
+
+    def test_tenant_and_user_isolation(self) -> None:
+        """SD §5.3 scorecard item 4: Tenant and user isolation across create, list, and detail."""
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+
+            # Tenant alpha / Alice
+            entry_alpha = owner.create_decision_journal_entry(
+                title="Alpha Policy",
+                body="Confidential Alpha strategy",
+                actor_id="op-alice",
+                tenant_id="tenant-alpha",
+                user_id="user-alice",
+                payload={"visibility": "private"},
+                created_at="2026-09-08T00:00:00Z",
+            )
+
+            # Tenant beta / Bob
+            entry_beta = owner.create_decision_journal_entry(
+                title="Beta Policy",
+                body="Confidential Beta strategy",
+                actor_id="op-bob",
+                tenant_id="tenant-beta",
+                user_id="user-bob",
+                payload={"visibility": "private"},
+                created_at="2026-09-08T00:00:00Z",
+            )
+
+            # Alice on Tenant Alpha only sees Alpha
+            alice_entries = owner.list_decision_journal_entries(tenant_id="tenant-alpha", user_id="user-alice")
+            self.assertEqual(len(alice_entries), 1)
+            self.assertEqual(alice_entries[0]["id"], entry_alpha["id"])
+
+            # Bob on Tenant Beta only sees Beta
+            bob_entries = owner.list_decision_journal_entries(tenant_id="tenant-beta", user_id="user-bob")
+            self.assertEqual(len(bob_entries), 1)
+            self.assertEqual(bob_entries[0]["id"], entry_beta["id"])
+
+            # Alice cannot get Beta entry across tenant boundary
+            get_across_tenant = owner.get_decision_journal_entry(entry_beta["id"], tenant_id="tenant-alpha")
+            self.assertIsNone(get_across_tenant)
+
+            # Detail get with proper tenant succeeds
+            get_own = owner.get_decision_journal_entry(entry_alpha["id"], tenant_id="tenant-alpha", user_id="user-alice")
+            self.assertIsNotNone(get_own)
+            self.assertEqual(get_own["id"], entry_alpha["id"])
+
+    def test_same_operator_id_across_different_tenants_isolation(self) -> None:
+        """SD §5.3 scorecard item 4: Same operator ID across different tenants maintains strict separation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+
+            # Operator 'op-global' operates in Tenant Alpha
+            entry_alpha = owner.create_decision_journal_entry(
+                title="Global Op in Alpha",
+                body="Tenant Alpha specific notes",
+                actor_id="op-global",
+                tenant_id="tenant-alpha",
+                created_at="2026-09-08T00:00:00Z",
+            )
+
+            # Operator 'op-global' operates in Tenant Beta
+            entry_beta = owner.create_decision_journal_entry(
+                title="Global Op in Beta",
+                body="Tenant Beta specific notes",
+                actor_id="op-global",
+                tenant_id="tenant-beta",
+                created_at="2026-09-08T00:00:00Z",
+            )
+
+            # Alpha query returns only Alpha entry
+            alpha_results = owner.list_decision_journal_entries(tenant_id="tenant-alpha", actor_id="op-global")
+            self.assertEqual([e["id"] for e in alpha_results], [entry_alpha["id"]])
+
+            # Beta query returns only Beta entry
+            beta_results = owner.list_decision_journal_entries(tenant_id="tenant-beta", actor_id="op-global")
+            self.assertEqual([e["id"] for e in beta_results], [entry_beta["id"]])
+
+    def test_supplied_id_collision_rejection_across_tenants_and_actors(self) -> None:
+        """SD §5.3 scorecard item 5: Reject caller-supplied ID collisions across actors/tenants."""
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+            shared_id = "dje-fixed-uuid-1234"
+
+            # Alice creates entry with specific ID in Tenant Alpha
+            created = owner.create_decision_journal_entry(
+                entry_id=shared_id,
+                title="Alice original",
+                body="Alice body",
+                actor_id="alice",
+                tenant_id="tenant-alpha",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            self.assertEqual(created["id"], shared_id)
+
+            # Bob in Tenant Beta tries to supply the same ID -> Collision Error!
+            with self.assertRaises(DecisionJournalCollisionError):
+                owner.create_decision_journal_entry(
+                    entry_id=shared_id,
+                    title="Bob spoof",
+                    body="Bob attempt",
+                    actor_id="bob",
+                    tenant_id="tenant-beta",
+                    created_at="2026-09-08T00:00:00Z",
+                )
+
+            # Charlie in Tenant Alpha (different actor) tries to supply the same ID -> Collision Error!
+            with self.assertRaises(DecisionJournalCollisionError):
+                owner.create_decision_journal_entry(
+                    entry_id=shared_id,
+                    title="Charlie collision",
+                    body="Charlie attempt",
+                    actor_id="charlie",
+                    tenant_id="tenant-alpha",
+                    created_at="2026-09-08T00:00:00Z",
+                )
+
+            # Alice in Tenant Alpha supplies the same ID -> Idempotent re-create succeeds
+            recreated = owner.create_decision_journal_entry(
+                entry_id=shared_id,
+                title="Alice original",
+                body="Alice body",
+                actor_id="alice",
+                tenant_id="tenant-alpha",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            self.assertEqual(recreated["id"], shared_id)
+
+    def test_read_parity_between_read_surface_ports_and_write_owner(self) -> None:
+        """SD §5.3: Read parity between ReadSurfacePorts and DecisionJournalWriteOwner."""
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+
+            entry_1 = owner.create_decision_journal_entry(
+                title="Entry 1",
+                body="Body 1",
+                actor_id="op-test",
+                tenant_id="tenant-corp",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            entry_2 = owner.create_decision_journal_entry(
+                title="Entry 2",
+                body="Body 2",
+                actor_id="op-test",
+                tenant_id="tenant-corp",
+                created_at="2026-09-08T01:00:00Z",
+            )
+
+            # Build ReadSurfacePorts backed by operations consultation port
+            dj_reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+            ops_consultation = CompositeOperationsConsultationPort(decision_journal_port=dj_reader)
+            read_surface = ReadSurfacePorts(operations_consultation=ops_consultation)
+
+            # Both list calls return identical data
+            owner_list = owner.list_decision_journal_entries(tenant_id="tenant-corp")
+            read_list = read_surface.list_decision_journal_entries(tenant_id="tenant-corp")
+            self.assertEqual(owner_list, read_list)
+
+            # Both get calls return identical entry
+            owner_get = owner.get_decision_journal_entry(entry_1["id"], tenant_id="tenant-corp")
+            read_get = read_surface.get_decision_journal_entry(entry_1["id"], tenant_id="tenant-corp")
+            self.assertEqual(owner_get, read_get)
+
+            # Verify ReadSurfacePorts exposes no mutation methods
+            self.assertFalse(hasattr(read_surface, "create_decision_journal_entry"))
+            self.assertFalse(hasattr(read_surface, "patch_decision_journal_entry"))
+
+    def test_legacy_unscoped_row_isolation(self) -> None:
+        """SD §5.3 scorecard item 6: Legacy rows missing tenant scope are excluded from tenant queries."""
+        with tempfile.TemporaryDirectory() as tmp:
+            from services.governance.decision_journal import build_decision_journal_stores
+            stores = build_decision_journal_stores(tmp)
+            # Directly insert an unscoped legacy row
+            stores.entries.put({
+                "id": "legacy-entry-001",
+                "title": "Legacy Unscoped Title",
+                "body": "Legacy body",
+                "createdBy": "op-legacy",
+                "visibility": "team",
+                "createdAt": "2025-01-01T00:00:00Z",
+                "version": 1,
+            })
+
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+
+            # Scoped tenant query excludes unscoped legacy rows by default
+            scoped_list = owner.list_decision_journal_entries(tenant_id="tenant-alpha")
+            self.assertEqual(len(scoped_list), 0)
+
+            # Explicit include_unscoped_legacy=True includes it
+            legacy_inclusive = owner.list_decision_journal_entries(
+                tenant_id="tenant-alpha",
+                include_unscoped_legacy=True,
+            )
+            self.assertEqual(len(legacy_inclusive), 1)
+            self.assertEqual(legacy_inclusive[0]["id"], "legacy-entry-001")
 
     def test_restart_fresh_reader_parity(self) -> None:
         """A second adapter over the same data dir sees identical state.

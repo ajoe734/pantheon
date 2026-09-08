@@ -25,6 +25,7 @@ from services.governance.decision_journal import (
     DecisionJournalStores,
     build_decision_journal_stores,
     create_entry,
+    get_entry,
     list_entries,
     patch_entry,
 )
@@ -48,45 +49,76 @@ def resolve_decision_journal_data_dir() -> str:
 
 
 class DecisionJournalOwnerAdapter:
-    """Adapts the durable Decision Journal owner to Agora's read-store shape.
+    """Typed adapter binding Decision Journal routes to the durable owner.
 
-    Wraps an existing read-store object (any ``ReadSurfacePorts`` instance or
-    compatible double) and proxies every attribute lookup to it unchanged,
-    except for the three Decision Journal methods this adapter itself
-    implements against the canonical governance owner:
-
-    - ``list_decision_journal_entries``
-    - ``create_decision_journal_entry``
-    - ``patch_decision_journal_entry``
+    Provides explicit, typed query and command operations against the canonical
+    governance Decision Journal owner without arbitrary dynamic proxying (__getattr__).
     """
 
-    def __init__(self, inner: Any, stores: DecisionJournalStores) -> None:
+    def __init__(self, inner: Optional[Any] = None, stores: Optional[DecisionJournalStores] = None) -> None:
         self._inner = inner
-        self._stores = stores
+        self._stores = stores or build_decision_journal_stores(resolve_decision_journal_data_dir())
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
+    @property
+    def stores(self) -> DecisionJournalStores:
+        return self._stores
 
-    def list_decision_journal_entries(self, **_kwargs: Any) -> List[Dict[str, Any]]:
-        return list_entries(self._stores)
+    def list_decision_journal_entries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        include_unscoped_legacy: bool = False,
+        **_kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        return list_entries(
+            self._stores,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            include_unscoped_legacy=include_unscoped_legacy,
+        )
+
+    def get_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        **_kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        return get_entry(
+            self._stores,
+            entry_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
 
     def create_decision_journal_entry(
         self,
         *,
         title: str,
         body: str,
+        entry_id: Optional[str] = None,
         actor_id: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
         created_at: str,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         **_kwargs: Any,
     ) -> Dict[str, Any]:
         payload = payload or {}
-        entry_id = str(
-            payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}"
+        resolved_entry_id = str(
+            entry_id
+            or _kwargs.get("entry_id")
+            or payload.get("id")
+            or payload.get("entryId")
+            or f"dje-{uuid.uuid4().hex[:10]}"
         )
+        resolved_tenant = tenant_id or payload.get("tenant_id") or payload.get("tenantId")
+        resolved_user = user_id or payload.get("user_id") or payload.get("userId") or actor_id or ""
         return create_entry(
             self._stores,
-            entry_id=entry_id,
+            entry_id=resolved_entry_id,
             title=title,
             body=body,
             actor_id=actor_id or "",
@@ -95,6 +127,8 @@ class DecisionJournalOwnerAdapter:
             linked_strategy_ids=payload.get("linkedStrategyIds"),
             linked_persona_ids=payload.get("linkedPersonaIds"),
             visibility=str(payload.get("visibility") or "private"),
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
         )
 
     def patch_decision_journal_entry(
@@ -107,6 +141,8 @@ class DecisionJournalOwnerAdapter:
         request_hash: str,
         patched_at: str,
         correlation_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         **_kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         return patch_entry(
@@ -118,11 +154,23 @@ class DecisionJournalOwnerAdapter:
             request_hash=request_hash,
             patched_at=patched_at,
             correlation_id=correlation_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
         )
 
 
+DecisionJournalWriteOwner = DecisionJournalOwnerAdapter
+
+
+def build_decision_journal_write_owner(
+    *, data_dir: Optional[str] = None
+) -> DecisionJournalWriteOwner:
+    stores = build_decision_journal_stores(data_dir or resolve_decision_journal_data_dir())
+    return DecisionJournalWriteOwner(None, stores)
+
+
 def build_decision_journal_owner_adapter(
-    inner: Any, *, data_dir: Optional[str] = None
+    inner: Optional[Any] = None, *, data_dir: Optional[str] = None
 ) -> DecisionJournalOwnerAdapter:
     stores = build_decision_journal_stores(data_dir or resolve_decision_journal_data_dir())
     return DecisionJournalOwnerAdapter(inner, stores)

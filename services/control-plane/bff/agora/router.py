@@ -24,6 +24,7 @@ from services.control_plane.bff.ports import (
     create_read_surface_ports,
 )
 from services.control_plane.bff.governance.decision_journal_write_owner import (
+    build_decision_journal_write_owner,
     wrap_get_read_store_with_decision_journal_owner,
 )
 
@@ -127,6 +128,8 @@ def create_agora_router(
     handle_sse_stream: Optional[Callable[..., Any]] = None,
     publish_event_fn: Optional[Callable[..., Any]] = None,
     service: Optional[AgoraService] = None,
+    journal_write_owner: Optional[Any] = None,
+    get_journal_write_owner: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -137,11 +140,12 @@ def create_agora_router(
     elif get_read_store is None:
         raise RuntimeError("Neither read_surface nor get_read_store was configured.")
 
-    # JOURNAL-OWNER-001: every Agora sub-router below shares this same
-    # get_read_store closure, so wrapping it once here is the single
-    # composition point that binds the whole Agora journal surface (reads
-    # and writes) to the canonical governance Decision Journal owner.
-    get_read_store = wrap_get_read_store_with_decision_journal_owner(get_read_store)
+    if get_journal_write_owner is None:
+        if journal_write_owner is not None:
+            get_journal_write_owner = (lambda: journal_write_owner() if callable(journal_write_owner) else journal_write_owner)
+        else:
+            _default_jwo = build_decision_journal_write_owner()
+            get_journal_write_owner = lambda: _default_jwo
 
     if command_store is not None:
         get_command_store = (lambda: command_store() if callable(command_store) else command_store)
@@ -171,6 +175,7 @@ def create_agora_router(
         get_read_store=get_read_store,
         get_audit_store=get_audit_store,
         get_command_store=get_command_store,
+        get_journal_write_owner=get_journal_write_owner,
         idempotency_store=idempotency_store,
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
@@ -436,6 +441,11 @@ def create_agora_router(
     ) -> CommandResponse[DecisionJournalEntryDTO]:
         identity = extract_identity(authorization, mfa_token=x_mfa_token)
         (require_journal_write_role or require_write_role)(identity)
+        scope = None
+        try:
+            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         agora_service.reject_body_idempotency_key(payload)
         agora_service.require_merge_patch_content_type(content_type)
         resolved_key = agora_service.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -447,6 +457,8 @@ def create_agora_router(
             resolved_key=resolved_key,
             correlation_id=x_correlation_id or x_trace_id,
             x_request_id=x_request_id,
+            tenant_id=scope.tenant_id if scope else None,
+            user_id=scope.user_id if scope else None,
         )
 
     @router.get("/bff/agora/daily")
@@ -635,10 +647,17 @@ def create_agora_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
+        scope = None
+        try:
+            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         return agora_service.list_journal_entries(
             identity=identity,
             page_token=page_token,
             page_size=page_size,
+            tenant_id=scope.tenant_id if scope else None,
+            user_id=scope.user_id if scope else None,
         )
 
     @router.post("/bff/agora/journal", status_code=201)
@@ -651,12 +670,19 @@ def create_agora_router(
     ) -> Any:
         identity = extract_identity(authorization)
         (require_journal_write_role or require_write_role)(identity)
+        scope = None
+        try:
+            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         return agora_service.create_journal_entry(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
             x_dry_run=x_dry_run,
+            tenant_id=scope.tenant_id if scope else None,
+            user_id=scope.user_id if scope else None,
         )
 
     @router.get("/bff/agora/training-examples")

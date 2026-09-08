@@ -1030,7 +1030,10 @@ class ReadSurfacePorts:
         return self.persona_training.get_trainer_preview(session_id, **kwargs)
 
     def list_decision_journal_entries(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.research_knowledge_source.list_research_notes(**kwargs)
+        return self.operations_consultation.list_decision_journal_entries(**kwargs)
+
+    def get_decision_journal_entry(self, entry_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.operations_consultation.get_decision_journal_entry(entry_id, **kwargs)
 
     def list_registry_entries(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_data_sources(**kwargs)
