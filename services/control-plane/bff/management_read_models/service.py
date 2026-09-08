@@ -2420,6 +2420,51 @@ class ManagementService:
                 source_kind="unavailable",
                 degradation_reason=f"rollback read failed: {exc}",
             )
+        provenance_records = self._record_provenance(rollbacks)
+        if provenance_records:
+            # An owner-reported status/degradation_reason on a rollback record
+            # itself is real observation truth (e.g. a rollback owner marked
+            # unavailable) and must not be overridden by the bare "read
+            # succeeded" status below. Aggregate across every
+            # provenance-bearing record, worst status wins, same as the other
+            # typed accessors in _typed_context_list.
+            worst = max(
+                provenance_records,
+                key=lambda record: self._STATUS_RANK.get(str(record.get("status") or "ok"), 0),
+            )
+            worst_status = str(worst.get("status") or "ok")
+            degradation_reasons = [
+                str(record.get("degradation_reason"))
+                for record in provenance_records
+                if record.get("degradation_reason")
+                and str(record.get("status") or "ok") != "ok"
+            ]
+            contributing_observations = [
+                self._context_observation(
+                    subject_type="rollbacks",
+                    subject_id=self._record_subject_id(record, "rollbacks"),
+                    status=str(record.get("status") or "ok"),
+                    owner=str(record.get("owner") or observation_owner),
+                    source_kind=str(record.get("source_kind") or "live"),
+                    source_version=record.get("source_version"),
+                    observed_at=record.get("observed_at"),
+                    degradation_reason=record.get("degradation_reason"),
+                    correlation_id=record.get("correlation_id"),
+                )
+                for record in provenance_records
+            ]
+            return rollbacks, self._context_observation(
+                subject_type="rollbacks",
+                subject_id=runtime_id,
+                status=worst_status,
+                owner=str(worst.get("owner") or observation_owner),
+                source_kind=str(worst.get("source_kind") or "live"),
+                source_version=worst.get("source_version"),
+                observed_at=worst.get("observed_at"),
+                degradation_reason="; ".join(degradation_reasons) or worst.get("degradation_reason"),
+                correlation_id=worst.get("correlation_id"),
+                contributing_observations=contributing_observations,
+            )
         return rollbacks, self._context_observation(
             subject_type="rollbacks",
             subject_id=runtime_id,

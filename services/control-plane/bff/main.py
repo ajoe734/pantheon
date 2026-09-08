@@ -15140,13 +15140,17 @@ def _mgmt_nl_surface_owner_observation(
     silently dropped because it never went through that service."""
     surface = surface if isinstance(surface, dict) else {}
     status = str(surface.get("status") or "unavailable")
-    reason = surface.get("message") or surface.get("note")
+    reason = surface.get("degradation_reason") or surface.get("message") or surface.get("note")
     return {
         "subject_type": subject_type,
         "subject_id": subject_type,
         "status": status,
         "owner": surface.get("owner") or owner,
-        "source_kind": surface.get("source") or ("live" if status == "ok" else "unavailable"),
+        "source_kind": surface.get("source_kind") or surface.get("source") or ("live" if status == "ok" else "unavailable"),
+        "source_version": surface.get("source_version"),
+        "observed_at": surface.get("observed_at"),
+        "freshness_seconds": surface.get("freshness_seconds"),
+        "correlation_id": surface.get("correlation_id"),
         "degradation_reason": reason if status != "ok" else None,
         "contributing_observations": [],
     }

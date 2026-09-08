@@ -312,3 +312,81 @@ def test_cockpit_preserves_non_runtime_owner_unavailability(
     surface = result["surfaces"]["management_cockpit"]
     assert surface["status"] != "ok", surface
     assert surface_key + " offline" in json.dumps(surface), surface
+
+
+@pytest.mark.parametrize(
+    "focus,surface_key",
+    [
+        ("trading_pulse", "management_trading_pulse"),
+        ("cockpit", "management_cockpit"),
+    ],
+)
+def test_nonraising_unavailable_rollback_owner_is_preserved(
+    _healthy_cockpit_context, monkeypatch, focus, surface_key
+) -> None:
+    """MGMT-READ-001 eighth review: get_context_rollbacks previously
+    returned status=ok/source_kind=live after any non-raising read,
+    discarding a rollback record that itself reported
+    status=unavailable/owner=rollback-owner. Both trading_pulse and cockpit
+    surfaces must surface that failed owner's full provenance instead of
+    reporting ok."""
+    row = dict(
+        runtime_id="r1",
+        id="rollback-1",
+        owner="rollback-owner",
+        status="unavailable",
+        source_kind="unavailable",
+        source_version="rollback-v7",
+        observed_at="2026-09-08T18:00:00Z",
+        correlation_id="rollback-correlation",
+        degradation_reason="rollback owner offline",
+    )
+    monkeypatch.setattr(bff_main.read_store, "get_rollbacks", lambda _runtime_id: [row])
+
+    result = bff_main._mgmt_nl_collect_context(focus, "2026-09-08T18:00:00Z", "tenant-a")
+
+    surface = result["surfaces"][surface_key]
+    assert surface["status"] == "unavailable", surface
+    encoded = json.dumps(surface)
+    for value in ("rollback-owner", "rollback-v7", "rollback-correlation", "rollback owner offline"):
+        assert value in encoded, surface
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source_version", "incident-v7"),
+        ("observed_at", "2026-09-08T18:00:00Z"),
+        ("correlation_id", "incident-correlation"),
+    ],
+)
+def test_cockpit_surface_owner_observation_preserves_provenance_fields(
+    _healthy_cockpit_context, monkeypatch, field, value
+) -> None:
+    """MGMT-READ-001 eighth review: _mgmt_nl_surface_owner_observation
+    reconstructed a partial untyped dict that dropped source_version,
+    observed_at and correlation_id from an incident/approval/sentinel
+    surface observation. Every contributing owner observation must carry
+    the full ManagementObservation provenance fields through cockpit
+    conversion."""
+    row = dict(
+        status="unavailable",
+        source="missing",
+        owner="incident-owner",
+        message="incident owner offline",
+        source_version="incident-v7",
+        observed_at="2026-09-08T18:00:00Z",
+        correlation_id="incident-correlation",
+    )
+    payload = {"alerts": [], "meta": {"surfaces": {"incident_feed": row}}}
+    monkeypatch.setattr(bff_main, "_build_operator_alerts_payload", lambda _snapshot_at: payload)
+
+    result = bff_main._mgmt_nl_collect_context("cockpit", "2026-09-08T18:00:00Z", "tenant-a")
+
+    surface = result["surfaces"]["management_cockpit"]
+    observation = next(
+        obs
+        for obs in surface["owner_observation"]["contributing_observations"]
+        if obs["subject_type"] == "incident_feed"
+    )
+    assert observation.get(field) == value, observation
