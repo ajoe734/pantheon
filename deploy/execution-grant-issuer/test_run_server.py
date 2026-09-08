@@ -9,13 +9,14 @@ wiring fails closed on bad input before a server is ever created.
 from __future__ import annotations
 
 import io
+import json
 import os
 import stat
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 DEPLOY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DEPLOY_DIR.parents[1]
@@ -201,6 +202,113 @@ class TestRunServiceRevocationCannotBeDisabled(unittest.TestCase):
             with patch("sys.argv", test_argv), self.assertRaises(SystemExit) as cm:
                 run_server.main()
             self.assertIn("not found or inaccessible", str(cm.exception))
+
+
+class TestRunServiceExecutionScopeConfiguration(unittest.TestCase):
+    def _base_config(self, priv_key_path: Path) -> dict:
+        return {
+            "service": {"host": "127.0.0.1", "port": 0},
+            "identity_platform": {
+                "project_id": "pantheon-dev-20260902",
+                "allowed_operator_uids": ["operator-1"],
+            },
+            "signing": {
+                "key_id": "test-signer",
+                "private_key_file": str(priv_key_path),
+            },
+            "policy": {
+                "allowed_tasks": ["DEV502-TRACE-001"],
+                "allowed_environments": ["pantheon-dev"],
+            },
+        }
+
+    def test_run_service_loads_step5_resume_example_config(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance."""
+        example_path = DEPLOY_DIR / "issuer-config.step5-resume.example.json"
+        self.assertTrue(example_path.is_file())
+        with open(example_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+        expected_tasks = [
+            "S5-PAIR-001",
+            "S5-LOOPS-001",
+            "S5-PROVENANCE-001",
+            "S5-JOURNEYS-001",
+            "S5-ROLLBACK-001",
+            "S5-REPORT-001",
+        ]
+        self.assertEqual(config["policy"]["allowed_tasks"], expected_tasks)
+        self.assertEqual(config["policy"]["allowed_environments"], ["pantheon-dev"])
+
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+            config["signing"]["private_key_file"] = str(priv_path)
+            config["service"]["tls"]["enabled"] = False
+            config["service"]["host"] = "127.0.0.1"
+            config["service"]["port"] = 0
+
+            with patch("run_server.create_issuer_server") as mock_server:
+                mock_inst = MagicMock()
+                mock_server.return_value = mock_inst
+                mock_inst.serve_forever.side_effect = KeyboardInterrupt()
+                try:
+                    run_server.run_service(config)
+                except KeyboardInterrupt:
+                    pass
+
+                self.assertTrue(mock_server.called)
+                service_arg = mock_server.call_args[0][0]
+                self.assertEqual(service_arg.allowed_tasks, frozenset(expected_tasks))
+                self.assertEqual(service_arg.allowed_environments, frozenset({"pantheon-dev"}))
+
+    def test_run_service_fails_closed_on_malformed_allowed_tasks(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance."""
+        bad_task_configs = [
+            None,
+            [],
+            "S5-PAIR-001",
+            ["*"],
+            ["all"],
+            ["any"],
+            ["S5-PAIR 001"],
+            [""],
+            ["   "],
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+
+            for bad_val in bad_task_configs:
+                with self.subTest(bad_val=bad_val):
+                    config = self._base_config(priv_path)
+                    config["policy"]["allowed_tasks"] = bad_val
+                    with self.assertRaises(ValueError):
+                        run_server.run_service(config)
+
+    def test_run_service_fails_closed_on_malformed_allowed_environments(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance."""
+        bad_env_configs = [
+            None,
+            [],
+            "pantheon-dev",
+            ["*"],
+            ["all"],
+            ["any"],
+            ["pantheon dev"],
+            [""],
+            ["   "],
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+
+            for bad_val in bad_env_configs:
+                with self.subTest(bad_val=bad_val):
+                    config = self._base_config(priv_path)
+                    config["policy"]["allowed_environments"] = bad_val
+                    with self.assertRaises(ValueError):
+                        run_server.run_service(config)
 
 
 if __name__ == "__main__":
