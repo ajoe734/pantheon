@@ -1005,6 +1005,73 @@ def _candidate_public_member(candidate: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _extract_run_artifact_identities(run: Dict[str, Any]) -> Tuple[Set[str], Dict[str, str]]:
+    """Extract canonical artifact IDs and known digests from the run owner result."""
+    known_ids: Set[str] = set()
+    digests: Dict[str, str] = {}
+
+    checksums = run.get("checksums") or {}
+    if isinstance(checksums, dict):
+        for k, v in checksums.items():
+            if isinstance(k, str) and isinstance(v, str):
+                base = k.split("/")[-1]
+                known_ids.add(k)
+                known_ids.add(base)
+                digests[k] = v
+                digests[base] = v
+
+    for key in ("artifact_refs", "artifacts", "artifact_ids"):
+        items = run.get(key)
+        if not items:
+            continue
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    for id_key in ("artifact_id", "ref_id", "id", "name"):
+                        val = item.get(id_key)
+                        if val:
+                            val_str = str(val).strip()
+                            known_ids.add(val_str)
+                            if "/" in val_str:
+                                known_ids.add(val_str.split("/")[-1])
+                    ref = item.get("ref") or item.get("uri")
+                    if ref:
+                        ref_str = str(ref).strip()
+                        known_ids.add(ref_str)
+                        if "/" in ref_str:
+                            known_ids.add(ref_str.split("/")[-1])
+                    digest = item.get("digest") or item.get("checksum") or item.get("artifact_digest")
+                    if digest and val:
+                        val_str = str(val).strip()
+                        digests[val_str] = str(digest).strip()
+                        if "/" in val_str:
+                            digests[val_str.split("/")[-1]] = str(digest).strip()
+                elif isinstance(item, str):
+                    s = item.strip()
+                    known_ids.add(s)
+                    if "/" in s:
+                        known_ids.add(s.split("/")[-1])
+        elif isinstance(items, dict):
+            for k, v in items.items():
+                k_str = str(k).strip()
+                known_ids.add(k_str)
+                if "/" in k_str:
+                    known_ids.add(k_str.split("/")[-1])
+                if isinstance(v, str):
+                    digests[k_str] = v.strip()
+                    if "/" in k_str:
+                        digests[k_str.split("/")[-1]] = v.strip()
+
+    single_art = run.get("artifact_id")
+    if single_art:
+        s = str(single_art).strip()
+        known_ids.add(s)
+        if "/" in s:
+            known_ids.add(s.split("/")[-1])
+
+    return known_ids, digests
+
+
 def _plan_detail_envelope(
     plan: Dict[str, Any],
     utc_now: Callable[[], str],
@@ -1737,27 +1804,44 @@ class AgoraResearchRouteContext:
                         expected_owner=expected_owner,
                     )
 
-                    # Verify candidate-supplied correlation/owner/receipt/artifact metadata against receipt if supplied
-                    if rec is not None:
+                    # Keep immutable receipt snapshot for client admission verification
+                    immutable_rec = rec
+                    cand_artifact_id = str(public_candidate.get("artifact_id") or "").strip()
+
+                    if immutable_rec is not None:
                         cand_corr = candidate.get("correlation_id")
-                        if cand_corr and str(cand_corr).strip() != str(rec.get("correlation_id", "")).strip():
+                        if cand_corr and str(cand_corr).strip() != str(immutable_rec.get("correlation_id", "")).strip():
                             prov = "unavailable"
                             rec = None
 
                         cand_owner = candidate.get("executor") or candidate.get("owner")
-                        if cand_owner and str(cand_owner).strip() != str(rec.get("executor", "")).strip():
+                        if cand_owner and str(cand_owner).strip() != str(immutable_rec.get("executor", "")).strip():
                             prov = "unavailable"
                             rec = None
 
                         cand_receipt_id = candidate.get("receipt_id")
-                        if cand_receipt_id and str(cand_receipt_id).strip() != str(rec.get("receipt_id", "")).strip():
+                        if cand_receipt_id and str(cand_receipt_id).strip() != str(immutable_rec.get("receipt_id", "")).strip():
                             prov = "unavailable"
                             rec = None
 
                         cand_digest = candidate.get("artifact_digest")
-                        if cand_digest and rec.get("artifact_digest") and str(cand_digest).strip() != str(rec.get("artifact_digest", "")).strip():
+                        if cand_digest:
+                            expected_digest = str(immutable_rec.get("artifact_digest") or "").strip()
+                            if not expected_digest or str(cand_digest).strip() != expected_digest:
+                                prov = "unavailable"
+                                rec = None
+
+                        # Validate candidate artifact_id against canonical run artifacts from owner result
+                        canonical_art_ids, known_digests = _extract_run_artifact_identities(run)
+                        if not canonical_art_ids or cand_artifact_id not in canonical_art_ids:
                             prov = "unavailable"
                             rec = None
+                        elif immutable_rec.get("artifact_digest"):
+                            rec_digest = str(immutable_rec["artifact_digest"]).strip()
+                            art_digest = known_digests.get(cand_artifact_id)
+                            if art_digest and art_digest != rec_digest:
+                                prov = "unavailable"
+                                rec = None
 
                     if status not in terminal_statuses and prov == "real":
                         prov = "simulation"
@@ -1778,14 +1862,24 @@ class AgoraResearchRouteContext:
                 public_candidate["has_real_receipt"] = bool(resolved_prov == "real" and receipt is not None)
                 if receipt and "receipt_id" in receipt:
                     public_candidate["receipt_id"] = receipt["receipt_id"]
+                    if receipt.get("artifact_digest"):
+                        public_candidate["artifact_digest"] = receipt["artifact_digest"]
                 elif not receipt:
                     public_candidate.pop("receipt_id", None)
 
                 candidates.append(public_candidate)
+                cand_metrics: Dict[str, Any] = {}
+                if run and isinstance(run.get("metrics"), dict):
+                    cand_metrics.update(run["metrics"])
                 if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
-                    metrics_by_artifact[public_candidate["artifact_id"]] = body.metrics_by_artifact[public_candidate["artifact_id"]]
-                else:
-                    metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
+                    client_art_metrics = body.metrics_by_artifact[public_candidate["artifact_id"]]
+                    if isinstance(client_art_metrics, dict):
+                        for k, v in client_art_metrics.items():
+                            cand_metrics.setdefault(k, v)
+                elif candidate.get("_metrics") and isinstance(candidate.get("_metrics"), dict):
+                    for k, v in candidate["_metrics"].items():
+                        cand_metrics.setdefault(k, v)
+                metrics_by_artifact[public_candidate["artifact_id"]] = cand_metrics
         elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
             try:
                 import agora.research.router as _r_router

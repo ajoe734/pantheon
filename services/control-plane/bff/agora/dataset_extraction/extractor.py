@@ -230,6 +230,7 @@ class AgoraDatasetStore:
         q = f'"{self.schema}"'
         self._inbox_table = f'{q}."agora_evidence_inbox"'
         self._records_table = f'{q}."agora_dataset_records"'
+        self._handoffs_table = f'{q}."agora_evidence_handoffs"'
         self._bootstrapped = False
         try:
             self._bootstrap()
@@ -1197,7 +1198,7 @@ class AgoraDatasetStore:
                     record.tenant_id,
                     record.user_id,
                     json.dumps(record.content) if isinstance(record.content, (dict, list)) else record.content,
-                    record.source_refs,
+                    json.dumps(record.source_refs) if isinstance(record.source_refs, (dict, list)) else record.source_refs,
                     record.learning_eligible,
                     record.captured_at,
                     record.extracted_at,

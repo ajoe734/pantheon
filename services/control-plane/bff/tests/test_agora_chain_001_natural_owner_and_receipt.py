@@ -803,6 +803,13 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         "execution_status": "succeeded",
         "executor": "vectorbt_executor",
         "correlation_id": "corr-authentic-001",
+        "artifact_refs": [
+            {
+                "artifact_id": "cand-authentic-real",
+                "ref": "research-artifact://vectorbt_executor/cand-authentic-real",
+            }
+        ],
+        "metrics": {"sharpe_ratio": 1.85, "max_drawdown": 0.08},
     }
     store.create_run(run_real)
     rec_real = ResearchExecutionReceipt(
@@ -812,6 +819,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         mode="real",
         correlation_id="corr-authentic-001",
         completed_at="2026-09-08T07:00:00Z",
+        artifact_digest="sha256:cand-authentic-real",
     )
     store.record_execution_receipt(rec_real.to_dict())
     resp_real = client.post(
@@ -839,3 +847,182 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
     assert cand_real["provenance"] == "real"
     assert cand_real["has_real_receipt"] is True
     assert cand_real["receipt_id"] == "rec-authentic-001"
+    assert cand_real.get("artifact_digest") == "sha256:cand-authentic-real"
+
+
+def test_unrelated_artifact_cannot_borrow_run_receipt_regression() -> None:
+    """Unrelated candidate artifact_id referencing a valid real run fails closed."""
+    from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
+    from types import SimpleNamespace
+
+    store = MemoryResearchPlanStore()
+    store.create_run({
+        "run_id": "review-run-unrelated",
+        "plan_id": "review-plan-1",
+        "tenant_id": "review-tenant",
+        "user_id": "review-user",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "review-corr-1",
+        "provenance": "real",
+        "artifact_refs": [{"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}],
+        "metrics": {"sharpe_ratio": 2.1},
+    })
+    store.record_execution_receipt({
+        "receipt_id": "review-receipt-1",
+        "run_id": "review-run-unrelated",
+        "executor": "vectorbt_executor",
+        "mode": "real",
+        "correlation_id": "review-corr-1",
+        "artifact_digest": "sha256:actual",
+        "spec_version": "1.0",
+        "completed_at": "2026-09-08T07:00:00Z",
+    })
+    context = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    scope = SimpleNamespace(tenant_id="review-tenant", user_id="review-user", auth_stub=False)
+
+    # Positive control: matching artifact and digest
+    pos_res = context.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="review-user",
+            profile="production",
+            candidates=[{
+                "artifact_id": "actual-artifact",
+                "run_id": "review-run-unrelated",
+                "artifact_digest": "sha256:actual",
+                "lifecycle_state": "candidate",
+            }],
+        ),
+        scope,
+        "2026-09-08T07:00:00Z",
+    )
+    assert pos_res["candidates"][0]["provenance"] == "real"
+    assert pos_res["candidates"][0]["has_real_receipt"] is True
+
+    # Negative control: unrelated artifact fails closed
+    neg_res = context.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="review-user",
+            profile="production",
+            candidates=[{
+                "artifact_id": "unrelated-client-artifact",
+                "run_id": "review-run-unrelated",
+                "lifecycle_state": "candidate",
+            }],
+        ),
+        scope,
+        "2026-09-08T07:00:00Z",
+    )
+    assert neg_res["candidates"][0]["provenance"] != "real"
+    assert neg_res["candidates"][0]["has_real_receipt"] is False
+
+
+def test_multiple_mismatches_fail_closed_without_crashing_regression() -> None:
+    """Candidate with multiple mismatched fields fails closed without crashing."""
+    from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
+    from types import SimpleNamespace
+
+    store = MemoryResearchPlanStore()
+    store.create_run({
+        "run_id": "review-run-multi",
+        "plan_id": "review-plan-1",
+        "tenant_id": "review-tenant",
+        "user_id": "review-user",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "review-corr-1",
+        "provenance": "real",
+        "artifact_refs": [{"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}],
+    })
+    store.record_execution_receipt({
+        "receipt_id": "review-receipt-1",
+        "run_id": "review-run-multi",
+        "executor": "vectorbt_executor",
+        "mode": "real",
+        "correlation_id": "review-corr-1",
+        "artifact_digest": "sha256:actual",
+        "spec_version": "1.0",
+        "completed_at": "2026-09-08T07:00:00Z",
+    })
+    context = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    scope = SimpleNamespace(tenant_id="review-tenant", user_id="review-user", auth_stub=False)
+
+    res = context.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="review-user",
+            profile="production",
+            candidates=[{
+                "artifact_id": "actual-artifact",
+                "run_id": "review-run-multi",
+                "correlation_id": "wrong-correlation",
+                "executor": "wrong-executor",
+                "receipt_id": "wrong-receipt",
+                "artifact_digest": "sha256:wrong",
+                "lifecycle_state": "candidate",
+            }],
+        ),
+        scope,
+        "2026-09-08T07:00:00Z",
+    )
+    assert res["candidates"][0]["provenance"] != "real"
+    assert res["candidates"][0]["has_real_receipt"] is False
+
+
+def test_postgres_dataset_owner_bootstrap_read_restart_regression() -> None:
+    """Postgres AgoraDatasetStore bootstraps, reads absent record, writes, restarts, and reads back."""
+    import uuid
+    from agora.dataset_extraction.extractor import AgoraDatasetStore, DatasetRecord
+    from agora.dataset_extraction.models import DatasetKind, InteractionKind
+
+    dsn = os.environ.get("REVIEW_TEST_DSN") or os.environ.get("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("Neither REVIEW_TEST_DSN nor TEST_DATABASE_URL is set")
+
+    schema = f"agora_reg_{uuid.uuid4().hex[:12]}"
+    store = AgoraDatasetStore(backend="postgres", dsn=dsn, schema=schema)
+    try:
+        assert store._bootstrapped is True
+        # Read absent ref: must return None without AttributeError
+        assert store.get_by_ref("absent-ref-123", tenant_id="t-reg", user_id="u-reg") is None
+
+        # Save record
+        record = DatasetRecord(
+            evidence_id="ev-reg-1",
+            dataset_version_id="dsv-reg-1",
+            dataset_kind=DatasetKind.OBSERVE,
+            interaction_kind=InteractionKind.ASK,
+            persona_id="persona-reg",
+            tenant_id="t-reg",
+            user_id="u-reg",
+            content={"test": "data"},
+            source_refs=["ref:reg-1"],
+            learning_eligible=True,
+            captured_at="2026-09-08T07:00:00Z",
+            extracted_at="2026-09-08T07:00:00Z",
+        )
+        store.save_record(record)
+        fetched = store.get_by_ref("dsv-reg-1", tenant_id="t-reg", user_id="u-reg")
+        assert fetched is not None
+        assert fetched.dataset_version_id == "dsv-reg-1"
+
+        # Restart: instantiate a new AgoraDatasetStore on the same schema
+        store_restarted = AgoraDatasetStore(backend="postgres", dsn=dsn, schema=schema)
+        assert store_restarted._bootstrapped is True
+        fetched_after_restart = store_restarted.get_by_ref("dsv-reg-1", tenant_id="t-reg", user_id="u-reg")
+        assert fetched_after_restart is not None
+        assert fetched_after_restart.dataset_version_id == "dsv-reg-1"
+    finally:
+        with store._connect() as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

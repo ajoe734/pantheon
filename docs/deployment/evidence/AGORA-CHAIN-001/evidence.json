@@ -52,11 +52,11 @@
       "services/research/tests/test_research_orchestrator_http_service.py",
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
-    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
+    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Restored _handoffs_table in AgoraDatasetStore ensuring PostgreSQL 16 bootstrap, get_by_ref, and restart idempotency succeed without AttributeError. Candidate admission in routes/common.py validates against immutable receipt snapshot preventing AttributeError on multi-mismatch payloads, verifies candidate artifact identity against canonical run artifacts (_extract_run_artifact_identities), binds authentic receipt digest, and resolves admitted metrics from owner result while failing closed for unrelated or unverifiable candidates. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
     "canonical_dataset_resolution": "Synthetic dataset resolver completely deleted from resolve_governed_dataset in dispatcher.py. Canonical dataset lookups resolve tenant-scoped records via AgoraDatasetStore (store.get_by_ref), failing closed for missing, invalid, or unavailable references. No mock/fabricated OHLCV records are generated for arbitrary input refs. AgoraInteractionWorker and separate-process entry point scripts/run_agora_interaction_worker.py wire durable AgoraDatasetStore backed by Postgres (AGORA_DATASET_STORE_BACKEND/DSN/SCHEMA) into ResearchDispatcher stage contexts.",
     "correlation_chain": "Single continuous correlation chain wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer. Server-side correlation resolution via _resolve_originating_correlation looks up originating trace_id or correlation_id from workshop events and request headers, preserving originating interaction trace rather than overwriting with workshop:<id>.",
     "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in \"real\" mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. Research orchestrator HTTP service (/stages/{stage_type}/execute) strictly rejects non-allowlisted stage types (400), enforces presence of governed datasets/inputs without synthetic fabrication (400 on missing input), dispatches only to configured execution owners failing closed (503) for unimplemented or unavailable backends, and strictly preserves simulation provenance (provenance=\"simulation\", receipt.mode=\"simulation\") whenever running stub engines rather than relabeling them as real.",
-    "candidate_admission_provenance_and_trust_flags": "Public candidate admission route in routes/common.py strips client-supplied trust flags (has_real_receipt, trusted, is_real, verified, no_order_route_proof). Evaluates server-side tenant-scoped terminal run and authentic ResearchExecutionReceipt from store, verifying owner, correlation, and artifact digest. Untrusted client real-provenance claims fail closed to simulation or unavailable without verified authentic terminal receipt.",
+    "candidate_admission_provenance_and_trust_flags": "Public candidate admission route in routes/common.py strips client-supplied trust flags (has_real_receipt, trusted, is_real, verified, no_order_route_proof). Evaluates server-side tenant-scoped terminal run and authentic ResearchExecutionReceipt from store, verifying owner, correlation, and artifact digest against an immutable receipt reference. Admitted candidates must reference canonical artifacts produced by the owner run and bind the authentic receipt digest; unrelated or unverifiable candidates fail closed.",
     "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Wired CanonicalPerformanceEventTransport with acknowledged delivery: unacknowledged events when no subscribers are active fail closed (RuntimeError) and surface HTTP 503 retryable; outage failures propagate without marking published and successfully recover on replay; retry-safe durable identity prevents duplicate events. In incidents service, suggestions are durably stored in isolated incident-data volume (/data/incidents/agora_performance.sqlite3) and queried by BFF over HTTP (PANTHEON_INCIDENTS_API_URL), eliminating shared/injected SQLite across containers.",
     "mandatory_deletions": {
       "client_supplied_real_provenance_flags": "Deleted routing.get('backend_mode', 'real') default in _build_run_projection; initial projection defaults to unavailable until authentic ResearchExecutionReceipt is recorded and validated; build_candidate_pool strips client-supplied has_real_receipt and trust flags.",
@@ -69,34 +69,46 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest /tmp/test_agora_chain_001_review_378775.py -vv",
-        "result": "2 passed in 4.80s",
-        "executed": 2,
-        "collected": 2
+        "command": "REVIEW_TEST_DSN=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest /tmp/test_agora_review_5365.py -vv",
+        "result": "4 passed in 4.67s",
+        "executed": 4,
+        "collected": 4
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py -vv",
-        "result": "8 passed, 338 warnings in 31.69s",
-        "executed": 8,
-        "collected": 8
+        "command": "REVIEW_TEST_DSN=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py -vv",
+        "result": "11 passed, 338 warnings in 32.73s",
+        "executed": 11,
+        "collected": 11
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -vv",
-        "result": "38 passed, 1 warning in 6.92s",
+        "result": "38 passed, 1 warning in 7.76s",
         "executed": 38,
         "collected": 38
       },
       {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py -vv",
+        "result": "11 passed, 70 warnings in 14.35s",
+        "executed": 11,
+        "collected": 11
+      },
+      {
         "command": ".venv-pantheon/bin/python3 -m pytest services/research/tests/test_research_orchestrator_http_service.py -vv",
-        "result": "15 passed, 1 warning in 6.44s",
+        "result": "15 passed, 1 warning in 6.26s",
         "executed": 15,
         "collected": 15
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py -vv",
-        "result": "11 passed, 70 warnings in 13.35s",
-        "executed": 11,
-        "collected": 11
+        "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_run_agora_interaction_worker.py -vv",
+        "result": "14 passed in 20.98s",
+        "executed": 14,
+        "collected": 14
+      },
+      {
+        "command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora/dataset_extraction/test_extractor.py -vv",
+        "result": "48 passed in 8.31s",
+        "executed": 48,
+        "collected": 48
       },
       {
         "command": "git diff --check",
@@ -138,7 +150,10 @@
     "p1_natural_path_server_side_correlation_and_input_refs_resolution": true,
     "p1_receipt_provenance_fail_closed_no_synthetic_mint": true,
     "p1_compose_worker_resolves_durable_dataset_owner": true,
-    "p1_candidate_admission_cannot_trust_client_real_provenance": true
+    "p1_candidate_admission_cannot_trust_client_real_provenance": true,
+    "p1_postgres_dataset_owner_bootstrap_and_read_regression": true,
+    "p1_candidate_admission_unrelated_artifact_fail_closed": true,
+    "p2_candidate_admission_multi_mismatch_no_crash": true
   },
   "review": {
     "reviewer": "Codex",
