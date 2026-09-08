@@ -11177,10 +11177,14 @@ def _project_persona_fleet_item(
     all_incidents: List[Dict[str, Any]],
     all_evolution_decisions: List[Dict[str, Any]],
     telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]],
+    tenant_id: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
+    record_filter = lambda rows: _mgmt_nl_filter_tenant_records(rows, tenant_id)
+    strategies, strategies_obs = _management_ai_context_service.get_context_strategies_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=len(strategies))
 
     # Bindings and teaching sessions go through the same typed,
     # exception-safe owner-projection accessor used for every other
@@ -11188,7 +11192,9 @@ def _project_persona_fleet_item(
     # observation instead of unwinding the whole persona fleet surface and
     # discarding every other persona/runtime/incident/evolution owner that
     # already read successfully.
-    bindings, bindings_obs = _management_ai_context_service.get_context_bindings_for_persona(persona_id)
+    bindings, bindings_obs = _management_ai_context_service.get_context_bindings_for_persona(
+        persona_id, record_filter=record_filter
+    )
     bindings = list(bindings or [])
     binding_ids = {
         str(binding.get("id") or binding.get("binding_id") or "").strip()
@@ -11201,7 +11207,9 @@ def _project_persona_fleet_item(
         if str(binding.get("capital_pool_id") or "").strip()
     }
 
-    sessions = list(read_store.get_sessions_for_persona(persona_id) or [])
+    sessions, sessions_obs = _management_ai_context_service.get_context_sessions_for_persona(
+        persona_id, record_filter=record_filter
+    )
     runtime_refs = {
         str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
         for session in sessions
@@ -11245,7 +11253,7 @@ def _project_persona_fleet_item(
     telemetry_observations = [obs for _summary, obs in matched_telemetry]
 
     teaching_sessions, teaching_sessions_obs = _management_ai_context_service.get_context_teaching_sessions_for_persona(
-        persona_id
+        persona_id, record_filter=record_filter
     )
     teaching_sessions = _sort_records_latest_first(
         list(teaching_sessions or []),
@@ -11284,16 +11292,18 @@ def _project_persona_fleet_item(
     ]
     evolution_decisions = _sort_records_latest_first(evolution_decisions, ("updated_at", "created_at"))
 
-    capital_pools = [
-        pool
+    # Each pool read supplies both enrichment and provenance, once.
+    pool_results = {
+        pool_id: _management_ai_context_service.get_context_capital_pool(
+            pool_id, record_filter=record_filter
+        )
         for pool_id in sorted(capital_pool_ids)
-        for pool in [read_store.get_capital_pool(pool_id)]
-        if pool
-    ]
+    }
+    capital_pools = [pool for pool, _obs in pool_results.values() if pool]
     enriched_bindings = [
         {
             **binding,
-            "capital_pool": read_store.get_capital_pool(str(binding.get("capital_pool_id") or "")),
+            "capital_pool": pool_results.get(str(binding.get("capital_pool_id") or "").strip(), (None, None))[0],
         }
         for binding in bindings
     ]
@@ -11303,7 +11313,9 @@ def _project_persona_fleet_item(
         telemetry_summaries=telemetry_summaries,
         active_incidents=active_incidents,
     )
-    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    allowed_actions, allowed_actions_obs = _management_ai_context_service.get_context_persona_allowed_actions(
+        persona_id, record_filter=record_filter
+    )
 
     telemetry_summary = {
         "latest": latest_telemetry,
@@ -11351,9 +11363,14 @@ def _project_persona_fleet_item(
         "sessions": sessions,
         "activeIncidents": active_incidents,
         "active_incidents": active_incidents,
-        "allowedActions": allowed_actions,
+        "allowedActions": allowed_actions or {},
     }
-    owner_observations = [bindings_obs, teaching_sessions_obs, *telemetry_observations]
+    owner_observations = [
+        strategies_obs, bindings_obs, sessions_obs, teaching_sessions_obs,
+        allowed_actions_obs, *[obs for _pool, obs in pool_results.values()],
+        *telemetry_observations,
+    ]
+    item["owner_observations"] = owner_observations
     return item, owner_observations
 _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
     "pending",
@@ -15373,14 +15390,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "persona_fleet":
         try:
-            personas = _mgmt_nl_filter_tenant_records(_list_persona_records(tenant_id), tenant_id)
-            # A persona owner that itself reports unavailable/degraded
-            # provenance (e.g. the merged persona record carries an explicit
-            # status/degradation_reason) is real observation truth and must
-            # surface in owner_observations instead of being silently dropped
-            # just because runtime/incidents/evolution all read ok.
-            personas_obs = _management_ai_context_service.observation_from_records(
-                personas, subject_type="personas", owner="persona_fleet"
+            personas, personas_obs = _management_ai_context_service.get_context_personas(
+                lambda: _list_persona_records(tenant_id), record_filter=_tenant_record_filter
             )
             runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
                 record_filter=_tenant_record_filter
@@ -15411,7 +15422,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 if not fleet_runtime_id or fleet_runtime_id in telemetry_by_runtime_id:
                     continue
                 telemetry_by_runtime_id[fleet_runtime_id] = _management_ai_context_service.get_context_telemetry_summary(
-                    fleet_runtime_id
+                    fleet_runtime_id, record_filter=_tenant_record_filter
                 )
             telemetry_observations = [obs for _summary, obs in telemetry_by_runtime_id.values()]
             # Project every persona independently: a raise from one persona's
@@ -15420,15 +15431,17 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             # runtime/incidents/evolution provenance already collected above.
             fleet_items = []
             fleet_owner_observations: List[Dict[str, Any]] = []
-            for persona in personas[:20]:
+            for persona in personas:
                 item, item_owner_observations = _project_persona_fleet_item(
                     persona,
                     all_runtime_bindings=runtime_bindings,
                     all_incidents=incidents,
                     all_evolution_decisions=evolution_decisions,
                     telemetry_by_runtime_id=telemetry_by_runtime_id,
+                    tenant_id=tenant_id,
                 )
-                fleet_items.append(item)
+                if len(fleet_items) < 20:
+                    fleet_items.append(item)
                 # Telemetry observations are already carried once per unique
                 # runtime in telemetry_observations above; only the
                 # per-persona-only owners (bindings, teaching sessions) are

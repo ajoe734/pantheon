@@ -2121,6 +2121,8 @@ class ManagementService:
         subject_type: str,
         owner: str,
         args: Tuple[Any, ...] = (),
+        kwargs: Optional[Dict[str, Any]] = None,
+        load_records: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         store = self._resolve_store()
@@ -2134,7 +2136,7 @@ class ManagementService:
                 degradation_reason=domain_status.get("message")
                 or f"{subject_type} read surface is unavailable or unconfigured.",
             )
-        if store is None or not hasattr(store, method_name):
+        if load_records is None and (store is None or not hasattr(store, method_name)):
             return [], self._context_observation(
                 subject_type=subject_type,
                 status="unavailable",
@@ -2143,7 +2145,10 @@ class ManagementService:
                 degradation_reason=f"{subject_type} read surface is unavailable or unconfigured.",
             )
         try:
-            items = list(getattr(store, method_name)(*args) or [])
+            items = list(
+                (load_records() if load_records is not None else getattr(store, method_name)(*args, **(kwargs or {})))
+                or []
+            )
         except Exception as exc:
             return [], self._context_observation(
                 subject_type=subject_type,
@@ -2326,7 +2331,8 @@ class ManagementService:
         )
 
     def get_context_telemetry_summary(
-        self, runtime_id: str, *, owner: Optional[str] = None
+        self, runtime_id: str, *, owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         observation_owner = owner or runtime_id or "management_ai_context"
         store = self._resolve_store()
@@ -2350,6 +2356,9 @@ class ManagementService:
                 source_kind="unavailable",
                 degradation_reason=f"telemetry read failed: {exc}",
             )
+        if summary is not None and record_filter is not None:
+            scoped = record_filter([summary])
+            summary = scoped[0] if scoped else None
         if summary is None:
             return None, self._context_observation(
                 subject_type="telemetry",
@@ -2411,6 +2420,70 @@ class ManagementService:
             subject_type="persona_teaching_sessions",
             owner=owner or persona_id or "management_ai_context",
             args=(persona_id,),
+            record_filter=record_filter,
+        )
+
+    def get_context_personas(
+        self, load_records: Callable[[], List[Dict[str, Any]]], *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Observe the canonical persona/provisioning composition without losing failures."""
+        return self._typed_context_list(
+            "list_personas", subject_type="personas", owner="persona_fleet",
+            load_records=load_records, record_filter=record_filter,
+        )
+
+    def get_context_sessions_for_persona(
+        self, persona_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "get_sessions_for_persona", subject_type="persona_sessions",
+            owner=persona_id, args=(persona_id,), record_filter=record_filter,
+        )
+
+    def get_context_strategies_for_persona(
+        self, persona_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_strategy_specs", subject_type="persona_strategies",
+            owner=persona_id, kwargs={"persona_id": persona_id}, record_filter=record_filter,
+        )
+
+    def _typed_context_record(
+        self, method_name: str, subject_type: str, subject_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        try:
+            record = getattr(self._resolve_store(), method_name)(subject_id)
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type=subject_type, subject_id=subject_id, owner=subject_id,
+                status="unavailable", source_kind="unavailable",
+                degradation_reason=f"{subject_type} read failed: {exc}",
+            )
+        records = [record] if record else []
+        if record_filter is not None:
+            records = record_filter(records)
+        return (records[0] if records else None), self.observation_from_records(
+            records, subject_type=subject_type, owner=subject_id,
+        )
+
+    def get_context_capital_pool(
+        self, pool_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_record(
+            "get_capital_pool", "capital_pool", pool_id, record_filter=record_filter,
+        )
+
+    def get_context_persona_allowed_actions(
+        self, persona_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_record(
+            "get_persona_allowed_actions", "persona_allowed_actions", persona_id,
             record_filter=record_filter,
         )
 

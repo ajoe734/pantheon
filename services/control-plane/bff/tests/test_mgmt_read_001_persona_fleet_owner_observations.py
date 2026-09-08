@@ -135,7 +135,7 @@ def test_persona_fleet_surfaces_persona_owner_reported_unavailable() -> None:
         _restore(original_store, original_service)
 
 
-def test_persona_fleet_reports_ok_when_every_owner_is_healthy() -> None:
+def test_persona_fleet_reports_degraded_when_auxiliary_owners_lack_records() -> None:
     original_store = bff_main.read_store
     original_service = bff_main._management_ai_context_service
     try:
@@ -159,6 +159,10 @@ def test_persona_fleet_reports_ok_when_every_owner_is_healthy() -> None:
         context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, None)
 
         surface = context["surfaces"]["persona_fleet"]
-        assert surface["status"] == "ok", surface
+        assert surface["status"] == "degraded", surface
+        assert any(
+            obs["subject_type"] == "persona_teaching_sessions" and obs["status"] == "degraded"
+            for obs in surface["owner_observations"]
+        )
     finally:
         _restore(original_store, original_service)
