@@ -59,14 +59,27 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
 def coordination_config(config: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(config, Mapping):
         return {}
-    return dict(config.get("coordination", {}) or {})
+    raw = config.get("coordination")
+    return dict(raw) if isinstance(raw, Mapping) else {}
 
 
 def repositories(config: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
     merged = deepcopy(DEFAULT_REPOSITORIES)
-    for repo_id, override in (coordination_config(config).get("repositories", {}) or {}).items():
+    coord = coordination_config(config)
+    raw_repos = coord.get("repositories")
+    if raw_repos is None:
+        return merged
+    if not isinstance(raw_repos, Mapping):
+        raise ValueError(
+            f"coordination.repositories must be a mapping, got {type(raw_repos).__name__}: {raw_repos!r}"
+        )
+    for repo_id, override in raw_repos.items():
+        if not isinstance(override, Mapping):
+            raise ValueError(
+                f"repository override for {repo_id!r} must be a mapping, got {type(override).__name__}: {override!r}"
+            )
         current = merged.setdefault(repo_id, {})
-        current.update(deepcopy(override or {}))
+        current.update(deepcopy(dict(override)))
 
     return merged
 
@@ -480,22 +493,25 @@ def task_repository_slug_and_default_branch(
     Resolves repository scope through ``validate_task_repository_scope``.
     Tasks with unrecognized, ambiguous, or conflicting scopes fail closed (return None).
     Repositories without a configured GitHub slug (e.g. runtime_platform) return None.
+    Malformed registry mapping/value/branch data fails closed (returns None).
     """
     if not isinstance(task, Mapping):
         return None
     config_dict = dict(config) if isinstance(config, Mapping) else {}
     try:
         repo_id = validate_task_repository_scope(config_dict, task)
-    except ValueError:
+        repo = repositories(config_dict).get(repo_id)
+    except (ValueError, TypeError, AttributeError):
         return None
-    repo = repositories(config_dict).get(repo_id)
     if not isinstance(repo, Mapping):
         return None
-    slug = str(repo.get("repo") or "").strip()
-    if not slug:
+    raw_slug = repo.get("repo")
+    if raw_slug is None or not isinstance(raw_slug, str) or not raw_slug.strip():
         return None
-    default_branch = str(repo.get("default_branch") or "dev").strip() or "dev"
-    return slug, default_branch
+    raw_branch = repo.get("default_branch")
+    if raw_branch is None or not isinstance(raw_branch, str) or not raw_branch.strip():
+        return None
+    return raw_slug.strip(), raw_branch.strip()
 
 
 def iter_local_repositories(config: dict[str, Any]) -> list[dict[str, Any]]:

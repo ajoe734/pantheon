@@ -2,17 +2,21 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001",
   "title": "Gate owner finalization on existing cross-repository integration reconciliation",
-  "owner": "Antigravity",
+  "owner": "Antigravity2",
   "reviewer": "Codex",
   "target_repo": "pantheon",
   "task_class": "development_tooling",
-  "timestamp": "2026-09-08T05:50:00Z",
+  "timestamp": "2026-09-08T06:18:00Z",
   "scope": {
     "owned": [
       "Supervisor dispatch admission ladder repair for non-default registry repositories",
       "Multi-repo registry helper for canonical GitHub slug and default branch resolution",
+      "Strict registry mapping, value, and default branch validation failing closed on malformed config",
+      "Config-aware canonical integration receipt consumption predicate in integration_receipt.py",
+      "Delegation of dispatch_policy receipt checks to shared integration_receipt predicate without duplication",
       "Suppression of owned_finalize_dispatch for unreceipted foreign-repository deliveries",
-      "Deterministic starvation regression coverage for OPS-FE-REVIEW-PROOF-001 and OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001"
+      "Deterministic starvation regression coverage for OPS-FE-REVIEW-PROOF-001 and OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001",
+      "Deterministic malformed-registry admission controls and consumer-admission parity coverage"
     ],
     "not_changing": [
       "No second scheduler, queue, cron, receipt store, status API, or integration path",
@@ -25,11 +29,12 @@
     ]
   },
   "source_artifacts": {
-    ".orchestrator/dispatch_policy.py": "dfbc5589a0c7b75f63085e081152240ea2456bb1d9fe64718ded552604952241",
-    ".orchestrator/multi_repo_registry.py": "c90d0e4410fce5798dffe6ab31da2838c8b5fc45b9ca3c614776ff96bc0e4333",
+    ".orchestrator/dispatch_policy.py": "41404b2df9ed4be0b967183d7d8483d438c6a775c0adba04e38089e10c6c48d2",
+    ".orchestrator/multi_repo_registry.py": "5245f187a4cafe8a680c5362a7959881045334395592959c8c61f14c45f311cf",
     ".orchestrator/supervisor.py": "ead5147667f354751a89c2c69885fdf232a91077919bdb94ad59df13b6a18ec0",
-    ".orchestrator/test_dispatch_policy.py": "fd31f8f7963681fc119b1e1390d5e1776da087e856682a77548287f8ed21eef3",
-    ".orchestrator/test_supervisor.py": "53555b92a97857549aba295f921d27d405fa5f6ad329999a3de2347d0aa14050"
+    ".orchestrator/rewrite/integration_receipt.py": "5065a51f00317489eb7bfe3ced8515734f7784f3ae35a4bfa5dddb0d8a0fc8a8",
+    ".orchestrator/test_dispatch_policy.py": "9df2152822706f5528154a40d5bf017d2b7cfb681e47420f32b1da16a7247228",
+    ".orchestrator/test_supervisor.py": "2c44d5fc2c9d5e67c0030f61fc277a66b8cc94fbee44fd7d22b20ab0b9122d9d"
   },
   "acceptance_verification": {
     "criterion_1": {
@@ -45,34 +50,36 @@
     "criterion_3": {
       "statement": "Resolve target repository through the existing strict registry/receipt contract. Unknown/misconfigured repository ids, absent/malformed receipts, generation drift, changed PR/head/base or repository slug must fail closed and must not make a task appear reconciled.",
       "status": "PASSED",
-      "evidence": "task_has_current_canonical_integration_receipt resolves repository scope strictly via multi_repo_registry.task_repository_slug_and_default_branch. Fails closed on unknown repository ids, ambiguous/conflicting artifact paths, receipt version mismatch (!=1), invalid result (!=landed), unknown observation, receipt task_generation > current task generation, PR mismatch, head_sha mismatch, target_branch mismatch, missing merge_commit_sha, or delivery_binding mismatch."
+      "evidence": "task_has_current_canonical_integration_receipt delegates directly to integration_receipt.integration_receipt_consumes_candidate(task, config=config), using multi_repo_registry.task_repository_slug_and_default_branch. Fails closed on unknown repository ids, non-mapping repositories list, invalid repository override types, explicit default_branch=None or empty, ambiguous/conflicting artifact paths, receipt version mismatch (!=1), invalid result (!=landed), unknown observation, receipt task_generation > current task generation, PR mismatch, head_sha mismatch, target_branch mismatch, missing merge_commit_sha, or delivery_binding mismatch."
     },
     "criterion_4": {
       "statement": "Add deterministic planner/admission coverage for the current OPS-FE-REVIEW-PROOF-001 binding: execute-plans PR #747/head 598101a2b62395d4c39c19df619ebb4207ea8458 with no receipt cannot consume the owner-finalize priority while OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001 remains selectable. Cover normal unmerged Pantheon finalization and invalid/unknown registry negative controls.",
       "status": "PASSED",
-      "evidence": "Added test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator in test_supervisor.py and corresponding unit tests in test_dispatch_policy.py. Verifies execute-plans PR 747 / head 598101a2b62395d4c39c19df619ebb4207ea8458 with no receipt is blocked and cannot finalize, allowing OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001 (in_progress) to be selected when max_concurrent_workers=1. Verified normal unmerged Pantheon finalization remains eligible, and verified negative controls for unknown repo, conflicting artifacts, malformed version, generation drift, repo drift, and branch drift."
+      "evidence": "Added test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator in test_supervisor.py and corresponding unit tests in test_dispatch_policy.py. Verifies execute-plans PR 747 / head 598101a2b62395d4c39c19df619ebb4207ea8458 with no receipt is blocked and cannot finalize, allowing OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001 (in_progress) to be selected when max_concurrent_workers=1. Verified normal unmerged Pantheon finalization remains eligible, and verified negative controls for unknown repo, conflicting artifacts, malformed version, generation drift, repo drift, branch drift, malformed coordination.repositories list, malformed override value, explicit default_branch=None, and explicit repo=None."
     },
     "criterion_5": {
       "statement": "Compose with OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001 without duplicating its writer/lock authority; rebase as needed, record exact tests/evidence, then deliver through the usual PR, independent review and sole integrator.",
       "status": "PASSED",
-      "evidence": "multi_repo_registry.task_repository_slug_and_default_branch helper provides clean composition without duplicating writer or lock authority. All modified artifacts compile cleanly and pass pytest."
+      "evidence": "Reused the canonical config-aware predicate integration_receipt_consumes_candidate(task, config=config) across both the supervisor scheduler and the sole auto-integrator without duplicating writer or lock authority. Proved consumer/admission parity across empty and configured registry states via test_consumer_and_dispatch_agree_on_same_canonical_receipt."
     }
   },
   "verification": {
     "status": "passed",
     "commands": [
+      "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex_finalize_registry_review.py",
       "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py",
-      "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator or test_review_approved_waits_for_exact_integration_receipt'",
-      "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'SharedPlannerContractTests'",
-      ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/dispatch_policy.py .orchestrator/multi_repo_registry.py",
+      "PYTHONPATH=.orchestrator timeout 180 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py -k 'SharedPlannerContractTests or test_review_approved_waits_for_exact_integration_receipt or test_dispatch_policy'",
+      "PYTHONPATH=.orchestrator timeout 180 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_multi_repo_registry.py .orchestrator/rewrite/test_integration_receipt.py",
+      ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/dispatch_policy.py .orchestrator/multi_repo_registry.py .orchestrator/rewrite/integration_receipt.py",
       "git diff --check"
     ],
     "results": [
-      "41 passed in test_dispatch_policy.py",
-      "2 focused supervisor tests passed",
-      "35 passed in SharedPlannerContractTests",
-      "all modified runtime modules compiled without syntax or lint errors",
-      "no git whitespace or patch errors"
+      "5 passed in /tmp/test_codex_finalize_registry_review.py",
+      "53 passed in test_dispatch_policy.py",
+      "88 passed, 264 deselected in SharedPlannerContractTests and focused supervisor/dispatch tests",
+      "80 passed in test_multi_repo_registry.py and test_integration_receipt.py",
+      "all modified runtime modules compiled cleanly with zero syntax or lint errors",
+      "git diff --check reported clean diff with no whitespace errors"
     ]
   },
   "review_handoff": {
@@ -81,7 +88,8 @@
       "Confirm evaluate_task_delivery_admission blocks unreceipted review_approved non-default registry tasks with task_not_dispatchable",
       "Confirm in-progress tasks like OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001 are not starved by unreceipted finalizations",
       "Confirm normal unmerged Pantheon review_approved tasks remain eligible for owner-finalize dispatch",
-      "Confirm unknown registry repositories, malformed receipts, and generation drift fail closed",
+      "Confirm unknown registry repositories, malformed registry mapping/value/branch data, and generation drift fail closed without crashing the planner",
+      "Confirm consumer and dispatch admission parity without duplicating writer or lock authority",
       "Confirm no second scheduler, queue, cron, or integration path was introduced"
     ]
   }

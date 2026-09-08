@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dispatch_policy
+from rewrite import integration_receipt
 from dispatch_policy import (
     ALLOWLISTED_EXECUTION_RESOURCES,
     DEFAULT_ACTIVE_WORKER_STATUSES,
@@ -722,3 +723,162 @@ def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
         )
         assert not dec_op_accepted.eligible
         assert dec_op_accepted.reason.value == "human_hold"
+
+
+@pytest.mark.parametrize(
+    "repositories",
+    [
+        [],
+        ["bad-entry"],
+        {"execute_plans": 42},
+        {"execute_plans": "bad"},
+        {"execute_plans": None},
+    ],
+)
+def test_malformed_registry_blocks_instead_of_crashing(repositories: Any) -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+    }
+    config = {"coordination": {"repositories": repositories}}
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
+
+
+@pytest.mark.parametrize(
+    "repo_override",
+    [
+        {"default_branch": None},
+        {"default_branch": ""},
+        {"default_branch": 123},
+        {"repo": None},
+        {"repo": ""},
+        {"repo": 456},
+    ],
+)
+def test_misconfigured_repo_attributes_cannot_reconcile(repo_override: dict[str, Any]) -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "integration_receipt": {
+            "version": 1,
+            "result": "landed",
+            "observation": "reconciled_existing_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T05:00:00Z",
+            "source": "canonical_auto_integrator",
+        },
+    }
+    config = {"coordination": {"repositories": {"execute_plans": repo_override}}}
+    assert not dispatch_policy.task_has_current_canonical_integration_receipt(config, task)
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
+
+
+def test_consumer_and_dispatch_agree_on_same_canonical_receipt() -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "integration_receipt": {
+            "version": 1,
+            "result": "landed",
+            "observation": "reconciled_existing_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T05:00:00Z",
+            "source": "canonical_auto_integrator",
+        },
+    }
+
+    # With default / empty config
+    assert (
+        dispatch_policy.task_has_current_canonical_integration_receipt({}, task)
+        == integration_receipt.integration_receipt_consumes_candidate(task)
+        is True
+    )
+
+    # With explicit coordination config
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute_plans": {
+                    "repo": "ajoe734/execute-plans",
+                    "default_branch": "dev",
+                }
+            }
+        }
+    }
+    assert (
+        dispatch_policy.task_has_current_canonical_integration_receipt(config, task)
+        == integration_receipt.integration_receipt_consumes_candidate(task, config=config)
+        is True
+    )
+
+    # Negative control: when receipt is absent
+    t_no_receipt = deepcopy(task)
+    del t_no_receipt["integration_receipt"]
+    assert (
+        dispatch_policy.task_has_current_canonical_integration_receipt(config, t_no_receipt)
+        == integration_receipt.integration_receipt_consumes_candidate(t_no_receipt, config=config)
+        is False
+    )

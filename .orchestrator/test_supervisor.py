@@ -3172,6 +3172,26 @@ class SharedPlannerContractTests(unittest.TestCase):
         fe_branch_drift["integration_receipt"]["target_branch"] = "main"
         self.assertFalse(planner_decision(self.config, fe_branch_drift, target="Codex")["eligible"])
 
+        # 6g. Malformed coordination.repositories list
+        bad_config_list = copy.deepcopy(self.config)
+        bad_config_list["coordination"] = {"repositories": ["bad-entry"]}
+        self.assertFalse(planner_decision(bad_config_list, task_fe, target="Codex")["eligible"])
+
+        # 6h. Malformed repository override value (not a mapping)
+        bad_config_val = copy.deepcopy(self.config)
+        bad_config_val["coordination"] = {"repositories": {"execute_plans": 42}}
+        self.assertFalse(planner_decision(bad_config_val, task_fe, target="Codex")["eligible"])
+
+        # 6i. Misconfigured explicit default_branch=None fails closed
+        bad_config_branch = copy.deepcopy(self.config)
+        bad_config_branch["coordination"] = {"repositories": {"execute_plans": {"default_branch": None}}}
+        self.assertFalse(planner_decision(bad_config_branch, task_fe, target="Codex")["eligible"])
+
+        # 6j. Misconfigured explicit repo slug=None fails closed
+        bad_config_slug = copy.deepcopy(self.config)
+        bad_config_slug["coordination"] = {"repositories": {"execute_plans": {"repo": None}}}
+        self.assertFalse(planner_decision(bad_config_slug, task_fe, target="Codex")["eligible"])
+
     def _pending_intent_task_with_recovery_receipt(
         self,
         *,

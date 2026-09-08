@@ -202,71 +202,12 @@ def task_has_current_canonical_integration_receipt(
 ) -> bool:
     """Return whether task carries a matching, current canonical integration receipt.
 
-    Pure, configuration-backed predicate matching the auto-integrator's receipt contract:
-    - Task stored receipt parses with version 1, result 'landed', valid observation, matching source.
-    - Generation is valid (>= 1) and receipt task_generation <= task current generation.
-    - Registry scope resolves to a configured GitHub slug and default branch.
-    - Review binding has a positive int PR, valid 40-hex head_sha, and target_branch.
-    - Delivery binding, if present, matches review_binding.
-    - Receipt repository, target_branch, pr, head_sha match the frozen delivery binding,
-      and merge_commit_sha is non-empty.
-    Fails closed on any unknown, ambiguous, missing, or malformed data.
+    Reuses the shared canonical integration_receipt consumption predicate
+    across both scheduler and sole auto-integrator.
     """
     if not isinstance(task, Mapping):
         return False
-    receipt = integration_receipt.parse_integration_receipt(
-        task.get(integration_receipt.RECEIPT_KEY)
-    )
-    if receipt is None:
-        return False
-    try:
-        current_generation = task.get("generation", 1)
-        if (
-            isinstance(current_generation, bool)
-            or not isinstance(current_generation, int)
-            or current_generation < 1
-        ):
-            return False
-    except Exception:
-        return False
-    if receipt["task_generation"] > current_generation:
-        return False
-
-    repo_identity = multi_repo_registry.task_repository_slug_and_default_branch(
-        config, task
-    )
-    if repo_identity is None:
-        return False
-    repo_slug, default_branch = repo_identity
-
-    binding = task.get("review_binding")
-    if not isinstance(binding, Mapping):
-        return False
-    pr = binding.get("pr")
-    if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
-        return False
-    head_sha = str(binding.get("head_sha") or "").strip().lower()
-    if not _OID_RE.fullmatch(head_sha):
-        return False
-    target_branch = str(binding.get("base") or "").strip() or default_branch
-
-    delivery = task.get("delivery_binding")
-    if delivery is not None:
-        if not isinstance(delivery, Mapping) or delivery.get("kind") != "pull_request":
-            return False
-        if any(
-            delivery.get(key) != binding.get(key)
-            for key in ("pr", "head_sha", "head_branch", "base")
-        ):
-            return False
-
-    return (
-        receipt["repository"] == repo_slug
-        and receipt["target_branch"] == target_branch
-        and receipt["pr"] == pr
-        and receipt["head_sha"] == head_sha
-        and bool(receipt.get("merge_commit_sha"))
-    )
+    return integration_receipt.integration_receipt_consumes_candidate(task, config=config)
 
 
 def is_non_default_repository_finalization_pending(
@@ -291,7 +232,7 @@ def is_non_default_repository_finalization_pending(
     config_dict = dict(config) if isinstance(config, Mapping) else {}
     try:
         repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, task)
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         return True
 
     if repo_id == "pantheon":
