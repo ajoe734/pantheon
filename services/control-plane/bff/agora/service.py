@@ -8,6 +8,7 @@ and data projections without importing or coupling to main.py.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -1602,13 +1603,33 @@ class AgoraService:
         scoped_idem_key: Optional[str] = None
         if resolved_key and not dry_run:
             scoped_idem_key = f"create:{resolved_tenant}:{resolved_user}:{resolved_key}"
+            entry_id = str(
+                payload.get("id")
+                or payload.get("entryId")
+                or f"dje-{hashlib.sha256(scoped_idem_key.encode('utf-8')).hexdigest()[:10]}"
+            )
+            journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
             if hasattr(owner, "check_create_idempotency"):
-                idem_check = owner.check_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                idem_check = owner.check_create_idempotency(
+                    scoped_key=scoped_idem_key,
+                    request_hash=request_hash,
+                    entry_id=entry_id,
+                    raw_key=resolved_key,
+                    tenant_id=resolved_tenant,
+                    user_id=resolved_user,
+                )
             elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
                 reservation = {
                     "idempotency_key": scoped_idem_key,
+                    "raw_idempotency_key": resolved_key,
+                    "tenant_id": resolved_tenant,
+                    "user_id": resolved_user,
+                    "actor_id": resolved_user,
                     "request_hash": request_hash,
+                    "entry_id": entry_id,
                     "status": "pending",
+                    "created_pid": os.getpid(),
+                    "created_at": time.time(),
                     "result": None,
                 }
                 reserved, existing = owner.stores.idempotency.insert_if_absent(reservation)
@@ -1617,7 +1638,33 @@ class AgoraService:
                 elif existing.get("request_hash") != request_hash:
                     idem_check = {"conflict": True, "record": existing}
                 elif existing.get("status") == "pending":
-                    idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
+                    target_id = entry_id or existing.get("entry_id")
+                    if target_id and owner.stores.entries.get(target_id) is not None:
+                        persisted = owner.stores.entries.get(target_id)
+                        reconstructed = {
+                            "data": copy.deepcopy(persisted),
+                            "meta": {
+                                "snapshot_at": str(persisted.get("createdAt") or ""),
+                                "idempotency": {"idempotencyKey": resolved_key, "replayed": True},
+                                "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
+                            },
+                        }
+                        idem_check = {"conflict": False, "result": reconstructed}
+                    else:
+                        created_pid = existing.get("created_pid")
+                        is_dead = False
+                        if created_pid and created_pid != os.getpid():
+                            try:
+                                os.kill(created_pid, 0)
+                            except ProcessLookupError:
+                                is_dead = True
+                            except PermissionError:
+                                pass
+                        if is_dead:
+                            owner.stores.idempotency.put(reservation)
+                            idem_check = None
+                        else:
+                            idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
                 elif existing.get("status") == "failed":
                     owner.stores.idempotency.put(reservation)
                     idem_check = None
@@ -1639,7 +1686,14 @@ class AgoraService:
                 if idem_check.get("pending"):
                     resolved_idem = None
                     if hasattr(owner, "await_create_idempotency"):
-                        resolved_idem = owner.await_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                        resolved_idem = owner.await_create_idempotency(
+                            scoped_key=scoped_idem_key,
+                            request_hash=request_hash,
+                            entry_id=entry_id,
+                            raw_key=resolved_key,
+                            tenant_id=resolved_tenant,
+                            user_id=resolved_user,
+                        )
                     elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
                         deadline = time.monotonic() + 10.0
                         while time.monotonic() < deadline:
@@ -1654,7 +1708,43 @@ class AgoraService:
                                 if rec.get("status") == "failed":
                                     resolved_idem = {"conflict": False, "failed": True}
                                     break
+                                target_id = entry_id or rec.get("entry_id")
+                                if target_id and owner.stores.entries.get(target_id) is not None:
+                                    persisted = owner.stores.entries.get(target_id)
+                                    reconstructed = {
+                                        "data": copy.deepcopy(persisted),
+                                        "meta": {
+                                            "snapshot_at": str(persisted.get("createdAt") or ""),
+                                            "idempotency": {"idempotencyKey": resolved_key, "replayed": True},
+                                            "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
+                                        },
+                                    }
+                                    resolved_idem = {"conflict": False, "result": reconstructed}
+                                    break
+                                created_pid = rec.get("created_pid")
+                                if created_pid and created_pid != os.getpid():
+                                    try:
+                                        os.kill(created_pid, 0)
+                                    except ProcessLookupError:
+                                        resolved_idem = {"conflict": False, "failed": True}
+                                        break
+                                    except PermissionError:
+                                        pass
                             time.sleep(0.005)
+                        else:
+                            rec = owner.stores.idempotency.get(scoped_idem_key)
+                            target_id = entry_id or (rec or {}).get("entry_id")
+                            if target_id and owner.stores.entries.get(target_id) is not None:
+                                persisted = owner.stores.entries.get(target_id)
+                                reconstructed = {
+                                    "data": copy.deepcopy(persisted),
+                                    "meta": {
+                                        "snapshot_at": str(persisted.get("createdAt") or ""),
+                                        "idempotency": {"idempotencyKey": resolved_key, "replayed": True},
+                                        "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
+                                    },
+                                }
+                                resolved_idem = {"conflict": False, "result": reconstructed}
                     if resolved_idem and resolved_idem.get("conflict"):
                         raise self.bff_error(
                             409,
@@ -1678,8 +1768,9 @@ class AgoraService:
                     return cached_result
 
         snapshot_at = self.utc_now()
-        entry_id = str(payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}")
-        journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
+        if "entry_id" not in locals():
+            entry_id = str(payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}")
+            journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
         if dry_run:
             return self.dry_run_success_response(
                 {
@@ -1760,6 +1851,7 @@ class AgoraService:
                     request_hash=request_hash,
                     result=result,
                     created_at=snapshot_at,
+                    entry_id=entry_id,
                 )
             elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
                 owner.stores.idempotency.put({
@@ -1769,6 +1861,7 @@ class AgoraService:
                     "user_id": resolved_user,
                     "actor_id": resolved_user,
                     "request_hash": request_hash,
+                    "entry_id": entry_id,
                     "status": "succeeded",
                     "result": result,
                     "created_at": snapshot_at,

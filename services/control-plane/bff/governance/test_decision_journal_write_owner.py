@@ -658,6 +658,43 @@ sys.exit(0)
             )
             self.assertIsNone(DomainDecisionJournalReaderPort(stores=stores).get_decision_journal_entry("e"))
 
+    def test_bff_create_crash_retries_committed_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crash_code = (
+                "import os, sys\n"
+                "from services.control_plane.bff.agora.service import AgoraService\n"
+                "from services.control_plane.bff.governance.decision_journal_write_owner import build_decision_journal_write_owner\n"
+                "from services.control_plane.bff.models import OperatorIdentity\n"
+                "owner = build_decision_journal_write_owner(data_dir=sys.argv[1])\n"
+                "owner.record_create_idempotency = lambda **kwargs: os._exit(74)\n"
+                "AgoraService(journal_write_owner=owner).create_journal_entry(\n"
+                "    payload={'title': 'Initial', 'body': 'body'},\n"
+                "    identity=OperatorIdentity(operator_id='alice', roles=['operator'], mfa_verified=True),\n"
+                "    idempotency_key='request-1',\n"
+                "    x_idempotency_key=None,\n"
+                "    tenant_id='tenant',\n"
+                "    user_id='alice',\n"
+                ")\n"
+            )
+            child = subprocess.run(
+                [sys.executable, "-c", crash_code, tmp],
+                env=dict(os.environ, PYTHONPATH="."),
+                timeout=20,
+            )
+            self.assertEqual(child.returncode, 74)
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+            self.assertEqual(len(owner.stores.entries.list_all()), 1)
+            service = AgoraService(journal_write_owner=owner)
+            result = service.create_journal_entry(
+                payload={"title": "Initial", "body": "body"},
+                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                idempotency_key="request-1",
+                x_idempotency_key=None,
+                tenant_id="tenant",
+                user_id="alice",
+            )
+            self.assertTrue(result["meta"]["idempotency"]["replayed"])
+
 
 if __name__ == "__main__":
     unittest.main()

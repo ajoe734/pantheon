@@ -24,6 +24,7 @@ from pathlib import Path
 
 from services.governance.decision_journal import (
     CANONICAL_WRITE_AUTHORITY,
+    CoordinatingJsonGovernanceRecordStore,
     DecisionJournalCollisionError,
     DecisionJournalConcurrencyError,
     DecisionJournalValidationError,
@@ -1439,6 +1440,67 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
             observed[0].get("status") == "replayed" and final["title"] == "alice private",
             "Reader replayed rolled-back transaction: " + str(observed[0]) + "; final=" + str(final),
         )
+
+    def test_create_reader_must_not_publish_rolled_back_entry(self) -> None:
+        writer = build_decision_journal_stores(self.tmp.name)
+        reader = build_decision_journal_stores(self.tmp.name)
+        observed = []
+
+        def fail_outbox(event: Any) -> None:
+            observed.append(get_entry(reader, "entry", tenant_id="tenant-a", actor_id="alice"))
+            raise OSError("injected outbox failure")
+
+        writer.outbox.put = fail_outbox  # type: ignore[assignment]
+        with self.assertRaises(OSError):
+            create_entry(
+                writer,
+                entry_id="entry",
+                title="Initial",
+                body="body",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+        self.assertIsNone(observed[0], "Reader observed entry that subsequently rolled back")
+        self.assertEqual(reader.outbox.list_all(), [])
+
+    def test_before_snapshot_must_not_recursively_duplicate_history(self) -> None:
+        self._create()
+        for index in range(1, 10):
+            self._patch(str(index), f"title-{index}")
+        tx = self.stores.entries.get("entry")["_tx_history"][-1]
+        self.assertNotIn(
+            "_tx_history",
+            tx.get("before_entry", {}),
+            "Every old full history is recursively copied into each transaction",
+        )
+
+    def test_patch_audit_cannot_substitute_for_migration_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as source_tmp:
+            self._create()
+            self._patch("1", "patched")
+            source = CoordinatingJsonGovernanceRecordStore(
+                Path(source_tmp) / "legacy.json", id_fields=("id",)
+            )
+            row = get_entry(self.stores, "entry", tenant_id="tenant-a", actor_id="alice")
+            assert row is not None
+            source.put(row)
+
+            def reject_audit(record: Any) -> None:
+                raise OSError("migration audit unavailable")
+
+            self.stores.audit.put = reject_audit  # type: ignore[assignment]
+            report = JournalMigrationEngine(self.stores).run_migration(
+                [row],
+                target_tenant_id="tenant-a",
+                dry_run=False,
+                dispose_source=True,
+                source_store=source,
+            )
+            self.assertIsNotNone(
+                source.get("entry"),
+                "Source disposed without checksum-bound migration audit",
+            )
 
 
 if __name__ == "__main__":

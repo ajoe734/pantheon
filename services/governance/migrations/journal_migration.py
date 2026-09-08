@@ -132,22 +132,42 @@ class JournalMigrationEngine:
         entry_id: str,
         checksum: str,
         target_tenant_id: str,
+        *,
+        actor: Optional[str] = None,
+        user_id: Optional[str] = None,
+        action: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if self.destination_stores.audit is None:
             return None
+        valid_actions = {
+            "governance.decision_journal.migrated",
+            "governance.decision_journal.legacy_scoped",
+        }
+        if action:
+            valid_actions.add(action)
         try:
             records = self.destination_stores.audit.list_all()
             for rec in records:
                 if not isinstance(rec, dict):
+                    continue
+                rec_action = str(rec.get("action") or "").strip()
+                if rec_action not in valid_actions:
                     continue
                 target = rec.get("target") or {}
                 target_id = target.get("id") if isinstance(target, dict) else None
                 rec_id = target_id or rec.get("source_id") or rec.get("entry_id")
                 rec_tenant = str(rec.get("tenant_id") or rec.get("tenantId") or "").strip()
                 rec_checksum = rec.get("source_checksum")
+                if not rec_checksum or rec_checksum != checksum:
+                    continue
                 if rec_id == entry_id and rec_tenant == target_tenant_id:
-                    if rec_checksum is None or rec_checksum == checksum:
-                        return rec
+                    rec_actor = str(rec.get("actor_id") or rec.get("actorId") or "").strip()
+                    rec_user = str(rec.get("user_id") or rec.get("userId") or rec_actor).strip()
+                    if actor and rec_actor and rec_actor != actor:
+                        continue
+                    if user_id and rec_user and rec_user != user_id:
+                        continue
+                    return rec
         except Exception:
             pass
         return None
@@ -166,7 +186,9 @@ class JournalMigrationEngine:
     ) -> bool:
         if self.destination_stores.audit is None:
             return False
-        existing = self._find_migration_audit(entry_id, checksum, target_tenant_id)
+        existing = self._find_migration_audit(
+            entry_id, checksum, target_tenant_id, actor=actor, user_id=user_id, action=action
+        )
         if existing is not None:
             return True
         try:
@@ -189,7 +211,12 @@ class JournalMigrationEngine:
                 "disposed": disposed,
             }
             self.destination_stores.audit.put(audit_rec)
-            return self._find_migration_audit(entry_id, checksum, target_tenant_id) is not None
+            return (
+                self._find_migration_audit(
+                    entry_id, checksum, target_tenant_id, actor=actor, user_id=user_id, action=action
+                )
+                is not None
+            )
         except Exception:
             return False
 

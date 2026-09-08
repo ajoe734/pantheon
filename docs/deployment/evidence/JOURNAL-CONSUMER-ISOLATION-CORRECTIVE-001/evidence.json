@@ -11,7 +11,7 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Entry CAS commits atomically first with durable transaction history and before-entry snapshot, followed by secondary store commit (outbox and audit), after which idempotency is finalized with status succeeded. Readers and subsequent writers coordinate reads and recovery with live writer transaction outcome. While a writer holds bundle lock, readers read committed before-entry state, and concurrent retries return pending without falsely finalizing or replaying uncommitted CAS writes that subsequently roll back. Fabricated-data version/title and raw-key success fallbacks removed; crash recovery never finalizes with failed secondary writes."
+      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Entry CAS commits atomically first with durable transaction history and non-recursive before-entry snapshot (stripping _tx_history and _creation_outbox), followed by secondary store commit (outbox and audit), after which idempotency is finalized with status succeeded. Readers and subsequent writers coordinate reads and recovery with live writer transaction outcome. While a writer holds bundle lock, readers read committed before-entry state, and concurrent retries return pending without falsely finalizing or replaying uncommitted CAS writes that subsequently roll back. Fabricated-data version/title and raw-key success fallbacks removed; crash recovery never finalizes with failed secondary writes."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
@@ -19,7 +19,7 @@
     },
     "durable_outbox_streaming": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types with explicit tenant_id, actor_id, and user_id scoping. Creation includes its idempotency and outbox in recoverable commit: fresh-process retries after creation crash recover and emit the creation outbox event."
+      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types with explicit tenant_id, actor_id, and user_id scoping. Creation includes its idempotency and outbox under bundle_lock; readers cannot observe or publish provisional/aborted creates during outbox.put failures, and fresh-process retries after creation crash recover and emit the creation outbox event."
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
@@ -27,11 +27,11 @@
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: create_entry raises DecisionJournalCollisionError when a supplied ID collides with another principal's or tenant's record. AgoraService binds create replay durably to principal and request hash, surviving new service instances."
+      "implementation": "services/governance/decision_journal.py: create_entry raises DecisionJournalCollisionError when a supplied ID collides with another principal's or tenant's record. AgoraService and DecisionJournalOwnerAdapter bind create reservation and result durably to recoverable durable transaction; crashed creator reservations are safely reclaimed or recovered on retry without 409 idempotency conflict."
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal-bound durable migration audit before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -83,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 44,
+        "tests": 47,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 22,
+        "tests": 23,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -105,15 +105,23 @@
         "status": "PASSED"
       },
       {
+        "name": "/tmp/journal-review-f3d106ef.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
         "name": "/tmp/journal-review-e17c12e5.py",
-        "runner": "PYTHONPATH=. .venv-pantheon/bin/python",
+        "runner": ".venv-pantheon/bin/python",
         "tests": 3,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 88
+    "total_tests_passed": 96
   },
   "artifacts": [
     "services/governance/decision_journal.py",

@@ -29,6 +29,7 @@ from services.governance.decision_journal import (
     get_entry,
     list_entries,
     patch_entry,
+    _project,
 )
 
 
@@ -169,18 +170,80 @@ class DecisionJournalOwnerAdapter:
             user_id=user_id,
         )
 
+    def _recover_committed_entry_result(
+        self,
+        record: Dict[str, Any],
+        entry_id: Optional[str] = None,
+        raw_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_stores") or self._stores is None or not hasattr(self._stores, "entries"):
+            return None
+        target_id = entry_id or record.get("entry_id")
+        if not target_id:
+            all_entries = self._stores.entries.list_all()
+            rec_tenant = str(record.get("tenant_id") or "").strip()
+            rec_user = str(record.get("user_id") or record.get("actor_id") or "").strip()
+            for ent in all_entries:
+                if not isinstance(ent, dict):
+                    continue
+                e_tenant = str(ent.get("tenant_id") or ent.get("tenantId") or "").strip()
+                e_user = str(ent.get("userId") or ent.get("user_id") or ent.get("createdBy") or "").strip()
+                if (not rec_tenant or e_tenant == rec_tenant) and (not rec_user or e_user == rec_user):
+                    target_id = ent.get("id")
+                    break
+        if target_id:
+            persisted = self._stores.entries.get(str(target_id).strip())
+            if persisted is not None and isinstance(persisted, dict):
+                rec_tenant = str(record.get("tenant_id") or "").strip()
+                rec_user = str(record.get("user_id") or record.get("actor_id") or "").strip()
+                p_tenant = str(persisted.get("tenant_id") or persisted.get("tenantId") or "").strip()
+                p_user = str(persisted.get("userId") or persisted.get("user_id") or persisted.get("createdBy") or "").strip()
+                if rec_tenant and p_tenant and rec_tenant != p_tenant:
+                    return None
+                if rec_user and p_user and rec_user != p_user:
+                    return None
+                resolved_raw_key = raw_key or record.get("raw_idempotency_key") or ""
+                reconstructed = {
+                    "data": _project(persisted),
+                    "meta": {
+                        "snapshot_at": str(persisted.get("createdAt") or persisted.get("updatedAt") or ""),
+                        "idempotency": {"idempotencyKey": resolved_raw_key, "replayed": True},
+                        "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
+                    },
+                }
+                record_succeeded = {
+                    **record,
+                    "status": "succeeded",
+                    "result": reconstructed,
+                    "entry_id": str(target_id).strip(),
+                }
+                self._stores.idempotency.put(record_succeeded)
+                return reconstructed
+        return None
+
     def check_create_idempotency(
         self,
         *,
         scoped_key: str,
         request_hash: str,
+        entry_id: Optional[str] = None,
+        raw_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if not hasattr(self, "_stores") or self._stores is None or not hasattr(self._stores, "idempotency"):
             return None
         reservation = {
             "idempotency_key": scoped_key,
+            "raw_idempotency_key": raw_key,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "actor_id": user_id,
             "request_hash": request_hash,
+            "entry_id": entry_id,
             "status": "pending",
+            "created_pid": os.getpid(),
+            "created_at": time.time(),
             "result": None,
         }
         reserved, existing = self._stores.idempotency.insert_if_absent(reservation)
@@ -192,6 +255,27 @@ class DecisionJournalOwnerAdapter:
 
         status = str(existing.get("status") or "")
         if status == "pending":
+            target_id = entry_id or existing.get("entry_id")
+            if target_id and self._stores.entries.get(target_id) is not None:
+                recovered = self._recover_committed_entry_result(existing, entry_id=target_id, raw_key=raw_key)
+                if recovered is not None:
+                    return {"conflict": False, "result": recovered}
+
+            created_pid = existing.get("created_pid")
+            is_dead = False
+            if created_pid and created_pid != os.getpid():
+                try:
+                    os.kill(created_pid, 0)
+                except ProcessLookupError:
+                    is_dead = True
+                except PermissionError:
+                    pass
+
+            if is_dead:
+                # Previous creator crashed before durable entry was committed: reclaim reservation
+                self._stores.idempotency.put(reservation)
+                return None
+
             return {"conflict": False, "pending": True, "scoped_key": scoped_key}
 
         if status == "failed":
@@ -205,6 +289,10 @@ class DecisionJournalOwnerAdapter:
         *,
         scoped_key: str,
         request_hash: str,
+        entry_id: Optional[str] = None,
+        raw_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         timeout: float = 10.0,
     ) -> Dict[str, Any]:
         deadline = time.monotonic() + timeout
@@ -218,7 +306,32 @@ class DecisionJournalOwnerAdapter:
                     return {"conflict": False, "result": record.get("result")}
                 if status == "failed":
                     return {"conflict": False, "failed": True}
+
+                target_id = entry_id or record.get("entry_id")
+                if target_id and self._stores.entries.get(target_id) is not None:
+                    recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
+                    if recovered is not None:
+                        return {"conflict": False, "result": recovered}
+
+                created_pid = record.get("created_pid")
+                if created_pid and created_pid != os.getpid():
+                    try:
+                        os.kill(created_pid, 0)
+                    except ProcessLookupError:
+                        return {"conflict": False, "failed": True}
+                    except PermissionError:
+                        pass
             time.sleep(0.005)
+
+        # Final deadline check
+        record = self._stores.idempotency.get(scoped_key)
+        if record is not None:
+            target_id = entry_id or record.get("entry_id")
+            if target_id and self._stores.entries.get(target_id) is not None:
+                recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
+                if recovered is not None:
+                    return {"conflict": False, "result": recovered}
+
         return {"conflict": True, "error": "timed out waiting for concurrent idempotency"}
 
     def fail_create_idempotency(
@@ -245,7 +358,9 @@ class DecisionJournalOwnerAdapter:
         request_hash: str,
         result: Dict[str, Any],
         created_at: str,
+        entry_id: Optional[str] = None,
     ) -> None:
+        rec_entry_id = entry_id or (result.get("data") or {}).get("id")
         self._stores.idempotency.put({
             "idempotency_key": scoped_key,
             "raw_idempotency_key": raw_key,
@@ -253,6 +368,7 @@ class DecisionJournalOwnerAdapter:
             "user_id": user_id,
             "actor_id": user_id,
             "request_hash": request_hash,
+            "entry_id": rec_entry_id,
             "status": "succeeded",
             "result": result,
             "created_at": created_at,
