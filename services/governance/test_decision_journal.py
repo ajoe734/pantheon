@@ -620,6 +620,130 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertEqual(report.disposition_evidence["total_disposed"], 1)
         self.assertEqual(len(report.inventory), 1)
 
+    def test_migration_preserves_agora_context_refs_category_version_and_timestamps(self) -> None:
+        source_path = Path(self.tmp_dir.name) / "agora_source_preservation.json"
+        source = CoordinatingJsonGovernanceRecordStore(source_path, id_fields=("id",))
+        agora_row = {
+            "id": "agora-legacy-001",
+            "title": "Alpha Strategy Allocation",
+            "decision": "Allocate 25% to alpha momentum strategy",
+            "category": "risk_management",
+            "contextRefs": [
+                {"type": "strategy", "id": "strat-alpha-99"},
+                {"type": "persona", "id": "persona-risk-officer"},
+            ],
+            "tags": ["risk", "allocation"],
+            "linkedStrategyIds": ["strat-alpha-99"],
+            "linkedPersonaIds": ["persona-risk-officer"],
+            "visibility": "team",
+            "version": 5,
+            "createdAt": "2026-08-15T09:30:00Z",
+            "updatedAt": "2026-09-02T14:45:00Z",
+            "author": "carol",
+            "tenant_id": "tenant-agora-01",
+        }
+        source.put(agora_row)
+
+        engine = JournalMigrationEngine(self.stores)
+        report = engine.run_migration(
+            [agora_row],
+            target_tenant_id="tenant-agora-01",
+            dry_run=False,
+            dispose_source=True,
+            source_store=source,
+        )
+
+        # 1. Successful migration and durable disposal of legacy source
+        self.assertEqual(report.total_migrated, 1)
+        self.assertEqual(report.total_conflicts, 0)
+        self.assertIsNone(source.get("agora-legacy-001"))
+        self.assertTrue(report.disposition_evidence["disposed"])
+        self.assertEqual(report.disposition_evidence["total_disposed"], 1)
+
+        # 2. Complete parity check
+        parity_ok, discrepancies = verify_migration_parity([agora_row], self.stores, "tenant-agora-01")
+        self.assertTrue(parity_ok, f"Discrepancies found: {discrepancies}")
+
+        # 3. Exact field preservation on readback
+        dest = get_entry(self.stores, "agora-legacy-001", tenant_id="tenant-agora-01", actor_id="carol")
+        self.assertIsNotNone(dest)
+        self.assertEqual(dest["id"], "agora-legacy-001")
+        self.assertEqual(dest["title"], "Alpha Strategy Allocation")
+        self.assertEqual(dest["body"], "Allocate 25% to alpha momentum strategy")
+        self.assertEqual(dest["category"], "risk_management")
+        self.assertEqual(dest["contextRefs"], agora_row["contextRefs"])
+        self.assertEqual(dest["version"], 5)
+        self.assertEqual(dest["createdAt"], "2026-08-15T09:30:00Z")
+        self.assertEqual(dest["updatedAt"], "2026-09-02T14:45:00Z")
+        self.assertEqual(dest["tags"], ["risk", "allocation"])
+        self.assertEqual(dest["linkedStrategyIds"], ["strat-alpha-99"])
+        self.assertEqual(dest["linkedPersonaIds"], ["persona-risk-officer"])
+        self.assertEqual(dest["visibility"], "team")
+
+        # 4. Fresh-reader parity check via newly instantiated stores from disk
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        fresh_dest = get_entry(fresh, "agora-legacy-001", tenant_id="tenant-agora-01", actor_id="carol")
+        self.assertIsNotNone(fresh_dest)
+        self.assertEqual(fresh_dest["category"], "risk_management")
+        self.assertEqual(fresh_dest["contextRefs"], agora_row["contextRefs"])
+        self.assertEqual(fresh_dest["version"], 5)
+        self.assertEqual(fresh_dest["createdAt"], "2026-08-15T09:30:00Z")
+        self.assertEqual(fresh_dest["updatedAt"], "2026-09-02T14:45:00Z")
+        fresh_parity, fresh_disc = verify_migration_parity([agora_row], fresh, "tenant-agora-01")
+        self.assertTrue(fresh_parity, f"Fresh reader parity discrepancies: {fresh_disc}")
+
+        # 5. Resumability check skips identical row cleanly
+        rerun_report = engine.run_migration(
+            [agora_row],
+            target_tenant_id="tenant-agora-01",
+            dry_run=False,
+            dispose_source=True,
+            source_store=source,
+        )
+        self.assertEqual(rerun_report.total_skipped, 1)
+        self.assertEqual(rerun_report.total_migrated, 0)
+        self.assertEqual(rerun_report.total_conflicts, 0)
+
+        # 6. Fidelity loss detection retains source store on incomplete fidelity (no source disposal)
+        loss_row = {
+            "id": "agora-loss-002",
+            "title": "Loss Candidate",
+            "body": "Must retain source on loss",
+            "category": "market_ops",
+            "contextRefs": [{"type": "market", "id": "mkt-spx"}],
+            "version": 4,
+            "createdAt": "2026-09-01T00:00:00Z",
+            "updatedAt": "2026-09-05T00:00:00Z",
+            "author": "carol",
+            "tenant_id": "tenant-agora-01",
+        }
+        source.put(loss_row)
+        # Pre-populate destination with degraded row (dropped contextRefs, reset version)
+        create_entry(
+            self.stores,
+            entry_id="agora-loss-002",
+            title="Loss Candidate",
+            body="Must retain source on loss",
+            actor_id="carol",
+            tenant_id="tenant-agora-01",
+            created_at="2026-09-01T00:00:00Z",
+            version=1,
+        )
+
+        loss_report = engine.run_migration(
+            [loss_row],
+            target_tenant_id="tenant-agora-01",
+            dry_run=False,
+            dispose_source=True,
+            source_store=source,
+        )
+        self.assertEqual(loss_report.total_conflicts, 1)
+        self.assertEqual(loss_report.total_migrated, 0)
+        # Source record MUST NOT be disposed on incomplete fidelity
+        self.assertIsNotNone(source.get("agora-loss-002"))
+        self.assertFalse(loss_report.items[0]["disposed"])
+        self.assertEqual(loss_report.items[0]["status"], "conflict")
+
     def test_concurrent_cas_conflict_handling(self) -> None:
         create_entry(
             self.stores,

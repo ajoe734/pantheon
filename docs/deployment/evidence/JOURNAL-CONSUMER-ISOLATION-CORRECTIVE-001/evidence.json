@@ -31,7 +31,7 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit. CORRECTIVE (PR #5667 review head 8ee88255d, commit a742e3ebf): journal_migration.py previously performed an unconditional entries.put on legacy migration destination without CAS or snapshot revalidation, allowing concurrent tenant migrations to race. Fixed by claiming the legacy row with compare_and_set against the exact read snapshot so losing concurrent migrations report conflicts."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit. CORRECTIVE (PR #5667 review head 8ee88255d, commit a742e3ebf): journal_migration.py previously performed an unconditional entries.put on legacy migration destination without CAS or snapshot revalidation, allowing concurrent tenant migrations to race. Fixed by claiming the legacy row with compare_and_set against the exact read snapshot so losing concurrent migrations report conflicts. CORRECTIVE (PR #5667 review head 2baf1d76a): journal_migration.py previously omitted Agora category, contextRefs, version, and updatedAt from migration mapping, compute_journal_row_checksum(), and verify_migration_parity(), causing accepted migrations to reset version/timestamps and dispose source stores while dropping contextRefs and category. Fixed compute_journal_row_checksum() and verify_migration_parity() to deterministically normalize and assert category, contextRefs, version, createdAt, updatedAt, tags, and linked IDs, passing all preserved fields through create_entry() and DecisionJournalOwnerAdapter.create_decision_journal_entry(). On incomplete fidelity or readback parity mismatch, migration detects conflict and retains source store without disposal; repro script /tmp/journal-review-2baf1d76-migration.py passes exit 0; regression test test_migration_preserves_agora_context_refs_category_version_and_timestamps added to test_decision_journal.py."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -224,16 +224,25 @@
         "note": "Independent reviewer repro for PR #5667 head df1f88e26 finding (agora_daily_brief missing requested_tenant_id and X-Pantheon-Tenant support); rerun clean after fix in router.py and test_decision_journal_write_owner.py."
       },
       {
-        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py (post-fix rerun)",
-        "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 115,
+        "name": "/tmp/journal-review-2baf1d76-migration.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 1,
         "failures": 0,
         "errors": 0,
         "status": "PASSED",
-        "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after router.py daily tenant scope fix; includes new test_daily_obeys_authorized_requested_tenant."
+        "note": "Independent reviewer repro for PR #5667 head 2baf1d76a P1 finding (legacy contextRefs/category/version/timestamps fidelity loss and improper disposal); rerun clean after fixes in journal_migration.py and decision_journal.py."
+      },
+      {
+        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py (post-fix rerun)",
+        "runner": ".venv-pantheon/bin/python -m pytest",
+        "tests": 116,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED",
+        "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after migration fidelity and write owner fixes; includes new test_migration_preserves_agora_context_refs_category_version_and_timestamps."
       }
     ],
-    "total_tests_passed": 263
+    "total_tests_passed": 265
   },
   "artifacts": [
     "services/governance/decision_journal.py",
@@ -246,6 +255,7 @@
     "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
     "services/control-plane/bff/ports/read_surface_ports.py",
     "services/control-plane/bff/ports/operations_consultation.py",
+    "services/control-plane/bff/models.py",
     "services/control-plane/bff/main.py",
     "services/agora/store.py",
     "services/agora/service.py",

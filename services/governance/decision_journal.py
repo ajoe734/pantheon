@@ -198,8 +198,10 @@ _PATCHABLE_FIELDS: Sequence[str] = (
     "linkedStrategyIds",
     "linkedPersonaIds",
     "visibility",
+    "category",
+    "contextRefs",
 )
-_LIST_FIELDS = {"tags", "linkedStrategyIds", "linkedPersonaIds"}
+_LIST_FIELDS = {"tags", "linkedStrategyIds", "linkedPersonaIds", "contextRefs"}
 
 _MAX_CAS_ATTEMPTS = 8
 _TITLE_MAX_LENGTH = 160
@@ -355,7 +357,7 @@ def _project(record: Dict[str, Any]) -> Dict[str, Any]:
     tenant_val = str(record.get("tenant_id") or record.get("tenantId") or "")
     user_val = str(record.get("user_id") or record.get("userId") or record.get("createdBy") or "")
     created_by_val = str(record.get("createdBy") or record.get("actor_id") or user_val or "")
-    return {
+    res = {
         "id": str(record.get("id") or ""),
         "title": str(record.get("title") or ""),
         "body": str(record.get("body") or ""),
@@ -364,7 +366,7 @@ def _project(record: Dict[str, Any]) -> Dict[str, Any]:
         "linkedPersonaIds": list(record.get("linkedPersonaIds") or []),
         "visibility": str(record.get("visibility") or "private"),
         "createdAt": str(record.get("createdAt") or ""),
-        "updatedAt": str(record.get("updatedAt") or ""),
+        "updatedAt": str(record.get("updatedAt") or record.get("createdAt") or ""),
         "version": int(record.get("version") or 1),
         "createdBy": created_by_val,
         "tenantId": tenant_val,
@@ -374,6 +376,12 @@ def _project(record: Dict[str, Any]) -> Dict[str, Any]:
         "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
         "persistenceMode": str(record.get("persistenceMode") or _persistence_mode()),
     }
+    if "category" in record and record.get("category") is not None:
+        res["category"] = str(record["category"])
+    raw_refs = record.get("contextRefs") if "contextRefs" in record else record.get("context_refs")
+    if raw_refs is not None:
+        res["contextRefs"] = list(raw_refs)
+    return res
 
 
 def domain_creation_idempotency_key(
@@ -599,6 +607,12 @@ def create_entry(
     linked_strategy_ids: Optional[List[str]] = None,
     linked_persona_ids: Optional[List[str]] = None,
     visibility: str = "private",
+    category: Optional[str] = None,
+    context_refs: Optional[List[Dict[str, Any]]] = None,
+    contextRefs: Optional[List[Dict[str, Any]]] = None,
+    version: Optional[int] = None,
+    updated_at: Optional[str] = None,
+    updatedAt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a decision journal entry, persisted through the owner store.
 
@@ -618,7 +632,40 @@ def create_entry(
         clean_actor = str(actor_id or "").strip()
         clean_user = str(user_id or clean_actor).strip()
 
+        actual_version = int(version) if version is not None else 1
+        actual_updated_at = str(updated_at or updatedAt or created_at)
+        actual_category = str(category).strip() if category is not None else None
+        actual_context_refs = None
+        if context_refs is not None:
+            actual_context_refs = list(context_refs)
+        elif contextRefs is not None:
+            actual_context_refs = list(contextRefs)
+
         event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
+        creation_data = {
+            "id": clean_id,
+            "title": _validate_title(title),
+            "body": _validate_body(body),
+            "tags": list(tags or []),
+            "linkedStrategyIds": list(linked_strategy_ids or []),
+            "linkedPersonaIds": list(linked_persona_ids or []),
+            "visibility": str(visibility or "private"),
+            "createdAt": created_at,
+            "updatedAt": actual_updated_at,
+            "version": actual_version,
+            "createdBy": clean_actor,
+            "tenantId": clean_tenant,
+            "tenant_id": clean_tenant,
+            "userId": clean_user,
+            "user_id": clean_user,
+            "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+            "persistenceMode": _persistence_mode(),
+        }
+        if actual_category is not None:
+            creation_data["category"] = actual_category
+        if actual_context_refs is not None:
+            creation_data["contextRefs"] = actual_context_refs
+
         creation_outbox = {
             "event_id": event_id,
             "id": event_id,
@@ -629,25 +676,7 @@ def create_entry(
             "actor_id": clean_actor,
             "user_id": clean_user,
             "timestamp": created_at,
-            "data": {
-                "id": clean_id,
-                "title": _validate_title(title),
-                "body": _validate_body(body),
-                "tags": list(tags or []),
-                "linkedStrategyIds": list(linked_strategy_ids or []),
-                "linkedPersonaIds": list(linked_persona_ids or []),
-                "visibility": str(visibility or "private"),
-                "createdAt": created_at,
-                "updatedAt": created_at,
-                "version": 1,
-                "createdBy": clean_actor,
-                "tenantId": clean_tenant,
-                "tenant_id": clean_tenant,
-                "userId": clean_user,
-                "user_id": clean_user,
-                "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
-                "persistenceMode": _persistence_mode(),
-            },
+            "data": creation_data,
         }
 
         create_idem_key = domain_creation_idempotency_key(
@@ -666,8 +695,8 @@ def create_entry(
             "linkedPersonaIds": list(linked_persona_ids or []),
             "visibility": str(visibility or "private"),
             "createdAt": created_at,
-            "updatedAt": created_at,
-            "version": 1,
+            "updatedAt": actual_updated_at,
+            "version": actual_version,
             "createdBy": clean_actor,
             "actor_id": clean_actor,
             "tenant_id": clean_tenant,
@@ -679,6 +708,10 @@ def create_entry(
             "_creation_outbox": creation_outbox,
             "_tx_history": [],
         }
+        if actual_category is not None:
+            record["category"] = actual_category
+        if actual_context_refs is not None:
+            record["contextRefs"] = actual_context_refs
         inserted, canonical = stores.entries.insert_if_absent(record)
         if not inserted:
             # Existing record found. Verify ownership: must match tenant and actor/user
@@ -1371,6 +1404,8 @@ def patch_entry(
                     candidate["title"] = _validate_title(candidate["title"])
                 if "body" in patch and patch["body"] is not None:
                     candidate["body"] = _validate_body(candidate["body"])
+                if "context_refs" in patch and "contextRefs" not in patch:
+                    candidate["contextRefs"] = list(patch["context_refs"] or [])
                 candidate["updatedAt"] = patched_at
                 candidate["version"] = int(before.get("version") or 0) + 1
                 candidate["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY

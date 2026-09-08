@@ -142,6 +142,10 @@ class DecisionJournalOwnerAdapter:
             visibility=str(payload.get("visibility") or "private"),
             tenant_id=resolved_tenant,
             user_id=resolved_user,
+            category=payload.get("category"),
+            context_refs=payload.get("contextRefs") or payload.get("context_refs"),
+            version=payload.get("version"),
+            updated_at=payload.get("updatedAt") or payload.get("updated_at"),
         )
 
     def patch_decision_journal_entry(

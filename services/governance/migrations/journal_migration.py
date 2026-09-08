@@ -26,13 +26,34 @@ from services.governance.decision_journal import (
 
 def compute_journal_row_checksum(record: Dict[str, Any]) -> str:
     """Compute a deterministic SHA-256 checksum of journal content fields."""
+    category = str(record.get("category") or "").strip()
+    raw_refs = record.get("contextRefs") if "contextRefs" in record else record.get("context_refs")
+    if raw_refs:
+        norm_refs = []
+        for ref in raw_refs:
+            if isinstance(ref, dict):
+                norm_refs.append({str(k): ref[k] for k in sorted(ref.keys())})
+            else:
+                norm_refs.append(ref)
+    else:
+        norm_refs = []
+
+    version = int(record.get("version") or 1)
+    created_at = str(record.get("createdAt") or record.get("created_at") or "2026-09-06T00:00:00Z").strip()
+    updated_at = str(record.get("updatedAt") or record.get("updated_at") or created_at).strip()
+
     normalized = {
         "title": str(record.get("title") or "").strip(),
         "body": str(record.get("body") or record.get("decision") or "").strip(),
         "tags": sorted(list(record.get("tags") or [])),
         "visibility": str(record.get("visibility") or "private").strip().lower(),
-        "linkedStrategyIds": sorted(list(record.get("linkedStrategyIds") or [])),
-        "linkedPersonaIds": sorted(list(record.get("linkedPersonaIds") or [])),
+        "linkedStrategyIds": sorted(list(record.get("linkedStrategyIds") or record.get("linked_strategy_ids") or [])),
+        "linkedPersonaIds": sorted(list(record.get("linkedPersonaIds") or record.get("linked_persona_ids") or [])),
+        "category": category,
+        "contextRefs": norm_refs,
+        "version": version,
+        "createdAt": created_at,
+        "updatedAt": updated_at,
     }
     dumped = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
@@ -253,6 +274,11 @@ class JournalMigrationEngine:
             ).strip()
             user_id = str(record.get("userId") or record.get("user_id") or actor).strip()
             created_at = str(record.get("createdAt") or record.get("created_at") or "2026-09-06T00:00:00Z")
+            updated_at = str(record.get("updatedAt") or record.get("updated_at") or created_at)
+            category = record.get("category")
+            raw_refs = record.get("contextRefs") if "contextRefs" in record else record.get("context_refs")
+            context_refs = list(raw_refs) if raw_refs is not None else None
+            version = int(record.get("version")) if record.get("version") is not None else 1
 
             report.inventory.append({
                 "id": entry_id,
@@ -351,6 +377,25 @@ class JournalMigrationEngine:
                     continue
 
                 if existing_tenant == target_tenant_id:
+                    parity_ok, parity_disc = verify_migration_parity([record], self.destination_stores, target_tenant_id)
+                    if not parity_ok:
+                        report.total_conflicts += 1
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="conflict",
+                                    error=f"Destination parity mismatch: {'; '.join(parity_disc)}",
+                                    disposed=False,
+                                )
+                            )
+                        )
+                        continue
                     report.total_skipped += 1
                     disposed_status = False
                     if dispose_source and not dry_run and source_store is not None:
@@ -410,7 +455,14 @@ class JournalMigrationEngine:
                         migrated_row["actor_id"] = actor
                         migrated_row["userId"] = user_id
                         migrated_row["user_id"] = user_id
-                        migrated_row["updatedAt"] = created_at
+                        migrated_row["createdAt"] = created_at
+                        migrated_row["updatedAt"] = updated_at
+                        if category is not None:
+                            migrated_row["category"] = category
+                        if context_refs is not None:
+                            migrated_row["contextRefs"] = context_refs
+                        if record.get("version") is not None:
+                            migrated_row["version"] = version
                         migrated_row["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
 
                         # Atomic legacy claim: the destination row must still match the
@@ -474,8 +526,12 @@ class JournalMigrationEngine:
 
                         # Readback and checksum verification with destination scope
                         readback = get_entry(self.destination_stores, entry_id, tenant_id=target_tenant_id, actor_id=actor, user_id=user_id)
-                        if readback is None or compute_journal_row_checksum(readback) != checksum:
+                        parity_ok, parity_disc = verify_migration_parity([record], self.destination_stores, target_tenant_id)
+                        if readback is None or compute_journal_row_checksum(readback) != checksum or not parity_ok:
                             report.total_conflicts += 1
+                            error_msg = "Destination readback/checksum verification failed after scoping legacy row"
+                            if not parity_ok:
+                                error_msg += f": {'; '.join(parity_disc)}"
                             report.items.append(
                                 asdict(
                                     JournalMigrationItem(
@@ -486,7 +542,7 @@ class JournalMigrationEngine:
                                         target_tenant=target_tenant_id,
                                         target_actor=actor,
                                         status="conflict",
-                                        error="Destination readback/checksum verification failed after scoping legacy row",
+                                        error=error_msg,
                                         disposed=False,
                                     )
                                 )
@@ -542,7 +598,8 @@ class JournalMigrationEngine:
                     dest_user = str(dest_entry.get("userId") or dest_entry.get("user_id") or dest_actor).strip()
                     if dest_tenant == target_tenant_id and \
                        (not dest_actor or dest_actor == actor or dest_user == user_id):
-                        if compute_journal_row_checksum(dest_entry) == checksum:
+                        parity_ok, parity_disc = verify_migration_parity([record], self.destination_stores, target_tenant_id)
+                        if compute_journal_row_checksum(dest_entry) == checksum and parity_ok:
                             report.total_skipped += 1
                             disposed_status = False
                             if dispose_source and not dry_run and source_store is not None:
@@ -605,10 +662,14 @@ class JournalMigrationEngine:
                     tenant_id=target_tenant_id,
                     user_id=user_id,
                     created_at=created_at,
+                    updated_at=updated_at,
                     tags=tags,
-                    linked_strategy_ids=list(record.get("linkedStrategyIds") or []),
-                    linked_persona_ids=list(record.get("linkedPersonaIds") or []),
+                    linked_strategy_ids=list(record.get("linkedStrategyIds") or record.get("linked_strategy_ids") or []),
+                    linked_persona_ids=list(record.get("linkedPersonaIds") or record.get("linked_persona_ids") or []),
                     visibility=visibility,
+                    category=category,
+                    context_refs=context_refs,
+                    version=version,
                 )
                 if self.destination_stores.audit is not None:
                     audit_id = f"aud-mig-{uuid.uuid4().hex[:12]}"
@@ -633,8 +694,12 @@ class JournalMigrationEngine:
 
                 # Readback and checksum verification
                 readback = get_entry(self.destination_stores, entry_id, tenant_id=target_tenant_id, actor_id=actor, user_id=user_id)
-                if readback is None or compute_journal_row_checksum(readback) != checksum:
+                parity_ok, parity_disc = verify_migration_parity([record], self.destination_stores, target_tenant_id)
+                if readback is None or compute_journal_row_checksum(readback) != checksum or not parity_ok:
                     report.total_conflicts += 1
+                    error_msg = "Destination readback/checksum verification failed after migration"
+                    if not parity_ok:
+                        error_msg += f": {'; '.join(parity_disc)}"
                     report.items.append(
                         asdict(
                             JournalMigrationItem(
@@ -645,7 +710,7 @@ class JournalMigrationEngine:
                                 target_tenant=target_tenant_id,
                                 target_actor=actor,
                                 status="conflict",
-                                error="Destination readback/checksum verification failed after migration",
+                                error=error_msg,
                                 disposed=False,
                             )
                         )
@@ -724,5 +789,79 @@ def verify_migration_parity(
         src_vis = str(record.get("visibility") or "private").strip().lower()
         if dest.get("visibility") != src_vis:
             discrepancies.append(f"Visibility mismatch for {entry_id}")
+
+        # Category parity
+        src_category = record.get("category")
+        if src_category is not None:
+            if dest.get("category") != src_category:
+                discrepancies.append(
+                    f"Category mismatch for {entry_id}: expected {src_category!r}, got {dest.get('category')!r}"
+                )
+        elif dest.get("category") is not None:
+            discrepancies.append(
+                f"Category mismatch for {entry_id}: expected None, got {dest.get('category')!r}"
+            )
+
+        # ContextRefs parity
+        raw_refs = record.get("contextRefs") if "contextRefs" in record else record.get("context_refs")
+        src_refs = list(raw_refs) if raw_refs is not None else None
+        dest_refs = dest.get("contextRefs")
+        if src_refs is not None:
+            if dest_refs != src_refs:
+                discrepancies.append(
+                    f"ContextRefs mismatch for {entry_id}: expected {src_refs!r}, got {dest_refs!r}"
+                )
+        elif dest_refs is not None:
+            discrepancies.append(
+                f"ContextRefs mismatch for {entry_id}: expected None, got {dest_refs!r}"
+            )
+
+        # Version parity
+        src_version = int(record["version"]) if record.get("version") is not None else 1
+        dest_version = int(dest.get("version") or 1)
+        if dest_version != src_version:
+            discrepancies.append(
+                f"Version mismatch for {entry_id}: expected {src_version!r}, got {dest_version!r}"
+            )
+
+        # Timestamps parity
+        src_created = str(record.get("createdAt") or record.get("created_at") or "").strip()
+        if src_created:
+            dest_created = str(dest.get("createdAt") or "").strip()
+            if dest_created != src_created:
+                discrepancies.append(
+                    f"CreatedAt mismatch for {entry_id}: expected {src_created!r}, got {dest.get('createdAt')!r}"
+                )
+
+        src_updated = str(record.get("updatedAt") or record.get("updated_at") or src_created).strip()
+        if src_updated:
+            dest_updated = str(dest.get("updatedAt") or "").strip()
+            if dest_updated != src_updated:
+                discrepancies.append(
+                    f"UpdatedAt mismatch for {entry_id}: expected {src_updated!r}, got {dest.get('updatedAt')!r}"
+                )
+
+        # Tags parity
+        src_tags = list(record.get("tags") or [])
+        dest_tags = list(dest.get("tags") or [])
+        if dest_tags != src_tags:
+            discrepancies.append(
+                f"Tags mismatch for {entry_id}: expected {src_tags!r}, got {dest_tags!r}"
+            )
+
+        # Linked IDs parity
+        src_strategies = list(record.get("linkedStrategyIds") or record.get("linked_strategy_ids") or [])
+        dest_strategies = list(dest.get("linkedStrategyIds") or [])
+        if dest_strategies != src_strategies:
+            discrepancies.append(
+                f"LinkedStrategyIds mismatch for {entry_id}: expected {src_strategies!r}, got {dest_strategies!r}"
+            )
+
+        src_personas = list(record.get("linkedPersonaIds") or record.get("linked_persona_ids") or [])
+        dest_personas = list(dest.get("linkedPersonaIds") or [])
+        if dest_personas != src_personas:
+            discrepancies.append(
+                f"LinkedPersonaIds mismatch for {entry_id}: expected {src_personas!r}, got {dest_personas!r}"
+            )
 
     return (len(discrepancies) == 0, discrepancies)
