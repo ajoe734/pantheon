@@ -2,8 +2,8 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "MGMT-READ-001",
   "base_ref": "dev@0b85363e45618b632ff1f791e79d3ed67ecb482f",
-  "prior_head": "ddae71d1ce4d48fbfdc3e5818eebefcb1f0c06b6",
-  "prior_review_decision": "REJECT (PR #5698 exact head ddae71d1ce4d48fbfdc3e5818eebefcb1f0c06b6, manifest blob c3ec1a844796de1566ad4c76959730f00ed57cff): (P1) main.py built observations before tenant filtering and service.py selected the first global record's provenance, so a tenant-a context could carry tenant-b owner/source_version/correlation_id even at runtime_count=0. (P1) service.py's get_context_telemetry_summary overwrote successful telemetry backfill/replay provenance with owner=runtime_id, source_kind=live, source_version/correlation_id=None, observed_at=now, freshness=0. (P1) service.py probed domain surface status separately before the actual list read; a provider that answered the probe successfully and then failed on the real read (error swallowed inside the port) was reported as an empty ok/live row instead of failing closed. (P1) main.py ignored non-telemetry owner failures when aggregating portfolio_book/persona_fleet status (e.g. runtime owner raising while pools/personas existed still reported status=ok).",
+  "prior_head": "8e79502c5c27ab3dc182a8f7a1f454dd18781a6d",
+  "prior_review_decision": "REJECT (PR #5698 exact head 8e79502c5c27ab3dc182a8f7a1f454dd18781a6d, manifest blob 3feb068712852bf995def730e4ee2e6c729bed11): (P1) a nonempty owner projection whose record itself carried status=unavailable/source_kind=unavailable/degradation_reason=owner offline was promoted to status=ok and lost its degradation_reason in both _typed_context_list and get_context_telemetry_summary, because both always forced status=ok (or the empty-vs-nonempty-derived status) once any provenance record was found, ignoring the record's own status/degradation_reason fields. (P1) _context_observation fabricated observed_at=now()/freshness_seconds=0 whenever a caller (including backfill records with observed_at=None, no-provenance records, and unavailable reads) passed observed_at=None, instead of preserving unknown observation time/freshness as null. (P2) when the real RuntimePort provider answered a status probe successfully and then failed on the actual read (error swallowed inside the port, returning an empty list), _typed_context_list's no-provenance fallback returned status=degraded/source_kind=live/degradation_reason=None/freshness=0, reading as a healthy live observation instead of an explained degradation tied to that read. Earlier prior_head ddae71d1ce4d48fbfdc3e5818eebefcb1f0c06b6 was rejected for: (P1) main.py built observations before tenant filtering and service.py selected the first global record's provenance, so a tenant-a context could carry tenant-b owner/source_version/correlation_id even at runtime_count=0. (P1) service.py's get_context_telemetry_summary overwrote successful telemetry backfill/replay provenance with owner=runtime_id, source_kind=live, source_version/correlation_id=None, observed_at=now, freshness=0. (P1) service.py probed domain surface status separately before the actual list read; a provider that answered the probe successfully and then failed on the real read (error swallowed inside the port) was reported as an empty ok/live row instead of failing closed. (P1) main.py ignored non-telemetry owner failures when aggregating portfolio_book/persona_fleet status (e.g. runtime owner raising while pools/personas existed still reported status=ok).",
   "depends_on": "LOOP-TRUTH-001 (done), DOMAIN-WRITERS-001 (done)",
   "normative_plan": "SD sec7 ManagementObservation row shape and Management AI product/development boundary, SA invariants 11-12 and ADR-01/ADR-08; pkt-pantheon-structural-closure-functional-v2-20260903",
   "implementation": {
@@ -17,6 +17,7 @@
     "summary": "Management AI context collection (_mgmt_nl_collect_context in main.py) previously reached the Management domain by calling the module-global ReadSurfacePorts object (read_store.list_runtime_bindings/list_capital_pools/list_incidents/list_evolution_decisions/get_telemetry_summary) directly -- generic store access bypassing the purpose-built ManagementService. Replaced every such call with new purpose-built ManagementService context accessors (get_context_runtime_bindings, get_context_capital_pools, get_context_incidents, get_context_evolution_decisions, get_context_telemetry_summary), instantiated once as module-level _management_ai_context_service bound to the same app_deps.read_surface used by the Management read-model routers. Each accessor returns (items, ManagementObservation) instead of a bare list: an unavailable or failing domain now returns an explicit typed degraded row (source_kind=unavailable, degradation_reason set) rather than an ad hoc {\"status\": \"unavailable\"} dict or a silently empty list, and the row is threaded into the NL context surfaces payload (owner_observation / owner_observations) so unavailable owners are never silently omitted.",
     "post_reject_fix_summary": "Addressed the three P1 defects from the first independent reject: (1) _typed_context_list now resolves each subject's real domain surface status via ReadSurfacePorts.get_surface_status() (persona_capital_runtime.runtime/capital/evolution.surfaces.evolution_decisions) before trusting a non-raising empty list; an unconfigured/provider-failed owner is reported status=unavailable even though the underlying port call itself did not raise (subjects with no such upstream signal, e.g. incidents, keep the prior try/except-based inference, documented in _DOMAIN_SURFACE_STATUS_PATH). (2) _context_observation is now built through the previously-unused ManagementObservation pydantic model (model_dump()) instead of a hand-rolled dict, and _typed_context_list inspects returned records for real owner/source_kind/source_version/observed_at/correlation_id provenance (via _record_provenance) and preserves it verbatim -- including computing freshness_seconds from the real observed_at instead of always stamping now()/freshness=0 or promoting replay/backfill to live. (3) get_context_telemetry_summary now returns (summary, ManagementObservation) instead of swallowing exceptions into None; _mgmt_nl_collect_context's portfolio branch aggregates every telemetry observation into owner_observations and sets portfolio_book status=degraded whenever any telemetry read failed, instead of staying ok solely because pools/runtime bindings existed.",
     "second_post_reject_fix_summary": "Addressed the four P1 defects from the second independent reject: (1) _typed_context_list now accepts an optional record_filter callable; _mgmt_nl_collect_context passes a tenant-scoping filter (built from the existing _mgmt_nl_filter_tenant_records) into every get_context_runtime_bindings/get_context_capital_pools/get_context_incidents/get_context_evolution_decisions call across the cockpit, trading_pulse, portfolio, and persona_fleet branches, so unauthorized-tenant records are dropped before _record_provenance ever inspects them -- a tenant-a call can no longer surface a tenant-b owner/source_version/correlation_id even when its own scoped record count is zero. (2) get_context_telemetry_summary now runs the same _record_provenance derivation used for list-shaped subjects against the returned summary dict and preserves its real owner/source_kind/source_version/observed_at/correlation_id instead of always stamping runtime_id/live/now/freshness=0. (3) _typed_context_list no longer trusts a pre-read domain_status probe to justify status=ok when the actual read comes back empty (a flaky/failing provider can answer the probe successfully and then fail on the real read, with the port swallowing the error into an empty list); status is now derived from the real read outcome -- non-empty is ok, empty fails closed to unavailable (domain_status said so) or degraded (ambiguous/no signal). (4) main.py's portfolio_book and persona_fleet status now aggregate every contributing owner_observation status (pools/runtime/telemetry for portfolio; runtime/incidents/evolution_decisions for persona_fleet) instead of only checking telemetry or record presence, so a runtime-owner failure can no longer be masked by a coexisting pool/persona success.",
+    "third_post_reject_fix_summary": "Addressed the three defects from the third independent reject (P1, P1, P2), all in service.py: (1) _context_observation no longer fabricates observed_at/freshness_seconds when observed_at is None -- it only derives freshness from an observed_at that was actually supplied, otherwise both stay null, regardless of source_kind or caller (backfill records, no-provenance records, and unavailable reads all now preserve unknown observation time instead of stamping now()/freshness=0). (2) _typed_context_list's and get_context_telemetry_summary's provenance-found branch now uses the record's own status (falling back to the count-derived status only when the record has none) and threads the record's own degradation_reason through, instead of always forcing status=ok merely because a provenance-bearing record was present -- an owner-reported unavailable/degraded record is preserved verbatim, never promoted to ok. (3) _typed_context_list's no-provenance fallback now branches on the computed status: only a genuinely ok (non-empty, provenance-less) read still reports source_kind=live with no degradation_reason; a degraded/unavailable outcome (e.g. a status probe that reported healthy immediately before the real read silently returned nothing) now reports source_kind=unavailable with an explicit degradation_reason instead of a bare live/None/freshness=0 triple that reads as healthy.",
     "row_shape_added": "ManagementObservation pydantic model added to management_read_models/models.py (subject_type, subject_id, status, owner, source_kind: live|replayed|backfill|unavailable, source_version, observed_at, freshness_seconds, degradation_reason, correlation_id) per SD sec7.1; now constructed directly by service.py instead of being unused.",
     "mandatory_deletions": {
       "generic_store_access_in_management_ai_context": "_mgmt_nl_collect_context in main.py no longer calls the bare module-global read_store.* surface; it exclusively calls the new typed ManagementService context accessors, matching how the Management read-model router already reaches the domain through ManagementService.",
@@ -28,28 +29,28 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python -m pytest /tmp/test_mgmt_read_001_review.py /tmp/test_mgmt_read_001_rereview.py -q --tb=short --disable-warnings",
-        "result": "8 passed (previously: 3 passed / 4 failed at the second-rejected head ddae71d1ce4d48fbfdc3e5818eebefcb1f0c06b6): test_replay_owner_provenance_is_preserved, test_unconfigured_domain_is_not_healthy_live, test_telemetry_failure_remains_explicit_in_portfolio_context, test_telemetry_replay_provenance_is_preserved, test_tenant_b_provenance_does_not_enter_tenant_a_context, test_unavailable_runtime_does_not_produce_healthy_portfolio, test_read_failure_after_status_probe_is_not_healthy_live",
-        "executed": 8,
-        "collected": 8
+        "command": ".venv-pantheon/bin/python -m pytest /tmp/test_mgmt_read_001_third_review.py /tmp/test_mgmt_read_001_review.py /tmp/test_mgmt_read_001_rereview.py -q --tb=short --disable-warnings",
+        "result": "12 passed (previously at the third-rejected head 8e79502c5c27ab3dc182a8f7a1f454dd18781a6d: 5 failed / 7 passed): test_explicit_unavailable_owner_is_not_promoted_to_ok[runtime], test_explicit_unavailable_owner_is_not_promoted_to_ok[telemetry], test_missing_observation_time_does_not_fabricate_freshness[runtime], test_missing_observation_time_does_not_fabricate_freshness[telemetry], test_swallowed_provider_failure_explains_degradation, plus the 7 prior review-file tests",
+        "executed": 12,
+        "collected": 12
       },
       {
         "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/management_read_models/test_management_service_context_observations.py --tb=short --disable-warnings",
-        "result": "9 passed (5 prior durable regressions plus 4 new durable regressions committed in task scope for the second reject's tenant-provenance, telemetry-provenance, probe/read-binding, and portfolio-aggregation defects)",
-        "executed": 9,
-        "collected": 9
+        "result": "14 passed (9 prior durable regressions plus 5 new durable regressions committed in task scope for the third reject's status-masking, observed-at-fabrication, and swallowed-provider-failure defects)",
+        "executed": 14,
+        "collected": 14
       },
       {
         "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/management_read_models/ --tb=short --disable-warnings",
-        "result": "51 passed, no regressions in the wider management_read_models package",
-        "executed": 51,
-        "collected": 51
+        "result": "56 passed, no regressions in the wider management_read_models package",
+        "executed": 56,
+        "collected": 56
       },
       {
         "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/management_read_models/test_twelve_loop_projector.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py --tb=short --disable-warnings",
-        "result": "117 passed, 2 pre-existing failures (test_nl_ask_dry_run_returns_compact_receipt_without_context_work, test_domain_router_factory_contracts) reproduced identically on the unmodified base_ref -- unchanged from the pre-fix baseline plus the 4 new tests, confirming no regression",
-        "executed": 119,
-        "collected": 119
+        "result": "122 passed, 2 pre-existing failures (test_nl_ask_dry_run_returns_compact_receipt_without_context_work, test_domain_router_factory_contracts) reproduced identically on the unmodified base_ref -- unchanged from the pre-fix baseline plus the 5 new tests, confirming no regression",
+        "executed": 124,
+        "collected": 124
       }
     ]
   },
@@ -66,10 +67,13 @@
     "tenant_filtered_before_provenance_derivation_in_all_context_branches": true,
     "telemetry_summary_provenance_preserved_not_overwritten": true,
     "availability_bound_to_actual_read_outcome_not_stale_probe": true,
-    "portfolio_and_persona_fleet_status_aggregate_every_contributing_owner": true
+    "portfolio_and_persona_fleet_status_aggregate_every_contributing_owner": true,
+    "owner_reported_status_and_degradation_reason_not_overwritten_by_count_derived_status": true,
+    "unknown_observation_time_and_freshness_preserved_as_null": true,
+    "read_failure_after_healthy_probe_reports_explicit_degradation": true
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "pending independent exact-head review of the second post-reject fix commit"
+    "decision": "pending independent exact-head review of the third post-reject fix commit"
   }
 }

@@ -2076,13 +2076,8 @@ class ManagementService:
         degradation_reason: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if source_kind in ("live", "replayed", "backfill"):
-            if freshness_seconds is None:
-                observed_at, freshness_seconds = self._observed_at_freshness(observed_at)
-            elif observed_at is None:
-                observed_at = self._utc_now()
-        elif observed_at is None:
-            observed_at = self._utc_now()
+        if observed_at is not None and freshness_seconds is None:
+            observed_at, freshness_seconds = self._observed_at_freshness(observed_at)
         return ManagementObservation(
             subject_type=subject_type,
             subject_id=subject_id or subject_type,
@@ -2160,20 +2155,39 @@ class ManagementService:
             status = "degraded"
         provenance = self._record_provenance(items)
         if provenance is not None:
+            # An owner-reported status/degradation_reason on the record itself
+            # is real observation truth and must not be overridden by the
+            # count-derived status below (e.g. a non-empty batch of rows that
+            # the owner itself marked unavailable is not "ok").
             return items, self._context_observation(
                 subject_type=subject_type,
-                status=status,
+                status=str(provenance.get("status") or status),
                 owner=str(provenance.get("owner") or owner),
                 source_kind=str(provenance.get("source_kind") or "live"),
                 source_version=provenance.get("source_version"),
                 observed_at=provenance.get("observed_at"),
+                degradation_reason=provenance.get("degradation_reason"),
                 correlation_id=provenance.get("correlation_id"),
             )
+        if status == "ok":
+            return items, self._context_observation(
+                subject_type=subject_type,
+                status=status,
+                owner=owner,
+                source_kind="live",
+            )
+        # No record carried provenance to explain a non-ok outcome (e.g. a
+        # provider that answered a healthy status probe and then silently
+        # returned nothing on the real read): report the degradation
+        # explicitly instead of a bare "live"/None pairing that reads as
+        # healthy.
         return items, self._context_observation(
             subject_type=subject_type,
             status=status,
             owner=owner,
-            source_kind="live",
+            source_kind="unavailable",
+            degradation_reason=(domain_status or {}).get("message")
+            or f"{subject_type} read returned no records despite a healthy status probe.",
         )
 
     def get_context_runtime_bindings(
@@ -2255,14 +2269,18 @@ class ManagementService:
             )
         provenance = self._record_provenance([summary]) if isinstance(summary, dict) else None
         if provenance is not None:
+            # As above: an owner-reported status/degradation_reason on the
+            # summary itself is real observation truth, not overridden by
+            # "a value came back" alone.
             return summary, self._context_observation(
                 subject_type="telemetry",
                 subject_id=runtime_id,
-                status="ok",
+                status=str(provenance.get("status") or "ok"),
                 owner=str(provenance.get("owner") or observation_owner),
                 source_kind=str(provenance.get("source_kind") or "live"),
                 source_version=provenance.get("source_version"),
                 observed_at=provenance.get("observed_at"),
+                degradation_reason=provenance.get("degradation_reason"),
                 correlation_id=provenance.get("correlation_id"),
             )
         return summary, self._context_observation(

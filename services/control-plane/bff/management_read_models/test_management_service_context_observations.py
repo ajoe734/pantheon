@@ -26,6 +26,16 @@ Acceptance criteria covered (pkt-pantheon-structural-closure-functional-v2-20260
   7. A runtime/pool observation failure inside the portfolio/persona_fleet
      collectors is aggregated into the surface status instead of being
      masked by another contributing surface's success.
+  8. A record that itself carries an explicit unavailable status/
+     degradation_reason (e.g. the owner reported itself offline) is
+     preserved verbatim and never promoted to status="ok" merely because
+     the read returned a non-empty batch.
+  9. A record with observed_at=None never has its freshness fabricated
+     from the request clock; unknown observation time/freshness stay
+     null rather than manufacturing fresh owner evidence.
+  10. A provider that answers a status probe successfully and then fails
+      on the real read (error swallowed inside the port) returns an
+      explicit degradation_reason instead of a bare live/None pairing.
 """
 
 from __future__ import annotations
@@ -211,3 +221,58 @@ def test_read_failure_after_status_probe_is_not_healthy_live() -> None:
     rows, obs = ManagementService(read_store=store).get_context_runtime_bindings()
     assert rows == []
     assert obs["status"] != "ok", obs
+
+
+@pytest.mark.parametrize("subject", ["runtime", "telemetry"])
+def test_explicit_unavailable_owner_is_not_promoted_to_ok(subject: str) -> None:
+    row = dict(
+        runtime_id="r1",
+        owner="runtime-owner",
+        source_kind="unavailable",
+        status="unavailable",
+        observed_at=None,
+        degradation_reason="owner offline",
+    )
+    service = ManagementService(
+        read_store=SimpleNamespace(list_runtime_bindings=lambda: [row], get_telemetry_summary=lambda _: row),
+        utc_now=lambda: NOW,
+    )
+    _rows, obs = (
+        service.get_context_runtime_bindings() if subject == "runtime" else service.get_context_telemetry_summary("r1")
+    )
+    assert obs["status"] != "ok" and obs["degradation_reason"] == "owner offline", obs
+
+
+@pytest.mark.parametrize("subject", ["runtime", "telemetry"])
+def test_missing_observation_time_does_not_fabricate_freshness(subject: str) -> None:
+    row = dict(runtime_id="r1", owner="runtime-owner", source_kind="backfill", source_version="v1", observed_at=None)
+    service = ManagementService(
+        read_store=SimpleNamespace(list_runtime_bindings=lambda: [row], get_telemetry_summary=lambda _: row),
+        utc_now=lambda: NOW,
+    )
+    _rows, obs = (
+        service.get_context_runtime_bindings() if subject == "runtime" else service.get_context_telemetry_summary("r1")
+    )
+    assert obs["observed_at"] is None and obs["freshness_seconds"] is None, obs
+
+
+def test_swallowed_provider_failure_explains_degradation() -> None:
+    calls = []
+
+    def provider():
+        calls.append(1)
+        if len(calls) == 1:
+            return [{"runtime_id": "r1"}]
+        raise RuntimeError("provider became unavailable")
+
+    runtime = RuntimePort(runtime_bindings_provider=provider)
+    service = ManagementService(
+        read_store=SimpleNamespace(
+            get_surface_status=lambda: {"persona_capital_runtime": {"runtime": runtime.get_surface_status()}},
+            list_runtime_bindings=runtime.list_runtime_bindings,
+        ),
+        utc_now=lambda: NOW,
+    )
+    rows, obs = service.get_context_runtime_bindings()
+    assert rows == []
+    assert obs["degradation_reason"] and obs["freshness_seconds"] is None, obs
