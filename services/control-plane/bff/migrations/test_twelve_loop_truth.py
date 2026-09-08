@@ -613,3 +613,88 @@ def test_postgres_unmatched_live_next_consumer_keeps_incremental_rebuild_equal(
     assert incremental.terminal_observed_at is None
     assert incremental.next_consumer_receipt_id == prefix + "live-next"
     assert set(incremental.receipt_ids) == {prefix + "live-next", prefix + "historical-terminal"}
+
+
+def test_postgres_equal_time_stimuli_reduce_independently_of_arrival_order() -> None:
+    """P1 regression: equal-time live/replay stimuli reduce identically across all arrival order permutations on PostgreSQL store."""
+    from itertools import permutations
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    key = "pg-eq-perm-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+
+    def receipt(name: str, kind: str, provenance: str, seconds: int) -> CanonicalLoopReceipt:
+        return CanonicalLoopReceipt(
+            receipt_id=key + name,
+            receipt_type=kind,
+            loop_id=1,
+            correlation_id=key,
+            release_id=key,
+            owner="review",
+            provenance=provenance,
+            status="accepted" if kind == "next_consumer" else "",
+            observed_at=now + timedelta(seconds=seconds),
+            causation_id=key + "cause",
+        )
+
+    live = receipt("z-live-stimulus", "stimulus", "live", -10)
+    replay = receipt("a-replay-stimulus", "stimulus", "replay", -10)
+    next_receipt = receipt("next", "next_consumer", "live", 0)
+
+    incremental = TwelveLoopTruthProjector(store, auto_load=False)
+    incremental.ingest_receipts([live, replay, next_receipt])
+    observed = incremental.get_observation(key, key, 1).to_dict()
+
+    for order in permutations([live, replay, next_receipt]):
+        clean = TwelveLoopTruthProjector()
+        clean.ingest_receipts(order)
+        clean.rebuild()
+        rebuilt = clean.get_observation(key, key, 1).to_dict()
+        assert observed == rebuilt, {
+            "order": [r.receipt_id for r in order],
+            "incremental": observed,
+            "rebuild": rebuilt,
+        }
+
+
+@pytest.mark.parametrize("provenance", ["replay", "backfill"])
+def test_postgres_older_stimulus_cannot_steal_live_next_consumer(provenance: str) -> None:
+    """P1 regression: older replay or backfill stimulus cannot steal live next-consumer or revert observed_at on PostgreSQL store."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    key = "pg-late-stim-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+
+    def receipt(name: str, kind: str, prov: str, seconds: int) -> CanonicalLoopReceipt:
+        return CanonicalLoopReceipt(
+            receipt_id=key + name,
+            receipt_type=kind,
+            loop_id=1,
+            correlation_id=key,
+            release_id=key,
+            owner="review",
+            provenance=prov,
+            status="accepted" if kind == "next_consumer" else "",
+            observed_at=now + timedelta(seconds=seconds),
+            causation_id=key + "cause",
+        )
+
+    projector = TwelveLoopTruthProjector(store, auto_load=False)
+    live = receipt("live-stimulus", "stimulus", "live", -10)
+    next_receipt = receipt("next", "next_consumer", "live", 0)
+    projector.ingest_receipts([live, next_receipt])
+    before = projector.get_observation(key, key, 1).to_dict()
+    assert before["next_consumer_receipt_id"] == next_receipt.receipt_id
+
+    projector.ingest_receipt(receipt("older-stimulus", "stimulus", provenance, -20))
+    after = store.get_observation(key, key, 1).to_dict()
+    assert (after["next_consumer_receipt_id"], after["observed_at"]) == (
+        before["next_consumer_receipt_id"],
+        before["observed_at"],
+    )

@@ -37,7 +37,10 @@
       "Atomic resolution of persisted receipt identity after insert rejects conflicting key/type and prevents projection of unpersisted duplicate content",
       "Deterministic candidate chain and provenance selection ensures ignored lower-provenance stimulus (replay/backfill) cannot invalidate or replace live terminal chains, preserving incremental equals rebuild and store durability",
       "MemoryTwelveLoopStore and PostgresTwelveLoopStore enforce receipt_ids containment CAS before provenance fencing, guaranteeing persistence safety across concurrent and out-of-order writes",
-      "Unmatched higher-provenance next-consumer chains are preserved as deterministic candidates even when unrelated terminal/stimulus candidates exist, preserving newer live evidence across all receipt arrival orderings and clean rebuild from source receipts"
+      "Unmatched higher-provenance next-consumer chains are preserved as deterministic candidates even when unrelated terminal/stimulus candidates exist, preserving newer live evidence across all receipt arrival orderings and clean rebuild from source receipts",
+      "Equal-timestamp stimulus arrivals reduce identically between incremental stream ingestion and full rebuild across all receipt arrival permutations",
+      "Older replay or backfill stimulus arrival cannot steal a live next-consumer receipt or regress observed_at timestamps in Memory or PostgreSQL stores",
+      "Provenance-aware candidate selection strictly matches stimuli, terminals, and next-consumers within the same provenance class, preventing lower-provenance candidates from consuming live next-consumer evidence"
     ],
     "mandatory_deletions": {
       "static_or_incident_derived_success_substitution": "Static or incident-derived success substitution excised; unobserved or failed loops remain explicit without synthetic fallback."
@@ -47,31 +50,37 @@
   "verification": {
     "commands": [
       {
-        "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
-        "result": "37 passed (including unmatched live next-consumer preservation across both arrival orderings, late lower-provenance stimulus preservation, equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection in memory store)",
-        "executed": 37,
-        "collected": 37
+        "command": "PYTHONPATH=. .venv-pantheon/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
+        "result": "40 passed (including equal-time stimuli reduction invariance across arrival orders, older stimulus next-consumer protection for replay/backfill, unmatched live next-consumer preservation across both arrival orderings, late lower-provenance stimulus preservation, equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection in memory store)",
+        "executed": 40,
+        "collected": 40
       },
       {
-        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. python3 -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
-        "result": "17 passed (including postgres unmatched live next-consumer preservation across both arrival orderings, postgres late lower-provenance stimulus preservation, postgres receipt-set containment and provenance fencing, real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
-        "executed": 17,
-        "collected": 17
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. .venv-pantheon/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
+        "result": "20 passed (including postgres equal-time stimuli reduction invariance across arrival orders, postgres older stimulus next-consumer protection for replay/backfill, postgres unmatched live next-consumer preservation across both arrival orderings, postgres late lower-provenance stimulus preservation, postgres receipt-set containment and provenance fencing, real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
+        "executed": 20,
+        "collected": 20
       },
       {
-        "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
-        "result": "43 passed, 138 warnings",
+        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "result": "43 passed, 137 warnings",
         "executed": 43,
         "collected": 43
       },
       {
-        "command": "timeout 120 env PYTHONPATH=. /tmp/bff-package-001-venv/bin/python -m pytest /tmp/test_loop_truth_5094dc7_review.py -q --tb=short",
+        "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_2f2ccba_review.py -vv",
+        "result": "6 passed (independent review reproduction suite for 2f2ccba addressing unmatched stimulus greedy next-consumer consumption, older replay/backfill stimulus next-consumer theft, and equal-time stimulus arrival permutations on memory and postgres stores)",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_5094dc7_review.py -q --tb=short",
         "result": "4 passed (prior independent review reproduction suite for replay and backfill on memory and postgres stores)",
         "executed": 4,
         "collected": 4
       },
       {
-        "command": "timeout 120 .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_338c381_review.py -q --tb=line",
+        "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_338c381_review.py -q --tb=line",
         "result": "4 passed (independent review reproduction suite for orphan live next-consumer arrival order and clean rebuild on memory and postgres stores)",
         "executed": 4,
         "collected": 4

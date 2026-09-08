@@ -395,27 +395,42 @@ class TwelveLoopTruthProjector:
         provenance_rank = {"backfill": 0, "replay": 1, "live": 2}
         has_live_receipt = any(r.provenance == "live" for r in receipts)
 
-        stimulus_receipts = [r for r in receipts if r.receipt_type == "stimulus"]
-        terminal_receipts = [r for r in receipts if r.receipt_type == "terminal"]
-        next_receipts = [r for r in receipts if r.receipt_type == "next_consumer"]
+        def receipt_sort_key(r: CanonicalLoopReceipt) -> Tuple[int, datetime, str]:
+            return (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id)
+
+        stimulus_receipts = sorted(
+            [r for r in receipts if r.receipt_type == "stimulus"],
+            key=receipt_sort_key,
+            reverse=True,
+        )
+        terminal_receipts = sorted(
+            [r for r in receipts if r.receipt_type == "terminal"],
+            key=receipt_sort_key,
+            reverse=True,
+        )
+        next_receipts = sorted(
+            [r for r in receipts if r.receipt_type == "next_consumer"],
+            key=receipt_sort_key,
+            reverse=True,
+        )
 
         # Form deterministic candidate chains:
         # Each candidate chain is a tuple (stimulus, terminal, next_consumer)
         candidates: List[Tuple[Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt]]] = []
         matched_stimulus_ids: Set[str] = set()
-        matched_next_ids: Set[str] = set()
+        terminal_matched_next_ids: Set[str] = set()
 
         # 1. Chains anchored on terminal executions
         for t in terminal_receipts:
             t_prov = provenance_rank.get(t.provenance, 0)
             # Find matching stimulus for terminal t:
-            # - stimulus provenance cannot be higher than terminal (or <= t_prov)
+            # - stimulus provenance must match terminal provenance
             # - stimulus must not be observed in the distant future relative to terminal
             # - causation continuity: if terminal specifies causation_id, it must match stimulus
             matching_s: List[CanonicalLoopReceipt] = []
             for s in stimulus_receipts:
                 s_prov = provenance_rank.get(s.provenance, 0)
-                if s_prov > t_prov:
+                if s_prov != t_prov:
                     continue
                 if s.observed_at > t.observed_at + timedelta(seconds=self.max_future_skew_seconds):
                     continue
@@ -431,7 +446,7 @@ class TwelveLoopTruthProjector:
             if matching_s:
                 s_for_t = max(
                     matching_s,
-                    key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
+                    key=receipt_sort_key,
                 )
                 matched_stimulus_ids.add(s_for_t.receipt_id)
 
@@ -439,7 +454,7 @@ class TwelveLoopTruthProjector:
             matching_n: List[CanonicalLoopReceipt] = []
             for n in next_receipts:
                 n_prov = provenance_rank.get(n.provenance, 0)
-                if n_prov < t_prov:
+                if n_prov != t_prov:
                     continue
                 if n.observed_at < t.observed_at - timedelta(seconds=self.max_future_skew_seconds):
                     continue
@@ -459,9 +474,9 @@ class TwelveLoopTruthProjector:
             if matching_n:
                 n_for_t = max(
                     matching_n,
-                    key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
+                    key=receipt_sort_key,
                 )
-                matched_next_ids.add(n_for_t.receipt_id)
+                terminal_matched_next_ids.add(n_for_t.receipt_id)
 
             candidates.append((s_for_t, t, n_for_t))
 
@@ -474,10 +489,10 @@ class TwelveLoopTruthProjector:
             # Find matching next_consumer for stimulus s (orphan next linking directly to stimulus):
             matching_n_s: List[CanonicalLoopReceipt] = []
             for n in next_receipts:
-                if n.receipt_id in matched_next_ids:
+                if n.receipt_id in terminal_matched_next_ids:
                     continue
                 n_prov = provenance_rank.get(n.provenance, 0)
-                if n_prov < s_prov:
+                if n_prov != s_prov:
                     continue
                 if n.observed_at < s.observed_at - timedelta(seconds=self.max_future_skew_seconds):
                     continue
@@ -493,15 +508,15 @@ class TwelveLoopTruthProjector:
             if matching_n_s:
                 n_for_s = max(
                     matching_n_s,
-                    key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
+                    key=receipt_sort_key,
                 )
-                matched_next_ids.add(n_for_s.receipt_id)
 
             candidates.append((s, None, n_for_s))
 
         # 3. Chains anchored on unmatched next_consumer receipts
+        candidate_next_ids = {cand[2].receipt_id for cand in candidates if cand[2] is not None}
         for n in next_receipts:
-            if n.receipt_id not in matched_next_ids:
+            if n.receipt_id not in candidate_next_ids:
                 candidates.append((None, None, n))
 
         def candidate_key(
@@ -510,6 +525,8 @@ class TwelveLoopTruthProjector:
             s_cand, t_cand, n_cand = cand
             accepted = [r for r in (s_cand, t_cand, n_cand) if r is not None]
             c_prov = max(provenance_rank.get(r.provenance, 0) for r in accepted) if accepted else 0
+
+            has_next = 1 if n_cand is not None else 0
 
             # Execution reference time:
             # A terminal represents the execution milestone.
@@ -535,7 +552,7 @@ class TwelveLoopTruthProjector:
                 is_fail = 0
                 cid = ""
 
-            return (c_prov, c_time, is_term, is_fail, cid)
+            return (c_prov, c_time, is_term, is_fail, has_next, cid)
 
         chosen_candidate = max(candidates, key=candidate_key)
         chosen_stimulus, chosen_terminal, chosen_next = chosen_candidate
