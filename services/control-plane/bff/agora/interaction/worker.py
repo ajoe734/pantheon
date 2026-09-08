@@ -78,6 +78,7 @@ class AgoraInteractionWorker:
         proposal_store: Optional[Any] = None,
         research_store: Optional[Any] = None,
         research_dispatcher: Optional[Any] = None,
+        dataset_store: Optional[Any] = None,
         worker_id: Optional[str] = None,
         lease_duration_seconds: int = 300,
         store: Optional[Any] = None,
@@ -87,14 +88,15 @@ class AgoraInteractionWorker:
         self.read_store = read_store
         self.client_factory = client_factory
         self.proposal_store = proposal_store
+        self.dataset_store = dataset_store or (getattr(research_dispatcher, "dataset_store", None) if research_dispatcher else None)
         if research_dispatcher is None and research_store is not None:
             try:
                 from agora.research.dispatcher import ResearchDispatcher
-                self.research_dispatcher = ResearchDispatcher(store=research_store)
+                self.research_dispatcher = ResearchDispatcher(store=research_store, dataset_store=self.dataset_store)
             except Exception:
                 try:
                     from services.control_plane.bff.agora.research.dispatcher import ResearchDispatcher
-                    self.research_dispatcher = ResearchDispatcher(store=research_store)
+                    self.research_dispatcher = ResearchDispatcher(store=research_store, dataset_store=self.dataset_store)
                 except Exception:
                     self.research_dispatcher = None
         else:

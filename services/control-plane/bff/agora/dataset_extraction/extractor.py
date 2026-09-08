@@ -230,21 +230,26 @@ class AgoraDatasetStore:
         q = f'"{self.schema}"'
         self._inbox_table = f'{q}."agora_evidence_inbox"'
         self._records_table = f'{q}."agora_dataset_records"'
-        self._handoffs_table = f'{q}."agora_evidence_handoffs"'
-        self._bootstrap()
-        _logger.info("Agora dataset store initialized backend=postgres schema=%s", self.schema)
+        self._bootstrapped = False
+        try:
+            self._bootstrap()
+            _logger.info("Agora dataset store initialized backend=postgres schema=%s", self.schema)
+        except Exception as exc:
+            _logger.warning("Agora dataset store deferred bootstrap: %s", exc)
 
-    def _connect(self) -> Any:
+    def _connect(self, *, bootstrap: bool = True) -> Any:
         try:
             import psycopg  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError("psycopg is required for Postgres Agora dataset store") from exc
+        if bootstrap and not self._bootstrapped:
+            self._bootstrap()
         return psycopg.connect(self.dsn)
 
     def _bootstrap(self) -> None:
         """Create the v2 scoped schema and migrate prior tables."""
 
-        with self._connect() as conn:
+        with self._connect(bootstrap=False) as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("agora_dataset_extraction_v2",))
             try:
                 conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
@@ -431,6 +436,7 @@ class AgoraDatasetStore:
                 f"CREATE UNIQUE INDEX IF NOT EXISTS uq_agora_handoff_scope_version "
                 f"ON {self._handoffs_table} (tenant_id, user_id, dataset_version_id)"
             )
+        self._bootstrapped = True
 
     @staticmethod
     def _constraint_names(conn: Any, table: str, constraint_type: str) -> List[str]:

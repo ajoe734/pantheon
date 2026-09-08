@@ -131,10 +131,33 @@ def main() -> int:
         execution_owners=backend_clients,
     )
 
+    # Durable dataset store: wire the same durable owner store (postgres in production)
+    dataset_backend = (
+        os.getenv("AGORA_DATASET_STORE_BACKEND")
+        or (workshop_backend if workshop_backend == "postgres" else "off")
+    ).strip().lower()
+    dataset_dsn = (
+        os.getenv("AGORA_DATASET_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+        or dsn
+    )
+    dataset_schema = os.getenv("AGORA_DATASET_STORE_SCHEMA", "agora")
+
+    from agora.dataset_extraction.extractor import AgoraDatasetStore
+    import agora.dataset_extraction.router as dataset_router
+
+    dataset_store = AgoraDatasetStore(
+        backend=dataset_backend,
+        dsn=dataset_dsn,
+        schema=dataset_schema,
+    )
+    dataset_router._STORE = dataset_store
+
     research_dispatcher = ResearchDispatcher(
         store=research_store,
         adapter_registry=adapter_registry,
         publish_progress_fn=publish_research_progress,
+        dataset_store=dataset_store,
     )
 
     tenant_id = args.tenant_id or os.getenv("PANTHEON_TENANT_ID")
@@ -146,6 +169,7 @@ def main() -> int:
         proposal_store=proposal_store,
         research_store=research_store,
         research_dispatcher=research_dispatcher,
+        dataset_store=dataset_store,
         worker_id=os.getenv("PANTHEON_AGORA_WORKER_ID", "agora-interaction-worker"),
     )
 

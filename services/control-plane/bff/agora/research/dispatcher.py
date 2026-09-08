@@ -702,7 +702,13 @@ class AuthenticResearchBackendClient:
 
         # Resolve canonical input_refs into execution inputs (dataset) if absent
         if not stage_payload.get("dataset") and not plan_payload.get("dataset"):
-            resolved_ds = resolve_governed_dataset(stage_payload, plan_payload)
+            resolved_ds = resolve_governed_dataset(
+                stage_payload,
+                plan_payload,
+                dataset_store=context.get("dataset_store") if isinstance(context, dict) else None,
+                tenant_id=(context.get("tenant_id") if isinstance(context, dict) else None) or plan_payload.get("tenant_id"),
+                user_id=(context.get("user_id") if isinstance(context, dict) else None) or plan_payload.get("user_id"),
+            )
             if resolved_ds:
                 stage_payload["dataset"] = resolved_ds
                 if isinstance(stage, dict) and "dataset" not in stage:
@@ -1189,6 +1195,9 @@ class ResearchDispatcher:
             "run_id": run_id,
             "correlation_id": correlation_id,
             "executor": expected_owner,
+            "dataset_store": getattr(self, "dataset_store", None),
+            "tenant_id": getattr(scope, "tenant_id", None) or plan.get("tenant_id"),
+            "user_id": getattr(scope, "user_id", None) or plan.get("user_id"),
         }
         try:
             result = adapter.execute(  # type: ignore[union-attr]

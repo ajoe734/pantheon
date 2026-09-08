@@ -1678,6 +1678,109 @@ class AgoraResearchRouteContext:
                     or public_candidate.get("created_at")
                     or now
                 )
+
+                # Mandatory deletion of client-trusted real-provenance flags
+                public_candidate.pop("has_real_receipt", None)
+                for trust_key in ("trusted", "is_real", "verified", "no_order_route_proof"):
+                    public_candidate.pop(trust_key, None)
+
+                # Resolve terminal run and authentic execution receipt server-side
+                run_id = candidate.get("run_id")
+                if not run_id and candidate.get("run_ref"):
+                    ref_str = str(candidate["run_ref"])
+                    run_id = ref_str.split("/")[-1] if "/" in ref_str else ref_str
+
+                run = None
+                if run_id and self.store and hasattr(self.store, "get_run"):
+                    try:
+                        run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
+                    except TypeError:
+                        run = self.store.get_run(run_id)
+
+                # Strictly verify tenant isolation
+                if run:
+                    run_tenant = run.get("tenant_id")
+                    if run_tenant and scope.tenant_id and run_tenant != scope.tenant_id:
+                        run = None
+
+                receipt = None
+                resolved_prov = "simulation"
+                if run:
+                    status = str(run.get("execution_status") or "").lower()
+                    terminal_statuses = {"succeeded", "completed"}
+
+                    plan = None
+                    if hasattr(self.store, "get_plan") and run.get("plan_id"):
+                        try:
+                            plan = self.store.get_plan(run["plan_id"])
+                        except Exception:
+                            plan = None
+
+                    expected_correlation = (
+                        run.get("correlation_id")
+                        or run.get("trace_id")
+                        or (plan.get("correlation_id") if plan else None)
+                        or (plan.get("trace_id") if plan else None)
+                    )
+                    expected_owner = (
+                        run.get("executor")
+                        or run.get("owner")
+                        or (plan.get("executor") if plan else None)
+                        or (plan.get("owner") if plan else None)
+                    )
+
+                    from ..receipt import resolve_run_provenance
+                    prov, rec = resolve_run_provenance(
+                        self.store,
+                        run,
+                        expected_correlation_id=expected_correlation,
+                        expected_owner=expected_owner,
+                    )
+
+                    # Verify candidate-supplied correlation/owner/receipt/artifact metadata against receipt if supplied
+                    if rec is not None:
+                        cand_corr = candidate.get("correlation_id")
+                        if cand_corr and str(cand_corr).strip() != str(rec.get("correlation_id", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                        cand_owner = candidate.get("executor") or candidate.get("owner")
+                        if cand_owner and str(cand_owner).strip() != str(rec.get("executor", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                        cand_receipt_id = candidate.get("receipt_id")
+                        if cand_receipt_id and str(cand_receipt_id).strip() != str(rec.get("receipt_id", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                        cand_digest = candidate.get("artifact_digest")
+                        if cand_digest and rec.get("artifact_digest") and str(cand_digest).strip() != str(rec.get("artifact_digest", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                    if status not in terminal_statuses and prov == "real":
+                        prov = "simulation"
+                        rec = None
+
+                    resolved_prov = prov
+                    receipt = rec
+                else:
+                    stored_prov = str(candidate.get("provenance") or "").lower().strip()
+                    if stored_prov in ("fixture",):
+                        resolved_prov = "fixture"
+                    elif stored_prov in ("unavailable",):
+                        resolved_prov = "unavailable"
+                    else:
+                        resolved_prov = "simulation"
+
+                public_candidate["provenance"] = resolved_prov
+                public_candidate["has_real_receipt"] = bool(resolved_prov == "real" and receipt is not None)
+                if receipt and "receipt_id" in receipt:
+                    public_candidate["receipt_id"] = receipt["receipt_id"]
+                elif not receipt:
+                    public_candidate.pop("receipt_id", None)
+
                 candidates.append(public_candidate)
                 if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
                     metrics_by_artifact[public_candidate["artifact_id"]] = body.metrics_by_artifact[public_candidate["artifact_id"]]

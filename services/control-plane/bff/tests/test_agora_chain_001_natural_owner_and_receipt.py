@@ -488,3 +488,354 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     assert bff_main.research_store.get_execution_receipt(run_id) is None
     prov, _ = resolve_run_provenance(bff_main.research_store, run_record)
     assert prov != "real"
+
+
+def test_compose_agora_interaction_worker_dataset_wiring_and_separate_process() -> None:
+    """Compose service agora-interaction-worker wires dataset store and resolves in a separate process."""
+    import subprocess
+    import yaml
+    root = Path(__file__).resolve().parents[4]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    declared = compose["services"]["agora-interaction-worker"]["environment"]
+    bff = compose["services"]["operator-bff"]["environment"]
+    assert "AGORA_DATASET_STORE_BACKEND" in bff
+    assert "AGORA_DATASET_STORE_BACKEND" in declared
+    assert "AGORA_DATASET_STORE_DSN" in declared
+    assert "AGORA_DATASET_STORE_SCHEMA" in declared
+
+    worker_env = {k: v for k, v in os.environ.items() if not k.startswith("AGORA_DATASET_STORE_")}
+    for key, val in declared.items():
+        worker_env[key] = val.split(":-", 1)[-1].rstrip("}") if val.startswith("${") else val
+
+    code = "import sys; sys.path.insert(0, 'services/control-plane/bff'); from agora.dataset_extraction.router import _default_store; print(_default_store().backend)"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=root,
+        env=worker_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    assert result.stdout.strip() == "postgres", result.stdout
+
+    health_res = subprocess.run(
+        [sys.executable, "scripts/run_agora_interaction_worker.py", "--healthcheck"],
+        cwd=root,
+        env=worker_env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    assert health_res.returncode == 0
+
+
+def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Public candidate admission must fail closed for forged, missing, or mismatched receipts, and verify genuine real receipts."""
+    import main as bff_main
+    from agora.research.receipt import ResearchExecutionReceipt
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("AGORA_CANDIDATE_POOL_PROFILE", "production")
+
+    store = bff_main.research_store
+    assert store is not None
+
+    tenant_id = "pantheon-dev"
+    user_id = "agora-user-a"
+    operator_auth = f"Bearer {user_id}:operator"
+
+    # 1. Non-existent run: client claims real provenance and has_real_receipt=True
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    resp_absent = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-absent-run-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-absent-run",
+                    "run_id": "run-does-not-exist",
+                    "provenance": "real",
+                    "has_real_receipt": True,
+                    "trusted": True,
+                    "is_real": True,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_absent.status_code == 201, resp_absent.text
+    cand = resp_absent.json()["data"]["candidates"][0]
+    assert cand["provenance"] != "real"
+    assert cand["provenance"] == "simulation"
+    assert cand.get("has_real_receipt") is False
+    assert "trusted" not in cand
+    assert "is_real" not in cand
+
+    # 2. Non-terminal run in store (e.g. execution_status="running")
+    run_running = {
+        "run_id": "run-running-001",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "plan_id": "plan-001",
+        "execution_status": "running",
+        "executor": "vectorbt_executor",
+        "correlation_id": "corr-running-001",
+    }
+    store.create_run(run_running)
+    resp_running = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-running-run-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-running",
+                    "run_id": "run-running-001",
+                    "provenance": "real",
+                    "has_real_receipt": True,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_running.status_code == 201, resp_running.text
+    cand_running = resp_running.json()["data"]["candidates"][0]
+    assert cand_running["provenance"] != "real"
+    assert cand_running["provenance"] == "unavailable"
+    assert cand_running.get("has_real_receipt") is False
+
+    # 3. Terminal run without receipt in store
+    run_no_rec = {
+        "run_id": "run-no-rec-001",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "plan_id": "plan-001",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "corr-no-rec-001",
+    }
+    store.create_run(run_no_rec)
+    resp_no_rec = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-no-rec-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-no-rec",
+                    "run_id": "run-no-rec-001",
+                    "provenance": "real",
+                    "has_real_receipt": True,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_no_rec.status_code == 201, resp_no_rec.text
+    cand_no_rec = resp_no_rec.json()["data"]["candidates"][0]
+    assert cand_no_rec["provenance"] != "real"
+    assert cand_no_rec["provenance"] == "simulation"
+    assert cand_no_rec.get("has_real_receipt") is False
+
+    # 4. Wrong owner receipt
+    run_wrong_owner = {
+        "run_id": "run-wrong-owner-001",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "plan_id": "plan-001",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "corr-wrong-owner-001",
+    }
+    store.create_run(run_wrong_owner)
+    rec_wrong_owner = ResearchExecutionReceipt(
+        receipt_id="rec-wrong-owner-001",
+        run_id="run-wrong-owner-001",
+        executor="unauthorized_rogue_executor",
+        mode="real",
+        correlation_id="corr-wrong-owner-001",
+        completed_at="2026-09-08T07:00:00Z",
+    )
+    store.record_execution_receipt(rec_wrong_owner.to_dict())
+    resp_wrong_owner = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-wrong-owner-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-wrong-owner",
+                    "run_id": "run-wrong-owner-001",
+                    "provenance": "real",
+                    "has_real_receipt": True,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_wrong_owner.status_code == 201, resp_wrong_owner.text
+    cand_wrong_owner = resp_wrong_owner.json()["data"]["candidates"][0]
+    assert cand_wrong_owner["provenance"] != "real"
+    assert cand_wrong_owner.get("has_real_receipt") is False
+
+    # 5. Wrong correlation receipt
+    run_wrong_corr = {
+        "run_id": "run-wrong-corr-001",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "plan_id": "plan-001",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "expected-corr-123",
+    }
+    store.create_run(run_wrong_corr)
+    rec_wrong_corr = ResearchExecutionReceipt(
+        receipt_id="rec-wrong-corr-001",
+        run_id="run-wrong-corr-001",
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id="mismatched-corr-999",
+        completed_at="2026-09-08T07:00:00Z",
+    )
+    store.record_execution_receipt(rec_wrong_corr.to_dict())
+    resp_wrong_corr = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-wrong-corr-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-wrong-corr",
+                    "run_id": "run-wrong-corr-001",
+                    "provenance": "real",
+                    "has_real_receipt": True,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_wrong_corr.status_code == 201, resp_wrong_corr.text
+    cand_wrong_corr = resp_wrong_corr.json()["data"]["candidates"][0]
+    assert cand_wrong_corr["provenance"] != "real"
+    assert cand_wrong_corr.get("has_real_receipt") is False
+
+    # 6. Foreign tenant run
+    run_foreign = {
+        "run_id": "run-foreign-001",
+        "tenant_id": "other-tenant-999",
+        "user_id": "other-user-999",
+        "plan_id": "plan-001",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "corr-foreign-001",
+    }
+    store.create_run(run_foreign)
+    rec_foreign = ResearchExecutionReceipt(
+        receipt_id="rec-foreign-001",
+        run_id="run-foreign-001",
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id="corr-foreign-001",
+        completed_at="2026-09-08T07:00:00Z",
+    )
+    store.record_execution_receipt(rec_foreign.to_dict())
+    resp_foreign = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-foreign-run-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-foreign",
+                    "run_id": "run-foreign-001",
+                    "provenance": "real",
+                    "has_real_receipt": True,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_foreign.status_code == 201, resp_foreign.text
+    cand_foreign = resp_foreign.json()["data"]["candidates"][0]
+    assert cand_foreign["provenance"] != "real"
+    assert cand_foreign.get("has_real_receipt") is False
+
+    # 7. Authentic terminal run with matching owner, correlation, and real receipt
+    run_real = {
+        "run_id": "run-authentic-real-001",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "plan_id": "plan-001",
+        "execution_status": "succeeded",
+        "executor": "vectorbt_executor",
+        "correlation_id": "corr-authentic-001",
+    }
+    store.create_run(run_real)
+    rec_real = ResearchExecutionReceipt(
+        receipt_id="rec-authentic-001",
+        run_id="run-authentic-real-001",
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id="corr-authentic-001",
+        completed_at="2026-09-08T07:00:00Z",
+    )
+    store.record_execution_receipt(rec_real.to_dict())
+    resp_real = client.post(
+        "/bff/agora/candidate-pools",
+        headers={
+            "Authorization": operator_auth,
+            "X-Tenant-Id": tenant_id,
+            "Idempotency-Key": "cpool-authentic-real-001",
+        },
+        json={
+            "operator_id": user_id,
+            "profile": "production",
+            "candidates": [
+                {
+                    "artifact_id": "cand-authentic-real",
+                    "run_id": "run-authentic-real-001",
+                    "correlation_id": "corr-authentic-001",
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        },
+    )
+    assert resp_real.status_code == 201, resp_real.text
+    cand_real = resp_real.json()["data"]["candidates"][0]
+    assert cand_real["provenance"] == "real"
+    assert cand_real["has_real_receipt"] is True
+    assert cand_real["receipt_id"] == "rec-authentic-001"
