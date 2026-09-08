@@ -85,7 +85,7 @@ class DependencyContractBatchTests(unittest.TestCase):
         ]
         self.state[ai_status.TERMINAL_FACTS_KEY] = {'COVERAGE': {
             'id': 'COVERAGE', 'status': 'done', 'terminal_outcome': 'completed', 'generation': 1,
-            'last_update': '2026-09-01T00:00:00Z',
+            'recorded_at': '2026-09-01T00:00:00Z',
         }}
         self.runtime = runtime_state.default_state()
         self._seed()
@@ -179,7 +179,7 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._snapshot(), before)
 
     def test_cycle_through_unchanged_task_rejected(self):
-        self.state['tasks'][2]['depends_on'] = ['DEP']
+        self.state['tasks'][2]['depends_on'] = ['STRICT']
         # Original graph must be acyclic too.
         self.state['tasks'][1]['depends_on'] = []
         self._seed()
@@ -248,6 +248,23 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._run(batch)[0], 75)
                 self.assertEqual(self._snapshot(), before)
 
+    def test_malformed_runtime_and_orphan_approval_records_never_prove_idle(self):
+        batch = self._request()
+        cases = []
+        for field in ('workers', 'queue', 'worker_worktrees', 'supervisor'):
+            raw = deepcopy(self.runtime)
+            raw[field] = []
+            cases.append(raw)
+        raw = deepcopy(self.runtime)
+        raw['workers']['orphan'] = {'task_id': 'DEP', 'status': 'waiting_approval'}
+        cases.append(raw)
+        for raw in cases:
+            with self.subTest(raw=raw):
+                Path(self.config['paths']['state_file']).write_text(json.dumps(raw))
+                before = self._snapshot()
+                self.assertEqual(self._run(batch)[0], 75)
+                self.assertEqual(self._snapshot(), before)
+
     def test_pending_review_recovery_and_privileged_catalog_rejected(self):
         for field, value in [
             ('review_decision_intent', {'nonce': 'pending'}),
@@ -302,6 +319,145 @@ class DependencyContractBatchTests(unittest.TestCase):
         self.state['tasks'][1]['target_repo'] = 'pantheon'
         self._seed()
         self.assertEqual(self._run(self._request([('DEP', ['COVERAGE'])]))[0], 0)
+
+    def test_real_cli_taskstore_commit_readback_retry_and_second_row_failure(self):
+        subprocess.run(['git', 'init', '-q', str(self._test_root)], check=True, capture_output=True)
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(('PANTHEON_', 'ORCH_'))}
+        env.update({
+            'AI_NAME': 'Human/Ops', ai_status.LOCAL_HUMAN_OPS_ENV: '1',
+            ai_status.STATUS_ROOT_ENV: str(self._test_root),
+            ai_status.TASK_STATE_STORE_MODE_ENV: 'authoritative',
+            ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.journal),
+            common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(self._test_root, self.journal),
+        })
+        request = self._request()
+        path = self._test_root / 'subprocess-request.json'
+        def run(batch):
+            path.write_text(json.dumps(batch))
+            return subprocess.run([sys.executable, ai_status.__file__, 'dependency-contract', str(path)],
+                                  env=env, cwd=self._test_root, capture_output=True, text=True, timeout=20)
+        before = self._snapshot()
+        stale = deepcopy(request)
+        stale['tasks'][1]['expected_sha256'] = '0' * 64
+        failed = run(stale)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout)
+        self.assertIn('CAS failed', failed.stderr)
+        self.assertEqual(self._snapshot(), before)
+        success = run(request)
+        self.assertEqual(success.returncode, 0, success.stderr)
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        result = json.loads(success.stdout)
+        self.assertEqual(result['checkpoint']['last_event_id'], after['last_event_id'])
+        self.assertEqual([row['depends_on'] for row in result['tasks']], [['COVERAGE'], ['READ', 'DEP']])
+        replay = run(request)
+        self.assertEqual(replay.returncode, 0, replay.stderr)
+        self.assertEqual(json.loads(replay.stdout)['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_process_loss_before_and_after_append_is_atomic(self):
+        batch = self._request()
+        context = multiprocessing.get_context('fork')
+        before = self._snapshot()
+        def run_child(before_append):
+            patch_target = 'sync_all' if before_append else 'refresh_derived_status_views_if_current'
+            # Patch the underlying commit/projection boundary in the child;
+            # no crash injection switch exists in the shipped CLI.
+            if before_append:
+                with mock.patch.object(ai_status, patch_target, side_effect=lambda *a, **k: os._exit(23)):
+                    self._run(batch)
+            else:
+                original = ai_status.sync_all
+                def commit_then_exit(*args, **kwargs):
+                    original(*args, **kwargs)
+                    os._exit(24)
+                with mock.patch.object(ai_status, 'sync_all', side_effect=commit_then_exit):
+                    self._run(batch)
+        for before_append, expected in [(True, 23), (False, 24)]:
+            process = context.Process(target=run_child, args=(before_append,))
+            process.start()
+            try:
+                process.join(timeout=15)
+                self.assertFalse(process.is_alive(), 'isolated command failed to terminate')
+                self.assertEqual(process.exitcode, expected)
+            finally:
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+            if before_append:
+                self.assertEqual(self._snapshot(), before)
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        self.assertEqual(ai_status.get_task(after['state'], 'DEP')['depends_on'], ['COVERAGE'])
+        self.assertEqual(ai_status.get_task(after['state'], 'STRICT')['depends_on'], ['READ', 'DEP'])
+        self.assertEqual(self._run(batch)[1]['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_existing_offlock_phase_refuses_revision_then_stale_queue_cannot_launch(self):
+        import supervisor
+        import test_supervisor as fixtures
+        ai_status.configure_status_root_paths(self._test_root)
+        config = fixtures.config_fixture(self._test_root)
+        config['paths'].update(self.config['paths'])
+        old = deepcopy(ai_status.get_task(ai_status.load_state(), 'DEP'))
+        event = supervisor.build_dispatch_event(old, 'Codex', supervisor.REASON_OWNED_READY, {'DEP': old})
+        event.update(event_id='evt-revision-race', event_key=event['key'], target_agent='codex',
+                     target_display_name='Codex', delivery_endpoint_id='codex', message='isolated test')
+        batch = self._request()
+        before = self._snapshot()
+        observed = []
+        def detached_operation(scratch):
+            # This is the actual supervisor's persisted reservation, while its
+            # operation runs outside runtime_admission.lock.
+            observed.append(self._run(batch))
+            self.assertEqual(self._snapshot(), before)
+            return False
+        with mock.patch.object(supervisor, 'write_activity_log'):
+            supervisor._run_reserved_runtime_phase(config, 'process_queue', detached_operation)
+        self.assertEqual(observed[0][0], 75)
+        self.assertEqual(self._run(batch)[0], 0)
+        committed = self._snapshot()
+        runtime = fixtures.with_healthy_delivery_health(config, self.runtime_module.load_runtime_state(config))
+        fixtures.with_queue_intents(runtime, event)
+        self.runtime_module.save_runtime_state(config, runtime)
+        with (
+            mock.patch.object(supervisor, 'load_status', side_effect=lambda *a, **k: ai_status.load_state()),
+            mock.patch.object(supervisor, 'start_worker_for_request') as launch,
+            mock.patch.object(supervisor, 'write_activity_log'),
+        ):
+            supervisor.process_queue(config, runtime)
+        launch.assert_not_called()
+        self.assertEqual(runtime['queue']['events'][event['event_id']]['status'], 'completed')
+        self.assertEqual(runtime['queue']['events'][event['event_id']]['skip_reason'], 'stale_dispatch_event')
+        self.assertEqual(self._snapshot(), committed)
+
+    def test_existing_final_spawn_boundary_reloads_revised_task_generation(self):
+        import supervisor
+        import test_supervisor as fixtures
+        ai_status.configure_status_root_paths(self._test_root)
+        config = fixtures.config_fixture(self._test_root)
+        config['paths'].update(self.config['paths'])
+        old = deepcopy(ai_status.get_task(ai_status.load_state(), 'DEP'))
+        event = supervisor.build_dispatch_event(old, 'Codex', supervisor.REASON_OWNED_READY, {'DEP': old})
+        event.update(event_id='evt-final-revision', event_key=event['key'], target_agent='codex',
+                     target_display_name='Codex', delivery_endpoint_id='codex', message='isolated test')
+        request = supervisor.DeliveryRequest(agent_id='codex', provider='codex', delivery_mode='codex',
+                                            task_id='DEP', reason=supervisor.REASON_OWNED_READY,
+                                            message='isolated test', metadata={'task_generation': 1})
+        self.assertEqual(self._run(self._request())[0], 0)
+        adapter = mock.Mock()
+        with (
+            mock.patch.object(supervisor, 'load_status', side_effect=lambda *a, **k: ai_status.load_state()),
+            mock.patch.object(supervisor, 'build_adapter', return_value=adapter),
+            mock.patch.object(supervisor, 'worker_commit_progress_snapshot', return_value={}),
+            mock.patch.object(supervisor, 'status_command_runtime_env', return_value={}),
+            mock.patch.object(supervisor, 'status_command_runtime_record_from_env', return_value={}),
+            self.assertRaises(supervisor.StaleDispatchBeforeLaunch),
+        ):
+            supervisor.start_worker_for_request(config, self.runtime, request, dispatch_event=event,
+                queue_event_id=event['event_id'], attempt_count=1, event_id_for_log=event['event_id'])
+        adapter.deliver.assert_not_called()
 
 
 class HumanOpsStatusWrapperTests(unittest.TestCase):

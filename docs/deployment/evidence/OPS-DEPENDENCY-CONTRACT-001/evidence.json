@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-DEPENDENCY-CONTRACT-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "scope": "Atomic dependency-set revisions through the existing qualified Human/Ops CLI and authoritative TaskStore",
+  "source_base": "656c2beeb7e9c62e446cd5f6ec7be0105cd7c3b5",
+  "anchor_commit": "edaee605c",
+  "source_contracts": [
+    {
+      "path": "/tmp/pantheon-tooling-root-repair-20260907/DEPENDENCY_CONTRACT_PLAN.md",
+      "sha256": "705fd1adf47624c5716cf82f1a6bc4d1cb4bed9b6b1391909511e9cedea5743c"
+    },
+    {
+      "path": "/tmp/pantheon-tooling-root-repair-20260907/dependency-contract-entrypoint-audit/REPORT.md",
+      "sha256": "b023622bdb3e6c6ced0346db79906748d683807001661f8cc58e4544e34a7739"
+    },
+    {
+      "path": "/tmp/pantheon-tooling-root-repair-20260907/fe-oss-dependency-audit/REPORT.md",
+      "sha256": "e0cd2918b718b0ec0994ce173223aafc6e32ad23add25ab976231f332fcbdfcb"
+    }
+  ],
+  "implementation": {
+    "ingress": "dependency-contract <absolute-request.json>; explicit local Human/Ops only, with no auto-worker markers",
+    "cas": "Existing task_mutation_cas_digest over each complete current task row",
+    "transaction": "Existing runtime-admission lock, canonical TaskStore transaction and buffered activity outbox; one append for the complete batch",
+    "fences": "Existing workers, embedded queue intents, worktree leases, off-lock phase reservations and pending review/recovery; existing task generation checked at queue and final process launch",
+    "graph": "Full prospective graph including unchanged intermediate tasks, durable terminal facts, retained tracks, and preserved terminal ordering of overlapping writers",
+    "provenance": "Original signed documents, task_spec/hash, roles, scope, acceptance, status/holds and delivery/review lineage preserved",
+    "unsupported": "Privileged execution authorization and catalog/proof-policy revisions"
+  },
+  "validation": [
+    {
+      "command": "AI_NAME=Codex timeout 120 python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests scripts.test_ai_status.DependencyTrackCommandTests scripts.test_ai_status.TaskMetadataTests -q",
+      "exit_code": 0,
+      "tests": 62,
+      "log": "/tmp/ops-dependency-focused.log"
+    },
+    {
+      "command": "AI_NAME=Codex timeout 180 python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k DurableQueueContractTests -q",
+      "exit_code": 0,
+      "tests": 20,
+      "log": "/tmp/ops-dependency-queue.log"
+    }
+  ],
+  "verification_in_progress": [
+    "Full scripts.test_ai_status suite",
+    "Status command runtime pin suite",
+    "Smoke acceptance in isolated venv with existing issuer requirements",
+    "Refresh branch onto current dev and repository checks"
+  ],
+  "activation_handoff": {
+    "status": "pending_review_merge_and_existing_promoter_activation",
+    "required_actor": "root/operator coordination through the existing supervisor and promoter",
+    "requirements": [
+      "Independent assigned exact-head review and sole-integrator merge into current dev",
+      "Qualify and activate the merged command runtime through the existing promoter",
+      "Re-read current canonical FE rows, full graph/scopes, current source, live queue/reservations and real capacity",
+      "Only if still justified, atomically revise the existing DEP/STRICTLIVE rows, preserving all other dependencies and actual protocol/hosted holds",
+      "Record one authoritative mutation/readback plus actual supervisor eligibility and one genuine owner dispatch"
+    ],
+    "actual_fe_mutation": false,
+    "actual_fe_dispatch_proven": false
+  },
+  "delivery": {
+    "status": "implementation_validation_in_progress",
+    "independent_review": "pending",
+    "merge_commit": null
+  }
+}

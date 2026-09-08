@@ -102,10 +102,10 @@ from multi_repo_registry import (
     validate_task_repository_scope,
 )
 from runtime_state import (
+    _resolve_runtime_source_leaf,
     activity_audit_lock_file,
     canonical_task_state_lock_file,
     load_runtime_state_snapshot,
-    load_runtime_state,
     runtime_state_lock,
 )
 from rewrite.task_state_store import (
@@ -4253,6 +4253,8 @@ def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, 
     if not isinstance(raw_artifacts, list):
         return []
     target_repo = str(task.get("target_repo") or "").strip() or "pantheon"
+    target_repo = {"execute_plans": "execute-plans", "frontend-checkout": "execute-plans",
+                   "ajoe734/execute-plans": "execute-plans", "ajoe734/pantheon": "pantheon"}.get(target_repo, target_repo)
     normalized: list[tuple[str, str]] = []
     for raw in raw_artifacts:
         if not isinstance(raw, str) or not raw.strip():
@@ -4261,6 +4263,8 @@ def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, 
         prefix, separator, suffix = value.partition(":")
         if separator and prefix in {"execute-plans", "frontend-checkout"}:
             normalized.append(("execute-plans", suffix.lstrip("/")))
+        elif separator and prefix == "pantheon":
+            normalized.append(("pantheon", suffix.lstrip("/")))
         elif value.startswith("execute-plans/"):
             normalized.append(
                 ("execute-plans", value.removeprefix("execute-plans/"))
@@ -5035,6 +5039,8 @@ def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set
             yield item
 
     for worker in records(runtime.get("workers"), "workers"):
+        if worker.get("status") not in settled and not worker.get("task_id"):
+            raise DependencyContractBusy("unattributable active worker")
         if worker.get("task_id") in task_ids and worker.get("status") not in settled:
             raise DependencyContractBusy(f"active worker for {worker.get('task_id')}")
     queue = runtime.get("queue")
@@ -5044,6 +5050,8 @@ def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set
         intent = event.get("intent")
         if not isinstance(intent, Mapping):
             raise DependencyContractBusy("runtime queue intent is malformed")
+        if event.get("status") not in settled and not intent.get("task_id"):
+            raise DependencyContractBusy("unattributable queued intent")
         if (intent.get("task_id") in task_ids or event.get("task_id") in task_ids) and event.get("status") not in settled:
             raise DependencyContractBusy("affected task has a queued launch intent")
     worktrees = runtime.get("worker_worktrees", {})
@@ -5101,7 +5109,7 @@ def _dependency_contract_reachability(tasks: Mapping[str, Mapping[str, Any]], *,
 
 def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:
     """Validate detached prospective rows before one canonical/outbox commit."""
-    if current_actor() != "Human/Ops" or not local_human_ops_requested() or any(
+    if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
         str(os.environ.get(key) or "").strip() for key in AUTO_WORKER_ENV_MARKERS
     ):
         raise SystemExit("dependency-contract requires explicit local Human/Ops, never a worker")
@@ -5140,7 +5148,7 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
         if execution_authorization.task_privileged_by_source(task) or any(
             task.get(field) not in (None, {}, [], "") for field in (
-                "artifact_conflict_guard", "catalog_task_contract_sha256", "active_proof_ownership",
+                "artifact_conflict_guard", "catalog_task_contract_sha256", "proof_ownership",
                 "execution_authorization", "execution_authorization_policy",
             )
         ):
@@ -5179,14 +5187,18 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
     after = _dependency_contract_reachability(prospective, terminal_only=True)
     active = [task_id for task_id, task in tasks.items() if not is_terminal_task(task)]
     scopes = {task_id: _normalized_task_artifact_scope(tasks[task_id]) for task_id in active}
+    historical_unordered = []
     for index, left in enumerate(active):
         for right in active[index + 1:]:
             old_order = (right in before[left], left in before[right])
             new_order = (right in after[left], left in after[right])
-            if not any(old_order) or old_order == new_order:
+            if any(old_order) and old_order == new_order:
                 continue
             if not any(lrepo == rrepo and _artifact_paths_overlap(lpath, rpath)
                        for lrepo, lpath in scopes[left] for rrepo, rpath in scopes[right]):
+                continue
+            if not any(old_order):
+                historical_unordered.append([left, right])
                 continue
             if not any(new_order):
                 raise SystemExit(f"dependency-contract would unserialize overlapping writers: {left}, {right}")
@@ -5206,13 +5218,15 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
         "message": batch["reason"], "command_runtime_sha": os.environ.get(STATUS_COMMAND_SHA_ENV),
         **local_human_ops_audit_fields(),
     })
-    return {"status": "committed", "task_ids": sorted(ids), "request_sha256": digest, "historical_missing_dependencies": historical_missing}
+    return {"status": "committed", "task_ids": sorted(ids), "request_sha256": digest,
+            "historical_missing_dependencies": historical_missing,
+            "historical_unordered_writers": historical_unordered}
 
 
 def run_dependency_contract_batch(args: list[str]) -> int:
     if len(args) != 1:
         raise SystemExit("Usage: dependency-contract <absolute-request-path>")
-    if current_actor() != "Human/Ops" or not local_human_ops_requested() or any(
+    if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
         str(os.environ.get(key) or "").strip() for key in AUTO_WORKER_ENV_MARKERS
     ):
         raise SystemExit("dependency-contract requires explicit local Human/Ops, never a worker")
@@ -5223,7 +5237,18 @@ def run_dependency_contract_batch(args: list[str]) -> int:
     committed = None
     try:
         with runtime_state_lock(config, shared=True):
-            runtime = load_runtime_state(config)
+            # Read the existing canonical runtime source under its admission
+            # lock. Projection normalization/pruning may hide malformed leases
+            # or orphaned approval workers; neither proves absence of a launch.
+            try:
+                runtime = json.loads(read_regular_file_bytes(
+                    _resolve_runtime_source_leaf(config, "state_file"),
+                    source="dependency-contract runtime admission",
+                ))
+            except (OSError, ValueError) as exc:
+                raise DependencyContractBusy(f"runtime admission snapshot unavailable: {exc}") from exc
+            if not isinstance(runtime, Mapping) or runtime.get("version") != 2:
+                raise DependencyContractBusy("runtime is not a V2 admission snapshot")
             with canonical_task_state_lock(shared=False):
                 with authoritative_task_state_transaction():
                     state = load_state()
