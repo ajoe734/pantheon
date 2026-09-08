@@ -11,11 +11,11 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: _tx_lock acquired for critical write operations; idempotency succeeded reservation happens prior to entry store CAS commit. Staged outbox and audit events are emitted before entry compare_and_set commit. In case of CAS retry, failure, or synthetic error, staged outbox and audit events are cleanly rolled back and idempotency resets to pending, preventing failed mutations from leaking into concurrent successful patches."
+      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery. Reservation is registered in idempotency store with status pending. Entry CAS commits atomically first, followed by secondary store commit (outbox and audit), after which idempotency is finalized with status succeeded. Retries and concurrent readers observe pending rather than replayed uncommitted data. If CAS or secondary stores fail, entries and staged secondary records are cleanly rolled back. Across instance or process crashes, crash recovery detects committed entry versions to finalize secondary stores or aborts uncommitted reservations."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, and tenant_id before entry CAS commit. Audit failures abort transaction without committing entry."
+      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, and tenant_id. list_audit_events strictly enforces tenant scope and authorized principal on audit reads: omitted or blank tenant denies tenant-scoped events; private entry diffs are denied unless queried by matching actor/user."
     },
     "durable_outbox_streaming": {
       "status": "satisfied",
@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records with authored principal deny mismatched actors; and unauthored legacy records require explicit include_unscoped_legacy=True."
+      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id)."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -35,7 +35,7 @@
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
-      "implementation": "Ordinary patch fails closed on unscoped legacy rows (missing scope cannot be claimed by tenant patch) pending governed migration; list_entries excludes legacy rows by default unless include_unscoped_legacy=True."
+      "implementation": "Ordinary unscoped reads (include_unscoped_legacy=False) fail closed on legacy rows missing tenant_id even if authored by caller; governed legacy access (include_unscoped_legacy=True) required. Ordinary patch fails closed on unscoped legacy rows pending governed migration; missing scope matrix verified across all readers and adapters."
     },
     "fresh_process_restart_parity": {
       "status": "satisfied",
@@ -82,15 +82,15 @@
     "suites": [
       {
         "name": "services/governance/test_decision_journal.py",
-        "runner": "python3 -m unittest",
-        "tests": 29,
+        "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
+        "tests": 35,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       },
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-        "runner": "/tmp/bff-package-001-venv/bin/python -m unittest",
+        "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
         "tests": 22,
         "failures": 0,
         "errors": 0,
@@ -100,6 +100,14 @@
         "name": "tests/agora_write_owner/",
         "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-cb67a9f3.py",
+        "runner": "GOVERNANCE_STORE_BACKEND=json PYTHONPATH=. /tmp/bff-package-001-venv/bin/python",
+        "tests": 3,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -137,7 +145,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 96
+    "total_tests_passed": 105
   },
   "artifacts": [
     "services/governance/decision_journal.py",

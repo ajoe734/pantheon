@@ -58,13 +58,17 @@ class TestDecisionJournalOwnerAdapter(unittest.TestCase):
                 title="Delay promotion",
                 body="Hold the canary promotion pending review.",
                 actor_id="op-1",
+                tenant_id="tenant-dev",
                 payload={"tags": ["risk"], "visibility": "private"},
                 created_at="2026-09-05T00:00:00Z",
             )
             self.assertEqual(created["title"], "Delay promotion")
             self.assertEqual(created["canonicalWriteAuthority"], "governance-decision-journal-svc")
 
-            listed = adapter.list_decision_journal_entries()
+            # Unscoped query returns empty (fail closed)
+            self.assertEqual(len(adapter.list_decision_journal_entries()), 0)
+
+            listed = adapter.list_decision_journal_entries(tenant_id="tenant-dev", actor_id="op-1")
             self.assertEqual(len(listed), 1)
             self.assertEqual(listed[0]["id"], created["id"])
 
@@ -72,6 +76,7 @@ class TestDecisionJournalOwnerAdapter(unittest.TestCase):
                 created["id"],
                 patch={"title": "Delay promotion (updated)"},
                 actor_id="op-1",
+                tenant_id="tenant-dev",
                 idempotency_key="idem-1",
                 request_hash="hash-1",
                 patched_at="2026-09-05T00:05:00Z",
@@ -296,6 +301,7 @@ class TestDecisionJournalOwnerAdapter(unittest.TestCase):
                 title="Freeze rollback candidate",
                 body="Restart parity check.",
                 actor_id="op-2",
+                tenant_id="tenant-parity",
                 payload={},
                 created_at="2026-09-05T01:00:00Z",
             )
@@ -303,13 +309,17 @@ class TestDecisionJournalOwnerAdapter(unittest.TestCase):
                 created["id"],
                 patch={"body": "Restart parity check (patched)."},
                 actor_id="op-2",
+                tenant_id="tenant-parity",
                 idempotency_key="idem-2",
                 request_hash="hash-2",
                 patched_at="2026-09-05T01:05:00Z",
             )
 
             second = build_decision_journal_owner_adapter(_BareInnerReadStore(), data_dir=tmp)
-            fresh = second.list_decision_journal_entries()
+            # Unscoped query returns empty (fail closed)
+            self.assertEqual(len(second.list_decision_journal_entries()), 0)
+
+            fresh = second.list_decision_journal_entries(tenant_id="tenant-parity", actor_id="op-2")
             self.assertEqual(len(fresh), 1)
             self.assertEqual(fresh[0]["id"], created["id"])
             self.assertEqual(fresh[0]["body"], "Restart parity check (patched).")
@@ -328,11 +338,16 @@ class TestDecisionJournalOwnerAdapter(unittest.TestCase):
                 title="Wrapped store parity",
                 body="",
                 actor_id="op-3",
+                tenant_id="tenant-wrapped",
                 payload={},
                 created_at="2026-09-05T02:00:00Z",
             )
-            self.assertEqual(len(store_b.list_decision_journal_entries()), 1)
-            self.assertEqual(store_b.list_decision_journal_entries()[0]["id"], created["id"])
+            # Unscoped query returns empty (fail closed)
+            self.assertEqual(len(store_b.list_decision_journal_entries()), 0)
+
+            fresh = store_b.list_decision_journal_entries(tenant_id="tenant-wrapped", actor_id="op-3")
+            self.assertEqual(len(fresh), 1)
+            self.assertEqual(fresh[0]["id"], created["id"])
 
 
 def _operator_identity() -> OperatorIdentity:

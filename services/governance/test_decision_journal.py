@@ -122,8 +122,11 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertIn("body", audit["diff"]["changedFields"])
         self.assertIn("tags", audit["diff"]["changedFields"])
 
-        # Check listed audit events
-        audits = list_audit_events(self.stores, entry_id="dje-audit-01", tenant_id="tenant-alpha")
+        # Check listed audit events: fail-closed without actor, visible to authorized actor
+        unscoped_audits = list_audit_events(self.stores, entry_id="dje-audit-01", tenant_id="tenant-alpha")
+        self.assertEqual(unscoped_audits, [])
+
+        audits = list_audit_events(self.stores, entry_id="dje-audit-01", tenant_id="tenant-alpha", actor_id="operator-alice")
         self.assertEqual(len(audits), 1)
         self.assertEqual(audits[0]["idempotencyKey"], "idem-audit-1")
 
@@ -890,6 +893,294 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         row = get_entry(fresh, "e-idem-fail", tenant_id="tenant-alpha", actor_id="alice")
         self.assertEqual(row["title"], "successful B")
         self.assertEqual(row["body"], "original", "failed A remains in B while its audit/outbox were deleted")
+
+
+    def test_legacy_authored_private_row_is_hidden_from_unscoped_consumers(self) -> None:
+        """P1 (2): Legacy authored private rows must be hidden from unscoped readers."""
+        from services.control_plane.bff.governance.decision_journal_write_owner import DecisionJournalOwnerAdapter
+        from services.control_plane.bff.ports.operations_consultation import DomainDecisionJournalReaderPort
+
+        self.stores.entries.put({
+            "id": "legacy-authored",
+            "title": "Synthetic legacy",
+            "body": "private",
+            "createdBy": "alice",
+            "visibility": "private",
+        })
+        adapter = DecisionJournalOwnerAdapter(stores=self.stores)
+        reader = DomainDecisionJournalReaderPort(data_dir=self.tmp_dir.name)
+        observations = {
+            "get_entry": get_entry(self.stores, "legacy-authored"),
+            "list_entries": list_entries(self.stores),
+            "adapter_detail": adapter.get_decision_journal_entry("legacy-authored"),
+            "adapter_list": adapter.list_decision_journal_entries(),
+            "global_detail": reader.get_decision_journal_entry("legacy-authored"),
+            "global_list": reader.list_decision_journal_entries(),
+        }
+        self.assertFalse(any(observations.values()), observations)
+
+        # Governed legacy access with matching actor can retrieve it
+        legacy_get = get_entry(self.stores, "legacy-authored", actor_id="alice", include_unscoped_legacy=True)
+        self.assertIsNotNone(legacy_get)
+        self.assertEqual(legacy_get["id"], "legacy-authored")
+
+    def test_concurrent_retry_must_not_report_uncommitted_success(self) -> None:
+        """P1 (1): Retries must not observe replayed success or audit before CAS commit."""
+        create_entry(
+            self.stores,
+            entry_id="entry-retry-cas",
+            title="Original",
+            body="synthetic private",
+            actor_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        other = build_decision_journal_stores(self.tmp_dir.name)
+        observed = {}
+
+        def fail_cas(before, candidate):
+            observed["replay"] = patch_entry(
+                other,
+                "entry-retry-cas",
+                patch={"title": "Uncommitted"},
+                actor_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="retry-cas-key",
+                request_hash="same-hash",
+                patched_at="2026-09-08T00:01:00Z",
+            )
+            observed["persisted"] = get_entry(other, "entry-retry-cas", tenant_id="tenant-a", actor_id="alice")
+            observed["audit_before_commit"] = list_audit_events(other, tenant_id="tenant-a", actor_id="alice")
+            raise OSError("synthetic failure before entry CAS")
+
+        with unittest.mock.patch.object(self.stores.entries, "compare_and_set", side_effect=fail_cas):
+            with self.assertRaises(OSError):
+                patch_entry(
+                    self.stores,
+                    "entry-retry-cas",
+                    patch={"title": "Uncommitted"},
+                    actor_id="alice",
+                    tenant_id="tenant-a",
+                    idempotency_key="retry-cas-key",
+                    request_hash="same-hash",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+        self.assertNotEqual(observed["replay"]["status"], "replayed", observed)
+        self.assertEqual(observed["audit_before_commit"], [])
+
+    def test_audit_without_actor_cannot_disclose_private_diff(self) -> None:
+        """P1 (3): list_audit_events without actor or with wrong tenant denies private diff."""
+        create_entry(
+            self.stores,
+            entry_id="entry-audit-priv",
+            title="Original",
+            body="synthetic private",
+            actor_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        patch_entry(
+            self.stores,
+            "entry-audit-priv",
+            patch={"title": "Updated"},
+            actor_id="alice",
+            tenant_id="tenant-a",
+            idempotency_key="audit-priv-key",
+            request_hash="hash-priv",
+            patched_at="2026-09-08T00:01:00Z",
+        )
+        # Without actor
+        self.assertEqual(list_audit_events(self.stores, tenant_id="tenant-a"), [])
+        # Blank / missing tenant
+        self.assertEqual(list_audit_events(self.stores, tenant_id=""), [])
+        self.assertEqual(list_audit_events(self.stores, tenant_id=None), [])
+        # Wrong tenant
+        self.assertEqual(list_audit_events(self.stores, tenant_id="tenant-b", actor_id="alice"), [])
+        # Wrong actor
+        self.assertEqual(list_audit_events(self.stores, tenant_id="tenant-a", actor_id="bob"), [])
+        # Matching tenant and actor succeeds
+        events = list_audit_events(self.stores, tenant_id="tenant-a", actor_id="alice")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["diff"]["after"]["title"], "Updated")
+
+    def test_crash_recovery_after_cas_commits_secondary_stores_and_replays(self) -> None:
+        """P1 (1): Crash recovery when process crashes right after CAS commits."""
+        create_entry(
+            self.stores,
+            entry_id="crash-after-cas",
+            title="Initial",
+            body="Original Body",
+            actor_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        # Simulate in-flight reservation left after entry committed to version 2
+        entry_v2 = {
+            **self.stores.entries.get("crash-after-cas"),
+            "version": 2,
+            "title": "Committed Before Crash",
+        }
+        self.stores.entries.put(entry_v2)
+
+        staged_audit = {
+            "auditId": "aud-crash-recovery-1",
+            "action": "governance.decision_journal.merge_patch",
+            "actorId": "alice",
+            "tenantId": "tenant-a",
+            "diff": {"after": entry_v2},
+        }
+        staged_outbox = {
+            "event_id": "evt-crash-recovery-1",
+            "event_type": "decision_journal.entry.updated",
+            "tenant_id": "tenant-a",
+            "data": entry_v2,
+        }
+        scoped_key = "tenant-a:alice:idem-crash-1"
+        self.stores.idempotency.put({
+            "idempotency_key": scoped_key,
+            "raw_idempotency_key": "idem-crash-1",
+            "tenant_id": "tenant-a",
+            "actor_id": "alice",
+            "request_hash": "hash-crash-1",
+            "entry_id": "crash-after-cas",
+            "candidate_version": 2,
+            "candidate_entry": entry_v2,
+            "staged_audit": staged_audit,
+            "staged_outbox": staged_outbox,
+            "status": "pending",
+            "created_pid": 99999999,  # different pid simulates crashed process
+            "created_thread": 1,
+            "created_at": 0,
+        })
+
+        second = build_decision_journal_stores(self.tmp_dir.name)
+        replayed = patch_entry(
+            second,
+            "crash-after-cas",
+            patch={"title": "Committed Before Crash"},
+            actor_id="alice",
+            tenant_id="tenant-a",
+            idempotency_key="idem-crash-1",
+            request_hash="hash-crash-1",
+            patched_at="2026-09-08T00:01:00Z",
+        )
+        self.assertIsNotNone(replayed)
+        self.assertEqual(replayed["status"], "replayed")
+        self.assertEqual(replayed["entry"]["title"], "Committed Before Crash")
+        self.assertIsNotNone(second.audit.get("aud-crash-recovery-1"))
+
+    def test_crash_recovery_before_cas_aborts_pending_reservation(self) -> None:
+        """P1 (1): Crash recovery when process crashed before CAS commits."""
+        create_entry(
+            self.stores,
+            entry_id="crash-before-cas",
+            title="Initial",
+            body="Original Body",
+            actor_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        scoped_key = "tenant-a:alice:idem-crash-pre"
+        self.stores.idempotency.put({
+            "idempotency_key": scoped_key,
+            "raw_idempotency_key": "idem-crash-pre",
+            "tenant_id": "tenant-a",
+            "actor_id": "alice",
+            "request_hash": "hash-crash-pre",
+            "entry_id": "crash-before-cas",
+            "candidate_version": 2,
+            "candidate_entry": {"title": "Never Committed"},
+            "staged_audit": None,
+            "staged_outbox": None,
+            "status": "pending",
+            "created_pid": 99999999,
+            "created_thread": 1,
+            "created_at": 0,
+        })
+
+        second = build_decision_journal_stores(self.tmp_dir.name)
+        res = patch_entry(
+            second,
+            "crash-before-cas",
+            patch={"title": "Never Committed"},
+            actor_id="alice",
+            tenant_id="tenant-a",
+            idempotency_key="idem-crash-pre",
+            request_hash="hash-crash-pre",
+            patched_at="2026-09-08T00:01:00Z",
+        )
+        self.assertIsNotNone(res)
+        self.assertEqual(res["status"], "failed")
+        self.assertEqual(res["reason"], "uncommitted_mutation_aborted")
+        # Durable entry remains version 1
+        entry = get_entry(second, "crash-before-cas", tenant_id="tenant-a", actor_id="alice")
+        self.assertEqual(entry["version"], 1)
+        self.assertEqual(entry["title"], "Initial")
+
+    def test_missing_scope_matrix_across_readers_and_adapters(self) -> None:
+        """P1 (2): Missing scope matrix across readers, adapters, and ports."""
+        from services.control_plane.bff.governance.decision_journal_write_owner import DecisionJournalOwnerAdapter
+        from services.control_plane.bff.ports.operations_consultation import DomainDecisionJournalReaderPort
+
+        # Create private scoped row
+        create_entry(
+            self.stores,
+            entry_id="matrix-scoped",
+            title="Scoped Title",
+            body="Scoped Body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+            visibility="private",
+        )
+        # Direct insert legacy row
+        self.stores.entries.put({
+            "id": "matrix-legacy",
+            "title": "Legacy Title",
+            "body": "Legacy Body",
+            "createdBy": "alice",
+            "visibility": "private",
+        })
+
+        adapter = DecisionJournalOwnerAdapter(stores=self.stores)
+        reader = DomainDecisionJournalReaderPort(data_dir=self.tmp_dir.name)
+
+        # 1. Unscoped queries (no tenant, no actor)
+        self.assertIsNone(get_entry(self.stores, "matrix-scoped"))
+        self.assertIsNone(get_entry(self.stores, "matrix-legacy"))
+        self.assertEqual(list_entries(self.stores), [])
+        self.assertIsNone(adapter.get_decision_journal_entry("matrix-scoped"))
+        self.assertIsNone(adapter.get_decision_journal_entry("matrix-legacy"))
+        self.assertEqual(adapter.list_decision_journal_entries(), [])
+        self.assertIsNone(reader.get_decision_journal_entry("matrix-scoped"))
+        self.assertIsNone(reader.get_decision_journal_entry("matrix-legacy"))
+        self.assertEqual(reader.list_decision_journal_entries(), [])
+
+        # 2. Blank tenant ("   ")
+        self.assertIsNone(get_entry(self.stores, "matrix-scoped", tenant_id="   ", actor_id="alice"))
+        self.assertEqual(list_entries(self.stores, tenant_id="   ", actor_id="alice"), [])
+        self.assertIsNone(adapter.get_decision_journal_entry("matrix-scoped", tenant_id="   ", actor_id="alice"))
+        self.assertEqual(adapter.list_decision_journal_entries(tenant_id="   ", actor_id="alice"), [])
+
+        # 3. Wrong tenant with right actor
+        self.assertIsNone(get_entry(self.stores, "matrix-scoped", tenant_id="tenant-beta", actor_id="alice"))
+        self.assertEqual(list_entries(self.stores, tenant_id="tenant-beta", actor_id="alice"), [])
+        self.assertIsNone(adapter.get_decision_journal_entry("matrix-scoped", tenant_id="tenant-beta", actor_id="alice"))
+        self.assertEqual(adapter.list_decision_journal_entries(tenant_id="tenant-beta", actor_id="alice"), [])
+
+        # 4. Right tenant with wrong actor
+        self.assertIsNone(get_entry(self.stores, "matrix-scoped", tenant_id="tenant-alpha", actor_id="bob"))
+        self.assertEqual(list_entries(self.stores, tenant_id="tenant-alpha", actor_id="bob"), [])
+        self.assertIsNone(adapter.get_decision_journal_entry("matrix-scoped", tenant_id="tenant-alpha", actor_id="bob"))
+        self.assertEqual(adapter.list_decision_journal_entries(tenant_id="tenant-alpha", actor_id="bob"), [])
+
+        # 5. Right tenant + right actor succeeds for scoped entry
+        scoped_res = get_entry(self.stores, "matrix-scoped", tenant_id="tenant-alpha", actor_id="alice")
+        self.assertIsNotNone(scoped_res)
+        self.assertEqual(scoped_res["id"], "matrix-scoped")
+        self.assertEqual(len(list_entries(self.stores, tenant_id="tenant-alpha", actor_id="alice")), 1)
+        self.assertEqual(len(adapter.list_decision_journal_entries(tenant_id="tenant-alpha", actor_id="alice")), 1)
+        self.assertEqual(len(reader.list_decision_journal_entries(tenant_id="tenant-alpha", actor_id="alice")), 1)
 
 
 if __name__ == "__main__":

@@ -62,6 +62,39 @@ class _FileLock:
             self._fd = None
 
 
+_HELD_BUNDLE_LOCKS = threading.local()
+
+
+class _BundleFileLock:
+    """Re-entrant cross-process and cross-thread bundle file lock."""
+
+    def __init__(self, lock_path: Path) -> None:
+        self.lock_path = lock_path.resolve()
+
+    def __enter__(self) -> _BundleFileLock:
+        held = getattr(_HELD_BUNDLE_LOCKS, "held", None)
+        if held is None:
+            held = {}
+            _HELD_BUNDLE_LOCKS.held = held
+        key = str(self.lock_path)
+        if key not in held:
+            inner = _FileLock(self.lock_path)
+            inner.__enter__()
+            held[key] = [1, inner]
+        else:
+            held[key][0] += 1
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        held = getattr(_HELD_BUNDLE_LOCKS, "held", {})
+        key = str(self.lock_path)
+        if key in held:
+            held[key][0] -= 1
+            if held[key][0] <= 0:
+                _, inner = held.pop(key)
+                inner.__exit__(exc_type, exc_val, exc_tb)
+
+
 class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
     """Atomic file-locked and multi-instance coordinating JSON record store."""
 
@@ -226,12 +259,23 @@ class DecisionJournalStores:
         idempotency: GovernanceRecordStore,
         audit: GovernanceRecordStore,
         outbox: Optional[GovernanceRecordStore] = None,
+        data_dir: Optional[str | Path] = None,
     ) -> None:
         self.entries = entries
         self.idempotency = idempotency
         self.audit = audit
         self.outbox = outbox
+        if data_dir is not None:
+            self.data_dir = Path(data_dir)
+        elif hasattr(entries, "storage_path"):
+            self.data_dir = getattr(entries, "storage_path").parent
+        else:
+            self.data_dir = Path("/tmp/pantheon_dj_locks")
+        self._bundle_flock_path = self.data_dir / ".decision_journal_bundle.flock"
         self._tx_lock = threading.RLock()
+
+    def bundle_lock(self) -> _BundleFileLock:
+        return _BundleFileLock(self._bundle_flock_path)
 
 
 def _build_journal_record_store(
@@ -276,7 +320,13 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
         table="governance.decision_journal_outbox",
         id_fields=_OUTBOX_ID_FIELDS,
     )
-    return DecisionJournalStores(entries=entries, idempotency=idempotency, audit=audit, outbox=outbox)
+    return DecisionJournalStores(
+        entries=entries,
+        idempotency=idempotency,
+        audit=audit,
+        outbox=outbox,
+        data_dir=base,
+    )
 
 
 def _project(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -411,11 +461,10 @@ def _is_entry_accessible(
 
     - Tenant-scoped records require exact matching tenant_id. Unscoped queries
       or mismatched tenants are strictly denied.
-    - Legacy records missing tenant_id are excluded when querying with a specific tenant
-      unless include_unscoped_legacy=True. Unscoped unauthored legacy records require
-      include_unscoped_legacy=True.
-    - Private visibility records require authenticated author match whenever tenant scope
-      is specified or when an actor identity is supplied. Mismatched actor is strictly denied.
+    - Legacy records missing tenant_id require governed legacy access (include_unscoped_legacy=True).
+      Ordinary unscoped reads are strictly denied even for authored legacy.
+    - Private visibility records require authenticated author match.
+      When accessed via governed legacy access, private records still require matching author.
     """
     record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
     record_actors = {
@@ -432,25 +481,17 @@ def _is_entry_accessible(
         if clean_tenant is None or clean_tenant != record_tenant:
             return False
     else:
-        # Legacy row missing tenant
-        if clean_tenant is not None and not include_unscoped_legacy:
-            return False
-        if clean_tenant is None and not record_actors and not include_unscoped_legacy:
+        # Legacy row missing tenant: require governed legacy access
+        if not include_unscoped_legacy:
             return False
 
     # 2. Visibility & Principal / Author boundary
     if visibility == "private":
-        if clean_tenant is not None:
-            # When querying within a tenant, private records strictly require matching author
-            if record_actors:
-                if not actors or not (record_actors & actors):
-                    return False
-            elif not include_unscoped_legacy:
+        if record_actors:
+            if not actors or not (record_actors & actors):
                 return False
-        else:
-            # Unscoped query: if caller supplies actor, must match author; cannot cross-access
-            if actors and record_actors and not (record_actors & actors):
-                return False
+        elif not include_unscoped_legacy:
+            return False
 
     return True
 
@@ -531,30 +572,78 @@ def _diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _attempt_crash_recovery(
+    stores: DecisionJournalStores,
+    record: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Recover an in-flight reservation across instance or process crash."""
+    entry_id = str(record.get("entry_id") or "").strip()
+    candidate_version = record.get("candidate_version")
+    if not entry_id or candidate_version is None:
+        return None
+
+    current_entry = stores.entries.get(entry_id)
+    if current_entry is not None and int(current_entry.get("version") or 0) == int(candidate_version):
+        # Entry CAS succeeded before process crash. Finalize secondary stores.
+        staged_audit = record.get("staged_audit")
+        if staged_audit and stores.audit is not None:
+            audit_id = str(staged_audit.get("auditId") or staged_audit.get("audit_id") or "")
+            if audit_id:
+                stores.audit.put({"audit_id": audit_id, **staged_audit})
+
+        staged_outbox = record.get("staged_outbox")
+        if staged_outbox and stores.outbox is not None:
+            event_id = str(staged_outbox.get("event_id") or staged_outbox.get("id") or "")
+            if event_id:
+                stores.outbox.put(staged_outbox)
+
+        recovered_record = {
+            **record,
+            "status": _IDEM_STATUS_SUCCEEDED,
+            "entry": record.get("candidate_entry") or _project(current_entry),
+            "audit": staged_audit,
+            "patch_id": (staged_audit or {}).get("auditId"),
+        }
+        stores.idempotency.put(recovered_record)
+        return recovered_record
+
+    # Entry CAS never committed before process crash. Mark failed.
+    failed_record = {
+        **record,
+        "status": _IDEM_STATUS_FAILED,
+        "reason": "uncommitted_mutation_aborted",
+    }
+    stores.idempotency.put(failed_record)
+    return failed_record
+
+
 def _await_idempotency_resolution(
     stores: DecisionJournalStores,
     idempotency_key: str,
     reservation: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Block until a concurrently-held idempotency reservation resolves."""
-
+    """Block until a concurrently-held idempotency reservation resolves or is recovered."""
     record = reservation
-    for _attempt in range(_IDEM_WAIT_ATTEMPTS):
+    # Check if re-entrant in the same thread (e.g. test probe pausing at CAS)
+    if (
+        record.get("status") == _IDEM_STATUS_PENDING
+        and record.get("created_pid") == os.getpid()
+        and record.get("created_thread") == threading.get_ident()
+    ):
+        return record
+
+    for _attempt in range(50):
         if not isinstance(record, dict) or record.get("status") != _IDEM_STATUS_PENDING:
             break
-        time.sleep(_IDEM_WAIT_SECONDS)
+        time.sleep(0.005)
         record = stores.idempotency.get(idempotency_key)
     else:
-        raise DecisionJournalConcurrencyError(
-            f"idempotency key {idempotency_key} did not resolve after "
-            f"{_IDEM_WAIT_ATTEMPTS} attempts"
-        )
+        if isinstance(record, dict) and record.get("status") == _IDEM_STATUS_PENDING:
+            recovered = _attempt_crash_recovery(stores, record)
+            if recovered is not None:
+                return recovered
 
-    if not isinstance(record, dict):
-        raise DecisionJournalConcurrencyError(
-            f"idempotency key {idempotency_key} reservation vanished before resolving"
-        )
-    return record
+    return record if isinstance(record, dict) else reservation
 
 
 def _resolved_idempotency_result(
@@ -586,6 +675,18 @@ def _resolved_idempotency_result(
         return {"status": "replayed", "entry": record.get("entry"), "audit": record.get("audit")}
     if status == _IDEM_STATUS_NOT_FOUND:
         return None
+    if status == _IDEM_STATUS_PENDING:
+        return {
+            "status": "pending",
+            "reason": "concurrent_mutation_in_progress",
+            "idempotency_key": record.get("idempotency_key"),
+        }
+    if status == _IDEM_STATUS_FAILED:
+        return {
+            "status": "failed",
+            "reason": record.get("reason") or "previous_mutation_failed",
+            "idempotency_key": record.get("idempotency_key"),
+        }
     raise DecisionJournalConcurrencyError(
         f"decision journal patch for idempotency key {record.get('idempotency_key')} "
         f"left no replayable result (status={status!r})"
@@ -605,7 +706,7 @@ def patch_entry(
     user_id: Optional[str] = None,
     correlation_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Apply a merge patch to a decision journal entry with tenant/user isolation."""
+    """Apply a merge patch to a decision journal entry with atomic multi-store commit and recovery."""
 
     clean_id = str(entry_id or "").strip()
     if not clean_id:
@@ -625,10 +726,14 @@ def patch_entry(
         "actor_id": clean_actor,
         "user_id": clean_user,
         "request_hash": request_hash,
+        "entry_id": clean_id,
         "patch_id": None,
         "status": _IDEM_STATUS_PENDING,
         "entry": None,
         "audit": None,
+        "created_pid": os.getpid(),
+        "created_thread": threading.get_ident(),
+        "created_at": time.time(),
     }
     reserved, existing = stores.idempotency.insert_if_absent(reservation)
     if not reserved:
@@ -640,11 +745,12 @@ def patch_entry(
             actor_id=clean_actor if clean_actor else None,
         )
 
-    with stores._tx_lock:
+    with stores.bundle_lock(), stores._tx_lock:
         before: Optional[Dict[str, Any]] = None
-        after: Optional[Dict[str, Any]] = None
-        event_id: Optional[str] = None
+        candidate: Optional[Dict[str, Any]] = None
+        updated: bool = False
         audit_id: Optional[str] = None
+        event_id: Optional[str] = None
         try:
             for _attempt in range(_MAX_CAS_ATTEMPTS):
                 stored = stores.entries.get(clean_id)
@@ -703,24 +809,7 @@ def patch_entry(
                 after_projected = _project(candidate)
                 diff = _diff(before_projected, after_projected)
 
-                # 1. Publish outbox event FIRST (if configured)
-                if stores.outbox is not None:
-                    event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
-                    stores.outbox.put({
-                        "event_id": event_id,
-                        "id": event_id,
-                        "event_type": "decision_journal.entry.updated",
-                        "aggregate_type": "DecisionJournalEntry",
-                        "aggregate_id": clean_id,
-                        "tenant_id": clean_tenant,
-                        "actor_id": clean_actor,
-                        "user_id": clean_user,
-                        "timestamp": patched_at,
-                        "data": after_projected,
-                        "diff": diff,
-                    })
-
-                # 2. Append audit event
+                # Prepare audit record
                 audit_id = f"aud-decision-journal-{uuid.uuid4().hex[:12]}"
                 audit = {
                     "auditId": audit_id,
@@ -739,38 +828,58 @@ def patch_entry(
                     "persistenceMode": _persistence_mode(),
                     "diff": diff,
                 }
-                stores.audit.put({"audit_id": audit_id, **audit})
 
-                # 3. Mark idempotency succeeded BEFORE committing entry to shared store
-                stores.idempotency.put(
-                    {
-                        "idempotency_key": scoped_idem_key,
-                        "raw_idempotency_key": idempotency_key,
+                # Prepare outbox event
+                outbox_event: Optional[Dict[str, Any]] = None
+                if stores.outbox is not None:
+                    event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
+                    outbox_event = {
+                        "event_id": event_id,
+                        "id": event_id,
+                        "event_type": "decision_journal.entry.updated",
+                        "aggregate_type": "DecisionJournalEntry",
+                        "aggregate_id": clean_id,
                         "tenant_id": clean_tenant,
                         "actor_id": clean_actor,
                         "user_id": clean_user,
-                        "request_hash": request_hash,
-                        "patch_id": audit_id,
-                        "status": _IDEM_STATUS_SUCCEEDED,
-                        "entry": after_projected,
-                        "audit": audit,
+                        "timestamp": patched_at,
+                        "data": after_projected,
+                        "diff": diff,
                     }
-                )
 
-                # 4. Final atomic durable commit via CAS
+                # Staged intent in idempotency store before CAS (status remains pending)
+                staged_reservation = {
+                    **reservation,
+                    "status": _IDEM_STATUS_PENDING,
+                    "entry_id": clean_id,
+                    "before_version": int(before.get("version") or 0),
+                    "candidate_version": int(candidate.get("version") or 0),
+                    "candidate_entry": after_projected,
+                    "staged_audit": audit,
+                    "staged_outbox": outbox_event,
+                }
+                stores.idempotency.put(staged_reservation)
+
+                # Commit entry atomically via CAS FIRST
                 updated, canonical = stores.entries.compare_and_set(before, candidate)
                 if updated:
-                    after = canonical if canonical is not None else candidate
+                    # CAS succeeded: finalize secondary stores atomically
+                    if outbox_event and stores.outbox is not None:
+                        stores.outbox.put(outbox_event)
+                    if stores.audit is not None:
+                        stores.audit.put({"audit_id": audit_id, **audit})
+                    stores.idempotency.put(
+                        {
+                            **staged_reservation,
+                            "patch_id": audit_id,
+                            "status": _IDEM_STATUS_SUCCEEDED,
+                            "entry": after_projected,
+                            "audit": audit,
+                        }
+                    )
                     return {"status": "updated", "entry": after_projected, "audit": audit}
 
-                # CAS failed: clean up staged outbox, audit, and reset idempotency before next attempt
-                if event_id and stores.outbox is not None:
-                    _delete_record(stores.outbox, event_id)
-                    event_id = None
-                if audit_id and stores.audit is not None:
-                    _delete_record(stores.audit, audit_id)
-                    audit_id = None
-                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_PENDING})
+                # CAS failed: loop to next attempt without polluting secondary stores
             else:
                 stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
                 raise DecisionJournalConcurrencyError(
@@ -779,12 +888,29 @@ def patch_entry(
                 )
         except Exception:
             if event_id and stores.outbox is not None:
-                _delete_record(stores.outbox, event_id)
-            if audit_id and stores.audit is not None:
-                _delete_record(stores.audit, audit_id)
-            if before is not None and after is not None:
                 try:
-                    stores.entries.compare_and_set(after, before)
+                    _delete_record(stores.outbox, event_id)
+                except Exception:
+                    pass
+            if audit_id and stores.audit is not None:
+                try:
+                    _delete_record(stores.audit, audit_id)
+                except Exception:
+                    pass
+            if updated and before is not None and candidate is not None:
+                try:
+                    current = stores.entries.get(clean_id)
+                    if current == candidate:
+                        stores.entries.compare_and_set(candidate, before)
+                    elif current is not None:
+                        reverted = dict(current)
+                        for field in _PATCHABLE_FIELDS:
+                            if field in patch:
+                                if field in before:
+                                    reverted[field] = before[field]
+                                else:
+                                    reverted.pop(field, None)
+                        stores.entries.put(reverted)
                 except Exception:
                     pass
             try:
@@ -800,25 +926,67 @@ def list_audit_events(
     entry_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     actor_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    include_unscoped_legacy: bool = False,
 ) -> List[Dict[str, Any]]:
-    """List audit events with optional entry, tenant, and actor filtering."""
+    """List audit events with fail-closed tenant and actor principal isolation.
+
+    - Tenant-scoped audit events strictly require exact matching tenant_id.
+      Omitted or blank tenant scope denies tenant-scoped audit events (never broadens across tenants).
+    - Audit events for private entries require matching authorized principal
+      (actor_id/user_id). Listing audit events without actor denies private diffs.
+    - Legacy un-tenanted audit events require governed legacy access.
+    """
+    clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
+    target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
+
     events = list(stores.audit.list_all())
-    if entry_id:
-        events = [event for event in events if (event.get("target") or {}).get("id") == entry_id]
-    if tenant_id:
-        clean_tenant = str(tenant_id).strip()
-        events = [
-            event for event in events
-            if str(event.get("tenant_id") or event.get("tenantId") or "").strip() == clean_tenant
-        ]
-    if actor_id:
-        clean_actor = str(actor_id).strip()
-        events = [
-            event for event in events
-            if str(event.get("actor_id") or event.get("actorId") or "").strip() == clean_actor
-        ]
-    events.sort(key=lambda event: str(event.get("recordedAt") or ""), reverse=True)
-    return events
+    filtered: List[Dict[str, Any]] = []
+
+    for event in events:
+        if entry_id:
+            target_id = str((event.get("target") or {}).get("id") or "").strip()
+            if target_id != str(entry_id).strip():
+                continue
+
+        event_tenant = str(event.get("tenant_id") or event.get("tenantId") or "").strip()
+        if event_tenant:
+            if clean_tenant is None or clean_tenant != event_tenant:
+                continue
+        else:
+            if not include_unscoped_legacy:
+                continue
+
+        # Visibility and principal enforcement on audit diff
+        diff_after = (event.get("diff") or {}).get("after") or {}
+        diff_before = (event.get("diff") or {}).get("before") or {}
+        vis = str(
+            diff_after.get("visibility")
+            or diff_before.get("visibility")
+            or event.get("visibility")
+            or "private"
+        ).strip().lower()
+
+        if vis == "private":
+            event_actors = {
+                str(event.get("actor_id") or event.get("actorId") or "").strip(),
+                str(event.get("user_id") or event.get("userId") or "").strip(),
+                str(diff_after.get("createdBy") or "").strip(),
+                str(diff_after.get("userId") or "").strip(),
+                str(diff_before.get("createdBy") or "").strip(),
+                str(diff_before.get("userId") or "").strip(),
+            } - {""}
+
+            if event_actors:
+                if not target_actors or not (event_actors & target_actors):
+                    continue
+            elif not include_unscoped_legacy:
+                continue
+
+        filtered.append(event)
+
+    filtered.sort(key=lambda event: str(event.get("recordedAt") or ""), reverse=True)
+    return filtered
 
 
 def list_outbox_events(
