@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -131,8 +132,34 @@ def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> s
     )
 
 
+def _worker_identity(env: dict[str, str]) -> tuple[str, str] | None:
+    """Return the per-run author identity without mutating shared Git config."""
+    agent = (env.get("AI_NAME") or env.get("PANTHEON_LLM_AGENT") or "").strip()
+    if not agent or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", agent):
+        return None
+    return agent, f"{agent.lower()}-agent@pantheon.local"
+
+
 def _build_env(index_file: str | None) -> dict[str, str]:
     env = os.environ.copy()
+    identity_fields = (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    )
+    if not any(env.get(key) for key in identity_fields):
+        identity = _worker_identity(env)
+        if identity:
+            name, email = identity
+            env.update(
+                {
+                    "GIT_AUTHOR_NAME": name,
+                    "GIT_AUTHOR_EMAIL": email,
+                    "GIT_COMMITTER_NAME": name,
+                    "GIT_COMMITTER_EMAIL": email,
+                }
+            )
     if index_file:
         Path(index_file).parent.mkdir(parents=True, exist_ok=True)
         env["GIT_INDEX_FILE"] = index_file
