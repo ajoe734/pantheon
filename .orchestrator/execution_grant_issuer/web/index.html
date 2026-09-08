@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pantheon Execution Grant Issuer — Tooling</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --heading: #f0f6fc;
+      --accent: #58a6ff;
+      --success: #238636;
+      --danger: #da3633;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.5;
+      margin: 0;
+      padding: 24px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    h1 {
+      color: var(--heading);
+      font-size: 20px;
+      margin-top: 0;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 12px;
+      background: #1f6feb22;
+      color: var(--accent);
+      border: 1px solid #1f6feb66;
+      margin-bottom: 16px;
+    }
+    .notice {
+      background: #388bfd15;
+      border-left: 4px solid var(--accent);
+      padding: 12px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: var(--heading);
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      box-sizing: border-box;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 13px;
+    }
+    input[type="text"]:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    button {
+      background-color: var(--success);
+      color: #ffffff;
+      border: none;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .output-area {
+      margin-top: 24px;
+      display: none;
+    }
+    pre {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 12px;
+    }
+    .status-msg {
+      margin-top: 12px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .status-error { color: var(--danger); }
+    .status-ok { color: #3fb950; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="badge">Development Tooling — Operational Execution Authority</span>
+    <h1>Execution Grant Issuer (Human MFA)</h1>
+
+    <div class="notice">
+      <strong>Scope:</strong> Issues single-use Ed25519 execution-authorization grants for privileged tasks (default: <code>DEV502-TRACE-001</code>).
+      Requires a valid Google Cloud Identity Platform ID token with a completed second-factor (MFA) claim. Single-factor/password-only, anonymous, and ADC tokens are rejected.
+    </div>
+
+    <div class="form-group">
+      <label for="taskId">Task ID</label>
+      <input type="text" id="taskId" value="DEV502-TRACE-001" />
+    </div>
+
+    <div class="form-group">
+      <label for="generation">Generation</label>
+      <input type="text" id="generation" value="3" />
+    </div>
+
+    <div class="form-group">
+      <label for="token">Identity Platform MFA ID Token (Bearer Token)</label>
+      <input type="text" id="token" placeholder="eyJhbGciOiJSUzI1NiIs..." />
+    </div>
+
+    <div class="form-group">
+      <label for="policyJson">Task Policy JSON Snapshot</label>
+      <textarea id="policyJson" rows="6" placeholder='{"action_scope": "execute", "environment": "pantheon-dev", "policy_digest": "...", "repository": "pantheon", "requires_execution_authorization": true, "resources": ["pantheon-dev"], "work_class": "hosted"}'></textarea>
+    </div>
+
+    <button id="submitBtn" onclick="issueGrant()">Request Challenge &amp; Issue Grant</button>
+    <div id="statusMsg" class="status-msg"></div>
+
+    <div id="outputArea" class="output-area">
+      <label>Signed Execution Grant JSON</label>
+      <pre id="grantOutput"></pre>
+
+      <label>CLI Submission Command</label>
+      <pre id="cliCommand"></pre>
+    </div>
+  </div>
+
+  <script>
+    async function issueGrant() {
+      const btn = document.getElementById('submitBtn');
+      const status = document.getElementById('statusMsg');
+      const outArea = document.getElementById('outputArea');
+      const grantOut = document.getElementById('grantOutput');
+      const cliOut = document.getElementById('cliCommand');
+
+      status.textContent = 'Verifying identity and requesting challenge...';
+      status.className = 'status-msg';
+      outArea.style.display = 'none';
+      btn.disabled = true;
+
+      try {
+        const taskId = document.getElementById('taskId').value.trim();
+        const generation = parseInt(document.getElementById('generation').value.trim(), 10);
+        const token = document.getElementById('token').value.trim();
+        const policyRaw = document.getElementById('policyJson').value.trim();
+
+        if (!token) throw new Error('ID Token is required');
+        if (!policyRaw) throw new Error('Task Policy JSON snapshot is required');
+
+        let policySnapshot;
+        try {
+          policySnapshot = JSON.parse(policyRaw);
+        } catch (e) {
+          throw new Error('Invalid JSON in Task Policy Snapshot');
+        }
+
+        // Step 1: Challenge
+        const challengeResp = await fetch('/v1/challenge', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            task_id: taskId,
+            generation: generation,
+            policy_snapshot: policySnapshot
+          })
+        });
+
+        const challengeData = await challengeResp.json();
+        if (!challengeResp.ok) {
+          throw new Error(challengeData.error || 'Challenge request failed');
+        }
+
+        status.textContent = 'Challenge obtained. Consuming challenge and signing grant...';
+
+        // Step 2: Issue
+        const issueResp = await fetch('/v1/issue', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            challenge_id: challengeData.challenge_id,
+            task_id: taskId,
+            generation: generation,
+            policy_snapshot: policySnapshot
+          })
+        });
+
+        const issueData = await issueResp.json();
+        if (!issueResp.ok) {
+          throw new Error(issueData.error || 'Grant issuance failed');
+        }
+
+        status.textContent = '✓ Execution-authorization grant successfully signed and issued.';
+        status.className = 'status-msg status-ok';
+
+        const grantStr = JSON.stringify(issueData.grant, null, 2);
+        grantOut.textContent = grantStr;
+
+        const compactJson = JSON.stringify(issueData.grant);
+        cliOut.textContent = `AI_NAME=Human/Ops EXECUTION_GRANT_JSON='${compactJson}' scripts/ai-status.sh execution-grant-submit ${taskId}`;
+        outArea.style.display = 'block';
+
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        status.className = 'status-msg status-error';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
