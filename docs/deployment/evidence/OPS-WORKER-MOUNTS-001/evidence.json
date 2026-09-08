@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "base_branch": "dev",
   "base_sha_at_dispatch": "1b39676c12182e15602bcb85a72244f2b31b0116",
-  "current_base": "ff9ae2d03a6ba013c0ff19782c54d8c23652c79e",
+  "current_base": "b15f482d31625519f2202b1b3c4f2d743c812862",
   "task_branch": "task/OPS-WORKER-MOUNTS-001",
   "depends_on": [
     "OPS-REVIEW-PROOF-001"
