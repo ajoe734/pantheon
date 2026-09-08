@@ -337,20 +337,34 @@ def _resolve_runtime_source_leaf(config: dict[str, Any], key: str) -> Path:
         if key == "state_file" and p.name == "state.json":
             if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
                 legacy = p.parent.parent / "state.json"
+                legacy_queue = p.parent.parent / "approval-queue.json"
+                modern_queue = p.parent / "approval-queue.json"
                 if legacy.exists():
+                    return legacy
+                if legacy_queue.exists() and not modern_queue.exists():
                     return legacy
             elif p.parent.name == ".orchestrator":
                 modern = p.parent / "worker-runtime" / "state.json"
+                modern_queue = p.parent / "worker-runtime" / "approval-queue.json"
                 if modern.exists():
+                    return modern
+                if modern_queue.exists():
                     return modern
         elif key == "approval_queue" and p.name == "approval-queue.json":
             if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
                 legacy = p.parent.parent / "approval-queue.json"
+                legacy_state = p.parent.parent / "state.json"
+                modern_state = p.parent / "state.json"
                 if legacy.exists():
+                    return legacy
+                if legacy_state.exists() and not modern_state.exists():
                     return legacy
             elif p.parent.name == ".orchestrator":
                 modern = p.parent / "worker-runtime" / "approval-queue.json"
+                modern_state = p.parent / "worker-runtime" / "state.json"
                 if modern.exists():
+                    return modern
+                if modern_state.exists():
                     return modern
     return p
 
@@ -398,6 +412,17 @@ def _runtime_source_layout(
                         requested = state_resolved.parent / "approval-queue.json"
                     elif state_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
                         requested = state_resolved.parent / "approval-queue.json"
+            elif key == "state_file":
+                queue_resolved = (
+                    _resolve_runtime_source_leaf(config, "approval_queue")
+                    if configured.get("approval_queue")
+                    else None
+                )
+                if queue_resolved is not None and queue_resolved.exists():
+                    if queue_resolved.parent.name == ".orchestrator" and requested.parent.name == "worker-runtime":
+                        requested = queue_resolved.parent / "state.json"
+                    elif queue_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
+                        requested = queue_resolved.parent / "state.json"
         if validate_data_leaves:
             _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
         if not requested.parent.exists():
@@ -416,6 +441,28 @@ def _runtime_source_layout(
         source_roots[source_id] = source_root
 
     distinct_source_roots = set(source_roots.values())
+    if len(distinct_source_roots) > 1:
+        has_orchestrator = any(r.name == ".orchestrator" for r in distinct_source_roots)
+        has_worker_runtime = any(
+            r.name == "worker-runtime" and r.parent.name == ".orchestrator"
+            for r in distinct_source_roots
+        )
+        if has_orchestrator and has_worker_runtime:
+            target_root = None
+            for sid, p in source_paths.items():
+                if p.exists():
+                    target_root = source_roots[sid]
+                    break
+            if target_root is None:
+                for r in distinct_source_roots:
+                    if r.name == "worker-runtime":
+                        target_root = r
+                        break
+            if target_root is not None:
+                for sid in list(source_paths.keys()):
+                    source_paths[sid] = target_root / source_paths[sid].name
+                    source_roots[sid] = target_root
+                distinct_source_roots = set(source_roots.values())
     if len(distinct_source_roots) > 1:
         details = ", ".join(
             f"{source_id}={source_roots[source_id]}"

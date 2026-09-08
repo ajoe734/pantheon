@@ -309,9 +309,13 @@ LEGACY_OPERATOR_ASSERTION_KEYS = (
 def resolve_orchestrator_state_file(status_root: Path) -> Path:
     worker_runtime_path = status_root / ".orchestrator" / "worker-runtime" / "state.json"
     legacy_path = status_root / ".orchestrator" / "state.json"
+    worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
     if worker_runtime_path.exists():
         return worker_runtime_path
     if legacy_path.exists():
+        return legacy_path
+    if legacy_queue.exists() and not worker_runtime_queue.exists():
         return legacy_path
     return worker_runtime_path
 
