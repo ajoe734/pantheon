@@ -45,7 +45,7 @@ from .dashboard.router import create_dashboard_router
 from .shadow.router import create_shadow_router
 from .personalization.router import create_personalization_router
 from .management_projection.router import create_management_projection_router
-from .dataset_extraction.router import create_dataset_extraction_router
+from .dataset_extraction.router import create_dataset_extraction_router, _default_store
 from .interaction.router import create_interaction_router
 from .interaction.store import InteractionLifecycleStore
 from .governance.router import create_governance_router
@@ -127,6 +127,7 @@ def create_agora_router(
     handle_sse_stream: Optional[Callable[..., Any]] = None,
     publish_event_fn: Optional[Callable[..., Any]] = None,
     service: Optional[AgoraService] = None,
+    dataset_store: Optional[Any] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -151,6 +152,7 @@ def create_agora_router(
 
     router = APIRouter(tags=["agora"])
     workshop_store = make_workshop_store()
+    ds_store = dataset_store if dataset_store is not None else _default_store()
     workshop_canonical_operations = WorkshopCanonicalOperations(
         approval_resolver=lambda decision_id: get_read_store().get_approval_decision(
             decision_id
@@ -366,7 +368,15 @@ def create_agora_router(
         workshop_store=workshop_store,
         canonical_operations=workshop_canonical_operations,
     ))
-    router.include_router(create_research_router(**_kw, require_write_role=require_write_role))
+    research_router = create_research_router(
+        **_kw,
+        require_write_role=require_write_role,
+        workshop_store=workshop_store,
+        dataset_store=ds_store,
+    )
+    router.include_router(research_router)
+    router.research_store = getattr(research_router, "store", None)
+    router.research_dispatcher = getattr(research_router, "dispatcher", None)
     router.include_router(create_trading_room_router(
         **_kw,
         require_write_role=require_write_role,
@@ -387,6 +397,7 @@ def create_agora_router(
         create_dataset_extraction_router(
             **_kw,
             require_write_role=require_write_role,
+            dataset_store=ds_store,
         )
     )
     router.include_router(create_interaction_router(
@@ -932,6 +943,7 @@ def create_agora_router(
 
     router.interaction_lifecycle = interaction_lifecycle
     router.workshop_store = workshop_store
+    router.dataset_store = ds_store
     router.proposal_store = proposal_store
     router.trading_room_store = trading_room_store
     router.agora_service = agora_service

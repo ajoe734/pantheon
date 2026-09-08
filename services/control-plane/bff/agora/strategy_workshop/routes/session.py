@@ -247,6 +247,9 @@ def build_session_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
         scope = _scope(authorization, x_tenant_id, write=True)
         # If-Match is mandatory: mutations without a precondition are rejected (RFC 6585 §428).
@@ -290,6 +293,14 @@ def build_session_router(
                     "Duplicate Idempotency-Key", idempotency_key,
                 )
         event_id = str(uuid.uuid4())
+        trace_id = (
+            x_trace_id
+            or x_correlation_id
+            or body.trace_id
+            or body.correlation_id
+            or session.get("trace_id")
+            or f"trace-{uuid.uuid4().hex[:12]}"
+        )
         private = private_content_store.put(
             tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
             workshop_id=workshop_id, event_id=event_id, content_type="text/plain",
@@ -310,6 +321,8 @@ def build_session_router(
             "private_content_ref": private.private_content_ref,
             "redacted_summary": "Private workshop message",
             "payload_refs_json": body.attachment_refs or None,
+            "trace_id": trace_id,
+            "correlation_id": trace_id,
         })
         if event is None:
             from services.control_plane.bff.models import ErrorCode
@@ -337,7 +350,8 @@ def build_session_router(
             {
                 "event_id": event["event_id"],
                 "sequence_no": event["sequence_no"],
-                "trace_id": event.get("trace_id"),
+                "trace_id": event.get("trace_id", trace_id),
+                "correlation_id": event.get("correlation_id", trace_id),
             },
             utc_now_fn=utc_now,
         )

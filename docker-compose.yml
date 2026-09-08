@@ -1078,6 +1078,7 @@ services:
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH: ${PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH:-/data/incidents/agora_performance.sqlite3}
     volumes:
       - incident-data:/data/incidents
     depends_on:
@@ -1456,9 +1457,16 @@ services:
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_DATASET_STORE_BACKEND: ${AGORA_DATASET_STORE_BACKEND:-postgres}
+      AGORA_DATASET_STORE_DSN: ${AGORA_DATASET_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
       AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
       AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
+      AGORA_RESEARCH_STORE_BACKEND: ${AGORA_RESEARCH_STORE_BACKEND:-postgres}
+      AGORA_RESEARCH_STORE_DSN: ${AGORA_RESEARCH_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_RESEARCH_STORE_SCHEMA: ${AGORA_RESEARCH_STORE_SCHEMA:-agora_research}
+      AGORA_RESEARCH_BACKEND_URL: ${AGORA_RESEARCH_BACKEND_URL:-http://research-orchestrator-svc:8101}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
       PANTHEON_AGORA_WORKER_ID: agora-interaction-worker
@@ -1468,6 +1476,8 @@ services:
       postgres:
         condition: service_healthy
       operator-bff:
+        condition: service_healthy
+      research-orchestrator-svc:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]

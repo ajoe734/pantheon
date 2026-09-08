@@ -71,19 +71,37 @@ class AgoraInteractionWorker:
     def __init__(
         self,
         *,
-        lifecycle_store: InteractionLifecycleStore,
-        workshop_store: Any,
-        read_store: Any,
+        lifecycle_store: Optional[InteractionLifecycleStore] = None,
+        workshop_store: Optional[Any] = None,
+        read_store: Optional[Any] = None,
         client_factory: Optional[Callable[[], OpenClawOpsClient]] = None,
         proposal_store: Optional[Any] = None,
+        research_store: Optional[Any] = None,
+        research_dispatcher: Optional[Any] = None,
+        dataset_store: Optional[Any] = None,
         worker_id: Optional[str] = None,
         lease_duration_seconds: int = 300,
+        store: Optional[Any] = None,
     ) -> None:
-        self.lifecycle_store = lifecycle_store
+        self.lifecycle_store = lifecycle_store or store
         self.workshop_store = workshop_store
         self.read_store = read_store
         self.client_factory = client_factory
         self.proposal_store = proposal_store
+        self.dataset_store = dataset_store or (getattr(research_dispatcher, "dataset_store", None) if research_dispatcher else None)
+        if research_dispatcher is None and research_store is not None:
+            try:
+                from agora.research.dispatcher import ResearchDispatcher
+                self.research_dispatcher = ResearchDispatcher(store=research_store, dataset_store=self.dataset_store)
+            except Exception:
+                try:
+                    from services.control_plane.bff.agora.research.dispatcher import ResearchDispatcher
+                    self.research_dispatcher = ResearchDispatcher(store=research_store, dataset_store=self.dataset_store)
+                except Exception:
+                    self.research_dispatcher = None
+        else:
+            self.research_dispatcher = research_dispatcher
+        self.research_store = research_store or (getattr(self.research_dispatcher, "store", None) if self.research_dispatcher else None)
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_WORKER_ID", f"agora-worker-{uuid.uuid4().hex[:12]}"
         )
@@ -106,12 +124,47 @@ class AgoraInteractionWorker:
         with self._lock:
             return dict(self._metrics)
 
-    def drain_outbox(self) -> int:
-        try:
-            return drain_interaction_outbox(self.lifecycle_store, self.workshop_store)
-        except Exception as exc:
-            logger.warning("Failed draining interaction outbox: %s", exc)
+    def drain_research_outbox(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> int:
+        """Drain queued research outbox records via research dispatcher."""
+        if self.research_dispatcher is None:
             return 0
+        try:
+            drained = self.research_dispatcher.drain_outbox(
+                worker_id=self.worker_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                limit=limit,
+            )
+            count = len(drained) if isinstance(drained, list) else int(drained or 0)
+            if count > 0:
+                with self._lock:
+                    self._metrics["completed_count"] += count
+            return count
+        except Exception as exc:
+            logger.warning("Failed draining research outbox: %s", exc)
+            return 0
+
+    def drain_outbox(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> int:
+        total = 0
+        if self.lifecycle_store is not None and self.workshop_store is not None:
+            try:
+                total += drain_interaction_outbox(self.lifecycle_store, self.workshop_store)
+            except Exception as exc:
+                logger.warning("Failed draining interaction outbox: %s", exc)
+        total += self.drain_research_outbox(tenant_id=tenant_id, user_id=user_id, limit=limit)
+        return total
 
     def claim_and_process_one(
         self,
@@ -120,6 +173,8 @@ class AgoraInteractionWorker:
         user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Claim next queued or expired-lease interaction and execute it."""
+        if self.lifecycle_store is None:
+            return None
         resource = self.lifecycle_store.claim_interaction(
             lease_owner=self.worker_id,
             lease_duration_seconds=self.lease_duration_seconds,
@@ -136,21 +191,6 @@ class AgoraInteractionWorker:
 
         return self._execute_and_finalize(resource)
 
-    def run_once(
-        self,
-        *,
-        limit: int = 1,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> int:
-        """Claim and process up to limit interactions."""
-        processed = 0
-        for _ in range(max(1, limit)):
-            item = self.claim_and_process_one(tenant_id=tenant_id, user_id=user_id)
-            if item is None:
-                break
-            processed += 1
-        return processed
 
     def process_interaction(
         self,
@@ -278,14 +318,14 @@ class AgoraInteractionWorker:
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> int:
-        """Process eligible pending interactions up to limit. Returns processed count."""
+        """Process eligible pending interactions up to limit and drain research outbox."""
         processed = 0
         while processed < limit:
             res = self.claim_and_process_one(tenant_id=tenant_id, user_id=user_id)
             if res is None:
                 break
             processed += 1
-        self.drain_outbox()
+        processed += self.drain_outbox(tenant_id=tenant_id, user_id=user_id, limit=limit)
         return processed
 
     def run_loop(

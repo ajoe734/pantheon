@@ -70,6 +70,7 @@ postmortem service via the dedicated route.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import os
 import secrets
@@ -134,6 +135,8 @@ try:
     )
     from .consumer import (
         DriftReportIncidentConsumer,
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
         InfrastructureHealthIncidentConsumer,
         IncidentConsumerError,
         IncidentConsumerRetryableError,
@@ -148,6 +151,8 @@ except ImportError:
     )
     from consumer import (  # type: ignore
         DriftReportIncidentConsumer,
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
         InfrastructureHealthIncidentConsumer,
         IncidentConsumerError,
         IncidentConsumerRetryableError,
@@ -308,6 +313,96 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
     return _to_response(inc)
 
 
+_SUGGESTION_CONSUMER: Optional[Any] = None
+DELIVERED_SUGGESTIONS_PATH = Path(DATA_DIR) / "delivered_suggestions.json"
+_DELIVERED_SUGGESTION_INCIDENT_IDS = DurableDeliveredIncidentsStore(DELIVERED_SUGGESTIONS_PATH)
+DOWNSTREAM_WORK_PATH = Path(DATA_DIR) / "downstream_pending_work.json"
+_DOWNSTREAM_WORK_STORE = DurableDownstreamWorkStore(DOWNSTREAM_WORK_PATH)
+
+
+def attach_incident_suggestion_consumer(consumer_fn: Any) -> None:
+    """Attach a downstream suggestion consumer callback (SD §6.4)."""
+    global _SUGGESTION_CONSUMER
+    _SUGGESTION_CONSUMER = consumer_fn
+
+
+def get_incident_suggestion_consumer() -> Optional[Any]:
+    return _SUGGESTION_CONSUMER
+
+
+_DEFAULT_SUGGESTION_STORE: Optional[Any] = None
+
+
+def _ensure_bff_agora_path() -> None:
+    bff_dir = str(Path(__file__).resolve().parent.parent / "control-plane" / "bff")
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+    try:
+        import agora
+        bff_agora = str(Path(bff_dir) / "agora")
+        if hasattr(agora, "__path__") and bff_agora not in agora.__path__:
+            agora.__path__.insert(0, bff_agora)
+    except Exception:
+        pass
+
+
+def _get_default_suggestion_store() -> Any:
+    global _DEFAULT_SUGGESTION_STORE
+    _ensure_bff_agora_path()
+    from agora.performance.store import PerformanceSuggestionStore
+    store_path = os.environ.get("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH")
+    if not store_path:
+        store_path = str(Path(DATA_DIR) / "agora_performance.sqlite3")
+    if _DEFAULT_SUGGESTION_STORE is None or getattr(_DEFAULT_SUGGESTION_STORE, "path", None) != Path(store_path):
+        _DEFAULT_SUGGESTION_STORE = PerformanceSuggestionStore(store_path)
+    return _DEFAULT_SUGGESTION_STORE
+
+
+def _canonical_performance_read_model_receiver(topic: str, entity_id: str, payload: Dict[str, Any]) -> None:
+    """Canonical production read-model event receiver for performance suggestion events."""
+    log.info(
+        "Delivered canonical performance read-model event: topic=%s entity_id=%s payload=%s",
+        topic,
+        entity_id,
+        payload,
+    )
+    store = _get_default_suggestion_store()
+    if store is not None and hasattr(store, "mark_event_published"):
+        store.mark_event_published(topic, entity_id, payload)
+
+
+def _wire_canonical_performance_subscriber() -> None:
+    _ensure_bff_agora_path()
+    try:
+        from agora.performance.consumer import (
+            get_canonical_performance_transport,
+            register_performance_subscriber,
+        )
+        transport = get_canonical_performance_transport()
+        if _canonical_performance_read_model_receiver not in transport._subscribers:
+            register_performance_subscriber(_canonical_performance_read_model_receiver)
+    except Exception as exc:
+        log.warning("Could not wire canonical performance subscriber: %s", exc)
+
+
+_wire_canonical_performance_subscriber()
+
+
+def _build_default_suggestion_consumer() -> Optional[Any]:
+    _ensure_bff_agora_path()
+    try:
+        from agora.performance.consumer import EvaluationTelemetryConsumer, canonical_performance_publisher
+        perf_store = _get_default_suggestion_store()
+        eval_consumer = EvaluationTelemetryConsumer(
+            store=perf_store,
+            publish_event_fn=canonical_performance_publisher,
+        )
+        return eval_consumer.consume
+    except Exception as exc:
+        log.exception("Failed building default suggestion consumer: %s", exc)
+        return None
+
+
 @app.post(
     "/api/incidents/consume-threshold",
     response_model=IncidentResponse,
@@ -319,14 +414,20 @@ def consume_threshold_incident(
     body: Dict[str, Any] = Body(...),
 ) -> IncidentResponse:
     """Consume a threshold telemetry payload through the Incident domain writer."""
+    suggestion_cb = _SUGGESTION_CONSUMER or _build_default_suggestion_consumer()
     consumer = ThresholdTelemetryIncidentConsumer(
         incident_store=store,
         reference_validator=reference_validator,
+        suggestion_consumer=suggestion_cb,
+        delivered_incident_ids=_DELIVERED_SUGGESTION_INCIDENT_IDS,
+        downstream_work_store=_DOWNSTREAM_WORK_STORE,
     )
     try:
         result = consumer.consume(body)
     except CanonicalReferenceError as exc:
         raise HTTPException(status_code=422, detail={"reference_errors": exc.errors})
+    except IncidentConsumerRetryableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except IncidentConsumerError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -728,6 +829,7 @@ async def incidents_outbox_loop():
 
 @app.on_event("startup")
 def start_incidents_outbox_worker():
+    _wire_canonical_performance_subscriber()
     import sys
     if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
         return
@@ -867,6 +969,133 @@ def get_operator_payload(incident_id: str) -> OperatorIncidentPayload:
         postmortem_id=postmortem_id,
         linked_evolution_decision_id=linked_evolution_decision_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Routes — Agora performance suggestions (agora-chain-001)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/api/incidents/agora/performance/suggestions",
+    summary="List Agora performance adjustment suggestions",
+)
+def list_agora_performance_suggestions(
+    tenant_id: Optional[str] = Query(None),
+    strategy_id: Optional[str] = Query(None),
+    owner_user_id: Optional[str] = Query(None),
+    period: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    store = _get_default_suggestion_store()
+    suggestions = store.list_suggestions(
+        tenant_id=tenant_id,
+        strategy_id=strategy_id,
+        owner_user_id=owner_user_id,
+        period=period,
+    )
+    return {"suggestions": suggestions}
+
+
+@app.get(
+    "/api/incidents/agora/performance/suggestions/{suggestion_id}",
+    summary="Get an Agora performance adjustment suggestion",
+)
+def get_agora_performance_suggestion(
+    suggestion_id: str,
+    tenant_id: Optional[str] = Query(None),
+    strategy_id: Optional[str] = Query(None),
+    owner_user_id: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    store = _get_default_suggestion_store()
+    suggestion = store.get_suggestion(
+        tenant_id=tenant_id or "",
+        strategy_id=strategy_id,
+        suggestion_id=suggestion_id,
+        owner_user_id=owner_user_id,
+    )
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+    return {"suggestion": suggestion}
+
+
+@app.post(
+    "/api/incidents/agora/performance/suggestions/{suggestion_id}/actions",
+    summary="Act on an Agora performance adjustment suggestion",
+)
+def act_on_agora_performance_suggestion(
+    suggestion_id: str,
+    body: Dict[str, Any] = Body(...),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+) -> Dict[str, Any]:
+    from agora.performance.store import (
+        PerformanceSuggestionConflict,
+        PerformanceSuggestionNotFound,
+    )
+    key = idempotency_key or body.get("idempotency_key")
+    if not key or len(str(key).strip()) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="Idempotency-Key header or body field must contain at least 8 characters",
+        )
+    store = _get_default_suggestion_store()
+    try:
+        receipt, replayed = store.act(
+            tenant_id=body.get("tenant_id", ""),
+            owner_user_id=body.get("owner_user_id", ""),
+            strategy_id=body.get("strategy_id", ""),
+            suggestion_id=suggestion_id,
+            action=body.get("action", ""),
+            expected_version=int(body.get("expected_version", 1)),
+            reason=body.get("reason"),
+            actor_id=body.get("actor_id", "operator"),
+            idempotency_key=str(key).strip(),
+            recorded_at=body.get("recorded_at") or datetime.now(timezone.utc).isoformat(),
+        )
+    except PerformanceSuggestionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PerformanceSuggestionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"receipt": receipt, "idempotent_replay": replayed}
+
+
+@app.get(
+    "/api/incidents/agora/performance/action-receipts/{receipt_id}",
+    summary="Get an Agora performance suggestion action receipt",
+)
+def get_agora_performance_action_receipt(
+    receipt_id: str,
+    tenant_id: Optional[str] = Query(None),
+    owner_user_id: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    store = _get_default_suggestion_store()
+    receipt = store.get_receipt(
+        tenant_id=tenant_id or "",
+        owner_user_id=owner_user_id or "",
+        receipt_id=receipt_id,
+    )
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="suggestion action receipt not found")
+    return {"receipt": receipt}
+
+
+@app.get(
+    "/api/incidents/agora/performance/suggestions/{suggestion_id}/audit-events",
+    summary="List audit events for an Agora performance suggestion",
+)
+def list_agora_performance_audit_events(
+    suggestion_id: str,
+    tenant_id: Optional[str] = Query(None),
+    owner_user_id: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    store = _get_default_suggestion_store()
+    events = store.list_audit_events(
+        tenant_id=tenant_id or "",
+        owner_user_id=owner_user_id or "",
+        suggestion_id=suggestion_id,
+    )
+    return {"audit_events": events}
 
 
 # ---------------------------------------------------------------------------

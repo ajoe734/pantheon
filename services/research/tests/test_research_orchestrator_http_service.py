@@ -27,6 +27,7 @@ def _load_service_module(
             "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
             "PANTHEON_OFFLINE_GATE_ENABLED": offline_gate,
             "RESEARCH_WORKER_GATEWAY_URL": "http://research-worker-gateway-svc:8103",
+            "REGISTRY_STORE_BACKEND": "memory",
         },
     ):
         sys.modules.pop("store", None)
@@ -179,7 +180,8 @@ def test_research_orchestrator_lifecycle_handoff_is_idempotent() -> None:
     assert payload["proposal_refs"] == [{"proposal_id": proposal["proposal_id"], "proposal_type": "registry_candidate"}]
 
 
-def test_research_orchestrator_writeback_registers_completed_run_artifact() -> None:
+def test_research_orchestrator_writeback_registers_completed_run_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
     reset_store()
     module = _load_service_module()
     client = TestClient(module.app)
@@ -551,3 +553,444 @@ def test_research_orchestrator_dormant_dispatch_stays_fail_closed_when_legacy_en
     assert payload["status"] == "rejected"
     assert payload["rejection"]["reason"] == "production_adapter_disabled"
     assert payload["production_activation"] == "disabled"
+
+
+def _make_sample_vectorbt_dataset(strategy_id: str = "strat-vbt-01") -> dict:
+    from datetime import date, timedelta
+    start = date(2026, 1, 1)
+    records = []
+    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
+        for i in range(35):
+            d = (start + timedelta(days=i)).isoformat()
+            p = base + i * 0.5
+            records.append({
+                "instrument": inst,
+                "date": d,
+                "open": p,
+                "high": p + 1.0,
+                "low": p - 0.5,
+                "close": p + 0.2,
+                "volume": 1000.0,
+            })
+    return {
+        "dataset_id": f"dataset:{strategy_id}",
+        "strategy_id": strategy_id,
+        "source_dataset_refs": [f"dataset:seed:{strategy_id}"],
+        "data_frequency": "daily",
+        "records": records,
+    }
+
+
+def _make_sample_statsmodels_dataset() -> dict:
+    return {
+        "price_series": {"asset_1": [100.0 + i for i in range(20)], "asset_2": [50.0 + i * 0.5 for i in range(20)]},
+        "factor_series": {"factor_1": [1.0 + (i % 3) for i in range(20)]},
+        "metadata": {"governed": True},
+    }
+
+
+def _make_sample_quantlib_dataset() -> dict:
+    return {
+        "dataset_id": "ds-quantlib-agora",
+        "source_dataset_refs": ["ref-1"],
+        "valuation_date": "2026-09-08",
+        "option_specs": [
+            {
+                "option_id": "opt-1",
+                "style": "european",
+                "option_type": "call",
+                "spot": 100.0,
+                "strike": 100.0,
+                "volatility": 0.2,
+                "risk_free_rate": 0.05,
+                "dividend_yield": 0.0,
+                "maturity_days": 30,
+            }
+        ],
+        "bond_specs": [
+            {
+                "instrument_id": "bond-1",
+                "face_value": 1000.0,
+                "coupon_rate": 0.05,
+                "market_rate": 0.05,
+                "maturity_years": 5,
+            }
+        ],
+        "metadata": {"governed": True},
+    }
+
+
+def test_execute_research_stage_missing_inputs_fail_closed() -> None:
+    """POST /stages/{stage_type}/execute must fail closed with 400 when required fields or inputs are missing."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    # 1. Empty body
+    res1 = client.post("/stages/prototype_backtest/execute", json={})
+    assert res1.status_code == 400
+    assert "Missing required execution request body" in res1.json()["detail"]
+
+    # 2. Missing plan
+    res2 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={"stage": {"stage_id": "s1", "stage_type": "prototype_backtest"}},
+    )
+    assert res2.status_code == 400
+    assert "Missing or invalid required execution field: 'plan'" in res2.json()["detail"]
+
+    # 3. Missing run_id
+    res3 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1"},
+        },
+    )
+    assert res3.status_code == 400
+    assert "Missing required execution field: 'run_id'" in res3.json()["detail"]
+
+    # 4. Missing correlation_id
+    res4 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1"},
+            "run_id": "run-test-1",
+        },
+    )
+    assert res4.status_code == 400
+    assert "Missing required execution field: 'correlation_id'" in res4.json()["detail"]
+
+    # 5. Non-allowlisted stage type
+    res5 = client.post(
+        "/stages/unauthorized_stage/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "unauthorized_stage"},
+            "plan": {"plan_id": "p1"},
+            "run_id": "run-test-1",
+            "correlation_id": "corr-test-1",
+        },
+    )
+    assert res5.status_code == 400
+    assert "Unknown or non-allowlisted research stage" in res5.json()["detail"]
+
+    # 6. Arbitrary custom_* or stage_* non-allowlisted stage types must fail closed
+    res6 = client.post(
+        "/stages/custom_no_execution_owner/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "custom_no_execution_owner"},
+            "plan": {"plan_id": "p1"},
+            "run_id": "run-test-1",
+            "correlation_id": "corr-test-1",
+        },
+    )
+    assert res6.status_code == 400
+    assert "Unknown or non-allowlisted research stage" in res6.json()["detail"]
+
+    # 7. Missing dataset for allowlisted stage
+    res7 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-1"},
+            "run_id": "run-test-no-ds",
+            "correlation_id": "corr-test-no-ds",
+        },
+    )
+    assert res7.status_code == 400
+    assert "Missing required governed dataset or input" in res7.json()["detail"]
+
+    # 8. Unimplemented allowlisted stage fails closed with 503
+    res8 = client.post(
+        "/stages/alpha_training/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "alpha_training"},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-1"},
+            "run_id": "run-test-alpha",
+            "correlation_id": "corr-test-alpha",
+        },
+    )
+    assert res8.status_code == 503
+    assert "absent or not configured" in res8.json()["detail"]
+
+    # 9. Malformed dataset fails closed with 400
+    res9 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {
+                "stage_id": "s1",
+                "stage_type": "prototype_backtest",
+                "dataset": {"dataset_id": "ds1", "records": "not-a-list"},
+            },
+            "plan": {"plan_id": "p1", "strategy_id": "strat-1"},
+            "run_id": "run-test-malformed",
+            "correlation_id": "corr-test-malformed",
+        },
+    )
+    assert res9.status_code == 400
+    assert "Governed input validation error" in res9.json()["detail"]
+
+
+def test_execute_research_stage_backend_unavailable_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /stages/{stage_type}/execute must fail closed with 503 when backend execution owner is marked unavailable."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    monkeypatch.setenv("AGORA_RESEARCH_PROTOTYPE_BACKTEST_UNAVAILABLE", "1")
+    res = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": _make_sample_vectorbt_dataset()},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-1"},
+            "run_id": "run-test-unavail",
+            "correlation_id": "corr-test-unavail",
+        },
+    )
+    assert res.status_code == 503
+    assert "currently unavailable" in res.json()["detail"]
+
+
+def test_execute_research_stage_simulation_execution_preserves_provenance() -> None:
+    """POST /stages/{stage_type}/execute with stub backend preserves simulation provenance and receipt mode."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+    run_id = "run-vbt-sim-001"
+    corr_id = "corr-vbt-sim-001"
+    dataset = _make_sample_vectorbt_dataset("strat-vbt-sim")
+
+    res = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": dataset},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-vbt-sim"},
+            "run_id": run_id,
+            "correlation_id": corr_id,
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["status"] == "succeeded"
+    assert data["outcome"] == "succeeded"
+    assert data["provenance"] == "simulation"
+    assert data["backend_reference"] == f"research-orchestrator://stages/prototype_backtest/{run_id}"
+
+    # Verify genuine metrics from vectorbt stub runner with simulation provenance
+    metric_names = {m["metric"] for m in data["metrics"]}
+    assert "mean_total_return" in metric_names
+    assert "mean_sharpe_ratio" in metric_names
+    assert "mean_max_drawdown" in metric_names
+    assert "total_trades" in metric_names
+    for m in data["metrics"]:
+        assert m["provenance"] == "simulation"
+
+    # Verify receipt integrity and mode
+    receipt = data["receipt"]
+    assert receipt["run_id"] == run_id
+    assert receipt["correlation_id"] == corr_id
+    assert receipt["mode"] == "simulation"
+    assert receipt["spec_version"] == "1.0"
+    assert receipt["artifact_digest"] == data["artifact_digest"]
+    assert receipt["completed_at"] is not None
+
+    # Verify artifact in store
+    artifacts = module.store.list_artifacts()
+    matching = [a for a in artifacts if a.get("checksum") == data["artifact_digest"]]
+    assert len(matching) == 1
+    art = matching[0]
+    assert art["run_id"] == run_id
+    assert art["stage_type"] == "prototype_backtest"
+    assert art["provenance"] == "simulation"
+
+
+def test_execute_research_stage_real_execution_with_authentic_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /stages/{stage_type}/execute with real execution owner produces genuine real metrics and receipt."""
+    from services.research.vectorbt.adapter.vectorbt_adapter import BacktestRunResult
+
+    module = _load_service_module()
+    client = TestClient(module.app)
+    run_id = "run-vbt-real-001"
+    corr_id = "corr-vbt-real-001"
+    dataset = _make_sample_vectorbt_dataset("strat-vbt-real")
+
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    real_run_result = BacktestRunResult(
+        backend="vectorbt_portfolio",
+        run_id="vbt-real-exec-001",
+        per_instrument_metrics={
+            "AAA": {"total_return": 0.15, "sharpe_ratio": 1.6, "max_drawdown": 0.04, "trade_count": 8, "num_bars": 35, "final_portfolio_value": 115000.0},
+            "BBB": {"total_return": 0.10, "sharpe_ratio": 1.2, "max_drawdown": 0.03, "trade_count": 6, "num_bars": 35, "final_portfolio_value": 110000.0},
+        },
+        aggregate_metrics={
+            "num_instruments": 2,
+            "mean_total_return": 0.125,
+            "mean_sharpe_ratio": 1.4,
+            "mean_max_drawdown": 0.035,
+            "total_trades": 14,
+        },
+        notes=("genuine real execution test",),
+    )
+    monkeypatch.setattr(
+        "services.research.vectorbt.adapter.vectorbt_adapter.VectorbtBackend.run",
+        lambda self, prepared, config: real_run_result,
+    )
+
+    res = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": dataset},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-vbt-real"},
+            "run_id": run_id,
+            "correlation_id": corr_id,
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["status"] == "succeeded"
+    assert data["outcome"] == "succeeded"
+    assert data["provenance"] == "real"
+    assert data["backend_reference"] == f"research-orchestrator://stages/prototype_backtest/{run_id}"
+
+    # Verify metrics have provenance='real'
+    for m in data["metrics"]:
+        assert m["provenance"] == "real"
+
+    receipt = data["receipt"]
+    assert receipt["run_id"] == run_id
+    assert receipt["mode"] == "real"
+    assert receipt["artifact_digest"] == data["artifact_digest"]
+
+    # Verify artifact in store has provenance='real'
+    matching = [a for a in module.store.list_artifacts() if a.get("checksum") == data["artifact_digest"]]
+    assert len(matching) == 1
+    assert matching[0]["provenance"] == "real"
+
+
+def test_execute_research_stage_econometric_validation_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /stages/econometric_validation/execute respects backend mode for simulation vs real provenance."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+    dataset = _make_sample_statsmodels_dataset()
+
+    # 1. Default stub mode -> simulation provenance
+    res_stub = client.post(
+        "/stages/econometric_validation/execute",
+        json={
+            "stage": {"stage_id": "s-ev-1", "stage_type": "econometric_validation", "dataset": dataset},
+            "plan": {"plan_id": "p-ev-1", "strategy_id": "strat-ev"},
+            "run_id": "run-ev-sim",
+            "correlation_id": "corr-ev-sim",
+        },
+    )
+    assert res_stub.status_code == 200, res_stub.text
+    data_stub = res_stub.json()
+    assert data_stub["provenance"] == "simulation"
+    assert data_stub["receipt"]["mode"] == "simulation"
+    for m in data_stub["metrics"]:
+        assert m["provenance"] == "simulation"
+
+    # 2. Real mode -> real provenance
+    monkeypatch.setenv("PANTHEON_STATSMODELS_BACKEND", "real")
+    monkeypatch.setattr(
+        "services.research.statsmodels.adapter.statsmodels_adapter.StatsmodelsBackend.run_cointegration",
+        lambda self, ds: {"test": "engle_granger", "cointegrated": True, "p_value": 0.015, "stub": False},
+    )
+    monkeypatch.setattr(
+        "services.research.statsmodels.adapter.statsmodels_adapter.StatsmodelsBackend.run_var_vecm",
+        lambda self, ds: {"model": "VAR", "lag_order": 2, "aic": -1500.0, "stub": False},
+    )
+
+    res_real = client.post(
+        "/stages/econometric_validation/execute",
+        json={
+            "stage": {"stage_id": "s-ev-2", "stage_type": "econometric_validation", "dataset": dataset},
+            "plan": {"plan_id": "p-ev-2", "strategy_id": "strat-ev"},
+            "run_id": "run-ev-real",
+            "correlation_id": "corr-ev-real",
+        },
+    )
+    assert res_real.status_code == 200, res_real.text
+    data_real = res_real.json()
+    assert data_real["provenance"] == "real"
+    assert data_real["receipt"]["mode"] == "real"
+    for m in data_real["metrics"]:
+        assert m["provenance"] == "real"
+
+
+def test_execute_research_stage_derivatives_pricing_risk_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /stages/derivatives_pricing_risk/execute respects backend mode for simulation vs real provenance."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+    snapshot = _make_sample_quantlib_dataset()
+
+    # 1. Default stub mode -> simulation provenance
+    res_stub = client.post(
+        "/stages/derivatives_pricing_risk/execute",
+        json={
+            "stage": {"stage_id": "s-ql-1", "stage_type": "derivatives_pricing_risk", "dataset": snapshot},
+            "plan": {"plan_id": "p-ql-1", "strategy_id": "strat-ql"},
+            "run_id": "run-ql-sim",
+            "correlation_id": "corr-ql-sim",
+        },
+    )
+    assert res_stub.status_code == 200, res_stub.text
+    data_stub = res_stub.json()
+    assert data_stub["provenance"] == "simulation"
+    assert data_stub["receipt"]["mode"] == "simulation"
+    for m in data_stub["metrics"]:
+        assert m["provenance"] == "simulation"
+
+    # 2. Real mode -> real provenance
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "real")
+    monkeypatch.setattr(
+        "services.research.quantlib.adapter.quantlib_adapter.QuantLibBackend.price_options",
+        lambda self, snap: {"opt-1": {"npv": 3.14, "delta": 0.52, "model": "black_scholes_real", "stub": False}},
+    )
+    monkeypatch.setattr(
+        "services.research.quantlib.adapter.quantlib_adapter.QuantLibBackend.analyze_fixed_income",
+        lambda self, snap: {"bond-1": {"clean_price": 1002.5, "duration": 4.5, "stub": False}},
+    )
+
+    res_real = client.post(
+        "/stages/derivatives_pricing_risk/execute",
+        json={
+            "stage": {"stage_id": "s-ql-2", "stage_type": "derivatives_pricing_risk", "dataset": snapshot},
+            "plan": {"plan_id": "p-ql-2", "strategy_id": "strat-ql"},
+            "run_id": "run-ql-real",
+            "correlation_id": "corr-ql-real",
+        },
+    )
+    assert res_real.status_code == 200, res_real.text
+    data_real = res_real.json()
+    assert data_real["provenance"] == "real"
+    assert data_real["receipt"]["mode"] == "real"
+    for m in data_real["metrics"]:
+        assert m["provenance"] == "real"
+
+
+def test_execute_research_stage_durable_idempotency_replay() -> None:
+    """POST /stages/{stage_type}/execute returns cached result on replay with same idempotency key."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+    run_id = "run-idemp-001"
+    corr_id = "corr-idemp-001"
+    dataset = _make_sample_vectorbt_dataset("strat-idemp")
+    body = {
+        "stage": {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": dataset},
+        "plan": {"plan_id": "p1", "strategy_id": "strat-idemp"},
+        "run_id": run_id,
+        "correlation_id": corr_id,
+        "downstream_key": "idemp-key-unique-42",
+    }
+
+    res1 = client.post("/stages/prototype_backtest/execute", json=body)
+    assert res1.status_code == 200, res1.text
+    data1 = res1.json()
+
+    # Replay with identical body/key
+    res2 = client.post("/stages/prototype_backtest/execute", json=body)
+    assert res2.status_code == 200, res2.text
+    data2 = res2.json()
+
+    assert data1["receipt"]["receipt_id"] == data2["receipt"]["receipt_id"]
+    assert data1["artifact_digest"] == data2["artifact_digest"]
+    assert data1["receipt"]["completed_at"] == data2["receipt"]["completed_at"]

@@ -1005,6 +1005,120 @@ def _candidate_public_member(candidate: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_metrics_to_dict(raw_metrics: Any) -> Dict[str, Any]:
+    """Normalize owner metrics list or dict to a flat {metric_name: value} dictionary."""
+    if not raw_metrics:
+        return {}
+    if isinstance(raw_metrics, dict):
+        return dict(raw_metrics)
+    norm: Dict[str, Any] = {}
+    if isinstance(raw_metrics, (list, tuple)):
+        for item in raw_metrics:
+            if isinstance(item, dict):
+                m_name = None
+                for k in ("metric", "metric_name", "name", "key"):
+                    if k in item and item[k] is not None:
+                        m_name = str(item[k]).strip()
+                        break
+                m_val = None
+                for k in ("value", "metric_value", "score", "val"):
+                    if k in item and item[k] is not None:
+                        m_val = item[k]
+                        break
+                if m_name and m_val is not None:
+                    norm[m_name] = m_val
+    return norm
+
+
+def _extract_run_artifact_identities(run: Dict[str, Any]) -> Tuple[Set[str], Dict[str, str]]:
+    """Extract canonical artifact IDs and known digests from the run owner result."""
+    known_ids: Set[str] = set()
+    digests: Dict[str, str] = {}
+
+    checksums = run.get("checksums") or {}
+    if isinstance(checksums, dict):
+        for k, v in checksums.items():
+            if isinstance(k, str) and isinstance(v, str):
+                if k.lower() in ("artifact",):
+                    continue
+                base = k.split("/")[-1]
+                known_ids.add(k)
+                digests[k] = v
+                if base.lower() not in ("artifact",):
+                    known_ids.add(base)
+                    digests[base] = v
+
+    for key in ("artifact_refs", "artifacts", "artifact_ids"):
+        items = run.get(key)
+        if not items:
+            continue
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    item_ids: Set[str] = set()
+                    for id_key in ("artifact_id", "ref_id", "id", "name"):
+                        val = item.get(id_key)
+                        if val:
+                            val_str = str(val).strip()
+                            if val_str and val_str.lower() not in ("artifact",):
+                                item_ids.add(val_str)
+                                base = val_str.split("/")[-1]
+                                if base.lower() not in ("artifact",):
+                                    item_ids.add(base)
+                    ref = item.get("ref") or item.get("uri")
+                    if ref:
+                        ref_str = str(ref).strip()
+                        if ref_str and ref_str.lower() not in ("artifact",):
+                            item_ids.add(ref_str)
+                            base = ref_str.split("/")[-1]
+                            if base.lower() not in ("artifact",):
+                                item_ids.add(base)
+
+                    known_ids.update(item_ids)
+                    digest = item.get("digest") or item.get("checksum") or item.get("artifact_digest")
+                    if digest:
+                        digest_str = str(digest).strip()
+                        for art_id in item_ids:
+                            digests[art_id] = digest_str
+
+                elif isinstance(item, str):
+                    s = item.strip()
+                    if s and s.lower() not in ("artifact",):
+                        known_ids.add(s)
+                        base = s.split("/")[-1]
+                        if base.lower() not in ("artifact",):
+                            known_ids.add(base)
+        elif isinstance(items, dict):
+            for k, v in items.items():
+                k_str = str(k).strip()
+                if k_str and k_str.lower() not in ("artifact",):
+                    known_ids.add(k_str)
+                    base = k_str.split("/")[-1]
+                    if base.lower() not in ("artifact",):
+                        known_ids.add(base)
+                        if isinstance(v, str):
+                            digests[base] = v.strip()
+                    if isinstance(v, str):
+                        digests[k_str] = v.strip()
+
+    single_art = run.get("artifact_id")
+    if single_art:
+        s = str(single_art).strip()
+        if s and s.lower() not in ("artifact",):
+            known_ids.add(s)
+            base = s.split("/")[-1]
+            if base.lower() not in ("artifact",):
+                known_ids.add(base)
+            single_digest = run.get("artifact_digest") or run.get("checksum")
+            if single_digest:
+                d_str = str(single_digest).strip()
+                digests[s] = d_str
+                if base.lower() not in ("artifact",):
+                    digests[base] = d_str
+
+    return known_ids, digests
+
+
 def _plan_detail_envelope(
     plan: Dict[str, Any],
     utc_now: Callable[[], str],
@@ -1033,7 +1147,7 @@ def _plan_detail_envelope(
     }
 
 
-def _run_projection_with_defaults(run: Dict[str, Any]) -> Dict[str, Any]:
+def _run_projection_with_defaults(run: Dict[str, Any], store: Optional[Any] = None) -> Dict[str, Any]:
     backend = dict(run.get("backend") or {})
     backend.setdefault("requested", _STAGE_TO_BACKEND.get(run.get("stage_type", ""), ""))
     backend.setdefault("effective", _STAGE_TO_BACKEND.get(run.get("stage_type", ""), ""))
@@ -1076,6 +1190,35 @@ def _run_projection_with_defaults(run: Dict[str, Any]) -> Dict[str, Any]:
         projected["failure"] = dict(run["failure"])
     if run.get("data_cutoff"):
         projected["data_cutoff"] = run["data_cutoff"]
+    from ..receipt import resolve_run_provenance
+
+    plan = None
+    if store and hasattr(store, "get_plan") and run.get("plan_id"):
+        try:
+            plan = store.get_plan(run["plan_id"])
+        except Exception:
+            plan = None
+
+    expected_correlation = (
+        run.get("correlation_id")
+        or run.get("trace_id")
+        or (plan.get("correlation_id") if plan else None)
+        or (plan.get("trace_id") if plan else None)
+    )
+    expected_owner = (
+        run.get("executor")
+        or run.get("owner")
+        or (plan.get("executor") if plan else None)
+        or (plan.get("owner") if plan else None)
+    )
+
+    resolved_prov, _ = resolve_run_provenance(
+        store,
+        run,
+        expected_correlation_id=expected_correlation,
+        expected_owner=expected_owner,
+    )
+    projected["provenance"] = resolved_prov
     return projected
 
 
@@ -1094,6 +1237,7 @@ def _build_run_projection(
         "run_id": run_id,
         "plan_id": plan["plan_id"],
         "workshop_id": plan.get("workshop_id", ""),
+        "correlation_id": plan.get("correlation_id") or (f"workshop:{plan.get('workshop_id')}" if plan.get("workshop_id") else f"plan:{plan['plan_id']}"),
         "strategy_id": plan.get("strategy_id", ""),
         "strategy_spec_registry_id": plan.get("strategy_spec_registry_id", ""),
         "stage_id": stage["stage_id"],
@@ -1113,7 +1257,7 @@ def _build_run_projection(
             "effective": backend or _STAGE_TO_BACKEND.get(stage["stage_type"], ""),
             "mode": routing.get("backend_mode", "real"),
         },
-        "provenance": routing.get("backend_mode", "real"),
+        "provenance": "unavailable",
         "no_order_route_proof": _RUN_NO_ORDER_ROUTE_PROOF,
         "created_at": now,
         "updated_at": now,
@@ -1151,12 +1295,66 @@ def _validate_create_body(
             )
 
 
+def _resolve_originating_correlation(
+    workshop_id: Optional[str],
+    *,
+    workshop_store: Optional[Any] = None,
+    trace_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    fallback_id: Optional[str] = None,
+) -> str:
+    """Resolve originating interaction trace/correlation.
+
+    Prefers explicit request trace/correlation ID, then queries the workshop store
+    for the latest event's trace_id or correlation_id, and falls back to workshop/plan ID.
+    """
+    if trace_id and str(trace_id).strip():
+        return str(trace_id).strip()
+    if correlation_id and str(correlation_id).strip():
+        return str(correlation_id).strip()
+
+    store = workshop_store
+    if store is None:
+        try:
+            import main as bff_main
+            store = getattr(bff_main, "workshop_store", None)
+        except Exception:
+            store = None
+    if store is None:
+        try:
+            from services.control_plane.bff import main as bff_main
+            store = getattr(bff_main, "workshop_store", None)
+        except Exception:
+            store = None
+
+    if workshop_id and store is not None and hasattr(store, "list_events"):
+        try:
+            events = store.list_events(workshop_id)
+            if events:
+                for ev in reversed(events):
+                    ev_trace = ev.get("trace_id") or ev.get("correlation_id")
+                    if ev_trace:
+                        return str(ev_trace).strip()
+        except Exception:
+            pass
+
+    if workshop_id:
+        return f"workshop:{workshop_id}"
+    if fallback_id:
+        return f"plan:{fallback_id}"
+    return ""
+
+
 def _build_plan(
     body: ResearchPlanCreateRequest,
     workshop_id: str,
     plan_id: str,
     now: str,
     scope: Any,
+    *,
+    workshop_store: Optional[Any] = None,
+    trace_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     stages: List[Dict[str, Any]] = []
     for stage in body.stages:
@@ -1195,10 +1393,19 @@ def _build_plan(
             normalized["blocking_reasons"] = stage.blocking_reasons
         stages.append(normalized)
 
+    resolved_correlation = _resolve_originating_correlation(
+        workshop_id,
+        workshop_store=workshop_store,
+        trace_id=trace_id,
+        correlation_id=correlation_id,
+        fallback_id=plan_id,
+    )
+
     plan: Dict[str, Any] = {
         "spec_version": "1.0",
         "plan_id": plan_id,
         "workshop_id": workshop_id,
+        "correlation_id": resolved_correlation,
         "strategy_id": body.strategy_id,
         "strategy_spec_registry_id": body.strategy_spec_registry_id,
         "tenant_id": scope.tenant_id,
@@ -1358,6 +1565,8 @@ class AgoraResearchRouteContext:
     require_write_role: Optional[Callable[..., None]] = None
     store: Any = None
     dispatcher: Optional[ResearchDispatcher] = None
+    workshop_store: Optional[Any] = None
+    dataset_store: Optional[Any] = None
 
     def error_code_enum(self) -> Any:
         try:
@@ -1583,14 +1792,154 @@ class AgoraResearchRouteContext:
                     or public_candidate.get("created_at")
                     or now
                 )
-                candidates.append(public_candidate)
-                if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
-                    metrics_by_artifact[public_candidate["artifact_id"]] = body.metrics_by_artifact[public_candidate["artifact_id"]]
+
+                # Mandatory deletion of client-trusted real-provenance flags
+                public_candidate.pop("has_real_receipt", None)
+                for trust_key in ("trusted", "is_real", "verified", "no_order_route_proof"):
+                    public_candidate.pop(trust_key, None)
+
+                # Resolve terminal run and authentic execution receipt server-side
+                run_id = candidate.get("run_id")
+                if not run_id and candidate.get("run_ref"):
+                    ref_str = str(candidate["run_ref"])
+                    run_id = ref_str.split("/")[-1] if "/" in ref_str else ref_str
+
+                run = None
+                if run_id and self.store and hasattr(self.store, "get_run"):
+                    try:
+                        run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
+                    except TypeError:
+                        run = self.store.get_run(run_id)
+
+                # Strictly verify tenant isolation
+                if run:
+                    run_tenant = run.get("tenant_id")
+                    if run_tenant and scope.tenant_id and run_tenant != scope.tenant_id:
+                        run = None
+
+                receipt = None
+                resolved_prov = "simulation"
+                if run:
+                    status = str(run.get("execution_status") or "").lower()
+                    terminal_statuses = {"succeeded", "completed"}
+
+                    plan = None
+                    if hasattr(self.store, "get_plan") and run.get("plan_id"):
+                        try:
+                            plan = self.store.get_plan(run["plan_id"])
+                        except Exception:
+                            plan = None
+
+                    expected_correlation = (
+                        run.get("correlation_id")
+                        or run.get("trace_id")
+                        or (plan.get("correlation_id") if plan else None)
+                        or (plan.get("trace_id") if plan else None)
+                    )
+                    expected_owner = (
+                        run.get("executor")
+                        or run.get("owner")
+                        or (plan.get("executor") if plan else None)
+                        or (plan.get("owner") if plan else None)
+                    )
+
+                    from ..receipt import resolve_run_provenance
+                    prov, rec = resolve_run_provenance(
+                        self.store,
+                        run,
+                        expected_correlation_id=expected_correlation,
+                        expected_owner=expected_owner,
+                    )
+
+                    # Keep immutable receipt snapshot for client admission verification
+                    immutable_rec = rec
+                    cand_artifact_id = str(public_candidate.get("artifact_id") or "").strip()
+
+                    if immutable_rec is not None:
+                        cand_corr = candidate.get("correlation_id")
+                        if cand_corr and str(cand_corr).strip() != str(immutable_rec.get("correlation_id", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                        cand_owner = candidate.get("executor") or candidate.get("owner")
+                        if cand_owner and str(cand_owner).strip() != str(immutable_rec.get("executor", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                        cand_receipt_id = candidate.get("receipt_id")
+                        if cand_receipt_id and str(cand_receipt_id).strip() != str(immutable_rec.get("receipt_id", "")).strip():
+                            prov = "unavailable"
+                            rec = None
+
+                        cand_digest = candidate.get("artifact_digest")
+                        if cand_digest:
+                            expected_digest = str(immutable_rec.get("artifact_digest") or "").strip()
+                            if not expected_digest or str(cand_digest).strip() != expected_digest:
+                                prov = "unavailable"
+                                rec = None
+
+                        # Validate candidate artifact_id against canonical run artifacts from owner result
+                        canonical_art_ids, known_digests = _extract_run_artifact_identities(run)
+                        if not canonical_art_ids or cand_artifact_id not in canonical_art_ids:
+                            prov = "unavailable"
+                            rec = None
+                        else:
+                            art_digest = known_digests.get(cand_artifact_id)
+                            if immutable_rec.get("artifact_digest"):
+                                rec_digest = str(immutable_rec["artifact_digest"]).strip()
+                                if art_digest and art_digest != rec_digest:
+                                    prov = "unavailable"
+                                    rec = None
+                            if cand_digest and art_digest and str(cand_digest).strip() != art_digest:
+                                prov = "unavailable"
+                                rec = None
+
+                    if status not in terminal_statuses and prov == "real":
+                        prov = "simulation"
+                        rec = None
+
+                    resolved_prov = prov
+                    receipt = rec
                 else:
-                    metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
+                    stored_prov = str(candidate.get("provenance") or "").lower().strip()
+                    if stored_prov in ("fixture",):
+                        resolved_prov = "fixture"
+                    elif stored_prov in ("unavailable",):
+                        resolved_prov = "unavailable"
+                    else:
+                        resolved_prov = "simulation"
+
+                public_candidate["provenance"] = resolved_prov
+                public_candidate["has_real_receipt"] = bool(resolved_prov == "real" and receipt is not None)
+                if receipt and "receipt_id" in receipt:
+                    public_candidate["receipt_id"] = receipt["receipt_id"]
+                    if receipt.get("artifact_digest"):
+                        public_candidate["artifact_digest"] = receipt["artifact_digest"]
+                elif not receipt:
+                    public_candidate.pop("receipt_id", None)
+
+                candidates.append(public_candidate)
+                cand_metrics: Dict[str, Any] = {}
+                if run:
+                    # Resolve scoring/evidence inputs only from authoritative owner data;
+                    # do not fill absent owner fields from metrics_by_artifact or candidate._metrics.
+                    if run.get("metrics"):
+                        cand_metrics.update(_normalize_metrics_to_dict(run["metrics"]))
+                elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
+                    if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
+                        client_art_metrics = body.metrics_by_artifact[public_candidate["artifact_id"]]
+                        if isinstance(client_art_metrics, dict):
+                            cand_metrics.update(client_art_metrics)
+                    elif candidate.get("_metrics") and isinstance(candidate.get("_metrics"), dict):
+                        cand_metrics.update(candidate["_metrics"])
+                metrics_by_artifact[public_candidate["artifact_id"]] = cand_metrics
         elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
-            # Explicit demo/test profile allows fixture prototype candidates
-            for candidate in _default_registry_candidates(now):
+            try:
+                import agora.research.router as _r_router
+                _cand_fn = getattr(_r_router, "_default_registry_candidates", _default_registry_candidates)
+            except Exception:
+                _cand_fn = _default_registry_candidates
+            for candidate in _cand_fn(now):
                 if not _candidate_matches_filter(candidate, pool_filter):
                     continue
                 public_candidate = _candidate_public_member(candidate)
