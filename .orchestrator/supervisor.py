@@ -4534,15 +4534,19 @@ def provider_stream_event_key(payload: Mapping[str, Any]) -> str:
 
 
 def provider_stream_event_is_meaningful(payload: Mapping[str, Any]) -> bool:
+    """Return whether a provider event extends a worker's work lease.
+
+    Streamed tool calls and text deltas show that a model is alive, but do not
+    establish that the task moved forward.  Treating each of them as work
+    progress lets an agent indefinitely renew a lease by repeatedly reading
+    the same files.  Source/commit observations cover durable work; a terminal
+    provider result covers completion or failure.
+    """
     event_type = str(payload.get("type") or "").strip().lower()
     if event_type == "init":
         return False
     if event_type == "step_update":
-        step = payload.get("step_update")
-        if not isinstance(step, Mapping):
-            return False
-        step_type = str(step.get("type") or step.get("step_type") or "").strip().lower()
-        return step_type not in {"", "user_input", "checkpoint"}
+        return False
     if event_type == "user":
         return False
     return bool(event_type)
@@ -5327,8 +5331,10 @@ def worker_active_process_lease_is_fresh(
 
     Provider output and commits are still the preferred progress signals.  A
     quiet test process can use this fallback only while its process tree keeps
-    advancing, its provider has a configured hard timeout, and that deadline
-    has not passed.  A provider without a timeout never receives this grace.
+    advancing, its provider is quiet, it has a configured hard timeout, and
+    that deadline has not passed.  A provider without a timeout never receives
+    this grace.  Provider output that continues without durable work is an
+    active agent loop, not a quiet foreground validation command.
     """
 
     deadline = worker_active_process_lease_deadline(config, worker)
@@ -5338,6 +5344,13 @@ def worker_active_process_lease_is_fresh(
     if last_activity is None:
         return False
     settings = worker_runtime_settings(config)
+    last_provider_event = _parse_iso_utc(str(worker.get("last_event_at") or ""))
+    if last_provider_event is not None and rewrite_worker_lifecycle.lease_progress_is_fresh(
+        last_progress_epoch=last_provider_event.timestamp(),
+        now_epoch=now.timestamp(),
+        stall_seconds=float(settings.get("work_progress_stale_seconds", 360)),
+    ):
+        return False
     return rewrite_worker_lifecycle.lease_progress_is_fresh(
         last_progress_epoch=last_activity.timestamp(),
         now_epoch=now.timestamp(),
