@@ -1,30 +1,11 @@
 name: Canonical Review Attestation Audit
 
-# This repository workflow is diagnostic only. It has no check-write
-# permission and must never be configured as the canonical required check:
-# every repository workflow runs as the generic github-actions App and can be
-# imitated by candidate code. The merge-authoritative check is issued by a
-# dedicated external GitHub App whose installation token is unavailable to
-# repository Actions and shared owner credentials.
-#
-# Before any checkout, every event path accepts only dev/master and captures
-# the immutable base SHA. Candidate code is never checked out or executed.
+# This repository workflow is an optional diagnostic audit only. It has no check-write
+# permission and is never configured as a required gate check. It evaluates the
+# offline verifier contract and signed attestation records for diagnostic audit purposes.
+# Candidate code is never checked out or executed; the workflow checks out the trusted
+# base SHA directly.
 on:
-  pull_request_target:
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - ready_for_review
-      - converted_to_draft
-      - edited
-  issue_comment:
-    types:
-      - created
-      - edited
-      - deleted
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -40,16 +21,10 @@ permissions:
 jobs:
   discover:
     name: Discover PR heads to evaluate
-    if: >-
-      github.event_name != 'issue_comment' ||
-      github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      EVENT_PR_NUMBER: >-
-        ${{ github.event.pull_request.number ||
-            github.event.issue.number ||
-            inputs.pr_number }}
+      EVENT_PR_NUMBER: ${{ inputs.pr_number }}
     outputs:
       pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
 
@@ -64,20 +39,13 @@ jobs:
           # diagnostic validates the product-only signed-review path, so it
           # must not publish a misleading failure for an otherwise valid
           # tooling delivery.
-          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
-              --jq '.[] | select(.base.ref == "dev" or .base.ref == "master") | select([.labels[].name] | index("delivery:tooling") | not) | .number' \
-              > "$numbers_file"
-          else
-            if [[ ! "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
-              echo "PR number must be a positive integer" >&2
-              exit 1
-            fi
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$EVENT_PR_NUMBER" \
-              --jq 'select([.labels[].name] | index("delivery:tooling") | not) | .number' \
-              > "$numbers_file"
+          if [[ ! "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "PR number must be a positive integer" >&2
+            exit 1
           fi
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$EVENT_PR_NUMBER" \
+            --jq 'select([.labels[].name] | index("delivery:tooling") | not) | .number' \
+            > "$numbers_file"
           pr_numbers="$(
             jq -Rsc \
               'split("\n") | map(select(length > 0) | tonumber) | unique' \
