@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "AGORA-CHAIN-001",
-  "base_ref": "dev@1b39676c12182e15602bcb85a72244f2b31b0116",
+  "base_ref": "dev@c99204a9a93fa87015dfb8ebe0839478a0482c08",
   "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done), OVERLAY-RETIRE-001 (done)",
   "normative_plan": "SD §6 Agora design, §12.4, GAP-AGORA-01, GAP-AGORA-02, GAP-AGORA-03, GAP-AGORA-05, GAP-AGORA-06; pkt-pantheon-structural-closure-functional-v2-20260903",
   "implementation": {
