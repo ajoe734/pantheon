@@ -542,11 +542,15 @@ def create_governance_router(
         page_size: int = Query(default=25, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
+        identity = _identity(authorization)
         snapshot_at = _now()
         try:
             items, next_token, total, surface_state = _service().list_consult_memos(
-                status=status, page_token=page_token, page_size=page_size, snapshot_at=snapshot_at
+                status=status,
+                page_token=page_token,
+                page_size=page_size,
+                snapshot_at=snapshot_at,
+                identity=identity,
             )
         except ValueError as exc:
             field = str(exc)

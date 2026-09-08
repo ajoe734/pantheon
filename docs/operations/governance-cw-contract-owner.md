@@ -144,8 +144,15 @@ as the exclusive, authoritative policy owner for CW01/CW03/CW04:
     `capabilities_for_identity`) in `GovernanceService` are wrapped in fail-closed error
     handling so callback exceptions resolve to `"unavailable"` or redaction-policy-unavailable.
   - Explicit collection surface state helpers: Added `committee_collection_surface_state`
-    and `memo_collection_surface_state` methods enforcing that an unavailable underlying
-    dataset always forces the collection surface state to `"unavailable"`.
+    and `memo_collection_surface_state` methods with provenance precedence (`_resolve_collection_surface_state`),
+    enforcing that raw unavailable/missing/unknown provenance always forces the collection surface state
+    to `"unavailable"` regardless of injected callback status (such as `main._dataset_surface_status`
+    returning `status="ok", source="unavailable"` on a fresh BFF) while preserving valid stale/degraded semantics.
+  - Safe memo summary list projection & record availability parity: `GovernanceService.list_consult_memos`
+    projects store rows to the published safe summary contract (`RedTeamMemoSummary`), ensuring
+    `summary`, `recommendations` list, and `evidence_refs` are never exposed in listing. If an individual
+    memo is unavailable, `recommendation_count` is suppressed to 0. Unavailable collection suppresses item rows
+    (`items: []`, `next_page_token: None`, `total: 0`, `surface_state: "unavailable"`).
   - Unavailable dominates collection listing: In `GovernanceService.list_committees`, if
     `committee_collection_surface_state` resolves to `"unavailable"`, item rows are
     suppressed (`data: []`, `next_cursor: None`, `total_count: 0`), matching the CW04
@@ -165,6 +172,8 @@ as the exclusive, authoritative policy owner for CW01/CW03/CW04:
   - Replaced ad-hoc router redaction branches with `_safe_redact` helper delegating to the
     service's fail-closed redactor.
   - `router.py:list_committees` now directly consults `service.committee_collection_surface_state`.
+  - `router.py:list_consult_memos` delegates pagination, projection, and collection surface state
+    resolution directly to `GovernanceService.list_consult_memos`.
 
 - **Comprehensive contract test suite expansion (`scripts/test_bff_cw_contract_prerequisite.py`)**:
   - Added test case 1: `test_cw04_red_case_1_memo_degraded_dataset_unavailable_suppresses_summary`:
@@ -174,12 +183,19 @@ as the exclusive, authoritative policy owner for CW01/CW03/CW04:
     Omitted provenance results in `status="unavailable"`, `fresh=False`, and CTA disabled.
   - Added test case 3: `test_cw04_red_case_3_router_omitted_redactor_empty_capabilities_no_strategy_evidence`:
     Omitted redactor and empty capabilities through the router fails closed and redacts strategy evidence.
-  - Added full 16-combination (4 record states x 4 dataset states) availability and CTA truth table
-    tests for both CW03 committee and CW04 memo, verifying identical behavior between service and router.
-  - Added callback exception fail-closed verification (`test_cw_callback_errors_fail_closed`).
-  - Added positive real-redactor verification (`test_cw04_authorized_real_redactor_positive_through_router`).
-  - Added production composition wiring test (`test_cw_normal_production_wiring_composition`).
-  - All 29 contract tests pass cleanly.
+  - Full 16-combination (4 record states x 4 dataset states) availability and CTA truth table
+    tests for both CW03 committee and CW04 memo covering BOTH list and detail parity across
+    GovernanceService and real router (`test_cw04_full_record_by_dataset_matrix_service_and_router`
+    and `test_cw03_full_record_by_dataset_matrix_service_and_router`).
+  - Production callback precedence verification (`test_production_callback_cannot_override_unavailable_source`)
+    parameterized across `record_state in ["ok", "degraded"]`.
+  - Safe list summary contract and omitted-redactor verification (`test_list_cannot_bypass_unavailable_content_and_omitted_redactor`).
+  - Full callback error fail-closed verification (`test_cw_callback_errors_fail_closed`) covering
+    dataset_surface_status exceptions, unknown provenance strings, redactor exceptions, and capability exceptions.
+  - Positive real-redactor verification (`test_cw04_authorized_real_redactor_positive_through_router`).
+  - Production composition wiring and live router request execution (`test_cw_normal_production_wiring_composition`)
+    through `TestClient(bff_main.app)`.
+  - All 32 contract tests pass cleanly.
 
 ## Known gap intentionally left untouched (not this corrective's scope)
 

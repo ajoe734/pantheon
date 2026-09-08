@@ -1091,7 +1091,7 @@ def test_cw04_full_record_by_dataset_matrix_service_and_router() -> None:
     """Full 4x4 matrix of record state x dataset source for CW04 memo:
     record in {ok, degraded, unavailable, missing}
     dataset source in {ok, degraded, unavailable, missing}
-    Verified across both actual GovernanceService and real router."""
+    Verified across both actual GovernanceService and real router for BOTH list and detail."""
     reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
 
     for rec_state in ["ok", "degraded", "unavailable", "missing"]:
@@ -1116,6 +1116,9 @@ def test_cw04_full_record_by_dataset_matrix_service_and_router() -> None:
             class _MatrixStore:
                 def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
                     return memo_data
+
+                def list_consult_memos(self, **_: Any) -> List[Dict[str, Any]]:
+                    return [memo_data] if memo_data else []
 
                 def dataset_source(self, dataset: str) -> str:
                     return ds_source
@@ -1195,12 +1198,55 @@ def test_cw04_full_record_by_dataset_matrix_service_and_router() -> None:
                     assert proj["meta"]["staleness"]["status"] == "fresh"
                     assert router_body["meta"]["staleness"]["status"] == "fresh"
 
+            # List verification for CW04 memo across service and router
+            svc_list_items, svc_list_tok, svc_list_tot, svc_list_surface = service.list_consult_memos(
+                status=None, page_token=None, page_size=25
+            )
+            router_list_res = client.get("/api/v1/consult/memos", headers={"Authorization": REVIEWER_AUTH})
+            assert router_list_res.status_code == 200
+            router_list_body = router_list_res.json()
+
+            if ds_source in {"unavailable", "missing"}:
+                assert svc_list_surface == "unavailable"
+                assert svc_list_items == []
+                assert svc_list_tot == 0
+                assert router_list_body["items"] == []
+                assert router_list_body["page_info"]["total"] == 0
+                assert router_list_body["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+                assert router_list_body["meta"]["staleness"]["status"] == "stale"
+            else:
+                expected_coll_state = "degraded" if ds_source == "degraded" else "ok"
+                assert svc_list_surface == expected_coll_state
+                assert router_list_body["meta"]["surfaces"]["redteam_memo"]["state"] == expected_coll_state
+                assert router_list_body["meta"]["staleness"]["status"] == ("fresh" if expected_coll_state == "ok" else "stale")
+
+                if rec_state == "missing":
+                    assert svc_list_items == []
+                    assert svc_list_tot == 0
+                    assert router_list_body["items"] == []
+                else:
+                    assert len(svc_list_items) == 1
+                    assert len(router_list_body["items"]) == 1
+                    for item in [svc_list_items[0], router_list_body["items"][0]]:
+                        assert "summary" not in item
+                        assert "recommendations" not in item
+                        assert "evidence_refs" not in item
+                        assert item["memo_id"] == f"mem-{rec_state}-{ds_source}"
+                        assert item["object_ref"] == {"type": "ConsultMemo", "id": f"mem-{rec_state}-{ds_source}"}
+                        assert item["memo_type"] == "red_team"
+                        assert item["status"] == "published"
+                        assert item["route_href"] == f"/consultation/memos/mem-{rec_state}-{ds_source}"
+                        if rec_state == "unavailable":
+                            assert item["recommendation_count"] == 0
+                        else:
+                            assert item["recommendation_count"] == 1
+
 
 def test_cw03_full_record_by_dataset_matrix_service_and_router() -> None:
     """Full 4x4 matrix of record state x dataset source for CW03 committee:
     record in {ok, degraded, unavailable, missing}
     dataset source in {ok, degraded, unavailable, missing}
-    Verified across both actual GovernanceService and real router."""
+    Verified across both actual GovernanceService and real router for BOTH list and detail."""
     operator_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"operator", "approver"}})()
 
     for rec_state in ["ok", "degraded", "unavailable", "missing"]:
@@ -1269,11 +1315,33 @@ def test_cw03_full_record_by_dataset_matrix_service_and_router() -> None:
                     assert proj["allowedActions"]["canRecordSponsorDecision"] is True
                     assert router_body["allowedActions"]["canRecordSponsorDecision"] is True
 
-            # Also check list_committees when dataset source is unavailable
+            # Full list_committees verification across all 16 combinations
+            svc_comm_items, svc_comm_tok, svc_comm_tot = service.list_committees(
+                quorum_state=None, consensus_state=None, page_token=None, page_size=25
+            )
+            list_res = client.get("/api/v1/committees", headers={"Authorization": OPERATOR_AUTH})
+            assert list_res.status_code == 200
+            list_body = list_res.json()
+
             if ds_source in {"unavailable", "missing"}:
-                list_res = client.get("/api/v1/committees", headers={"Authorization": OPERATOR_AUTH})
-                assert list_res.status_code == 200
-                assert list_res.json()["data"] == []
+                assert svc_comm_items == []
+                assert svc_comm_tot == 0
+                assert list_body["data"] == []
+                assert list_body["page_info"]["total"] == 0
+                assert list_body["meta"]["surfaces"]["committee_board"] == "unavailable"
+            else:
+                expected_coll_state = "degraded" if ds_source == "degraded" else "ok"
+                assert list_body["meta"]["surfaces"]["committee_board"] == expected_coll_state
+
+                if rec_state == "missing":
+                    assert svc_comm_items == []
+                    assert svc_comm_tot == 0
+                    assert list_body["data"] == []
+                else:
+                    assert len(svc_comm_items) == 1
+                    assert len(list_body["data"]) == 1
+                    assert svc_comm_items[0]["committee_id"] == f"comm-{rec_state}-{ds_source}"
+                    assert list_body["data"][0]["committee_id"] == f"comm-{rec_state}-{ds_source}"
 
 
 def test_cw_callback_errors_fail_closed() -> None:
@@ -1297,6 +1365,9 @@ def test_cw_callback_errors_fail_closed() -> None:
         def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
             return memo
 
+        def list_consult_memos(self, **_: Any) -> List[Dict[str, Any]]:
+            return [memo]
+
         def dataset_source(self, dataset: str) -> str:
             raise RuntimeError("dataset source crashed")
 
@@ -1309,6 +1380,15 @@ def test_cw_callback_errors_fail_closed() -> None:
     class _GoodStore:
         def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
             return memo
+
+        def list_consult_memos(self, **_: Any) -> List[Dict[str, Any]]:
+            return [memo]
+
+        def get_committee(self, committee_id: str) -> Optional[Dict[str, Any]]:
+            return {"committee_id": committee_id, "surface_state": "ok"}
+
+        def list_committees(self, **_: Any) -> List[Dict[str, Any]]:
+            return [{"committee_id": "c1", "surface_state": "ok"}]
 
         def dataset_source(self, dataset: str) -> str:
             return "typed_store"
@@ -1338,6 +1418,151 @@ def test_cw_callback_errors_fail_closed() -> None:
     assert res.status_code == 200
     assert res.json()["evidence_refs"][0]["redacted"] is True
     assert res.json()["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
+
+    # 4. dataset_surface_status callback raises exception -> fails closed to unavailable
+    def _exploding_surface_status(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("surface status crashed")
+
+    service_exploding_status = GovernanceService(
+        _GoodStore(),
+        dataset_surface_status=_exploding_surface_status,
+    )
+    assert service_exploding_status.committee_collection_surface_state() == "unavailable"
+    assert service_exploding_status.memo_collection_surface_state() == "unavailable"
+    comm_items, _, comm_total = service_exploding_status.list_committees(page_token=None, page_size=25)
+    assert comm_items == []
+    assert comm_total == 0
+    memo_items, _, memo_total, memo_surf = service_exploding_status.list_consult_memos(status=None, page_token=None, page_size=25)
+    assert memo_items == []
+    assert memo_total == 0
+    assert memo_surf == "unavailable"
+    memo_p = service_exploding_status.consult_memo_projection("mem-err", identity=reviewer_identity)
+    assert memo_p["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+    assert memo_p["summary"] is None
+    assert memo_p["allowedActions"]["canInitiateGovernanceReview"] is False
+
+    # 5. dataset_source returns unrecognized unknown provenance -> fails closed to unavailable
+    class _UnknownSourceStore:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo
+        def list_consult_memos(self, **_: Any) -> List[Dict[str, Any]]:
+            return [memo]
+        def get_committee(self, committee_id: str) -> Optional[Dict[str, Any]]:
+            return {"committee_id": committee_id, "surface_state": "ok"}
+        def list_committees(self, **_: Any) -> List[Dict[str, Any]]:
+            return [{"committee_id": "c1", "surface_state": "ok"}]
+        def dataset_source(self, dataset: str) -> str:
+            return "unknown_provenance_xyz"
+
+    service_unknown = GovernanceService(_UnknownSourceStore())
+    assert service_unknown.committee_collection_surface_state() == "unavailable"
+    assert service_unknown.memo_collection_surface_state() == "unavailable"
+    assert service_unknown.list_committees(page_token=None, page_size=25)[0] == []
+    assert service_unknown.list_consult_memos(status=None, page_token=None, page_size=25)[0] == []
+
+    # 6. capabilities_for_identity raises exception -> fails closed to empty capabilities
+    def _exploding_caps(ident: Any) -> Any:
+        raise RuntimeError("capabilities crashed")
+
+    service_exploding_caps = GovernanceService(
+        _GoodStore(),
+        redact_evidence_refs=_canonical_redact_evidence_refs,
+        capabilities_for_identity=_exploding_caps,
+    )
+    proj_caps = service_exploding_caps.consult_memo_projection("mem-err", identity=reviewer_identity)
+    assert proj_caps["evidence_refs"][0]["redacted"] is True
+
+
+@pytest.mark.parametrize("record_state", ["ok", "degraded"])
+def test_production_callback_cannot_override_unavailable_source(record_state: str) -> None:
+    """Production callback main._dataset_surface_status cannot override unavailable source."""
+    class _Store:
+        def __init__(self, source: str, state: str) -> None:
+            self.source, self.state = source, state
+
+        def dataset_source(self, dataset: str) -> str:
+            return self.source
+
+        def get_consult_memo(self, memo_id: str) -> Dict[str, Any]:
+            return {
+                "memo_id": memo_id,
+                "surface_state": self.state,
+                "status": "published",
+                "lifecycle_state": "published",
+                "summary": "SYNTHETIC_CONTENT",
+                "recommendations": ["approve"],
+                "evidence_refs": [{"ref_id": "synthetic-ref", "evidence_type": "strategy", "description": "SYNTHETIC_PRIVATE"}],
+                "governance_target": {"target_type": "deployment_plan", "target_id": "synthetic-plan"},
+            }
+
+        def list_consult_memos(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return [self.get_consult_memo("probe")]
+
+    identity = type("Identity", (), {"operator_id": "synthetic-reviewer", "roles": {"reviewer", "operator", "approver"}})()
+    store = _Store("unavailable", record_state)
+    service = GovernanceService(store, dataset_surface_status=bff_main._dataset_surface_status)
+    projection = service.consult_memo_projection("probe", identity=identity)
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: store,
+            extract_identity=lambda auth: identity,
+            dataset_surface_status=bff_main._dataset_surface_status,
+        )
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v1/consult/memos/probe")
+        assert response.status_code == 200
+        routed = response.json()
+    actual = [
+        (p["meta"]["surfaces"]["redteam_memo"]["state"], p["summary"], p["allowedActions"]["canInitiateGovernanceReview"])
+        for p in (projection, routed)
+    ]
+    assert actual == [("unavailable", None, False)] * 2
+
+
+def test_list_cannot_bypass_unavailable_content_and_omitted_redactor() -> None:
+    """List projection constrains output to safe summary and does not leak private content."""
+    class _Store:
+        def __init__(self, source: str, state: str) -> None:
+            self.source, self.state = source, state
+
+        def dataset_source(self, dataset: str) -> str:
+            return self.source
+
+        def get_consult_memo(self, memo_id: str) -> Dict[str, Any]:
+            return {
+                "memo_id": memo_id,
+                "surface_state": self.state,
+                "status": "published",
+                "lifecycle_state": "published",
+                "summary": "SYNTHETIC_CONTENT",
+                "recommendations": ["approve"],
+                "evidence_refs": [{"ref_id": "synthetic-ref", "evidence_type": "strategy", "description": "SYNTHETIC_PRIVATE"}],
+                "governance_target": {"target_type": "deployment_plan", "target_id": "synthetic-plan"},
+            }
+
+        def list_consult_memos(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return [self.get_consult_memo("probe")]
+
+    identity = type("Identity", (), {"operator_id": "synthetic-reviewer", "roles": {"reviewer", "operator", "approver"}})()
+    store = _Store("ok", "unavailable")
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: store,
+            extract_identity=lambda auth: identity,
+            capabilities_for_identity=lambda identity: [],
+        )
+    )
+    with TestClient(app) as client:
+        detail = client.get("/api/v1/consult/memos/probe").json()
+        response = client.get("/api/v1/consult/memos")
+        assert response.status_code == 200
+        listing = response.json()
+    assert detail["summary"] is None
+    assert "SYNTHETIC_CONTENT" not in str(listing) and "SYNTHETIC_PRIVATE" not in str(listing)
+    assert listing["items"][0]["recommendation_count"] == 0
 
 
 def test_cw04_authorized_real_redactor_positive_through_router() -> None:
@@ -1382,9 +1607,9 @@ def test_cw04_authorized_real_redactor_positive_through_router() -> None:
 
 
 def test_cw_normal_production_wiring_composition() -> None:
-    """Normal production wiring read-only composition verification:
+    """Normal production wiring composition and full live router execution:
     main.app mounts the governance router with GovernanceService backed by app_deps.read_surface,
-    and no duplicate or divergent policy engines exist."""
+    executing all CW routes through TestClient(bff_main.app)."""
     def _iter_routes(routes: Any) -> Any:
         for route in routes:
             nested_router = getattr(route, "original_router", None)
@@ -1399,6 +1624,34 @@ def test_cw_normal_production_wiring_composition() -> None:
     assert "/api/v1/consult/memos" in routes
     assert "/api/v1/consult/memos/{memo_id}" in routes
     assert "/api/v1/committees/{committee_id}" in routes
+
+    # Execute requests against actual production app
+    with TestClient(bff_main.app) as client:
+        # GET /api/v1/consult/memos
+        res_memos = client.get("/api/v1/consult/memos", headers={"Authorization": REVIEWER_AUTH})
+        assert res_memos.status_code == 200
+        body_memos = res_memos.json()
+        assert "items" in body_memos
+        assert "page_info" in body_memos
+        assert "meta" in body_memos
+        assert "redteam_memo" in body_memos["meta"]["surfaces"]
+
+        # GET /api/v1/committees
+        res_comm = client.get("/api/v1/committees", headers={"Authorization": OPERATOR_AUTH})
+        assert res_comm.status_code == 200
+        body_comm = res_comm.json()
+        assert "data" in body_comm
+        assert "page_info" in body_comm
+        assert "meta" in body_comm
+        assert "committee_board" in body_comm["meta"]["surfaces"]
+
+        # GET /api/v1/consult/requests
+        res_req = client.get("/api/v1/consult/requests", headers={"Authorization": OPERATOR_AUTH})
+        assert res_req.status_code == 200
+        body_req = res_req.json()
+        assert "data" in body_req
+        assert "meta" in body_req
+        assert "consult_request_list" in body_req["meta"]["surfaces"]
 
 
 if __name__ == "__main__":
