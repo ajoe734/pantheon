@@ -168,6 +168,7 @@ class ApprovalDecisionResponse(BaseModel):
     controller_record_ref: Optional[str] = None
     recorded_at: Optional[str] = None
     authority_status: Optional[str] = None
+    authorization_scope: Optional[Dict[str, Any]] = None
     version: int
     event_id: str
 

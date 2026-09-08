@@ -7,8 +7,17 @@ on:
       - services/persona/**
       - services/capital/**
       - services/deployment/**
-      - services/governance/approval_authority.py
-      - services/governance/test_approval_authority.py
+      - services/governance/**
+      - services/registry/**
+      - services/runtime-manager/**
+      - services/control-plane/governance/**
+      - services/service_token_file.py
+      - services/dev-paper-principal-issuer/**
+      - scripts/*dev_paper_principal*.py
+      - docker-compose.yml
+      - docker-compose.control.yml
+      - scripts/deploy_nonprod_vm.sh
+      - .github/workflows/nonprod-deploy.yml
       - services/control-plane/bff/**
       - tests/persona_capital_write_owner/**
       - .github/workflows/persona-owner-contract.yml
@@ -21,7 +30,23 @@ jobs:
   contract:
     name: Persona provisioning owner contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: gov_approval_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GOV_APPROVAL_TEST_DSN: postgresql://postgres@127.0.0.1:5432/gov_approval_test
+      TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/gov_approval_test
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -32,9 +57,18 @@ jobs:
           python3 -m pip install --upgrade pip "setuptools>=68"
           python3 -m pip install -r requirements.txt -r services/control-plane/bff/requirements.txt
           python3 scripts/dev/provision_python_distribution.py --mode current --allow-system-interpreter
-      - name: Verify real owner creation, strict actor binding and Deployment wire
+      - name: Verify real owners, paper scope, renewal and durable receipt reload
         run: |
           python3 -m pytest -q \
             services/control-plane/bff/tests/test_persona_*contract.py \
             services/control-plane/bff/test_persona_provisioning_coordinator.py \
-            tests/persona_capital_write_owner/test_persistent_owners.py
+            tests/persona_capital_write_owner/test_persistent_owners.py \
+            scripts/test_issue_dev_paper_principals.py \
+            scripts/test_dev_paper_principal_renewal.py \
+            services/governance/test_paper_approval_scope.py \
+            services/governance/test_paper_approval_postgres.py \
+            services/governance/test_approval_authority_postgres.py \
+            services/registry/test_paper_scope_registry.py \
+            services/registry/test_owner_durability.py \
+            services/deployment/test_paper_scope_service.py \
+            services/runtime-manager/test_paper_scope_deploy_authority.py

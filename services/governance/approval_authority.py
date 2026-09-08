@@ -9,7 +9,7 @@ import json
 import math
 import os
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -46,11 +46,20 @@ class ApprovalEvidence(BaseModel):
     controller_record_ref: str | None
     authority_status: str | None
     recorded_at: str | None
+    authorization_scope: dict | None = None
     version: int = Field(ge=1)
     event_id: str = Field(min_length=1)
 
     def require_valid(self, *, expected: Mapping[str, Any] | None = None,
-                      now: datetime | None = None) -> 'ApprovalEvidence':
+                      now: datetime | None = None,
+                      usage_context: Any = None) -> 'ApprovalEvidence':
+        """Common validity predicate for every domain consumer.
+
+        ``usage_context`` is an ``ApprovalUsageContext`` (environment,
+        target_stage, capital_scale_pct) describing what the caller is about
+        to do.  Unscoped approvals ignore it.  A scoped approval fails closed
+        without it and admits only a context inside its stored scope.
+        """
         if self.decision_state != 'decided':
             raise ApprovalInvalid('approval_decision must be in decided state')
         if (self.decision_state != 'decided' or self.decision != 'approved'
@@ -68,6 +77,21 @@ class ApprovalEvidence(BaseModel):
                 raise ValueError('expired')
         except (AttributeError, TypeError, ValueError) as exc:
             raise ApprovalInvalid('Approval expiry is missing, malformed or expired') from exc
+        from services.governance.paper_approval_scope import (
+            AuthorizationScopeError, UsageContextViolation, enforce_authorization_scope,
+            require_dedicated_subject_scope,
+        )
+        try:
+            # The dedicated paper subject never has unscoped legacy authority:
+            # absent/null/malformed/broadened scope on its decisions is invalid.
+            require_dedicated_subject_scope(
+                actor_id=self.actor_id,
+                owner_user_id=getattr(self, 'owner_user_id', None),
+                authorization_scope=self.authorization_scope,
+            )
+            enforce_authorization_scope(self.authorization_scope, usage_context)
+        except (AuthorizationScopeError, UsageContextViolation) as exc:
+            raise ApprovalInvalid(f'Approval authorization_scope rejects this use: {exc}') from exc
         values = self.model_dump()
         for name, value in (expected or {}).items():
             if value is None or value == '' or values.get(name) != value:
@@ -82,26 +106,35 @@ class NoOwnerRedirect(HTTPRedirectHandler):
 
 
 class ApprovalReader:
-    def __init__(self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0):
+    def __init__(self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0,
+                 token_provider: Callable[[], str] | None = None):
         try:
             parsed = urlsplit(base_url)
         except ValueError as exc:
             raise ApprovalUnavailable('Governance reader URL is malformed') from exc
         if (parsed.scheme not in {'http', 'https'} or not parsed.hostname
                 or parsed.username or parsed.password or parsed.query or parsed.fragment
-                or not service_token or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+                or (not service_token and token_provider is None)
+                or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
             raise ApprovalUnavailable('Governance reader URL, scoped principal and timeout required')
         self._opener = build_opener(NoOwnerRedirect())
         self.base_url = base_url.rstrip('/')
         self.service_token = service_token
+        self.token_provider = token_provider
         self.timeout_seconds = timeout_seconds
 
     def get(self, decision_id: str) -> ApprovalEvidence:
         if not decision_id or not decision_id.strip():
             raise ApprovalInvalid('Exact decision ID required')
+        try:
+            token = self.token_provider() if self.token_provider else self.service_token
+            if not token:
+                raise RuntimeError('Missing service credential')
+        except RuntimeError as exc:
+            raise ApprovalUnavailable('Governance read principal unavailable') from exc
         request = Request(
             f'{self.base_url}/api/governance/approvals/{quote(decision_id, safe="")}',
-            headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + self.service_token},
+            headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + token},
             method='GET',
         )
         try:
@@ -123,12 +156,15 @@ class ApprovalReader:
             raise ApprovalInvalid('Governance exact decision ID mismatch')
         return evidence
 
-    def verify(self, decision_id: str, *, expected: Mapping[str, Any], now=None) -> ApprovalEvidence:
-        return self.get(decision_id).require_valid(expected=expected, now=now)
+    def verify(self, decision_id: str, *, expected: Mapping[str, Any], now=None,
+               usage_context: Any = None) -> ApprovalEvidence:
+        return self.get(decision_id).require_valid(expected=expected, now=now, usage_context=usage_context)
 
 
 def configured_approval_reader(domain: str, *, base_url: str | None = None) -> ApprovalReader:
+    from services.service_token_file import configured_service_token
     prefix = domain.upper().replace('-', '_')
+    variable = f'{prefix}_GOVERNANCE_SERVICE_TOKEN'
     try:
         timeout = float(os.getenv(f'{prefix}_GOVERNANCE_TIMEOUT_SECONDS', '5'))
     except ValueError as exc:
@@ -136,5 +172,6 @@ def configured_approval_reader(domain: str, *, base_url: str | None = None) -> A
     return ApprovalReader(
         base_url=base_url or os.getenv(f'{prefix}_GOVERNANCE_BASE_URL', ''),
         service_token=os.getenv(f'{prefix}_GOVERNANCE_SERVICE_TOKEN', ''),
+        token_provider=lambda: configured_service_token(variable),
         timeout_seconds=timeout,
     )
