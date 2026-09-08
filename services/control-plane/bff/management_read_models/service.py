@@ -2091,12 +2091,16 @@ class ManagementService:
             correlation_id=correlation_id,
         ).model_dump()
 
+    _STATUS_RANK: Dict[str, int] = {"ok": 0, "degraded": 1, "unavailable": 2}
+
     @staticmethod
-    def _record_provenance(items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        for item in items:
-            if isinstance(item, dict) and "source_kind" in item:
-                return item
-        return None
+    def _record_provenance(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # Every provenance-bearing record, not just the first: picking only
+        # the first record let a healthy owner row that happened to sort
+        # first hide a later owner's real degradation for the same subject
+        # (and the reverse when reversed), so availability depended on
+        # record order instead of the worst actual observation.
+        return [item for item in items if isinstance(item, dict) and "source_kind" in item]
 
     def _typed_context_list(
         self,
@@ -2153,21 +2157,37 @@ class ManagementService:
             status = "unavailable"
         else:
             status = "degraded"
-        provenance = self._record_provenance(items)
-        if provenance is not None:
-            # An owner-reported status/degradation_reason on the record itself
-            # is real observation truth and must not be overridden by the
-            # count-derived status below (e.g. a non-empty batch of rows that
-            # the owner itself marked unavailable is not "ok").
+        provenance_records = self._record_provenance(items)
+        if provenance_records:
+            # An owner-reported status/degradation_reason on the records
+            # themselves is real observation truth and must not be
+            # overridden by the count-derived status below (e.g. a
+            # non-empty batch of rows that an owner itself marked
+            # unavailable is not "ok"). Aggregate across every
+            # provenance-bearing record instead of only the first one, so a
+            # later owner's degradation is never masked by an earlier
+            # owner's healthy row -- the worst reported status wins
+            # independent of record order.
+            worst = max(
+                provenance_records,
+                key=lambda record: self._STATUS_RANK.get(str(record.get("status") or status), 0),
+            )
+            worst_status = str(worst.get("status") or status)
+            degradation_reasons = [
+                str(record.get("degradation_reason"))
+                for record in provenance_records
+                if record.get("degradation_reason")
+                and str(record.get("status") or status) != "ok"
+            ]
             return items, self._context_observation(
                 subject_type=subject_type,
-                status=str(provenance.get("status") or status),
-                owner=str(provenance.get("owner") or owner),
-                source_kind=str(provenance.get("source_kind") or "live"),
-                source_version=provenance.get("source_version"),
-                observed_at=provenance.get("observed_at"),
-                degradation_reason=provenance.get("degradation_reason"),
-                correlation_id=provenance.get("correlation_id"),
+                status=worst_status,
+                owner=str(worst.get("owner") or owner),
+                source_kind=str(worst.get("source_kind") or "live"),
+                source_version=worst.get("source_version"),
+                observed_at=worst.get("observed_at"),
+                degradation_reason="; ".join(degradation_reasons) or worst.get("degradation_reason"),
+                correlation_id=worst.get("correlation_id"),
             )
         if status == "ok":
             return items, self._context_observation(
@@ -2267,7 +2287,8 @@ class ManagementService:
                 source_kind="live",
                 degradation_reason="telemetry summary not found for this runtime.",
             )
-        provenance = self._record_provenance([summary]) if isinstance(summary, dict) else None
+        provenance_records = self._record_provenance([summary]) if isinstance(summary, dict) else []
+        provenance = provenance_records[0] if provenance_records else None
         if provenance is not None:
             # As above: an owner-reported status/degradation_reason on the
             # summary itself is real observation truth, not overridden by

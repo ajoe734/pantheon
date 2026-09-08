@@ -15183,7 +15183,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "cards": pulse_data.get("cards"),
             }
             surfaces["management_trading_pulse"] = {
-                "status": runtime_bindings_obs["status"] if not runtime_bindings else "ok",
+                "status": runtime_bindings_obs["status"],
                 "source": "bff_composed",
                 "owner_observation": runtime_bindings_obs,
             }

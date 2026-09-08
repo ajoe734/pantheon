@@ -54,7 +54,7 @@ from services.control_plane.bff.ports.persona_capital_runtime import RuntimePort
 NOW = "2026-09-08T18:00:00Z"
 
 
-def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a") -> dict:
+def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a", focus: str = "portfolio") -> dict:
     """Execute the exact committed context collector plus its tenant-scoping
     helpers, isolating unrelated adapters."""
     tree = ast.parse(Path("services/control-plane/bff/main.py").read_text())
@@ -72,9 +72,10 @@ def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a") -> dic
         _management_ai_context_service=ManagementService(read_store=store, utc_now=lambda: NOW),
         _mgmt_nl_add_record_entities=lambda *args: None,
         _management_telemetry_rollup=lambda *args: {},
+        _mgmt_nl_trading_pulse_snippet=lambda *args: {"summary": {}, "cards": []},
     )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "main.py", "exec"), namespace)
-    return namespace["_mgmt_nl_collect_context"]("portfolio", NOW, tenant_id)
+    return namespace["_mgmt_nl_collect_context"](focus, NOW, tenant_id)
 
 
 def test_replay_owner_provenance_is_preserved() -> None:
@@ -276,3 +277,43 @@ def test_swallowed_provider_failure_explains_degradation() -> None:
     rows, obs = service.get_context_runtime_bindings()
     assert rows == []
     assert obs["degradation_reason"] and obs["freshness_seconds"] is None, obs
+
+
+@pytest.mark.parametrize("status", ["unavailable", "degraded"])
+def test_trading_pulse_preserves_owner_reported_status(status: str) -> None:
+    row = dict(
+        runtime_id="r1",
+        owner="runtime-owner",
+        source_kind="unavailable",
+        status=status,
+        degradation_reason="owner offline",
+    )
+    context = _collect_context(SimpleNamespace(list_runtime_bindings=lambda: [row]), focus="trading_pulse")
+    surface = context["surfaces"]["management_trading_pulse"]
+    assert surface["owner_observation"]["status"] == status, surface
+    assert surface["status"] != "ok", surface
+
+
+@pytest.mark.parametrize("unavailable_first", [False, True])
+def test_portfolio_exposes_unavailable_owner_regardless_of_row_order(unavailable_first: bool) -> None:
+    healthy = dict(
+        runtime_id="r1",
+        owner="runtime-owner-1",
+        source_kind="live",
+        status="ok",
+        source_version="v1",
+        correlation_id="c1",
+    )
+    failed = dict(
+        runtime_id="r2",
+        owner="runtime-owner-2",
+        source_kind="unavailable",
+        status="unavailable",
+        degradation_reason="owner-2 offline",
+        correlation_id="c2",
+    )
+    rows = [failed, healthy] if unavailable_first else [healthy, failed]
+    context = _collect_context(SimpleNamespace(list_runtime_bindings=lambda: rows, list_capital_pools=lambda: []))
+    surface = context["surfaces"]["portfolio_book"]
+    assert surface["status"] != "ok", surface
+    assert "owner-2 offline" in repr(surface), surface
