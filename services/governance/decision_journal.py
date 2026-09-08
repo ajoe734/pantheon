@@ -592,6 +592,7 @@ def create_entry(
             actor_id=clean_actor,
             entry_id=clean_id,
         )
+        creation_outbox["idempotency_key"] = create_idem_key
 
         record = {
             "id": clean_id,
@@ -749,6 +750,70 @@ def _is_entry_accessible(
 
 
 
+def _get_committed_entry_snapshot(
+    stores: DecisionJournalStores,
+    entry: Optional[Dict[str, Any]],
+    *,
+    coordinate_if_unlocked: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Resolve the authoritative committed snapshot of an entry.
+
+    If an uncommitted creation is in flight, returns None.
+    If an uncommitted patch transaction is in flight, returns before_entry.
+    Coordinates pending transactions if store bundle is unlocked and coordinate_if_unlocked is True.
+    """
+    if not isinstance(entry, dict):
+        return None
+
+    clean_id = str(entry.get("id") or "").strip()
+    if not clean_id:
+        return None
+
+    is_locked = stores.is_bundle_locked()
+    if not is_locked and coordinate_if_unlocked:
+        _coordinate_pending_txs(stores, entry)
+        current = stores.entries.get(clean_id)
+        if not isinstance(current, dict):
+            return None
+        entry = current
+
+    # 1. Check creation outbox / creation commit status
+    if entry.get("_creation_outbox") is not None:
+        clean_tenant = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
+        clean_actor = str(entry.get("createdBy") or entry.get("actor_id") or "").strip()
+        create_idem_key = domain_creation_idempotency_key(
+            tenant_id=clean_tenant,
+            actor_id=clean_actor,
+            entry_id=clean_id,
+        )
+        is_committed = False
+        if stores.idempotency is not None:
+            idem_rec = stores.idempotency.get(create_idem_key)
+            if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                is_committed = True
+        if not is_committed:
+            return None
+
+    # 2. Check patch transaction history
+    tx_history = entry.get("_tx_history")
+    if isinstance(tx_history, list) and tx_history:
+        latest_tx = tx_history[-1]
+        if isinstance(latest_tx, dict):
+            idem_key = latest_tx.get("idempotency_key")
+            is_committed = False
+            if idem_key and stores.idempotency is not None:
+                idem_rec = stores.idempotency.get(idem_key)
+                if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                    is_committed = True
+            if not is_committed:
+                before_entry = latest_tx.get("before_entry")
+                if before_entry is not None and isinstance(before_entry, dict):
+                    return dict(before_entry)
+                return None
+
+    return dict(entry)
+
+
 def get_entry(
     stores: DecisionJournalStores,
     entry_id: str,
@@ -763,81 +828,17 @@ def get_entry(
     if not clean_id:
         return None
 
-    record = stores.entries.get(clean_id)
-    if record is None:
+    raw_record = stores.entries.get(clean_id)
+    if raw_record is None:
         return None
 
-    # Coordinate reads with live writer transaction outcome
-    if stores.is_bundle_locked():
-        tx_history = record.get("_tx_history")
-        if isinstance(tx_history, list) and tx_history:
-            latest_tx = tx_history[-1]
-            if isinstance(latest_tx, dict):
-                idem_key = latest_tx.get("idempotency_key")
-                is_committed = False
-                if idem_key and stores.idempotency is not None:
-                    idem_rec = stores.idempotency.get(idem_key)
-                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                        is_committed = True
-                if not is_committed:
-                    before_entry = latest_tx.get("before_entry")
-                    if before_entry is not None and isinstance(before_entry, dict):
-                        record = before_entry
-                    else:
-                        return None
-        elif record.get("_creation_outbox") is not None:
-            clean_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-            clean_actor = str(record.get("createdBy") or record.get("actor_id") or "").strip()
-            create_idem_key = domain_creation_idempotency_key(
-                tenant_id=clean_tenant,
-                actor_id=clean_actor,
-                entry_id=clean_id,
-            )
-            is_committed = False
-            if stores.idempotency is not None:
-                idem_rec = stores.idempotency.get(create_idem_key)
-                if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                    is_committed = True
-            if not is_committed:
-                return None
-    else:
-        _coordinate_pending_txs(stores, record)
-        record = stores.entries.get(clean_id)
-        if record is None:
-            return None
-
-        if record.get("_creation_outbox") is not None:
-            clean_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-            clean_actor = str(record.get("createdBy") or record.get("actor_id") or "").strip()
-            create_idem_key = domain_creation_idempotency_key(
-                tenant_id=clean_tenant,
-                actor_id=clean_actor,
-                entry_id=clean_id,
-            )
-            is_committed = False
-            if stores.idempotency is not None:
-                idem_rec = stores.idempotency.get(create_idem_key)
-                if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                    is_committed = True
-            if not is_committed:
-                return None
-
-        tx_history = record.get("_tx_history")
-        if isinstance(tx_history, list) and tx_history:
-            latest_tx = tx_history[-1]
-            if isinstance(latest_tx, dict):
-                idem_key = latest_tx.get("idempotency_key")
-                is_committed = False
-                if idem_key and stores.idempotency is not None:
-                    idem_rec = stores.idempotency.get(idem_key)
-                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                        is_committed = True
-                if not is_committed:
-                    before_entry = latest_tx.get("before_entry")
-                    if before_entry is not None and isinstance(before_entry, dict):
-                        record = before_entry
-                    else:
-                        return None
+    record = _get_committed_entry_snapshot(
+        stores,
+        raw_record,
+        coordinate_if_unlocked=not stores.is_bundle_locked(),
+    )
+    if record is None:
+        return None
 
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
@@ -863,91 +864,16 @@ def list_entries(
 ) -> List[Dict[str, Any]]:
     """List decision journal entries with fail-closed tenant and user isolation."""
     all_records = stores.entries.list_all()
-    is_locked = stores.is_bundle_locked()
-    for i, record in enumerate(all_records):
-        if not isinstance(record, dict):
-            continue
-        clean_rec_id = str(record.get("id") or "").strip()
-        if is_locked:
-            tx_history = record.get("_tx_history")
-            if isinstance(tx_history, list) and tx_history:
-                latest_tx = tx_history[-1]
-                if isinstance(latest_tx, dict):
-                    idem_key = latest_tx.get("idempotency_key")
-                    is_committed = False
-                    if idem_key and stores.idempotency is not None:
-                        idem_rec = stores.idempotency.get(idem_key)
-                        if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                            is_committed = True
-                    if not is_committed:
-                        before_entry = latest_tx.get("before_entry")
-                        if before_entry is not None and isinstance(before_entry, dict):
-                            all_records[i] = before_entry
-                        else:
-                            all_records[i] = None
-                            continue
-            elif record.get("_creation_outbox") is not None:
-                clean_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-                clean_actor = str(record.get("createdBy") or record.get("actor_id") or "").strip()
-                create_idem_key = domain_creation_idempotency_key(
-                    tenant_id=clean_tenant,
-                    actor_id=clean_actor,
-                    entry_id=clean_rec_id,
-                )
-                is_committed = False
-                if stores.idempotency is not None:
-                    idem_rec = stores.idempotency.get(create_idem_key)
-                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                        is_committed = True
-                if not is_committed:
-                    all_records[i] = None
-                    continue
-        else:
-            _coordinate_pending_txs(stores, record)
-            latest = stores.entries.get(clean_rec_id)
-            if latest is None:
-                all_records[i] = None
-                continue
-            if latest.get("_creation_outbox") is not None:
-                clean_tenant = str(latest.get("tenant_id") or latest.get("tenantId") or "").strip()
-                clean_actor = str(latest.get("createdBy") or latest.get("actor_id") or "").strip()
-                create_idem_key = domain_creation_idempotency_key(
-                    tenant_id=clean_tenant,
-                    actor_id=clean_actor,
-                    entry_id=clean_rec_id,
-                )
-                is_committed = False
-                if stores.idempotency is not None:
-                    idem_rec = stores.idempotency.get(create_idem_key)
-                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                        is_committed = True
-                if not is_committed:
-                    all_records[i] = None
-                    continue
-            tx_history = latest.get("_tx_history")
-            if isinstance(tx_history, list) and tx_history:
-                latest_tx = tx_history[-1]
-                if isinstance(latest_tx, dict):
-                    idem_key = latest_tx.get("idempotency_key")
-                    is_committed = False
-                    if idem_key and stores.idempotency is not None:
-                        idem_rec = stores.idempotency.get(idem_key)
-                        if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
-                            is_committed = True
-                    if not is_committed:
-                        before_entry = latest_tx.get("before_entry")
-                        if before_entry is not None and isinstance(before_entry, dict):
-                            all_records[i] = before_entry
-                        else:
-                            all_records[i] = None
-                            continue
-            all_records[i] = latest
-
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
 
     filtered: List[Dict[str, Any]] = []
-    for record in all_records:
+    for raw_record in all_records:
+        record = _get_committed_entry_snapshot(
+            stores,
+            raw_record,
+            coordinate_if_unlocked=not stores.is_bundle_locked(),
+        )
         if record is None:
             continue
         if not _is_entry_accessible(
@@ -1342,6 +1268,9 @@ def patch_entry(
                     "user_id": clean_user,
                     "correlationId": correlation_id,
                     "idempotencyKey": idempotency_key,
+                    "idempotency_key": scoped_idem_key,
+                    "scoped_idempotency_key": scoped_idem_key,
+                    "tx_id": tx_id,
                     "recordedAt": patched_at,
                     "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
                     "persistenceMode": _persistence_mode(),
@@ -1364,6 +1293,9 @@ def patch_entry(
                         "timestamp": patched_at,
                         "data": after_projected,
                         "diff": diff,
+                        "idempotency_key": scoped_idem_key,
+                        "raw_idempotency_key": idempotency_key,
+                        "tx_id": tx_id,
                     }
 
                 clean_before = dict(before)
@@ -1482,6 +1414,7 @@ def list_audit_events(
     - Audit events for private entries require matching authorized principal
       (actor_id/user_id). Listing audit events without actor denies private diffs.
     - Legacy un-tenanted audit events require governed legacy access.
+    - Gates event visibility on committed transaction outcome: never exposes provisional or rolled-back events.
     """
     try:
         if entry_id:
@@ -1498,12 +1431,73 @@ def list_audit_events(
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
 
     events = list(stores.audit.list_all())
+    entry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     filtered: List[Dict[str, Any]] = []
 
     for event in events:
         if entry_id:
             target_id = str((event.get("target") or {}).get("id") or "").strip()
             if target_id != str(entry_id).strip():
+                continue
+        else:
+            target_id = str((event.get("target") or {}).get("id") or "").strip()
+
+        if not target_id:
+            continue
+
+        if target_id not in entry_cache:
+            entry_cache[target_id] = _get_committed_entry_snapshot(
+                stores,
+                stores.entries.get(target_id),
+                coordinate_if_unlocked=not stores.is_bundle_locked(),
+            )
+        committed_entry = entry_cache[target_id]
+        if committed_entry is None:
+            continue
+
+        # Check version: event mutation must not exceed committed entry version
+        diff = event.get("diff") or {}
+        diff_after = diff.get("after") or {}
+        event_ver = diff_after.get("version")
+        if event_ver is not None:
+            try:
+                if int(event_ver) > int(committed_entry.get("version") or 0):
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # Check idempotency record status if available
+        idem_key = event.get("idempotency_key") or event.get("scoped_idempotency_key")
+        if not idem_key:
+            clean_evt_tenant = str(event.get("tenant_id") or event.get("tenantId") or "").strip()
+            clean_evt_actor = str(event.get("actor_id") or event.get("actorId") or "").strip()
+            raw_key = event.get("idempotencyKey")
+            if clean_evt_tenant and clean_evt_actor and raw_key:
+                idem_key = patch_idempotency_key(
+                    tenant_id=clean_evt_tenant,
+                    actor_id=clean_evt_actor,
+                    idempotency_key=raw_key,
+                )
+
+        if idem_key and stores.idempotency is not None:
+            idem_rec = stores.idempotency.get(idem_key)
+            if idem_rec is not None and idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
+                continue
+
+        # Check matching transaction in entry history if present
+        audit_id = str(event.get("auditId") or event.get("audit_id") or "")
+        tx_history = committed_entry.get("_tx_history")
+        if isinstance(tx_history, list) and tx_history:
+            tx_uncommitted = False
+            for tx in tx_history:
+                if isinstance(tx, dict) and tx.get("audit_id") == audit_id:
+                    tx_idem = tx.get("idempotency_key")
+                    if tx_idem and stores.idempotency is not None:
+                        idem_rec = stores.idempotency.get(tx_idem)
+                        if idem_rec is not None and idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
+                            tx_uncommitted = True
+                            break
+            if tx_uncommitted:
                 continue
 
         event_tenant = str(event.get("tenant_id") or event.get("tenantId") or "").strip()
@@ -1568,13 +1562,77 @@ def list_outbox_events(
         pass
 
     events = list(stores.outbox.list_all())
-    if entry_id:
-        events = [event for event in events if str(event.get("aggregate_id") or "") == entry_id]
-    if tenant_id:
-        clean_tenant = str(tenant_id).strip()
-        events = [
-            event for event in events
-            if str(event.get("tenant_id") or event.get("tenantId") or "").strip() == clean_tenant
-        ]
-    events.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
-    return events
+    entry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    filtered: List[Dict[str, Any]] = []
+
+    for event in events:
+        agg_id = str(event.get("aggregate_id") or "").strip()
+        if not agg_id:
+            continue
+        if entry_id and agg_id != str(entry_id).strip():
+            continue
+        if tenant_id:
+            clean_tenant = str(tenant_id).strip()
+            if str(event.get("tenant_id") or event.get("tenantId") or "").strip() != clean_tenant:
+                continue
+
+        if agg_id not in entry_cache:
+            entry_cache[agg_id] = _get_committed_entry_snapshot(
+                stores,
+                stores.entries.get(agg_id),
+                coordinate_if_unlocked=not stores.is_bundle_locked(),
+            )
+        committed_entry = entry_cache[agg_id]
+        if committed_entry is None:
+            continue
+
+        event_type = str(event.get("event_type") or "")
+        if event_type != "decision_journal.entry.created":
+            # For update events, check version: mutation must not exceed committed version
+            event_data = event.get("data") or {}
+            event_ver = event_data.get("version")
+            if event_ver is not None:
+                try:
+                    if int(event_ver) > int(committed_entry.get("version") or 0):
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            # Check idempotency record status if available
+            idem_key = event.get("idempotency_key")
+            if not idem_key:
+                clean_evt_tenant = str(event.get("tenant_id") or event.get("tenantId") or "").strip()
+                clean_evt_actor = str(event.get("actor_id") or event.get("actorId") or "").strip()
+                raw_key = event.get("raw_idempotency_key")
+                if clean_evt_tenant and clean_evt_actor and raw_key:
+                    idem_key = patch_idempotency_key(
+                        tenant_id=clean_evt_tenant,
+                        actor_id=clean_evt_actor,
+                        idempotency_key=raw_key,
+                    )
+
+            if idem_key and stores.idempotency is not None:
+                idem_rec = stores.idempotency.get(idem_key)
+                if idem_rec is not None and idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
+                    continue
+
+            # Check matching transaction in entry history if present
+            outbox_id = str(event.get("event_id") or event.get("id") or "")
+            tx_history = committed_entry.get("_tx_history")
+            if isinstance(tx_history, list) and tx_history:
+                tx_uncommitted = False
+                for tx in tx_history:
+                    if isinstance(tx, dict) and tx.get("outbox_id") == outbox_id:
+                        tx_idem = tx.get("idempotency_key")
+                        if tx_idem and stores.idempotency is not None:
+                            idem_rec = stores.idempotency.get(tx_idem)
+                            if idem_rec is not None and idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
+                                tx_uncommitted = True
+                                break
+                if tx_uncommitted:
+                    continue
+
+        filtered.append(event)
+
+    filtered.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
+    return filtered

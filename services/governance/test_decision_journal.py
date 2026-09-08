@@ -1680,6 +1680,65 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
             self.assertEqual(len(recovered.outbox.list_all()), 1)
             self.assertEqual(recovered.idempotency.get(domain_key).get("status"), "succeeded")
 
+    def test_failed_recovery_list_must_not_disclose_private_body(self) -> None:
+        """P1: list_entries must preserve committed snapshot and never disclose uncommitted patch."""
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            scope = {"tenant_id": "tenant-a", "actor_id": "alice"}
+            create_entry(stores, entry_id="entry", title="private title", body="private body", created_at="2026-09-08", **scope)
+            child_code = (
+                "import os, sys\n"
+                "from services.governance.decision_journal import build_decision_journal_stores, patch_entry\n"
+                "s = build_decision_journal_stores(sys.argv[1])\n"
+                "s.outbox.put = lambda event: os._exit(74)\n"
+                "patch_entry(s, 'entry', patch={'visibility': 'public'}, tenant_id='tenant-a', actor_id='alice', idempotency_key='publish', request_hash='publish', patched_at='2026-09-08')\n"
+            )
+            child = subprocess.run([sys.executable, "-c", child_code, path], timeout=10)
+            self.assertEqual(child.returncode, 74)
+            fresh = build_decision_journal_stores(path)
+            def fail(_: Any) -> None:
+                raise OSError("outbox remains unavailable")
+            fresh.outbox.put = fail  # type: ignore[assignment]
+            self.assertEqual(get_entry(fresh, "entry", **scope)["visibility"], "private")
+            self.assertIsNone(get_entry(fresh, "entry", tenant_id="tenant-a", actor_id="bob"))
+            rows = list_entries(fresh, tenant_id="tenant-a", actor_id="bob")
+            self.assertEqual(rows, [], "list exposed private body through an uncommitted visibility patch")
+
+    def test_audit_and_outbox_must_not_publish_rolled_back_patch(self) -> None:
+        """P1: audit/outbox list readers must gate on committed transaction outcome and not expose provisional events."""
+        with tempfile.TemporaryDirectory() as path:
+            scope = {"tenant_id": "tenant-a", "actor_id": "alice"}
+            stores = build_decision_journal_stores(path)
+            reader = build_decision_journal_stores(path)
+            create_entry(stores, entry_id="entry", title="before", body="body", created_at="2026-09-08", **scope)
+            original_put = stores.idempotency.put
+            observed: Dict[str, Any] = {}
+
+            def fail_commit(record: Dict[str, Any]) -> None:
+                if record.get("status") == "succeeded":
+                    observed["audit"] = list_audit_events(reader, entry_id="entry", **scope)
+                    observed["outbox"] = [
+                        e for e in list_outbox_events(reader, entry_id="entry", tenant_id="tenant-a")
+                        if str(e.get("event_type") or "").endswith("updated")
+                    ]
+                    raise OSError("idempotency commit fails after audit and outbox")
+                original_put(record)
+
+            stores.idempotency.put = fail_commit  # type: ignore[assignment]
+            with self.assertRaises(OSError):
+                patch_entry(
+                    stores,
+                    "entry",
+                    patch={"title": "aborted"},
+                    idempotency_key="patch",
+                    request_hash="patch",
+                    patched_at="2026-09-08",
+                    **scope,
+                )
+            self.assertEqual(get_entry(reader, "entry", **scope)["title"], "before")
+            self.assertEqual(list_audit_events(reader, entry_id="entry", **scope), [])
+            self.assertEqual(observed, {"audit": [], "outbox": []}, "uncommitted events were exposed before rollback")
+
 
 if __name__ == "__main__":
     unittest.main()

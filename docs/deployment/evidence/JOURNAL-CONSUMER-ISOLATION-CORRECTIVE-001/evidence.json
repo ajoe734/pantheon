@@ -15,15 +15,15 @@
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, and tenant_id. list_audit_events strictly enforces tenant scope and authorized principal on audit reads: omitted or blank tenant denies tenant-scoped events; private entry diffs are denied unless queried by matching actor/user."
+      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, tenant_id, and transaction idempotency key. list_audit_events strictly enforces tenant scope, authorized principal on audit reads, and gates event visibility on committed transaction outcome, never disclosing uncommitted or rolled-back provisional events to preserve append-only externally visible history."
     },
     "durable_outbox_streaming": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types with explicit tenant_id, actor_id, and user_id scoping. Creation includes its idempotency and outbox under bundle_lock; readers cannot observe or publish provisional/aborted creates during outbox.put failures, and fresh-process retries after creation crash recover and emit the creation outbox event. Replay/recreate of committed entries preserves original event payload and never emits duplicate creation events."
+      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types with explicit tenant_id, actor_id, user_id, and idempotency key scoping. Creation includes its idempotency and outbox under bundle_lock; list_outbox_events gates visibility on committed transaction outcome so readers cannot observe or publish provisional/aborted creates or updates, and fresh-process retries after creation crash recover and emit the creation outbox event. Replay/recreate of committed entries preserves original event payload and never emits duplicate creation events."
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries."
+      "implementation": "services/governance/decision_journal.py: Unified fail-closed _get_committed_entry_snapshot resolution and _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). list_entries consistently preserves the before_entry snapshot during incomplete or uncommitted patches across crashed recoveries, preventing private metadata or body disclosure across principals. Delimiters in tenants/users/keys are URL-quoted with safe='-_.~' across all idempotency keys to prevent delimiter collision. Recovery and replay strictly validate tenant_id, user_id, and entry_id against stored reservations and result payloads so crashed or forged reservations never replay other principals' records across ambiguous scope boundaries."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -83,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 53,
+        "tests": 55,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -100,6 +100,14 @@
         "name": "tests/agora_write_owner/",
         "runner": ".venv-pantheon/bin/python -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-b6e128df.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 2,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -137,7 +145,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 109
+    "total_tests_passed": 115
   },
   "artifacts": [
     "services/governance/decision_journal.py",
