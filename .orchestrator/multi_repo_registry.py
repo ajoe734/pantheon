@@ -59,8 +59,16 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
 def coordination_config(config: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(config, Mapping):
         return {}
-    raw = config.get("coordination")
-    return dict(raw) if isinstance(raw, Mapping) else {}
+    if "coordination" not in config:
+        return {}
+    raw = config["coordination"]
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"coordination must be a mapping, got {type(raw).__name__}: {raw!r}"
+        )
+    return dict(raw)
 
 
 def repositories(config: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -442,6 +450,9 @@ def validate_task_repository_scope(
     config_dict = dict(config) if isinstance(config, Mapping) else {}
     task_map = task if isinstance(task, Mapping) else {}
     task_id = str(task_map.get("id") or "?").strip() or "?"
+
+    # Ensure repository registry is valid (fails closed on malformed config)
+    repositories(config_dict)
 
     raw_target = task_declared_target_repository(task_map)
     declared_target = task_target_repository_id(config_dict, task_map)

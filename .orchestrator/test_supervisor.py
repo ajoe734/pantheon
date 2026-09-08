@@ -3192,6 +3192,16 @@ class SharedPlannerContractTests(unittest.TestCase):
         bad_config_slug["coordination"] = {"repositories": {"execute_plans": {"repo": None}}}
         self.assertFalse(planner_decision(bad_config_slug, task_fe, target="Codex")["eligible"])
 
+        # 6k. Malformed coordination parent container (list)
+        bad_config_coord_list = copy.deepcopy(self.config)
+        bad_config_coord_list["coordination"] = ["bad-entry"]
+        self.assertFalse(planner_decision(bad_config_coord_list, task_fe, target="Codex")["eligible"])
+
+        # 6l. Malformed coordination parent container (non-mapping scalar)
+        bad_config_coord_scalar = copy.deepcopy(self.config)
+        bad_config_coord_scalar["coordination"] = 42
+        self.assertFalse(planner_decision(bad_config_coord_scalar, task_fe, target="Codex")["eligible"])
+
     def _pending_intent_task_with_recovery_receipt(
         self,
         *,

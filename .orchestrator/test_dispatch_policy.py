@@ -727,16 +727,22 @@ def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
 
 
 @pytest.mark.parametrize(
-    "repositories",
+    "config",
     [
-        [],
-        ["bad-entry"],
-        {"execute_plans": 42},
-        {"execute_plans": "bad"},
-        {"execute_plans": None},
+        # Parent coordination container malformed
+        {"coordination": []},
+        {"coordination": ["bad-entry"]},
+        {"coordination": 42},
+        {"coordination": "bad"},
+        # Nested coordination.repositories malformed
+        {"coordination": {"repositories": []}},
+        {"coordination": {"repositories": ["bad-entry"]}},
+        {"coordination": {"repositories": {"execute_plans": 42}}},
+        {"coordination": {"repositories": {"execute_plans": "bad"}}},
+        {"coordination": {"repositories": {"execute_plans": None}}},
     ],
 )
-def test_malformed_registry_blocks_instead_of_crashing(repositories: Any) -> None:
+def test_malformed_registry_blocks_instead_of_crashing(config: dict[str, Any]) -> None:
     head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
     task = {
         "id": "OPS-FE-REVIEW-PROOF-001",
@@ -758,7 +764,6 @@ def test_malformed_registry_blocks_instead_of_crashing(repositories: Any) -> Non
             "base": "dev",
         },
     }
-    config = {"coordination": {"repositories": repositories}}
     assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
 
 
@@ -1004,16 +1009,22 @@ def test_end_to_end_parity_custom_repository() -> None:
 
 
 @pytest.mark.parametrize(
-    "repositories",
+    "config",
     [
-        [],
-        ["bad-entry"],
-        {"execute_plans": 42},
-        {"execute_plans": {"repo": None}},
-        {"execute_plans": {"default_branch": None}},
+        # Parent coordination container malformed
+        {"coordination": []},
+        {"coordination": ["bad-entry"]},
+        {"coordination": 42},
+        {"coordination": "invalid"},
+        # Nested coordination.repositories malformed
+        {"coordination": {"repositories": []}},
+        {"coordination": {"repositories": ["bad-entry"]}},
+        {"coordination": {"repositories": {"execute_plans": 42}}},
+        {"coordination": {"repositories": {"execute_plans": {"repo": None}}}},
+        {"coordination": {"repositories": {"execute_plans": {"default_branch": None}}}},
     ],
 )
-def test_end_to_end_parity_malformed_config(repositories: Any) -> None:
+def test_end_to_end_parity_malformed_config(config: dict[str, Any]) -> None:
     head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
     merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
     task = {
@@ -1050,12 +1061,99 @@ def test_end_to_end_parity_malformed_config(repositories: Any) -> None:
             "source": "canonical_auto_integrator",
         },
     }
-    config = {"coordination": {"repositories": repositories}}
-    # Fails closed on malformed config: scheduler suppresses finalization without crashing
+    # 1. Receipt predicate rejects malformed config
+    assert (
+        integration_receipt.integration_receipt_consumes_candidate(task, config=config)
+        is False
+    )
+    assert (
+        dispatch_policy.task_has_current_canonical_integration_receipt(config, task)
+        is False
+    )
+
+    # 2. Fails closed on malformed config: scheduler suppresses finalization without crashing
     assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
-    # Auto-integrator does not crash and selects candidate
+
+
+
+    # 4. Auto-integrator does not crash and selects candidate
     candidates = auto_integrator.integration_candidates({"tasks": [task]}, config=config)
     assert [c.task_id for c in candidates] == [task["id"]]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        None,
+        {},
+        {"other": 123},
+        {"coordination": None},
+        {"coordination": {}},
+    ],
+)
+def test_end_to_end_parity_allowed_default_and_absent_coordination(config: Any) -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "integration_receipt": {
+            "version": 1,
+            "result": "landed",
+            "observation": "reconciled_existing_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T05:00:00Z",
+            "source": "canonical_auto_integrator",
+        },
+    }
+    # 1. Reconciled delivery with receipt: consumes candidate and permits finalization
+    assert (
+        integration_receipt.integration_receipt_consumes_candidate(task, config=config)
+        is True
+    )
+    assert (
+        dispatch_policy.task_has_current_canonical_integration_receipt(config, task)
+        is True
+    )
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is False
+    assert auto_integrator.integration_candidates({"tasks": [task]}, config=config) == []
+
+    # 2. Unreceipted delivery: pending finalization, selected by auto-integrator
+    t_no_receipt = deepcopy(task)
+    del t_no_receipt["integration_receipt"]
+    assert (
+        integration_receipt.integration_receipt_consumes_candidate(t_no_receipt, config=config)
+        is False
+    )
+    assert (
+        dispatch_policy.task_has_current_canonical_integration_receipt(config, t_no_receipt)
+        is False
+    )
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, t_no_receipt) is True
+    candidates = auto_integrator.integration_candidates({"tasks": [t_no_receipt]}, config=config)
+    assert [c.task_id for c in candidates] == [t_no_receipt["id"]]
 
 
 def test_end_to_end_parity_compose_with_receipt_repair_task() -> None:
