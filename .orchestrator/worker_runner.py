@@ -212,12 +212,8 @@ def validate_coordination_root(
         raise RuntimeError(f"ai-status.json cannot be a symlink: {status_file}")
 
     # Enforce supervisor marker paths exist
-    state_marker = root / ".orchestrator" / "worker-runtime" / "state.json"
-    if not state_marker.exists():
-        state_marker = root / ".orchestrator" / "state.json"
-    approval_marker = root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
-    if not approval_marker.exists():
-        approval_marker = root / ".orchestrator" / "approval-queue.json"
+    state_marker = runtime_state_marker_path(root)
+    approval_marker = approval_queue_marker_path(root)
     for marker_path in (
         state_marker,
         approval_marker,
@@ -828,16 +824,46 @@ def _own_process_start_ticks() -> int:
     return int(raw[raw.rfind(")") + 2:].split()[19])
 
 
+def _regular_file(path: Path) -> bool:
+    """True only for an existing regular file, never a symlink or a fence."""
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _runtime_source_marker(root: Path, name: str) -> Path:
+    """Resolve one supervisor runtime source the way the supervisor itself does.
+
+    The current layout keeps ``state.json``/``approval-queue.json`` under
+    ``.orchestrator/worker-runtime``; the retired flat ``.orchestrator`` path
+    is only used when it still holds the real regular file.  After a storage
+    migration the retired path carries a fence (an empty directory, or a FIFO
+    from older promotions), and a fence must never be selected: opening a
+    FIFO blocks forever and opening a directory fails, which both kill the
+    worker at launch (2026-09-08 lost-lease loop).
+    """
+    modern = root / ".orchestrator" / "worker-runtime" / name
+    legacy = root / ".orchestrator" / name
+    if _regular_file(modern) or not _regular_file(legacy):
+        return modern
+    return legacy
+
+
+def runtime_state_marker_path(root: Path) -> Path:
+    return _runtime_source_marker(root, "state.json")
+
+
+def approval_queue_marker_path(root: Path) -> Path:
+    return _runtime_source_marker(root, "approval-queue.json")
+
+
 def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, Any] | None:
-    runtime_state = coordination_root / ".orchestrator" / "worker-runtime" / "state.json"
-    # The V2 supervisor owns its receipt in worker-runtime.  Retain the
-    # retired path only for isolated legacy fixtures that have no V2 file; a
-    # worker must never fail entry binding merely because the canonical state
-    # moved into its runtime directory.
-    if not runtime_state.exists():
-        runtime_state = coordination_root / ".orchestrator" / "state.json"
+    # The V2 supervisor owns its receipt in worker-runtime.  The retired flat
+    # path is used only while it still holds the real regular file (isolated
+    # legacy fixtures); a fence there is never selected.
     state = json.loads(read_regular_file_bytes(
-        runtime_state, source="worker launch receipt"
+        runtime_state_marker_path(coordination_root), source="worker launch receipt"
     ))
     if not isinstance(state, dict):
         raise RuntimeError("worker_runner: runtime launch state is malformed")

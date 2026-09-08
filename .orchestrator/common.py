@@ -380,6 +380,15 @@ def ensure_parent(path: Path) -> None:
 def load_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         return deepcopy(default)
+    # Never open anything but a regular file: read_text() on a FIFO with no
+    # peer blocks forever (2026-09-08: the supervisor hung here refreshing
+    # the dashboard against a fenced, retired .orchestrator/state.json).
+    try:
+        regular = stat.S_ISREG(path.stat().st_mode)
+    except OSError:
+        regular = True  # vanished between exists() and stat(); read_text() reports it as before
+    if not regular:
+        raise RuntimeError(f"cannot load JSON from a non-regular file: {path}")
     last_error: json.JSONDecodeError | None = None
     for attempt in range(10):
         text = path.read_text(encoding="utf-8").strip()
@@ -544,6 +553,28 @@ def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
 
 
+def _runtime_source_regular_file(path: Path) -> bool:
+    """True only for an existing regular file (a fence or symlink never counts)."""
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _runtime_source_present(path: Path) -> bool:
+    """True when anything occupies the path, a promotion fence included.
+
+    A configured path that is occupied by a fence must keep its configuration
+    and fail closed later; only a truly absent configured path may be
+    redirected onto the sibling layout.
+    """
+    try:
+        path.lstat()
+    except OSError:
+        return False
+    return True
+
+
 def canonical_status_paths(
     repo_config: dict[str, Any],
     status_root: Path,
@@ -556,8 +587,16 @@ def canonical_status_paths(
     legacy_queue = (status_root / ".orchestrator" / "approval-queue.json").resolve()
     worker_runtime_queue = (status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").resolve()
 
-    use_legacy = (legacy_state.exists() or legacy_queue.exists()) and not (
-        worker_runtime_state.exists() or worker_runtime_queue.exists()
+    # Only a real regular file can nominate a layout.  A retired legacy path
+    # may hold a promotion fence (empty directory, or a FIFO from older
+    # promotions) whose ``exists()`` is true; selecting it would make every
+    # later open() fail or block forever.
+    use_legacy = (
+        _runtime_source_regular_file(legacy_state)
+        or _runtime_source_regular_file(legacy_queue)
+    ) and not (
+        _runtime_source_regular_file(worker_runtime_state)
+        or _runtime_source_regular_file(worker_runtime_queue)
     )
 
     if fill_defaults:
@@ -599,21 +638,26 @@ def canonical_status_paths(
             ) from exc
         rendered[key] = str(candidate)
 
+    # Redirect a configured path only when it is truly absent, and only onto a
+    # real regular file: a fence is never a redirect target, and a fence at
+    # the configured path keeps the configuration so the writer fails closed.
     if (
         rendered.get("state_file") == str(worker_runtime_state)
-        and not worker_runtime_state.exists()
-        and legacy_state.exists()
+        and not _runtime_source_present(worker_runtime_state)
+        and _runtime_source_regular_file(legacy_state)
     ):
         rendered["state_file"] = str(legacy_state)
-        if rendered.get("approval_queue") == str(worker_runtime_queue) and not worker_runtime_queue.exists():
+        if rendered.get("approval_queue") == str(worker_runtime_queue) and not _runtime_source_present(
+            worker_runtime_queue
+        ):
             rendered["approval_queue"] = str(legacy_queue)
     elif (
         rendered.get("state_file") == str(legacy_state)
-        and not legacy_state.exists()
-        and worker_runtime_state.exists()
+        and not _runtime_source_present(legacy_state)
+        and _runtime_source_regular_file(worker_runtime_state)
     ):
         rendered["state_file"] = str(worker_runtime_state)
-        if rendered.get("approval_queue") == str(legacy_queue) and not legacy_queue.exists():
+        if rendered.get("approval_queue") == str(legacy_queue) and not _runtime_source_present(legacy_queue):
             rendered["approval_queue"] = str(worker_runtime_queue)
 
     expected_status_file = status_root / "ai-status.json"

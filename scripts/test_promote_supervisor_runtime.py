@@ -1264,12 +1264,12 @@ def test_migrate_storage_paths_moves_task_state_and_worker_runtime_files(tmp_pat
     assert (runtime / "task-state" / "events.jsonl.legacy-anchor.json").exists()
 
     assert not old_state.is_file()
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert new_state.exists()
     assert json.loads(new_state.read_text(encoding="utf-8")) == {"workers": {}}
 
     assert not old_queue.is_file()
-    assert old_queue.is_fifo()
+    assert old_queue.is_dir()
     assert new_queue.exists()
     assert json.loads(new_queue.read_text(encoding="utf-8")) == {"version": 2}
 
@@ -2102,7 +2102,7 @@ def test_retained_immutable_writer_fails_closed_and_does_not_recreate_retired_st
 
     record = promotion._migrate_storage_paths(old_cfg, new_cfg)
     assert record["migrated"] is True
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert not old_state.is_file()
 
     old_root = Path(os.environ.get("PANTHEON_COMMAND_ROOT", Path.cwd()))
@@ -2123,7 +2123,7 @@ with runtime_state.runtime_state_update(cfg) as s:
     )
 
     assert proc.returncode != 0
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert not old_state.is_file()
     new_token = json.loads(new_state.read_text())["auto_commit_archive"]["pending_token"]
     assert new_token == "before-migration"
@@ -2554,3 +2554,185 @@ common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-w
     assert new_log.read_bytes() == before
     assert result.returncode != 0
     assert not old_log.exists()
+
+
+# --- retired-path fences must fail fast, never block (2026-09-08 FIFO hang) ---
+
+
+def test_create_retired_path_fence_is_a_directory_that_fails_fast(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+    assert not fence.is_fifo()
+    assert promotion._is_retired_path_fence(fence)
+    with pytest.raises(IsADirectoryError):
+        open(fence, "rb")
+    # idempotent
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+
+
+def test_create_retired_path_fence_never_uses_mkfifo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("mkfifo must never be used for a retired-path fence")
+
+    monkeypatch.setattr(os, "mkfifo", forbidden)
+    fence = tmp_path / "approval-queue.json"
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+
+
+def test_create_retired_path_fence_upgrades_existing_fifo_fence(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    os.mkfifo(str(fence), 0o600)
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+    assert not fence.is_fifo()
+
+
+def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths(
+    tmp_path: Path,
+) -> None:
+    orch = tmp_path / "status" / ".orchestrator"
+    modern = orch / "worker-runtime"
+    modern.mkdir(parents=True)
+    (modern / "state.json").write_text('{"workers": {}}', encoding="utf-8")
+    (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+    legacy_state = orch / "state.json"
+    legacy_queue = orch / "approval-queue.json"
+    os.mkfifo(str(legacy_state), 0o600)
+    os.mkfifo(str(legacy_queue), 0o600)
+
+    old_log = tmp_path / "runtime" / "events.jsonl"
+    old_lock = old_log.with_name("events.jsonl.lock")
+    new_log = tmp_path / "runtime" / "task-state" / "events.jsonl"
+    new_log.parent.mkdir(parents=True)
+    new_log.write_text("", encoding="utf-8")
+    os.mkfifo(str(old_lock), 0o600)
+
+    incumbent = {
+        "paths": {"state_file": str(legacy_state), "approval_queue": str(legacy_queue)},
+        "task_state_store": {"event_log": str(old_log)},
+    }
+    rendered = {
+        "paths": {
+            "state_file": str(modern / "state.json"),
+            "approval_queue": str(modern / "approval-queue.json"),
+        },
+        "task_state_store": {"event_log": str(new_log)},
+    }
+
+    # Before: the FIFO at the incumbent path "exists", so this used to raise a
+    # target collision instead of recognising the fence.
+    record = promotion._migrate_storage_paths(incumbent, rendered)
+
+    assert record["migrated"] is False
+    assert sorted(record["upgraded_fences"]) == sorted(
+        [str(legacy_state), str(legacy_queue), str(old_lock)]
+    )
+    for fence in (legacy_state, legacy_queue, old_lock):
+        assert fence.is_dir(), fence
+    assert (modern / "state.json").read_text(encoding="utf-8") == '{"workers": {}}'
+    assert new_log.exists()
+
+
+def _reaped_pid() -> int:
+    child = subprocess.Popen(["true"])
+    child.wait()
+    return child.pid
+
+
+def test_wait_for_incumbent_workers_idle_returns_immediately_without_live_workers(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "run-done": {"status": "completed", "pid": os.getpid()},
+                    "run-dead": {"status": "running", "pid": _reaped_pid()},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = promotion.wait_for_incumbent_workers_idle(
+        {"paths": {"state_file": str(state)}}, timeout_seconds=30
+    )
+    assert result["idle"] is True
+    assert result["remaining_workers"] == []
+    assert result["waited_seconds"] < 1
+
+
+def test_wait_for_incumbent_workers_idle_waits_for_live_worker_to_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = subprocess.Popen(["sleep", "30"])
+    messages: list[str] = []
+    try:
+        state = tmp_path / "state.json"
+        state.write_text(
+            json.dumps({"workers": {"run-live": {"status": "running", "pid": child.pid}}}),
+            encoding="utf-8",
+        )
+
+        def worker_finishes_during_sleep(seconds: float) -> None:
+            child.kill()
+            child.wait()
+
+        monkeypatch.setattr(promotion.time, "sleep", worker_finishes_during_sleep)
+        result = promotion.wait_for_incumbent_workers_idle(
+            {"paths": {"state_file": str(state)}}, timeout_seconds=10, log=messages.append
+        )
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+    assert result["idle"] is True
+    assert result["remaining_workers"] == []
+    assert any("waiting up to 10s for 1 live incumbent worker(s)" in m for m in messages)
+    assert any("idle after" in m for m in messages)
+
+
+def test_wait_for_incumbent_workers_idle_gives_up_at_deadline_and_reports_workers(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps({"workers": {"run-me": {"status": "running", "pid": os.getpid()}}}),
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    result = promotion.wait_for_incumbent_workers_idle(
+        {"paths": {"state_file": str(state)}},
+        timeout_seconds=0.3,
+        poll_interval_seconds=0.05,
+        log=messages.append,
+    )
+    assert result["idle"] is False
+    assert result["remaining_workers"] == ["run-me"]
+    assert 0.3 <= result["waited_seconds"] < 5
+    assert any("exhausted" in m and "run-me" in m for m in messages)
+
+
+def test_wait_for_incumbent_workers_idle_ignores_fenced_or_missing_state(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    fence.mkdir()
+    result = promotion.wait_for_incumbent_workers_idle(
+        {"paths": {"state_file": str(fence)}}, timeout_seconds=5
+    )
+    assert result["idle"] is True
+    assert result["waited_seconds"] < 1
+    assert promotion.wait_for_incumbent_workers_idle(None, timeout_seconds=5)["idle"] is True
+
+
+def test_parse_args_wait_for_idle_seconds_defaults_to_immediate_drain() -> None:
+    args = promotion.parse_args(["--promote", "--status-root", "/tmp/status-root"])
+    assert args.wait_for_idle_seconds == 0.0
+    args = promotion.parse_args(
+        ["--promote", "--status-root", "/tmp/status-root", "--wait-for-idle-seconds", "900"]
+    )
+    assert args.wait_for_idle_seconds == 900.0

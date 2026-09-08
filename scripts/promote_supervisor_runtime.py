@@ -915,7 +915,11 @@ def _preflight_storage_migration(
             new_sym = first_symlink_component(new_p)
             if new_sym is not None or new_p.is_symlink():
                 raise ValueError(f"rendered {key} contains symlink: {new_sym or new_p}")
-            if old_p.exists() and (new_p.exists() or new_p.is_symlink()):
+            if (
+                old_p.exists()
+                and not _is_retired_path_fence(old_p)
+                and (new_p.exists() or new_p.is_symlink())
+            ):
                 raise RuntimeError(f"target {key} collision: {new_p} already exists")
 
 
@@ -971,31 +975,63 @@ def _is_retired_path_fence(path: Path) -> bool:
     return False
 
 
-def _create_retired_path_fence(path: Path) -> None:
+def _is_fifo(path: Path) -> bool:
+    try:
+        return stat.S_ISFIFO(os.lstat(str(path)).st_mode)
+    except OSError:
+        return False
+
+
+def _upgrade_fifo_fence(path: Path) -> None:
+    """Replace a FIFO fence with a directory fence, releasing anyone stuck on it.
+
+    A process blocked in ``open()`` on the FIFO stays blocked even after the
+    FIFO is unlinked, so first pair with any waiting reader (non-blocking
+    write-end open succeeds only when a reader is waiting; it then reads EOF
+    and fails fast instead of hanging forever).
+    """
     p = Path(path)
+    if not _is_fifo(p):
+        return
+    # Read end first: releases any writer blocked in open(); then the write
+    # end: releases any reader blocked in open() (it reads EOF).  Both opens
+    # are non-blocking, so this never waits on a peer itself.
+    for flags in (os.O_RDONLY | os.O_NONBLOCK, os.O_WRONLY | os.O_NONBLOCK):
+        try:
+            fd = os.open(str(p), flags)
+        except OSError:
+            continue
+        os.close(fd)
+    os.unlink(str(p))
+    p.mkdir(mode=0o700, exist_ok=False)
+
+
+def _create_retired_path_fence(path: Path) -> None:
+    """Fence a retired storage path with an empty mode-0700 directory.
+
+    A fence must make any stale reader or writer of the retired path fail
+    *fast*: ``open()`` on a directory raises ``EISDIR`` immediately.  A FIFO
+    is never used any more.  ``open()`` on a FIFO with no peer blocks forever,
+    which on 2026-09-08 turned one leftover reader of the flat
+    ``.orchestrator/state.json`` into a supervisor that hung before its first
+    tick, while every worker launch died on the same path.  A FIFO left by an
+    older promotion is still recognised by ``_is_retired_path_fence`` and is
+    upgraded to a directory here.
+    """
+    p = Path(path)
+    if _is_fifo(p):
+        _upgrade_fifo_fence(p)
     if _is_retired_path_fence(p):
         return
     if p.exists() or p.is_symlink():
         raise RuntimeError(f"cannot establish retired-path fence: {p} already exists and is not a fence")
 
-    fifo_err: Exception | None = None
-    if hasattr(os, "mkfifo"):
-        try:
-            os.mkfifo(str(p), 0o600)
-        except OSError as exc:
-            fifo_err = exc
-
-    if not _is_retired_path_fence(p):
-        try:
-            p.mkdir(mode=0o700, exist_ok=False)
-        except OSError as exc:
-            err_msg = (
-                f"cannot establish retired-path fence at {p}: "
-                f"mkfifo failed ({fifo_err}); mkdir fallback failed ({exc})"
-                if fifo_err
-                else f"cannot establish retired-path fence at {p}: mkdir fallback failed ({exc})"
-            )
-            raise RuntimeError(err_msg) from exc
+    try:
+        p.mkdir(mode=0o700, exist_ok=False)
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot establish retired-path fence at {p}: mkdir failed ({exc})"
+        ) from exc
 
     if not _is_retired_path_fence(p):
         try:
@@ -1003,6 +1039,48 @@ def _create_retired_path_fence(path: Path) -> None:
         except Exception:
             pass
         raise RuntimeError(f"retired-path fence verification failed at {p}")
+
+
+def _retired_fence_candidates(
+    incumbent: Mapping[str, Any] | None,
+    rendered: Mapping[str, Any],
+) -> list[Path]:
+    """Retired storage paths that a promotion may have fenced earlier.
+
+    Covers the flat ``.orchestrator/{state,approval-queue}.json`` siblings of
+    the rendered ``worker-runtime`` paths and, when the task-state journal
+    moved, the retired journal's ``.lock``/``.head.json`` sidecars.
+    """
+    candidates: list[Path] = []
+    new_paths = rendered.get("paths") if isinstance(rendered.get("paths"), Mapping) else {}
+    for key in ("state_file", "approval_queue"):
+        raw = str(new_paths.get(key) or "").strip()
+        if not raw:
+            continue
+        new_p = Path(raw).expanduser()
+        if new_p.parent.name == "worker-runtime" and new_p.parent.parent.name == ".orchestrator":
+            candidates.append(new_p.parent.parent / new_p.name)
+    old_store = incumbent.get("task_state_store") if incumbent and isinstance(incumbent.get("task_state_store"), Mapping) else {}
+    new_store = rendered.get("task_state_store") if isinstance(rendered.get("task_state_store"), Mapping) else {}
+    old_log_raw = str(old_store.get("event_log") or "").strip()
+    new_log_raw = str(new_store.get("event_log") or "").strip()
+    if old_log_raw and new_log_raw and old_log_raw != new_log_raw:
+        old_event_log = Path(old_log_raw).expanduser()
+        for suffix in (".lock", ".head.json"):
+            candidates.append(old_event_log.with_name(f"{old_event_log.name}{suffix}"))
+    return candidates
+
+
+def _upgrade_retired_fifo_fences(
+    incumbent: Mapping[str, Any] | None,
+    rendered: Mapping[str, Any],
+) -> list[str]:
+    upgraded: list[str] = []
+    for candidate in _retired_fence_candidates(incumbent, rendered):
+        if _is_fifo(candidate):
+            _upgrade_fifo_fence(candidate)
+            upgraded.append(str(candidate))
+    return upgraded
 
 
 def _remove_retired_path_fence(path: Path) -> None:
@@ -1111,6 +1189,99 @@ def _recover_stopped_runtime_phase_reservations(
     return recovered
 
 
+# Worker statuses that a cutover must drain (SIGTERM) because the process may
+# still write runtime state.  Every drained worker is re-dispatched from
+# scratch by the replacement supervisor, so draining is expensive.
+DRAIN_CONFLICT_STATUSES = frozenset(
+    {
+        "queued",
+        "started",
+        "running",
+        "waiting_approval",
+        "suspended_approval",
+        "retry_backoff",
+        "stalled",
+        "admitted",
+    }
+)
+
+
+def _live_incumbent_workers(incumbent: Mapping[str, Any] | None) -> list[str]:
+    """Run ids of incumbent workers that a cutover would have to drain.
+
+    Read-only snapshot of the incumbent state file; on any read or parse
+    problem this reports no workers so the authoritative locked drain below
+    remains the only decision point.
+    """
+    if not incumbent:
+        return []
+    old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+    raw_state_path = str(old_paths.get("state_file") or "").strip()
+    if not raw_state_path:
+        return []
+    state_path = Path(raw_state_path).expanduser()
+    try:
+        if not stat.S_ISREG(os.lstat(str(state_path)).st_mode):
+            return []
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    workers = raw_state.get("workers") if isinstance(raw_state, Mapping) and isinstance(raw_state.get("workers"), Mapping) else {}
+    live: list[str] = []
+    for run_id, worker in workers.items():
+        if not isinstance(worker, Mapping):
+            continue
+        if str(worker.get("status") or "").strip() not in DRAIN_CONFLICT_STATUSES:
+            continue
+        pid = worker.get("pid")
+        if isinstance(pid, int) and pid > 0 and _pid_alive(pid):
+            live.append(str(run_id))
+    return sorted(live)
+
+
+def wait_for_incumbent_workers_idle(
+    incumbent: Mapping[str, Any] | None,
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 5.0,
+    log: Any = None,
+) -> dict[str, Any]:
+    """Give live incumbent workers a bounded chance to finish before cutover.
+
+    Promotion drains every live worker and each one is later re-dispatched
+    from scratch, so promoting in the middle of real work throws that work
+    away (five promotions on 2026-09-08 restarted the same task five times).
+    This wait is an optimisation only: it runs before the admission lock is
+    taken, and the locked drain still decides authoritatively afterwards.
+    """
+    started = time.monotonic()
+    deadline = started + max(0.0, timeout_seconds)
+    remaining = _live_incumbent_workers(incumbent)
+    polls = 0
+    while remaining and time.monotonic() < deadline:
+        if log is not None and polls % 12 == 0:
+            log(
+                f"waiting up to {timeout_seconds:g}s for {len(remaining)} live incumbent "
+                f"worker(s) to finish before cutover: {', '.join(remaining)}"
+            )
+        time.sleep(max(0.0, min(poll_interval_seconds, deadline - time.monotonic())))
+        polls += 1
+        remaining = _live_incumbent_workers(incumbent)
+    waited = round(time.monotonic() - started, 3)
+    if log is not None and polls:
+        log(
+            f"incumbent workers idle after {waited:g}s"
+            if not remaining
+            else f"idle wait exhausted after {waited:g}s; draining {len(remaining)} live worker(s): {', '.join(remaining)}"
+        )
+    return {
+        "timeout_seconds": timeout_seconds,
+        "waited_seconds": waited,
+        "idle": not remaining,
+        "remaining_workers": remaining,
+    }
+
+
 def qualify_and_drain_incumbent_writers(
     incumbent: Mapping[str, Any] | None,
     *,
@@ -1177,16 +1348,7 @@ def qualify_and_drain_incumbent_writers(
     workers = raw_state.get("workers") if isinstance(raw_state.get("workers"), Mapping) else {}
     workers_drained: list[int] = []
     drained_run_ids: set[str] = set()
-    conflict_statuses = {
-        "queued",
-        "started",
-        "running",
-        "waiting_approval",
-        "suspended_approval",
-        "retry_backoff",
-        "stalled",
-        "admitted",
-    }
+    conflict_statuses = DRAIN_CONFLICT_STATUSES
     for run_id, worker in workers.items():
         if not isinstance(worker, Mapping):
             continue
@@ -1298,6 +1460,7 @@ def _migrate_storage_paths(
     _preflight_storage_migration(incumbent, rendered)
 
     moved_files: list[tuple[str, str]] = []
+    upgraded_fences: list[str] = []
     dirs_to_fsync: set[Path] = set()
 
     old_store = incumbent.get("task_state_store") if isinstance(incumbent.get("task_state_store"), Mapping) else {}
@@ -1346,7 +1509,7 @@ def _migrate_storage_paths(
                 for suffix in ("", ".head.json", ".lock", ".legacy-anchor.json"):
                     old_file = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
                     new_file = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
-                    if old_file.exists():
+                    if old_file.exists() and not _is_retired_path_fence(old_file):
                         os.replace(old_file, new_file)
                         moved_files.append((str(old_file), str(new_file)))
                         if suffix in (".lock", ".head.json"):
@@ -1360,7 +1523,7 @@ def _migrate_storage_paths(
             if old_val and new_val and old_val != new_val:
                 old_p = Path(old_val).expanduser()
                 new_p = Path(new_val).expanduser()
-                if old_p.exists():
+                if old_p.exists() and not _is_retired_path_fence(old_p):
                     if new_p.exists() or new_p.is_symlink():
                         raise RuntimeError(f"target {key} collision: {new_p} already exists")
                     new_p.parent.mkdir(parents=True, exist_ok=True)
@@ -1372,6 +1535,12 @@ def _migrate_storage_paths(
                     os.replace(old_p, new_p)
                     moved_files.append((str(old_p), str(new_p)))
                     _create_retired_path_fence(old_p)
+
+        # Fences from older promotions were FIFOs; turn any that survive into
+        # directory fences so nothing can block on them again.
+        upgraded_fences = _upgrade_retired_fifo_fences(incumbent, rendered)
+        for fence in upgraded_fences:
+            dirs_to_fsync.add(Path(fence).parent)
 
         for d in dirs_to_fsync:
             _fsync_dir(d)
@@ -1429,6 +1598,7 @@ def _migrate_storage_paths(
     return {
         "migrated": bool(moved_files),
         "files": moved_files,
+        "upgraded_fences": upgraded_fences,
         "fsynced_directories": sorted(str(d) for d in dirs_to_fsync),
         "lock_fd": old_lock_fd if keep_lock else None,
     }
@@ -1446,11 +1616,14 @@ def _replace_supervisor_locked(
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
     requirements_path: Path | None = None,
+    wait_for_idle_seconds: float = 0.0,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
     if termination_timeout <= 0:
         raise ValueError("termination timeout must be positive")
+    if wait_for_idle_seconds < 0:
+        raise ValueError("wait-for-idle seconds must not be negative")
     rendered, identity = render_v2_config(
         repo_root,
         status_root=status_root,
@@ -1500,6 +1673,12 @@ def _replace_supervisor_locked(
         "launched_pid": None,
         "outcome": "failed",
     }
+    if wait_for_idle_seconds > 0 and incumbent:
+        result["idle_wait"] = wait_for_incumbent_workers_idle(
+            incumbent,
+            timeout_seconds=wait_for_idle_seconds,
+            log=lambda message: print(f"promote_supervisor_runtime: {message}", file=sys.stderr, flush=True),
+        )
     # Runtime promotion and supervisor reservation recovery share one
     # canonical, re-entrant lock implementation.  A raw flock here would
     # acquire the same sidecar inode without registering in stable_sidecar_lock,
@@ -1724,6 +1903,7 @@ def replace_supervisor(
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
     requirements_path: Path | None = None,
+    wait_for_idle_seconds: float = 0.0,
 ) -> dict[str, Any]:
     """Validate and switch config while excluding the canonical merge owner."""
 
@@ -1739,6 +1919,7 @@ def replace_supervisor(
             repository_source_roots=repository_source_roots,
             repository_integration_roots=repository_integration_roots,
             requirements_path=requirements_path,
+            wait_for_idle_seconds=wait_for_idle_seconds,
         )
 
 
@@ -1758,6 +1939,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--termination-timeout", type=float, default=15.0)
+    parser.add_argument(
+        "--wait-for-idle-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Before taking the admission lock, wait up to this many seconds for "
+            "live incumbent workers to finish so the cutover does not throw "
+            "their work away. 0 (default) drains immediately as before."
+        ),
+    )
     parser.add_argument("--evidence-path")
     parser.add_argument(
         "--authority-env-file",
@@ -1866,6 +2057,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
                 requirements_path=requirements_path,
+                wait_for_idle_seconds=args.wait_for_idle_seconds,
             )
     except (OSError, ValueError, auto_integrator.IntegrationLockError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}

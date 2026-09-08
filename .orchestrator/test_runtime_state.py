@@ -1252,3 +1252,69 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             st["auto_commit_archive"]["pending_token"] = "valid-token"
         reloaded = runtime_state.load_runtime_state(valid_cfg)
         self.assertEqual(reloaded["auto_commit_archive"]["pending_token"], "valid-token")
+
+
+class RetiredPathFenceResolutionTests(unittest.TestCase):
+    """A promotion fence (directory, or FIFO from older promotions) at a retired
+    ``.orchestrator/{state,approval-queue}.json`` path must never be resolved as
+    a runtime source: opening a FIFO blocks forever, opening a directory fails."""
+
+    def test_fence_at_configured_legacy_path_fails_closed_instead_of_redirecting(self) -> None:
+        # A retired writer still configured with the fenced path must not be
+        # silently pointed at the live store; it must fail, and fail fast.
+        with tempfile.TemporaryDirectory(prefix="runtime-state-fence-") as temp_dir:
+            orch = Path(temp_dir) / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            cfg = {"paths": {"state_file": str(orch / "state.json")}}
+            resolved = runtime_state._resolve_runtime_source_leaf(cfg, "state_file")
+            self.assertEqual(resolved, orch / "state.json")
+            with self.assertRaisesRegex(RuntimeError, "must be a regular file"):
+                runtime_state._assert_canonical_runtime_data_leaf(resolved, source_id="runtime_state")
+
+    def test_missing_modern_path_never_falls_back_onto_a_legacy_fence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-state-fence-") as temp_dir:
+            orch = Path(temp_dir) / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+            cfg = {"paths": {"state_file": str(orch / "worker-runtime" / "state.json")}}
+            self.assertEqual(
+                runtime_state._resolve_runtime_source_leaf(cfg, "state_file"),
+                orch / "worker-runtime" / "state.json",
+            )
+
+    def test_fifo_fence_at_legacy_path_is_never_selected_as_fallback(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-state-fence-") as temp_dir:
+            orch = Path(temp_dir) / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            os.mkfifo(str(orch / "state.json"), 0o600)
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+            cfg = {
+                "paths": {
+                    "state_file": str(modern / "state.json"),
+                    "approval_queue": str(modern / "approval-queue.json"),
+                }
+            }
+            self.assertEqual(
+                runtime_state._resolve_runtime_source_leaf(cfg, "state_file"),
+                modern / "state.json",
+            )
+            self.assertEqual(
+                runtime_state._resolve_runtime_source_leaf(cfg, "approval_queue"),
+                modern / "approval-queue.json",
+            )
+
+    def test_real_legacy_file_still_backs_a_missing_modern_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-state-fence-") as temp_dir:
+            orch = Path(temp_dir) / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            cfg = {"paths": {"state_file": str(orch / "worker-runtime" / "state.json")}}
+            self.assertEqual(
+                runtime_state._resolve_runtime_source_leaf(cfg, "state_file"),
+                orch / "state.json",
+            )

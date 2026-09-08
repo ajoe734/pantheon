@@ -290,6 +290,8 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         f"pantheon={integration_parent / 'pantheon' / target}",
         "--repository-integration-root",
         f"execute_plans={integration_parent / 'execute_plans' / target}",
+        "--wait-for-idle-seconds",
+        "900",
     ]
     source = SYNC_SCRIPT.read_text(encoding="utf-8")
     assert "/home/lupin" not in source

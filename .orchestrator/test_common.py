@@ -199,6 +199,33 @@ class AgentConfigurationTests(unittest.TestCase):
 
 
 class JsonLoadResilienceTests(unittest.TestCase):
+    def test_load_json_fails_fast_on_fifo_or_directory_instead_of_blocking(self) -> None:
+        import concurrent.futures
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fifo = Path(tmpdir) / "state.json"
+            os.mkfifo(str(fifo), 0o600)
+            fence_dir = Path(tmpdir) / "approval-queue.json"
+            fence_dir.mkdir()
+
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(common.load_json, fifo, {})
+            try:
+                with self.assertRaisesRegex(RuntimeError, "non-regular file"):
+                    # A blocking open() would surface here as a TimeoutError.
+                    future.result(timeout=5)
+            finally:
+                if not future.done():
+                    # Release a reader stuck on the FIFO so the worker thread can exit.
+                    try:
+                        os.close(os.open(str(fifo), os.O_WRONLY | os.O_NONBLOCK))
+                    except OSError:
+                        pass
+                pool.shutdown(wait=False)
+
+            with self.assertRaisesRegex(RuntimeError, "non-regular file"):
+                common.load_json(fence_dir, {})
+
     def test_load_json_still_allows_empty_optional_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "optional.json"
@@ -3111,6 +3138,52 @@ class TestWriteStatusPrecondition(unittest.TestCase):
             snapshot = task_state_store.load_snapshot(event_log)
             self.assertEqual(snapshot["event_count"], 2)
             self.assertEqual(snapshot["state"], payload)
+
+
+class CanonicalStatusPathsFenceTests(unittest.TestCase):
+    """A promotion fence (directory, or FIFO from older promotions) at a retired
+    ``.orchestrator/{state,approval-queue}.json`` path must never nominate the
+    legacy layout: every later open() on it would fail or block forever."""
+
+    def test_retired_path_fences_never_nominate_the_legacy_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(modern / "state.json"))
+            self.assertEqual(rendered["approval_queue"], str(modern / "approval-queue.json"))
+
+    def test_fences_without_modern_files_still_choose_the_modern_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(orch / "worker-runtime" / "state.json"))
+            self.assertEqual(
+                rendered["approval_queue"], str(orch / "worker-runtime" / "approval-queue.json")
+            )
+
+    def test_real_legacy_files_still_win_while_modern_layout_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "approval-queue.json").write_text("{}", encoding="utf-8")
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(orch / "state.json"))
+            self.assertEqual(rendered["approval_queue"], str(orch / "approval-queue.json"))
 
 
 if __name__ == "__main__":

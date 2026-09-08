@@ -331,6 +331,23 @@ def _assert_canonical_runtime_data_leaf(path: Path, *, source_id: str) -> None:
         )
 
 
+def _regular_file(path: Path) -> bool:
+    """True only for an existing regular file.
+
+    A retired storage path may carry a promotion fence (an empty directory, or
+    a FIFO left by older promotions).  ``exists()`` is true for both, but a
+    fence must never be *chosen* as an alternative runtime source: opening a
+    FIFO with no peer blocks forever and opening a directory fails.  A fence
+    at the *configured* path is deliberately returned as-is so the later
+    regular-file assertion fails closed instead of silently redirecting a
+    retired writer onto the live store.
+    """
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
 def _resolve_runtime_source_leaf(config: dict[str, Any], key: str) -> Path:
     p = config_path(config, key).expanduser()
     if not p.exists():
@@ -339,32 +356,32 @@ def _resolve_runtime_source_leaf(config: dict[str, Any], key: str) -> Path:
                 legacy = p.parent.parent / "state.json"
                 legacy_queue = p.parent.parent / "approval-queue.json"
                 modern_queue = p.parent / "approval-queue.json"
-                if legacy.exists():
+                if _regular_file(legacy):
                     return legacy
-                if legacy_queue.exists() and not modern_queue.exists():
+                if _regular_file(legacy_queue) and not _regular_file(modern_queue):
                     return legacy
             elif p.parent.name == ".orchestrator":
                 modern = p.parent / "worker-runtime" / "state.json"
                 modern_queue = p.parent / "worker-runtime" / "approval-queue.json"
-                if modern.exists():
+                if _regular_file(modern):
                     return modern
-                if modern_queue.exists():
+                if _regular_file(modern_queue):
                     return modern
         elif key == "approval_queue" and p.name == "approval-queue.json":
             if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
                 legacy = p.parent.parent / "approval-queue.json"
                 legacy_state = p.parent.parent / "state.json"
                 modern_state = p.parent / "state.json"
-                if legacy.exists():
+                if _regular_file(legacy):
                     return legacy
-                if legacy_state.exists() and not modern_state.exists():
+                if _regular_file(legacy_state) and not _regular_file(modern_state):
                     return legacy
             elif p.parent.name == ".orchestrator":
                 modern = p.parent / "worker-runtime" / "approval-queue.json"
                 modern_state = p.parent / "worker-runtime" / "state.json"
-                if modern.exists():
+                if _regular_file(modern):
                     return modern
-                if modern_state.exists():
+                if _regular_file(modern_state):
                     return modern
     return p
 
@@ -399,7 +416,7 @@ def _runtime_source_layout(
         requested = config_path(config, key).expanduser()
         if not requested.exists():
             fallback = _resolve_runtime_source_leaf(config, key)
-            if fallback.exists():
+            if _regular_file(fallback):
                 requested = fallback
             elif key == "approval_queue":
                 state_resolved = (
@@ -407,7 +424,7 @@ def _runtime_source_layout(
                     if configured.get("state_file")
                     else None
                 )
-                if state_resolved is not None and state_resolved.exists():
+                if state_resolved is not None and _regular_file(state_resolved):
                     if state_resolved.parent.name == ".orchestrator" and requested.parent.name == "worker-runtime":
                         requested = state_resolved.parent / "approval-queue.json"
                     elif state_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
@@ -418,7 +435,7 @@ def _runtime_source_layout(
                     if configured.get("approval_queue")
                     else None
                 )
-                if queue_resolved is not None and queue_resolved.exists():
+                if queue_resolved is not None and _regular_file(queue_resolved):
                     if queue_resolved.parent.name == ".orchestrator" and requested.parent.name == "worker-runtime":
                         requested = queue_resolved.parent / "state.json"
                     elif queue_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
