@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import execution_authorization
+import multi_repo_registry
 from common import display_name_for, normalize_agent_id, utc_now
 from rewrite import dispatch_admission as rewrite_dispatch_admission
+from rewrite import integration_receipt
 from rewrite import task_machine as rewrite_task_machine
 from task_archive import TaskResolver
 
@@ -192,6 +194,110 @@ def is_operator_exact_head_acceptance(task: Mapping[str, Any] | None) -> bool:
         str(acceptance.get("operator_acceptance_proof_ref") or "").strip()
         == f"{_OPERATOR_ACCEPTANCE_PROOF_PREFIX}{head_sha}"
     )
+
+
+def task_has_current_canonical_integration_receipt(
+    config: Mapping[str, Any] | None,
+    task: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether task carries a matching, current canonical integration receipt.
+
+    Pure, configuration-backed predicate matching the auto-integrator's receipt contract:
+    - Task stored receipt parses with version 1, result 'landed', valid observation, matching source.
+    - Generation is valid (>= 1) and receipt task_generation <= task current generation.
+    - Registry scope resolves to a configured GitHub slug and default branch.
+    - Review binding has a positive int PR, valid 40-hex head_sha, and target_branch.
+    - Delivery binding, if present, matches review_binding.
+    - Receipt repository, target_branch, pr, head_sha match the frozen delivery binding,
+      and merge_commit_sha is non-empty.
+    Fails closed on any unknown, ambiguous, missing, or malformed data.
+    """
+    if not isinstance(task, Mapping):
+        return False
+    receipt = integration_receipt.parse_integration_receipt(
+        task.get(integration_receipt.RECEIPT_KEY)
+    )
+    if receipt is None:
+        return False
+    try:
+        current_generation = task.get("generation", 1)
+        if (
+            isinstance(current_generation, bool)
+            or not isinstance(current_generation, int)
+            or current_generation < 1
+        ):
+            return False
+    except Exception:
+        return False
+    if receipt["task_generation"] > current_generation:
+        return False
+
+    repo_identity = multi_repo_registry.task_repository_slug_and_default_branch(
+        config, task
+    )
+    if repo_identity is None:
+        return False
+    repo_slug, default_branch = repo_identity
+
+    binding = task.get("review_binding")
+    if not isinstance(binding, Mapping):
+        return False
+    pr = binding.get("pr")
+    if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
+        return False
+    head_sha = str(binding.get("head_sha") or "").strip().lower()
+    if not _OID_RE.fullmatch(head_sha):
+        return False
+    target_branch = str(binding.get("base") or "").strip() or default_branch
+
+    delivery = task.get("delivery_binding")
+    if delivery is not None:
+        if not isinstance(delivery, Mapping) or delivery.get("kind") != "pull_request":
+            return False
+        if any(
+            delivery.get(key) != binding.get(key)
+            for key in ("pr", "head_sha", "head_branch", "base")
+        ):
+            return False
+
+    return (
+        receipt["repository"] == repo_slug
+        and receipt["target_branch"] == target_branch
+        and receipt["pr"] == pr
+        and receipt["head_sha"] == head_sha
+        and bool(receipt.get("merge_commit_sha"))
+    )
+
+
+def is_non_default_repository_finalization_pending(
+    config: Mapping[str, Any] | None,
+    task: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether owner-finalization dispatch must be suppressed for unreceipted multirepo work.
+
+    For every configured non-default registry repository, an exact review_approved delivery
+    with no current canonical integration receipt must not reserve owned_finalize_dispatch.
+    It remains visible to the existing sole auto-integrator; once that existing receipt is
+    current, normal owner closeout remains eligible.
+    Normal unmerged Pantheon finalization remains eligible.
+    Unknown or misconfigured repositories fail closed (treated as pending / not reconciled).
+    """
+    if not isinstance(task, Mapping):
+        return False
+    status = str(task.get("status") or "").strip().lower()
+    if status != "review_approved":
+        return False
+
+    config_dict = dict(config) if isinstance(config, Mapping) else {}
+    try:
+        repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, task)
+    except ValueError:
+        return True
+
+    if repo_id == "pantheon":
+        return False
+
+    return not task_has_current_canonical_integration_receipt(config_dict, task)
 
 
 def normalize_execution_resources(
@@ -460,6 +566,7 @@ def evaluate_task_delivery_admission(
                     config, task, target_agent
                 )
             )
+            or is_operator_exact_head_acceptance(task)
         ),
         review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
         execution_resources=tuple(task_execution_resources(task)),
@@ -467,7 +574,7 @@ def evaluate_task_delivery_admission(
             task, now=datetime.now(timezone.utc)
         ),
     )
-    return rewrite_dispatch_admission.evaluate_dispatch_intent(
+    decision = rewrite_dispatch_admission.evaluate_dispatch_intent(
         task_intent,
         delivery_lane_for_agent(config, target_agent),
         build_delivery_admission_snapshot(
@@ -486,6 +593,19 @@ def evaluate_task_delivery_admission(
         ),
         requested_endpoint_id=requested_endpoint_id,
     )
+    if not decision.eligible:
+        return decision
+    if (
+        decision.task_reason is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
+        and is_non_default_repository_finalization_pending(config, task)
+    ):
+        return rewrite_dispatch_admission.DispatchDecision(
+            eligible=False,
+            reason=rewrite_dispatch_admission.DispatchBlockReason.TASK_NOT_DISPATCHABLE,
+            task_reason=decision.task_reason,
+            logical_lane_id=decision.logical_lane_id,
+        )
+    return decision
 
 
 def dispatch_event_is_in_unchanged_cooldown(

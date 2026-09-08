@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import dispatch_policy
 from dispatch_policy import (
     ALLOWLISTED_EXECUTION_RESOURCES,
     DEFAULT_ACTIVE_WORKER_STATUSES,
@@ -304,6 +305,14 @@ def test_explain_and_live_dispatch_share_one_candidate_function() -> None:
         supervisor.evaluate_task_delivery_admission
         is dispatch_policy.evaluate_task_delivery_admission
     )
+    assert (
+        supervisor.task_has_current_canonical_integration_receipt
+        is dispatch_policy.task_has_current_canonical_integration_receipt
+    )
+    assert (
+        supervisor.is_non_default_repository_finalization_pending
+        is dispatch_policy.is_non_default_repository_finalization_pending
+    )
 
 
 def test_entry_points_are_exported() -> None:
@@ -315,6 +324,8 @@ def test_entry_points_are_exported() -> None:
         "dispatch_event_is_in_unchanged_cooldown",
         "task_review_requeue_is_materialized",
         "evaluate_dispatch_candidate",
+        "task_has_current_canonical_integration_receipt",
+        "is_non_default_repository_finalization_pending",
     ):
         assert callable(getattr(dispatch_policy, name)), name
 
@@ -411,3 +422,303 @@ def test_wrapper_normalizes_only_auth_fence_for_canonical_purpose(authorization_
         task["execution_authorization"]["old_runtime_hold"] = True
         task["review_decision_intent"] = {"nonce": "unresolved-independent-review-decision"}
         assert evaluate().reason.value == "human_hold"
+
+
+def test_task_has_current_canonical_integration_receipt_multirepo() -> None:
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute-plans": {
+                    "repo": "ajoe734/execute-plans",
+                    "default_branch": "dev",
+                }
+            }
+        }
+    }
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "8f8383b507b1fb631d44422031f01ebea5024d5e"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "integration_receipt": {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        },
+    }
+
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, task) is True
+
+    # Fail closed on missing or non-mapping
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, None) is False
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, {}) is False
+
+    # Negative control: missing receipt
+    t_no_receipt = deepcopy(task)
+    del t_no_receipt["integration_receipt"]
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_no_receipt) is False
+
+    # Negative control: malformed receipt version
+    t_bad_ver = deepcopy(task)
+    t_bad_ver["integration_receipt"]["version"] = 99
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_bad_ver) is False
+
+    # Negative control: generation drift (receipt task_generation > current task generation)
+    t_drift = deepcopy(task)
+    t_drift["generation"] = 1
+    t_drift["integration_receipt"]["task_generation"] = 2
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_drift) is False
+
+    # Negative control: changed repository slug
+    t_repo_drift = deepcopy(task)
+    t_repo_drift["integration_receipt"]["repository"] = "ajoe734/pantheon"
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_repo_drift) is False
+
+    # Negative control: changed target branch
+    t_branch_drift = deepcopy(task)
+    t_branch_drift["integration_receipt"]["target_branch"] = "main"
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_branch_drift) is False
+
+    # Negative control: changed PR
+    t_pr_drift = deepcopy(task)
+    t_pr_drift["integration_receipt"]["pr"] = 999
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_pr_drift) is False
+
+    # Negative control: changed head_sha
+    t_sha_drift = deepcopy(task)
+    t_sha_drift["integration_receipt"]["head_sha"] = "0" * 40
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_sha_drift) is False
+
+    # Negative control: missing merge_commit_sha
+    t_no_merge = deepcopy(task)
+    t_no_merge["integration_receipt"]["merge_commit_sha"] = ""
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_no_merge) is False
+
+    # Negative control: delivery binding mismatch
+    t_mismatch = deepcopy(task)
+    t_mismatch["delivery_binding"]["pr"] = 999
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_mismatch) is False
+
+    # Negative control: unknown repository in registry
+    t_unknown = deepcopy(task)
+    t_unknown["target_repo"] = "nonexistent_repo"
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_unknown) is False
+
+    # Negative control: conflicting repo artifacts
+    t_conflict = deepcopy(task)
+    t_conflict["artifacts"] = ["execute-plans/src/index.ts", "pantheon/api.py"]
+    assert dispatch_policy.task_has_current_canonical_integration_receipt(config, t_conflict) is False
+
+
+def test_is_non_default_repository_finalization_pending_cases() -> None:
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute-plans": {
+                    "repo": "ajoe734/execute-plans",
+                    "default_branch": "dev",
+                }
+            }
+        }
+    }
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "8f8383b507b1fb631d44422031f01ebea5024d5e"
+
+    task_fe = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+    }
+
+    # Non-default repo, review_approved, no receipt -> pending (True)
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_fe) is True
+
+    # Non-default repo, with valid receipt -> reconciled, not pending (False)
+    task_fe_reconciled = deepcopy(task_fe)
+    task_fe_reconciled["integration_receipt"] = {
+        "version": 1,
+        "result": "landed",
+        "observation": "performed_merge",
+        "task_generation": 1,
+        "repository": "ajoe734/execute-plans",
+        "target_branch": "dev",
+        "pr": 747,
+        "head_sha": head_sha,
+        "merge_commit_sha": merge_sha,
+        "observed_at": "2026-09-08T00:00:00Z",
+        "source": "canonical_auto_integrator",
+    }
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_fe_reconciled) is False
+
+    # Normal unmerged Pantheon task (review_approved, no receipt) -> not suppressed (False)
+    task_pantheon = {
+        "id": "OPS-PAN-001",
+        "status": "review_approved",
+        "target_repo": "pantheon",
+    }
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_pantheon) is False
+
+    # Non-review_approved task (e.g. in_progress) -> False
+    task_in_progress = deepcopy(task_fe)
+    task_in_progress["status"] = "in_progress"
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_in_progress) is False
+
+    # Unknown repository scope -> fails closed as pending (True)
+    task_unknown = deepcopy(task_fe)
+    task_unknown["target_repo"] = "nonexistent_repo"
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_unknown) is True
+
+
+def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
+    from rewrite.dispatch_admission import AdmissionSnapshot, DeliveryEndpoint, DispatchLane, HealthRecord, HealthState
+
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute-plans": {
+                    "repo": "ajoe734/execute-plans",
+                    "default_branch": "dev",
+                }
+            }
+        }
+    }
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "8f8383b507b1fb631d44422031f01ebea5024d5e"
+
+    task_fe = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+    }
+
+    lane = DispatchLane("test-lane", "Codex", 1, (DeliveryEndpoint("endpoint", "provider", "account"),))
+    snapshot = AdmissionSnapshot(
+        now=datetime.now(timezone.utc),
+        endpoint_health={"endpoint": HealthRecord(HealthState.HEALTHY)},
+        account_health={"account": HealthRecord(HealthState.HEALTHY)},
+        account_limits={"account": 1},
+    )
+
+    with (
+        mock.patch.object(dispatch_policy, "delivery_lane_for_agent", return_value=lane),
+        mock.patch.object(dispatch_policy, "build_delivery_admission_snapshot", return_value=snapshot),
+        mock.patch.object(dispatch_policy, "dependencies_satisfied", return_value=True),
+        mock.patch.object(dispatch_policy.rewrite_task_machine, "delivery_binding_is_current", return_value=True),
+        mock.patch.object(dispatch_policy, "review_decision_intent_replay_eligible", return_value=False),
+    ):
+        # 1. Unreceipted execute-plans task -> blocked
+        dec_unreceipted = dispatch_policy.evaluate_task_delivery_admission(
+            config, {}, task_fe, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
+            agent_loads={}, active_account_loads={}, pending_account_loads={},
+        )
+        assert not dec_unreceipted.eligible
+        assert dec_unreceipted.reason.value == "task_not_dispatchable"
+        assert dec_unreceipted.task_reason.value == 1  # OWNED_FINALIZE
+
+        # 2. Receipted execute-plans task -> admitted
+        task_receipted = deepcopy(task_fe)
+        task_receipted["integration_receipt"] = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        }
+        dec_receipted = dispatch_policy.evaluate_task_delivery_admission(
+            config, {}, task_receipted, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
+            agent_loads={}, active_account_loads={}, pending_account_loads={},
+        )
+        assert dec_receipted.eligible
+        assert dec_receipted.task_reason.value == 1
+
+        # 3. Normal unmerged Pantheon task -> admitted
+        task_pantheon = {
+            "id": "OPS-PAN-001",
+            "status": "review_approved",
+            "owner": "Codex",
+            "target_repo": "pantheon",
+            "generation": 1,
+            "review_binding": {
+                "pr": 500,
+                "head_sha": "a" * 40,
+                "head_branch": "task/OPS-PAN-001",
+                "base": "dev",
+            },
+        }
+        dec_pantheon = dispatch_policy.evaluate_task_delivery_admission(
+            config, {}, task_pantheon, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
+            agent_loads={}, active_account_loads={}, pending_account_loads={},
+        )
+        assert dec_pantheon.eligible
+        assert dec_pantheon.task_reason.value == 1
+
+        # 4. evaluate_dispatch_candidate surfaces task_not_dispatchable
+        cand_unreceipted = dispatch_policy.evaluate_dispatch_candidate(
+            config, {}, {}, task_fe, "Codex", {},
+            settings={}, active_task_ids=set(), pending_task_ids=set(),
+            pending_event_keys=set(), agent_loads={}, active_account_loads={},
+            pending_account_loads={}, seen_event_keys={}, checked_at="2026-09-08T00:00:00Z",
+            cooldown_seconds=0,
+        )
+        assert not cand_unreceipted["eligible"]
+        assert cand_unreceipted["first_blocking_gate"] == "task_not_dispatchable"
+
+        # 5. Operator exact-head acceptance hold takes precedence over finalization
+        task_op_accepted = operator_accepted_task(owner="Codex")
+        dec_op_accepted = dispatch_policy.evaluate_task_delivery_admission(
+            config, {}, task_op_accepted, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
+            agent_loads={}, active_account_loads={}, pending_account_loads={},
+        )
+        assert not dec_op_accepted.eligible
+        assert dec_op_accepted.reason.value == "human_hold"

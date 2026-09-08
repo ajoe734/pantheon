@@ -3044,6 +3044,134 @@ class SharedPlannerContractTests(unittest.TestCase):
             (supervisor.REASON_OWNED_FINALIZE, 1),
         )
 
+    def test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator(self) -> None:
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+        merge_sha = "8f8383b507b1fb631d44422031f01ebea5024d5e"
+
+        task_fe = task_fixture("OPS-FE-REVIEW-PROOF-001", status="review_approved", owner="Codex")
+        task_fe.update({
+            "target_repo": "execute-plans",
+            "generation": 1,
+            "review_binding": {
+                "pr": 747,
+                "head_sha": head_sha,
+                "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+                "base": "dev",
+            },
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 747,
+                "head_sha": head_sha,
+                "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+                "base": "dev",
+            },
+        })
+
+        task_repair = task_fixture("OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001", status="in_progress", owner="Codex")
+        task_repair.update({
+            "target_repo": "pantheon",
+            "generation": 1,
+            "depends_on": [],
+        })
+
+        # 1. Admission check: unreceipted execute-plans task is blocked and cannot finalize
+        fe_dec = planner_decision(self.config, task_fe, target="Codex")
+        self.assertFalse(fe_dec["eligible"])
+        self.assertEqual(fe_dec["first_blocking_gate"], "task_not_dispatchable")
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task_fe, "Codex", {task_fe["id"]: task_fe}
+            )
+        )
+
+        # 2. In-progress receipt-repair task is eligible
+        repair_dec = planner_decision(self.config, task_repair, target="Codex")
+        self.assertTrue(repair_dec["eligible"])
+        self.assertEqual(repair_dec["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+        # 3. Deterministic starvation prevention: planner selects receipt-repair task
+        self.config["ready_dispatcher"]["max_concurrent_workers"] = 1
+        queued: list[dict[str, object]] = []
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex"],
+            status_snapshot={"tasks": [task_fe, task_repair]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: queued.append(event) or True,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["task_id"], "OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001")
+        self.assertEqual(queued[0]["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+        # 4. Once exact canonical integration receipt lands, owner finalization is unlocked
+        task_fe["integration_receipt"] = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        }
+        fe_reconciled = planner_decision(self.config, task_fe, target="Codex")
+        self.assertTrue(fe_reconciled["eligible"])
+        self.assertEqual(fe_reconciled["reason"], supervisor.REASON_OWNED_FINALIZE)
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task_fe, "Codex", {task_fe["id"]: task_fe}
+            ),
+            (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+
+        # 5. Normal unmerged Pantheon finalization remains eligible
+        pantheon_task = task_fixture("OPS-PAN-NORMAL-001", status="review_approved", owner="Codex")
+        pantheon_task["target_repo"] = "pantheon"
+        pan_dec = planner_decision(self.config, pantheon_task, target="Codex")
+        self.assertTrue(pan_dec["eligible"])
+        self.assertEqual(pan_dec["reason"], supervisor.REASON_OWNED_FINALIZE)
+
+        # 6. Negative controls (fail closed)
+        # 6a. Unknown repository
+        fe_unknown = copy.deepcopy(task_fe)
+        fe_unknown["target_repo"] = "nonexistent_repo"
+        self.assertFalse(planner_decision(self.config, fe_unknown, target="Codex")["eligible"])
+
+        # 6b. Conflicting repository artifacts
+        fe_conflict = copy.deepcopy(task_fe)
+        fe_conflict["artifacts"] = ["execute-plans/src/index.ts", "pantheon/api.py"]
+        self.assertFalse(planner_decision(self.config, fe_conflict, target="Codex")["eligible"])
+
+        # 6c. Malformed receipt version
+        fe_bad_ver = copy.deepcopy(task_fe)
+        fe_bad_ver["integration_receipt"]["version"] = 99
+        self.assertFalse(planner_decision(self.config, fe_bad_ver, target="Codex")["eligible"])
+
+        # 6d. Generation drift
+        fe_drift = copy.deepcopy(task_fe)
+        fe_drift["integration_receipt"]["task_generation"] = 2
+        self.assertFalse(planner_decision(self.config, fe_drift, target="Codex")["eligible"])
+
+        # 6e. Repository mismatch in receipt
+        fe_repo_drift = copy.deepcopy(task_fe)
+        fe_repo_drift["integration_receipt"]["repository"] = "ajoe734/pantheon"
+        self.assertFalse(planner_decision(self.config, fe_repo_drift, target="Codex")["eligible"])
+
+        # 6f. Target branch mismatch in receipt
+        fe_branch_drift = copy.deepcopy(task_fe)
+        fe_branch_drift["integration_receipt"]["target_branch"] = "main"
+        self.assertFalse(planner_decision(self.config, fe_branch_drift, target="Codex")["eligible"])
+
     def _pending_intent_task_with_recovery_receipt(
         self,
         *,
