@@ -78,10 +78,12 @@ from dispatch_policy import (
     evaluate_dispatch_candidate,
     evaluate_task_delivery_admission,
     is_execution_dispatch_reason,
+    is_non_default_repository_finalization_pending,
     is_operator_exact_head_acceptance,
     normalized_status_set,
     ready_dispatch_settings,
     task_execution_resources,
+    task_has_current_canonical_integration_receipt,
     task_review_requeue_is_materialized,
     validate_execution_resource_limits,
 )
@@ -13914,7 +13916,7 @@ def task_execution_dispatch_candidate(
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
-        and not integration_receipt.integration_receipt_consumes_candidate(task)
+        and not task_has_current_canonical_integration_receipt(config, task)
     ):
         # Approval and cron integration are separate transactions. Closeout
         # starts only after the canonical integrator records this exact landing.
