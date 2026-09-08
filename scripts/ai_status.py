@@ -306,11 +306,39 @@ LEGACY_OPERATOR_ASSERTION_KEYS = (
     "consumed_operator_assertions",
     "consumed_canonical_mutation_assertions",
 )
+def resolve_orchestrator_state_file(status_root: Path) -> Path:
+    worker_runtime_path = status_root / ".orchestrator" / "worker-runtime" / "state.json"
+    legacy_path = status_root / ".orchestrator" / "state.json"
+    worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
+    if worker_runtime_path.exists():
+        return worker_runtime_path
+    if legacy_path.exists():
+        return legacy_path
+    if legacy_queue.exists() and not worker_runtime_queue.exists():
+        return legacy_path
+    return worker_runtime_path
+
+
+def resolve_approval_queue_file(status_root: Path) -> Path:
+    worker_runtime_state = status_root / ".orchestrator" / "worker-runtime" / "state.json"
+    legacy_state = status_root / ".orchestrator" / "state.json"
+    worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
+    if worker_runtime_queue.exists():
+        return worker_runtime_queue
+    if legacy_queue.exists():
+        return legacy_queue
+    if legacy_state.exists() and not worker_runtime_state.exists():
+        return legacy_queue
+    return worker_runtime_queue
+
+
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
-APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+ORCHESTRATOR_STATE_FILE = resolve_orchestrator_state_file(STATUS_ROOT)
+APPROVAL_QUEUE_FILE = resolve_approval_queue_file(STATUS_ROOT)
 DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 
 
@@ -328,8 +356,8 @@ def configure_status_root_paths(status_root: str | Path) -> Path:
     LOG_FILE = root / "ai-activity-log.jsonl"
     CURRENT_WORK_FILE = root / "current-work.md"
     DOCS_SITE_DIR = root / "docs-site"
-    ORCHESTRATOR_STATE_FILE = root / ".orchestrator" / "state.json"
-    APPROVAL_QUEUE_FILE = root / ".orchestrator" / "approval-queue.json"
+    ORCHESTRATOR_STATE_FILE = resolve_orchestrator_state_file(root)
+    APPROVAL_QUEUE_FILE = resolve_approval_queue_file(root)
     DASHBOARD_BUNDLE_FILE = root / "dashboard-bundle.json"
 
     task_archive_module.STATUS_ROOT = root
@@ -1722,14 +1750,24 @@ def load_config() -> dict[str, Any]:
         return {}
     paths = payload.setdefault("paths", {})
     if isinstance(paths, dict):
+        state_file = ORCHESTRATOR_STATE_FILE
+        try:
+            state_file.relative_to(STATUS_ROOT)
+        except ValueError:
+            state_file = resolve_orchestrator_state_file(STATUS_ROOT)
+        approval_queue = APPROVAL_QUEUE_FILE
+        try:
+            approval_queue.relative_to(STATUS_ROOT)
+        except ValueError:
+            approval_queue = resolve_approval_queue_file(STATUS_ROOT)
         paths.update(
             {
                 "status_file": str(STATUS_FILE),
                 "activity_log": str(LOG_FILE),
                 "current_work": str(CURRENT_WORK_FILE),
                 "dashboard": str(DOCS_SITE_DIR / "index.html"),
-                "state_file": str(ORCHESTRATOR_STATE_FILE),
-                "approval_queue": str(APPROVAL_QUEUE_FILE),
+                "state_file": str(state_file),
+                "approval_queue": str(approval_queue),
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
@@ -6727,9 +6765,10 @@ def _assert_no_active_execution(
             f"cannot reconcile stale resurrected task with active command lease: {task_id}"
         )
 
-    if ORCHESTRATOR_STATE_FILE.exists():
+    state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else (STATUS_ROOT / ".orchestrator" / "state.json")
+    if state_file.exists():
         try:
-            orc_state = json.loads(ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+            orc_state = json.loads(state_file.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RuntimeError(
                 f"orchestrator runtime state is unavailable or malformed: {exc}"

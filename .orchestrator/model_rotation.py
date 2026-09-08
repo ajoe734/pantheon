@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from common import config_path, normalize_agent_id
+from common import config_path, normalize_agent_id, resolved_coordinator_status_root
 
 COOLDOWN_FILENAME = "model-rotation-cooldowns.json"
 DEFAULT_COOLDOWN_SECONDS = 900
@@ -51,7 +51,10 @@ ROTATION_ELIGIBLE_FAILURE_KINDS = frozenset({"quota_terminal", "capacity_retryab
 
 
 def cooldown_file_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / COOLDOWN_FILENAME
+    state_dir = config_path(config, "state_file").parent
+    if state_dir.name == "worker-runtime":
+        return state_dir.parent / COOLDOWN_FILENAME
+    return state_dir / COOLDOWN_FILENAME
 
 
 def resolve_provider_entry(config: dict[str, Any] | None, provider_id: str | None) -> tuple[str, dict[str, Any]]:

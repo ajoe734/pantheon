@@ -3832,9 +3832,12 @@ class ExecutionAuthorizationProcessTests(unittest.TestCase):
         status_root = root / "status"
         (status_root / ".orchestrator").mkdir(parents=True)
         self.config = config_fixture(status_root)
-        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(root / "runtime" / "tasks.jsonl")}
+        event_log = root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(event_log)}
         self.task = _synthetic_privileged_task()
-        supervisor.write_status(self.config, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        from rewrite.task_state_store import append_state_commit
+        append_state_commit(event_log, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        supervisor.write_json(supervisor.config_path(self.config, "status_file"), {"tasks": [self.task]})
         self.ctx = multiprocessing.get_context("fork")
         self.marker = root / "effect"
 
@@ -13698,8 +13701,9 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             cmd_root = temp_path / "cmd_root"
             worktree = temp_path / "worktree"
             runtime_dir = temp_path / "runtime"
-            runtime_dir.mkdir(parents=True)
-            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+            task_state_dir = runtime_dir / "task-state"
+            task_state_dir.mkdir(parents=True)
+            task_state_event_log = task_state_dir / "task-state-events.jsonl"
 
             for d in (central, cmd_root, worktree):
                 d.mkdir(parents=True, exist_ok=True)
@@ -14404,7 +14408,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 },
             }
             (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
-            supervisor.write_status(config, init_state, source="test-init")
+            rewrite_task_state_store.append_state_commit(task_state_event_log, init_state, source="init")
 
             child_env = os.environ.copy()
             for k in list(child_env.keys()):
@@ -14657,7 +14661,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 },
             }
             (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
-            supervisor.write_status(config, init_state, source="test-init")
+            rewrite_task_state_store.append_state_commit(task_state_event_log, init_state, source="init")
 
             child_env = os.environ.copy()
             for k in list(child_env.keys()):

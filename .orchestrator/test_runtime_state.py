@@ -1167,3 +1167,61 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     nonblocking=True,
                 ):
                     self.fail("reverse-order runtime lock was acquired")
+
+    def test_configured_authority_preserves_leaf_validation_and_rejects_symlink(self) -> None:
+        status_root = self.root / "status"
+        orchestrator_dir = status_root / ".orchestrator"
+        worker_runtime_dir = orchestrator_dir / "worker-runtime"
+        worker_runtime_dir.mkdir(parents=True, exist_ok=True)
+        (status_root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+
+        configured_state = orchestrator_dir / "state.json"
+        migrated_state = worker_runtime_dir / "state.json"
+        migrated_queue = worker_runtime_dir / "approval-queue.json"
+
+        migrated_state.write_text(json.dumps(runtime_state.default_state()) + "\n", encoding="utf-8")
+        migrated_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+        unrelated = self.root / "unrelated.json"
+        unrelated.write_text('{"unrelated": true}\n', encoding="utf-8")
+        configured_state.symlink_to(unrelated)
+
+        cfg = {
+            "paths": {
+                "status_file": str(status_root / "ai-status.json"),
+                "state_file": str(configured_state),
+                "approval_queue": str(migrated_queue),
+            }
+        }
+
+        # 1. Configured symlink MUST NOT be masked by existence of worker-runtime/state.json
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"canonical runtime_state data leaf cannot be a symlink",
+        ):
+            runtime_state.load_runtime_state(cfg)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"canonical runtime_state data leaf cannot be a symlink",
+        ):
+            with runtime_state.runtime_state_update(cfg):
+                pass
+
+        # 2. No implicit compatibility fallback function exists
+        self.assertFalse(hasattr(runtime_state, "_canonical_runtime_source_path"))
+
+        # 3. Clean configured path in worker-runtime loads and updates successfully
+        valid_cfg = {
+            "paths": {
+                "status_file": str(status_root / "ai-status.json"),
+                "state_file": str(migrated_state),
+                "approval_queue": str(migrated_queue),
+            }
+        }
+        loaded = runtime_state.load_runtime_state(valid_cfg)
+        self.assertIsNotNone(loaded)
+        with runtime_state.runtime_state_update(valid_cfg) as st:
+            st["auto_commit_archive"]["pending_token"] = "valid-token"
+        reloaded = runtime_state.load_runtime_state(valid_cfg)
+        self.assertEqual(reloaded["auto_commit_archive"]["pending_token"], "valid-token")

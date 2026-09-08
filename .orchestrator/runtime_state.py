@@ -331,6 +331,44 @@ def _assert_canonical_runtime_data_leaf(path: Path, *, source_id: str) -> None:
         )
 
 
+def _resolve_runtime_source_leaf(config: dict[str, Any], key: str) -> Path:
+    p = config_path(config, key).expanduser()
+    if not p.exists():
+        if key == "state_file" and p.name == "state.json":
+            if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
+                legacy = p.parent.parent / "state.json"
+                legacy_queue = p.parent.parent / "approval-queue.json"
+                modern_queue = p.parent / "approval-queue.json"
+                if legacy.exists():
+                    return legacy
+                if legacy_queue.exists() and not modern_queue.exists():
+                    return legacy
+            elif p.parent.name == ".orchestrator":
+                modern = p.parent / "worker-runtime" / "state.json"
+                modern_queue = p.parent / "worker-runtime" / "approval-queue.json"
+                if modern.exists():
+                    return modern
+                if modern_queue.exists():
+                    return modern
+        elif key == "approval_queue" and p.name == "approval-queue.json":
+            if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
+                legacy = p.parent.parent / "approval-queue.json"
+                legacy_state = p.parent.parent / "state.json"
+                modern_state = p.parent / "state.json"
+                if legacy.exists():
+                    return legacy
+                if legacy_state.exists() and not modern_state.exists():
+                    return legacy
+            elif p.parent.name == ".orchestrator":
+                modern = p.parent / "worker-runtime" / "approval-queue.json"
+                modern_state = p.parent / "worker-runtime" / "state.json"
+                if modern.exists():
+                    return modern
+                if modern_state.exists():
+                    return modern
+    return p
+
+
 def _runtime_source_layout(
     config: dict[str, Any],
     *,
@@ -359,8 +397,36 @@ def _runtime_source_layout(
         if not configured.get(key):
             continue
         requested = config_path(config, key).expanduser()
+        if not requested.exists():
+            fallback = _resolve_runtime_source_leaf(config, key)
+            if fallback.exists():
+                requested = fallback
+            elif key == "approval_queue":
+                state_resolved = (
+                    _resolve_runtime_source_leaf(config, "state_file")
+                    if configured.get("state_file")
+                    else None
+                )
+                if state_resolved is not None and state_resolved.exists():
+                    if state_resolved.parent.name == ".orchestrator" and requested.parent.name == "worker-runtime":
+                        requested = state_resolved.parent / "approval-queue.json"
+                    elif state_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
+                        requested = state_resolved.parent / "approval-queue.json"
+            elif key == "state_file":
+                queue_resolved = (
+                    _resolve_runtime_source_leaf(config, "approval_queue")
+                    if configured.get("approval_queue")
+                    else None
+                )
+                if queue_resolved is not None and queue_resolved.exists():
+                    if queue_resolved.parent.name == ".orchestrator" and requested.parent.name == "worker-runtime":
+                        requested = queue_resolved.parent / "state.json"
+                    elif queue_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
+                        requested = queue_resolved.parent / "state.json"
         if validate_data_leaves:
             _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
+        if not requested.parent.exists():
+            requested.parent.mkdir(parents=True, exist_ok=True)
         try:
             source_root = requested.parent.resolve(strict=True)
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
@@ -375,6 +441,28 @@ def _runtime_source_layout(
         source_roots[source_id] = source_root
 
     distinct_source_roots = set(source_roots.values())
+    if len(distinct_source_roots) > 1:
+        has_orchestrator = any(r.name == ".orchestrator" for r in distinct_source_roots)
+        has_worker_runtime = any(
+            r.name == "worker-runtime" and r.parent.name == ".orchestrator"
+            for r in distinct_source_roots
+        )
+        if has_orchestrator and has_worker_runtime:
+            target_root = None
+            for sid, p in source_paths.items():
+                if p.exists():
+                    target_root = source_roots[sid]
+                    break
+            if target_root is None:
+                for r in distinct_source_roots:
+                    if r.name == "worker-runtime":
+                        target_root = r
+                        break
+            if target_root is not None:
+                for sid in list(source_paths.keys()):
+                    source_paths[sid] = target_root / source_paths[sid].name
+                    source_roots[sid] = target_root
+                distinct_source_roots = set(source_roots.values())
     if len(distinct_source_roots) > 1:
         details = ", ".join(
             f"{source_id}={source_roots[source_id]}"
@@ -400,18 +488,23 @@ def _runtime_source_layout(
 
     source_root = next(iter(distinct_source_roots), None)
     if status_root is not None and source_root is not None:
-        allowed_source_roots = {status_root, status_root / ".orchestrator"}
+        allowed_source_roots = {
+            status_root,
+            status_root / ".orchestrator",
+            status_root / ".orchestrator" / "worker-runtime",
+        }
         if source_root not in allowed_source_roots:
             raise RuntimeError(
                 "canonical runtime source root does not belong to the status "
                 f"root: source_root={source_root}, status_root={status_root}"
             )
     elif status_root is None and source_root is not None:
-        status_root = (
-            source_root.parent
-            if source_root.name == ".orchestrator"
-            else source_root
-        )
+        if source_root.name == "worker-runtime" and source_root.parent.name == ".orchestrator":
+            status_root = source_root.parent.parent
+        elif source_root.name == ".orchestrator":
+            status_root = source_root.parent
+        else:
+            status_root = source_root
 
     if status_root is None:
         raise KeyError(
@@ -512,7 +605,7 @@ def runtime_state_lock(
 
 def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     state = normalize_v2_runtime_cache(
-        load_json(config_path(config, "state_file"), default=None)
+        load_json(_resolve_runtime_source_leaf(config, "state_file"), default=None)
     )
 
     valid_pending_event_ids = set(
@@ -547,7 +640,7 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
 
 def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) -> None:
     _write_runtime_json_unlocked(
-        config_path(config, "state_file"),
+        _resolve_runtime_source_leaf(config, "state_file"),
         normalize_v2_runtime_cache(state),
         source_id="runtime_state",
     )
@@ -580,7 +673,9 @@ def load_runtime_state_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     must never be used for an admission or write decision.
     """
 
-    return _load_runtime_state_unlocked(config)
+    return normalize_v2_runtime_cache(
+        load_json(_resolve_runtime_source_leaf(config, "state_file"), default=None)
+    )
 
 
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
@@ -758,7 +853,7 @@ def _normalize_approval_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def _load_approval_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     raw = load_json(
-        config_path(config, "approval_queue"),
+        _resolve_runtime_source_leaf(config, "approval_queue"),
         default=default_approval_state(),
     )
     state = deepcopy(default_approval_state())
@@ -793,7 +888,7 @@ def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         payload["version"] = 2
         payload["updated_at"] = utc_now()
         _write_runtime_json_unlocked(
-            config_path(config, "approval_queue"),
+            _resolve_runtime_source_leaf(config, "approval_queue"),
             payload,
             source_id="approval_queue",
         )
@@ -848,6 +943,13 @@ def _write_runtime_bytes_unlocked(
     *,
     source_id: str,
 ) -> None:
+    if path.parent.name == ".orchestrator" and (path.parent / "worker-runtime").is_dir():
+        migrated_target = path.parent / "worker-runtime" / path.name
+        if migrated_target.exists():
+            raise RuntimeError(
+                f"cannot write to retired runtime {source_id} path {path}; "
+                f"retained old-path writers must use canonical authority {migrated_target}"
+            )
     _assert_canonical_runtime_data_leaf(path, source_id=source_id)
     durable_write_bytes(path, payload)
     if _read_canonical_runtime_source(path, source_id=source_id) != payload:
