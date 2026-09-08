@@ -108,6 +108,40 @@ class WorkerCommitPreflightTests(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(log, valid_subject)
 
+    def test_worker_commit_uses_worker_identity_when_git_config_is_absent(self) -> None:
+        (self.repo / "file1.py").write_text("print('updated')\n", encoding="utf-8")
+        subprocess.run(["git", "config", "--unset-all", "user.name"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "--unset-all", "user.email"], cwd=self.repo, check=True)
+        msg_file = self.repo / "msg.txt"
+        msg_file.write_text(
+            "TASK-001: commit\n\nTask-ID: TASK-001\n", encoding="utf-8"
+        )
+        argv = [
+            "worker_commit.py", "--task-id", "TASK-001", "--message-file",
+            str(msg_file), "--scope", str(self.repo / "file1.py"),
+        ]
+        environment = {
+            "AI_NAME": "Claude",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(worker_commit, "ROOT", self.repo),
+            mock.patch.object(worker_commit, "STATUS_ROOT", self.repo),
+            mock.patch.object(worker_commit, "_append_audit"),
+            mock.patch.dict(os.environ, environment, clear=False),
+        ):
+            self.assertEqual(worker_commit.main(), 0)
+        author = subprocess.run(
+            ["git", "log", "-1", "--format=%an <%ae>"],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        self.assertEqual(author, "Claude <claude-agent@pantheon.local>")
+
     def test_worker_commit_accepts_bounded_prefix_for_long_task_id(self) -> None:
         """OPS-COMMIT-IDENTITY-001: a generated task_id can exceed 72 chars.
 
