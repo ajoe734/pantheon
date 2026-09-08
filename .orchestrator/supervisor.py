@@ -12572,6 +12572,20 @@ def recover_lost_worker_lease(
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
         return True
+    if str(task.get("status") or "") == "done":
+        # Normal done has already been offered to the exact-worker classifier.
+        # A Human/Ops supersede instead uses the existing governance authority
+        # contract. It must release dead attempts too, not only live PIDs.
+        decision = active_worker_governance_lease_decision(
+            config, worker, task, state=status,
+            activity_events=recent_governance_activity_events(config),
+        )
+        if decision.get("action") != "terminate":
+            return False
+        worker["status"] = "superseded"
+        worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
+        return True
     role = (
         "reviewer"
         if str((worker.get("request_snapshot") or {}).get("reason") or "")
@@ -12591,11 +12605,6 @@ def recover_lost_worker_lease(
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
         return True
-    if str(task.get("status") or "") == "done":
-        # Exact done-event cleanup belongs to the shared terminal classifier.
-        # Never create a retry/generation fence for an archived task when that
-        # proof is unavailable or invalid.
-        return False
     if task.get("review_decision_intent") not in (None, {}, []):
         # A pending review decision intent has its own typed recovery mechanism
         # (reconcile_review_decision_intent_lease_recovery). Fencing a generic lost
