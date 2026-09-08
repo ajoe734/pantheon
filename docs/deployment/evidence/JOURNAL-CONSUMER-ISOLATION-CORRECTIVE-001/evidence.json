@@ -2,7 +2,7 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
   "worker": "Antigravity",
-  "reviewer": "Codex2",
+  "reviewer": "Codex",
   "governing_spec": {
     "document": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md",
     "section": "Section B: Journal Consumer Isolation & Old-Writer Retirement",
@@ -11,15 +11,15 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: compare_and_set on GovernanceRecordStore with version tracking and _MAX_CAS_ATTEMPTS retry budget."
+      "implementation": "services/governance/decision_journal.py: compare_and_set on GovernanceRecordStore with version tracking, _MAX_CAS_ATTEMPTS retry budget, and atomic rollback on audit/outbox failures (delete on create failure, CAS-restore on patch failure)."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, oldValues, and newValues and puts append-only record to audit store."
+      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, oldValues, and newValues and puts append-only record to audit store. Audit failures roll back entry mutation."
     },
     "durable_outbox_streaming": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types."
+      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types. Outbox errors are never swallowed and trigger rollback."
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
@@ -27,15 +27,19 @@
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: create_entry raises DecisionJournalCollisionError when a supplied ID collides with another principal's or tenant's record. AgoraService maps to HTTP 409 Conflict."
+      "implementation": "services/governance/decision_journal.py: create_entry raises DecisionJournalCollisionError when a supplied ID collides with another principal's or tenant's record. AgoraService binds create replay durably to principal and request hash, surviving new service instances."
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, verify_migration_parity, dry-run mode, checkpointing, and conflict handling. Unscoped legacy rows excluded from tenant queries unless explicitly requested."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, author preservation, destination tenant collision detection, dry-run mode, checkpointing, source disposition, and inventory/evidence reporting."
+    },
+    "unscoped_legacy_isolation": {
+      "status": "satisfied",
+      "implementation": "Ordinary patch fails closed on unscoped legacy rows (missing scope cannot be claimed by tenant patch) pending governed migration."
     },
     "fresh_process_restart_parity": {
       "status": "satisfied",
-      "implementation": "Restart parity verified in unit tests; backing stores persist to JSON/Postgres via build_decision_journal_stores without relying on in-memory mutable state."
+      "implementation": "Restart parity verified with real subprocess restarts (subprocess.run); backing stores persist to JSON/Postgres via build_decision_journal_stores; DomainDecisionJournalReaderPort and JsonGovernanceRecordStore automatically reflect fresh on-disk writes."
     }
   },
   "old_writer_retirement": {
@@ -79,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": "python3 -m unittest",
-        "tests": 9,
+        "tests": 17,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -87,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": "python3 -m unittest",
-        "tests": 12,
+        "tests": 17,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -99,12 +103,21 @@
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-corrective-001-review-probes.py",
+        "runner": "python3",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
       }
     ],
-    "total_tests_passed": 40
+    "total_tests_passed": 61
   },
   "artifacts": [
     "services/governance/decision_journal.py",
+    "services/governance/record_store.py",
     "services/governance/test_decision_journal.py",
     "services/governance/migrations/journal_migration.py",
     "services/control-plane/bff/agora/service.py",
@@ -122,3 +135,4 @@
     "docs/deployment/evidence/JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001/evidence.json"
   ]
 }
+

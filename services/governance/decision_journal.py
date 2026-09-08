@@ -265,7 +265,12 @@ def create_entry(
                 "data": _project(canonical),
             })
         except Exception:
-            pass
+            if hasattr(stores.entries, "delete"):
+                try:
+                    stores.entries.delete(clean_id)
+                except Exception:
+                    pass
+            raise
 
     return _project(canonical)
 
@@ -491,7 +496,7 @@ def patch_entry(
             # Enforce tenant isolation on mutation
             if clean_tenant:
                 rec_tenant = str(stored.get("tenant_id") or stored.get("tenantId") or "").strip()
-                if rec_tenant and rec_tenant != clean_tenant:
+                if not rec_tenant or rec_tenant != clean_tenant:
                     stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
                     return None
 
@@ -527,9 +532,6 @@ def patch_entry(
             candidate["version"] = int(before.get("version") or 0) + 1
             candidate["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
             candidate["persistenceMode"] = _persistence_mode()
-            if clean_tenant and not candidate.get("tenant_id"):
-                candidate["tenant_id"] = clean_tenant
-                candidate["tenantId"] = clean_tenant
 
             updated, canonical = stores.entries.compare_and_set(before, candidate)
             if updated:
@@ -581,26 +583,28 @@ def patch_entry(
 
         # Publish outbox event
         if stores.outbox is not None:
-            try:
-                event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
-                stores.outbox.put({
-                    "event_id": event_id,
-                    "id": event_id,
-                    "event_type": "decision_journal.entry.updated",
-                    "aggregate_type": "DecisionJournalEntry",
-                    "aggregate_id": clean_id,
-                    "tenant_id": clean_tenant,
-                    "actor_id": clean_actor,
-                    "user_id": clean_user,
-                    "timestamp": patched_at,
-                    "data": after_projected,
-                    "diff": diff,
-                })
-            except Exception:
-                pass
+            event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
+            stores.outbox.put({
+                "event_id": event_id,
+                "id": event_id,
+                "event_type": "decision_journal.entry.updated",
+                "aggregate_type": "DecisionJournalEntry",
+                "aggregate_id": clean_id,
+                "tenant_id": clean_tenant,
+                "actor_id": clean_actor,
+                "user_id": clean_user,
+                "timestamp": patched_at,
+                "data": after_projected,
+                "diff": diff,
+            })
 
         return {"status": "updated", "entry": after_projected, "audit": audit}
     except Exception:
+        if before is not None and after is not None:
+            try:
+                stores.entries.compare_and_set(after, before)
+            except Exception:
+                pass
         try:
             stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
         except Exception:

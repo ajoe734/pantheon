@@ -1573,10 +1573,50 @@ class AgoraService:
         journal_payload = {**payload, "title": title, "body": body_text, "visibility": visibility}
         request_hash = self.stable_json_hash({"route": "POST /bff/agora/journal", "payload": journal_payload})
         dry_run = bool(x_dry_run and x_dry_run.strip().lower() in ("true", "1", "yes"))
-        if not dry_run:
-            cached = self.check_idempotency(resolved_key, request_hash)
-            if cached is not None:
-                return cached
+
+        owner = self.journal_write_owner
+        if not dry_run and (owner is None or not hasattr(owner, "create_decision_journal_entry")):
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision Journal write owner is not configured",
+                "The canonical Decision Journal owner adapter was not composed onto this service",
+                precondition_failed="decision_journal_write_owner",
+            )
+
+        scoped_idem_key: Optional[str] = None
+        if resolved_key and not dry_run:
+            scoped_idem_key = f"create:{resolved_tenant}:{resolved_user}:{resolved_key}"
+            if hasattr(owner, "check_create_idempotency"):
+                idem_check = owner.check_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+            elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                record = owner.stores.idempotency.get(scoped_idem_key)
+                if record is None:
+                    idem_check = None
+                elif record.get("request_hash") != request_hash:
+                    idem_check = {"conflict": True, "record": record}
+                else:
+                    idem_check = {"conflict": False, "result": record.get("result")}
+            else:
+                idem_check = None
+
+            if idem_check is not None:
+                if idem_check.get("conflict"):
+                    raise self.bff_error(
+                        409,
+                        ErrorCode.IDEMPOTENCY_CONFLICT,
+                        "Idempotency key was already used with a different payload",
+                        f"Key {resolved_key!r} is bound to a different Agora request hash",
+                        precondition_failed="idempotency_conflict",
+                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                    )
+                cached = idem_check.get("result")
+                if cached is not None:
+                    cached_result = copy.deepcopy(cached)
+                    if "meta" in cached_result and isinstance(cached_result["meta"], dict):
+                        if "idempotency" in cached_result["meta"] and isinstance(cached_result["meta"]["idempotency"], dict):
+                            cached_result["meta"]["idempotency"]["replayed"] = True
+                    return cached_result
 
         snapshot_at = self.utc_now()
         entry_id = str(payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}")
@@ -1599,15 +1639,6 @@ class AgoraService:
                 evidence_kind="agora.journal.create",
             )
 
-        owner = self.journal_write_owner
-        if owner is None or not hasattr(owner, "create_decision_journal_entry"):
-            raise self.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Decision Journal write owner is not configured",
-                "The canonical Decision Journal owner adapter was not composed onto this service",
-                precondition_failed="decision_journal_write_owner",
-            )
         try:
             created = owner.create_decision_journal_entry(
                 title=title,
@@ -1643,7 +1674,29 @@ class AgoraService:
                 "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
             },
         }
-        self.record_idempotency(resolved_key, request_hash, result)
+        if scoped_idem_key and not dry_run:
+            if hasattr(owner, "record_create_idempotency"):
+                owner.record_create_idempotency(
+                    scoped_key=scoped_idem_key,
+                    raw_key=resolved_key,
+                    tenant_id=resolved_tenant,
+                    user_id=resolved_user,
+                    request_hash=request_hash,
+                    result=result,
+                    created_at=snapshot_at,
+                )
+            elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                owner.stores.idempotency.put({
+                    "idempotency_key": scoped_idem_key,
+                    "raw_idempotency_key": resolved_key,
+                    "tenant_id": resolved_tenant,
+                    "user_id": resolved_user,
+                    "actor_id": resolved_user,
+                    "request_hash": request_hash,
+                    "status": "succeeded",
+                    "result": result,
+                    "created_at": snapshot_at,
+                })
         return result
 
     # --- Training Examples --- #

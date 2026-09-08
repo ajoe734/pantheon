@@ -158,6 +158,42 @@ class DecisionJournalOwnerAdapter:
             user_id=user_id,
         )
 
+    def check_create_idempotency(
+        self,
+        *,
+        scoped_key: str,
+        request_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        record = self._stores.idempotency.get(scoped_key)
+        if record is None:
+            return None
+        if record.get("request_hash") != request_hash:
+            return {"conflict": True, "record": record}
+        return {"conflict": False, "result": record.get("result")}
+
+    def record_create_idempotency(
+        self,
+        *,
+        scoped_key: str,
+        raw_key: str,
+        tenant_id: str,
+        user_id: str,
+        request_hash: str,
+        result: Dict[str, Any],
+        created_at: str,
+    ) -> None:
+        self._stores.idempotency.put({
+            "idempotency_key": scoped_key,
+            "raw_idempotency_key": raw_key,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "actor_id": user_id,
+            "request_hash": request_hash,
+            "status": "succeeded",
+            "result": result,
+            "created_at": created_at,
+        })
+
 
 DecisionJournalWriteOwner = DecisionJournalOwnerAdapter
 

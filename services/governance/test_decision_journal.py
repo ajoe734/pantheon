@@ -436,6 +436,202 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertEqual(fresh_entry["title"], "Durable Persistence")
         self.assertEqual(fresh_entry["tags"], ["restart", "proof"])
 
+    def test_outbox_failure_rejects_create_and_rolls_back(self) -> None:
+        with unittest.mock.patch.object(self.stores.outbox, "put", side_effect=OSError("synthetic outbox failure")):
+            with self.assertRaises(OSError):
+                create_entry(
+                    self.stores,
+                    entry_id="dje-fail-create",
+                    title="Will Fail",
+                    body="Should not persist on outbox failure",
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    created_at="2026-09-08T00:00:00Z",
+                )
+        self.assertIsNone(self.stores.entries.get("dje-fail-create"))
+
+    def test_audit_failure_does_not_commit_entry_and_rolls_back(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="dje-fail-audit",
+            title="Initial Title",
+            body="Initial Body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        with unittest.mock.patch.object(self.stores.audit, "put", side_effect=OSError("synthetic audit failure")):
+            with self.assertRaises(OSError):
+                patch_entry(
+                    self.stores,
+                    "dje-fail-audit",
+                    patch={"title": "Changed Title"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="key-fail-audit",
+                    request_hash="hash-fail-audit",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        entry = get_entry(fresh, "dje-fail-audit", tenant_id="tenant-alpha")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["version"], 1)
+        self.assertEqual(entry["title"], "Initial Title")
+
+    def test_outbox_failure_does_not_commit_patch_and_rolls_back(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="dje-fail-patch-outbox",
+            title="Initial Title",
+            body="Initial Body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        with unittest.mock.patch.object(self.stores.outbox, "put", side_effect=OSError("synthetic patch outbox failure")):
+            with self.assertRaises(OSError):
+                patch_entry(
+                    self.stores,
+                    "dje-fail-patch-outbox",
+                    patch={"title": "Changed Title"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="key-fail-patch-outbox",
+                    request_hash="hash-fail-patch-outbox",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        entry = get_entry(fresh, "dje-fail-patch-outbox", tenant_id="tenant-alpha")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["version"], 1)
+        self.assertEqual(entry["title"], "Initial Title")
+
+    def test_patch_cannot_claim_unscoped_legacy(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="legacy-unscoped-team",
+            title="Unscoped Team Entry",
+            body="Should fail closed on tenant-b patch",
+            actor_id="alice",
+            tenant_id=None,
+            visibility="team",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        res = patch_entry(
+            self.stores,
+            "legacy-unscoped-team",
+            patch={"title": "Claimed by bob"},
+            actor_id="bob",
+            tenant_id="tenant-b",
+            idempotency_key="key-claim-attempt",
+            request_hash="hash-claim-attempt",
+            patched_at="2026-09-08T00:01:00Z",
+        )
+        self.assertIsNone(res)
+
+    def test_migration_preserves_agora_author(self) -> None:
+        engine = JournalMigrationEngine(self.stores)
+        report = engine.run_migration(
+            [
+                {
+                    "id": "old-agora-entry",
+                    "title": "Agora Note",
+                    "decision": "Decision content",
+                    "author": "alice-agora",
+                    "visibility": "private",
+                }
+            ],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+            dispose_source=True,
+        )
+        entry = get_entry(self.stores, "old-agora-entry", tenant_id="tenant-alpha")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["createdBy"], "alice-agora")
+        self.assertEqual(report.total_migrated, 1)
+        self.assertGreater(report.audit_events_recorded, 0)
+
+    def test_migration_rejects_cross_tenant_identical_collision(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="dje-cross-coll",
+            title="Alpha Entry",
+            body="Body content",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        engine = JournalMigrationEngine(self.stores)
+        report = engine.run_migration(
+            [
+                {
+                    "id": "dje-cross-coll",
+                    "title": "Alpha Entry",
+                    "body": "Body content",
+                    "author": "alice",
+                    "visibility": "private",
+                }
+            ],
+            target_tenant_id="tenant-beta",
+            dry_run=False,
+            dispose_source=True,
+        )
+        self.assertEqual(report.total_conflicts, 1)
+
+    def test_migration_disposes_source_store_and_produces_evidence(self) -> None:
+        class FakeSourceStore:
+            def __init__(self):
+                self._journal = {"leg-disp-01": {"title": "To Dispose"}}
+
+        source = FakeSourceStore()
+        engine = JournalMigrationEngine(self.stores)
+        report = engine.run_migration(
+            [
+                {
+                    "id": "leg-disp-01",
+                    "title": "To Dispose",
+                    "body": "Body",
+                    "author": "alice",
+                }
+            ],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+            dispose_source=True,
+            source_store=source,
+        )
+        self.assertEqual(report.total_migrated, 1)
+        self.assertNotIn("leg-disp-01", source._journal)
+        self.assertTrue(report.disposition_evidence["disposed"])
+        self.assertEqual(report.disposition_evidence["total_disposed"], 1)
+        self.assertEqual(len(report.inventory), 1)
+
+    def test_concurrent_cas_conflict_handling(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="dje-cas-conflict",
+            title="Base Title",
+            body="Base Body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        with unittest.mock.patch.object(self.stores.entries, "compare_and_set", return_value=(False, None)):
+            with self.assertRaises(DecisionJournalConcurrencyError):
+                patch_entry(
+                    self.stores,
+                    "dje-cas-conflict",
+                    patch={"title": "Concurrent update"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="key-cas-conflict",
+                    request_hash="hash-cas-conflict",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        entry = get_entry(fresh, "dje-cas-conflict", tenant_id="tenant-alpha")
+        self.assertEqual(entry["version"], 1)
+        self.assertEqual(entry["title"], "Base Title")
+
 
 if __name__ == "__main__":
     unittest.main()

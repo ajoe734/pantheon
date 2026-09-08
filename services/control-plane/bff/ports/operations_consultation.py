@@ -2544,9 +2544,11 @@ class DomainDecisionJournalReaderPort:
 
     @property
     def stores(self) -> Optional[DecisionJournalStores]:
-        if self._stores is None and build_decision_journal_stores is not None:
-            self._stores = build_decision_journal_stores(self._data_dir)
-        return self._stores
+        if self._stores is not None:
+            return self._stores
+        if build_decision_journal_stores is not None:
+            return build_decision_journal_stores(self._data_dir)
+        return None
 
     def list_decision_journal_entries(
         self,

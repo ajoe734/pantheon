@@ -9,6 +9,9 @@ owner adapter is missing.
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -396,6 +399,149 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                 resolved_key="agora-journal-patch-2",
             )
         self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_create_replay_does_not_return_other_principal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+            svc = AgoraService(journal_write_owner=owner)
+            first = svc.create_journal_entry(
+                payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
+                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                idempotency_key="same-key",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            second = svc.create_journal_entry(
+                payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
+                identity=OperatorIdentity(operator_id="bob", roles=["operator"], mfa_verified=True),
+                idempotency_key="same-key",
+                x_idempotency_key=None,
+                tenant_id="tenant-b",
+                user_id="bob",
+            )
+            self.assertNotEqual(first["data"]["id"], second["data"]["id"])
+
+    def test_create_replay_survives_new_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first_svc = AgoraService(journal_write_owner=build_decision_journal_write_owner(data_dir=tmp))
+            first = first_svc.create_journal_entry(
+                payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
+                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                idempotency_key="same-key",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            second_svc = AgoraService(journal_write_owner=build_decision_journal_write_owner(data_dir=tmp))
+            second = second_svc.create_journal_entry(
+                payload={"title": "Synthetic", "body": "Synthetic private body", "visibility": "private"},
+                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                idempotency_key="same-key",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertEqual(first["data"]["id"], second["data"]["id"])
+            self.assertTrue(second["meta"]["idempotency"]["replayed"])
+
+    def test_create_replay_payload_mismatch_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = AgoraService(journal_write_owner=build_decision_journal_write_owner(data_dir=tmp))
+            svc.create_journal_entry(
+                payload={"title": "Original Title", "body": "Body", "visibility": "private"},
+                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                idempotency_key="conflict-key",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            with self.assertRaises(HTTPException) as ctx:
+                svc.create_journal_entry(
+                    payload={"title": "Different Title", "body": "Body", "visibility": "private"},
+                    identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                    idempotency_key="conflict-key",
+                    x_idempotency_key=None,
+                    tenant_id="tenant-a",
+                    user_id="alice",
+                )
+            self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_existing_consumer_observes_new_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+            self.assertEqual(reader.list_decision_journal_entries(tenant_id="tenant-a", user_id="alice"), [])
+            owner = build_decision_journal_write_owner(data_dir=tmp)
+            owner.create_decision_journal_entry(
+                title="Observed Title",
+                body="Observed Body",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                user_id="alice",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            entries = reader.list_decision_journal_entries(tenant_id="tenant-a", user_id="alice")
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["title"], "Observed Title")
+
+    def test_actual_subprocess_restart_parity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = os.getcwd()
+            # Subprocess 1: create entry
+            code_1 = f"""
+import sys
+from services.control_plane.bff.governance.decision_journal_write_owner import build_decision_journal_write_owner
+owner = build_decision_journal_write_owner(data_dir={tmp!r})
+res = owner.create_decision_journal_entry(
+    title="Subprocess Initial",
+    body="Body 1",
+    entry_id="dje-subproc-1",
+    actor_id="operator-subproc",
+    created_at="2026-09-08T01:00:00Z",
+    tenant_id="tenant-subproc",
+    user_id="operator-subproc",
+)
+assert res["id"] == "dje-subproc-1"
+sys.exit(0)
+"""
+            p1 = subprocess.run([sys.executable, "-c", code_1], capture_output=True, text=True, env=env)
+            self.assertEqual(p1.returncode, 0, f"stdout: {p1.stdout}\nstderr: {p1.stderr}")
+
+            # Subprocess 2: patch entry
+            code_2 = f"""
+import sys
+from services.control_plane.bff.governance.decision_journal_write_owner import build_decision_journal_write_owner
+owner = build_decision_journal_write_owner(data_dir={tmp!r})
+res = owner.patch_decision_journal_entry(
+    "dje-subproc-1",
+    patch={{"title": "Subprocess Patched"}},
+    actor_id="operator-subproc",
+    tenant_id="tenant-subproc",
+    idempotency_key="subproc-idem-key",
+    request_hash="subproc-hash",
+    patched_at="2026-09-08T01:05:00Z",
+)
+assert res is not None and res["entry"]["version"] == 2
+sys.exit(0)
+"""
+            p2 = subprocess.run([sys.executable, "-c", code_2], capture_output=True, text=True, env=env)
+            self.assertEqual(p2.returncode, 0, f"stdout: {p2.stdout}\nstderr: {p2.stderr}")
+
+            # Subprocess 3: read and verify
+            code_3 = f"""
+import sys
+from services.control_plane.bff.ports.operations_consultation import DomainDecisionJournalReaderPort
+reader = DomainDecisionJournalReaderPort(data_dir={tmp!r})
+entries = reader.list_decision_journal_entries(tenant_id="tenant-subproc", user_id="operator-subproc")
+assert len(entries) == 1
+assert entries[0]["id"] == "dje-subproc-1"
+assert entries[0]["title"] == "Subprocess Patched"
+assert entries[0]["version"] == 2
+sys.exit(0)
+"""
+            p3 = subprocess.run([sys.executable, "-c", code_3], capture_output=True, text=True, env=env)
+            self.assertEqual(p3.returncode, 0, f"stdout: {p3.stdout}\nstderr: {p3.stderr}")
 
 
 if __name__ == "__main__":
