@@ -1005,6 +1005,31 @@ def _candidate_public_member(candidate: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_metrics_to_dict(raw_metrics: Any) -> Dict[str, Any]:
+    """Normalize owner metrics list or dict to a flat {metric_name: value} dictionary."""
+    if not raw_metrics:
+        return {}
+    if isinstance(raw_metrics, dict):
+        return dict(raw_metrics)
+    norm: Dict[str, Any] = {}
+    if isinstance(raw_metrics, (list, tuple)):
+        for item in raw_metrics:
+            if isinstance(item, dict):
+                m_name = None
+                for k in ("metric", "metric_name", "name", "key"):
+                    if k in item and item[k] is not None:
+                        m_name = str(item[k]).strip()
+                        break
+                m_val = None
+                for k in ("value", "metric_value", "score", "val"):
+                    if k in item and item[k] is not None:
+                        m_val = item[k]
+                        break
+                if m_name and m_val is not None:
+                    norm[m_name] = m_val
+    return norm
+
+
 def _extract_run_artifact_identities(run: Dict[str, Any]) -> Tuple[Set[str], Dict[str, str]]:
     """Extract canonical artifact IDs and known digests from the run owner result."""
     known_ids: Set[str] = set()
@@ -1014,11 +1039,14 @@ def _extract_run_artifact_identities(run: Dict[str, Any]) -> Tuple[Set[str], Dic
     if isinstance(checksums, dict):
         for k, v in checksums.items():
             if isinstance(k, str) and isinstance(v, str):
+                if k.lower() in ("artifact",):
+                    continue
                 base = k.split("/")[-1]
                 known_ids.add(k)
-                known_ids.add(base)
                 digests[k] = v
-                digests[base] = v
+                if base.lower() not in ("artifact",):
+                    known_ids.add(base)
+                    digests[base] = v
 
     for key in ("artifact_refs", "artifacts", "artifact_ids"):
         items = run.get(key)
@@ -1027,47 +1055,66 @@ def _extract_run_artifact_identities(run: Dict[str, Any]) -> Tuple[Set[str], Dic
         if isinstance(items, list):
             for item in items:
                 if isinstance(item, dict):
+                    item_ids: Set[str] = set()
                     for id_key in ("artifact_id", "ref_id", "id", "name"):
                         val = item.get(id_key)
                         if val:
                             val_str = str(val).strip()
-                            known_ids.add(val_str)
-                            if "/" in val_str:
-                                known_ids.add(val_str.split("/")[-1])
+                            if val_str and val_str.lower() not in ("artifact",):
+                                item_ids.add(val_str)
+                                base = val_str.split("/")[-1]
+                                if base.lower() not in ("artifact",):
+                                    item_ids.add(base)
                     ref = item.get("ref") or item.get("uri")
                     if ref:
                         ref_str = str(ref).strip()
-                        known_ids.add(ref_str)
-                        if "/" in ref_str:
-                            known_ids.add(ref_str.split("/")[-1])
+                        if ref_str and ref_str.lower() not in ("artifact",):
+                            item_ids.add(ref_str)
+                            base = ref_str.split("/")[-1]
+                            if base.lower() not in ("artifact",):
+                                item_ids.add(base)
+
+                    known_ids.update(item_ids)
                     digest = item.get("digest") or item.get("checksum") or item.get("artifact_digest")
-                    if digest and val:
-                        val_str = str(val).strip()
-                        digests[val_str] = str(digest).strip()
-                        if "/" in val_str:
-                            digests[val_str.split("/")[-1]] = str(digest).strip()
+                    if digest:
+                        digest_str = str(digest).strip()
+                        for art_id in item_ids:
+                            digests[art_id] = digest_str
+
                 elif isinstance(item, str):
                     s = item.strip()
-                    known_ids.add(s)
-                    if "/" in s:
-                        known_ids.add(s.split("/")[-1])
+                    if s and s.lower() not in ("artifact",):
+                        known_ids.add(s)
+                        base = s.split("/")[-1]
+                        if base.lower() not in ("artifact",):
+                            known_ids.add(base)
         elif isinstance(items, dict):
             for k, v in items.items():
                 k_str = str(k).strip()
-                known_ids.add(k_str)
-                if "/" in k_str:
-                    known_ids.add(k_str.split("/")[-1])
-                if isinstance(v, str):
-                    digests[k_str] = v.strip()
-                    if "/" in k_str:
-                        digests[k_str.split("/")[-1]] = v.strip()
+                if k_str and k_str.lower() not in ("artifact",):
+                    known_ids.add(k_str)
+                    base = k_str.split("/")[-1]
+                    if base.lower() not in ("artifact",):
+                        known_ids.add(base)
+                        if isinstance(v, str):
+                            digests[base] = v.strip()
+                    if isinstance(v, str):
+                        digests[k_str] = v.strip()
 
     single_art = run.get("artifact_id")
     if single_art:
         s = str(single_art).strip()
-        known_ids.add(s)
-        if "/" in s:
-            known_ids.add(s.split("/")[-1])
+        if s and s.lower() not in ("artifact",):
+            known_ids.add(s)
+            base = s.split("/")[-1]
+            if base.lower() not in ("artifact",):
+                known_ids.add(base)
+            single_digest = run.get("artifact_digest") or run.get("checksum")
+            if single_digest:
+                d_str = str(single_digest).strip()
+                digests[s] = d_str
+                if base.lower() not in ("artifact",):
+                    digests[base] = d_str
 
     return known_ids, digests
 
@@ -1836,10 +1883,14 @@ class AgoraResearchRouteContext:
                         if not canonical_art_ids or cand_artifact_id not in canonical_art_ids:
                             prov = "unavailable"
                             rec = None
-                        elif immutable_rec.get("artifact_digest"):
-                            rec_digest = str(immutable_rec["artifact_digest"]).strip()
+                        else:
                             art_digest = known_digests.get(cand_artifact_id)
-                            if art_digest and art_digest != rec_digest:
+                            if immutable_rec.get("artifact_digest"):
+                                rec_digest = str(immutable_rec["artifact_digest"]).strip()
+                                if art_digest and art_digest != rec_digest:
+                                    prov = "unavailable"
+                                    rec = None
+                            if cand_digest and art_digest and str(cand_digest).strip() != art_digest:
                                 prov = "unavailable"
                                 rec = None
 
@@ -1869,8 +1920,8 @@ class AgoraResearchRouteContext:
 
                 candidates.append(public_candidate)
                 cand_metrics: Dict[str, Any] = {}
-                if run and isinstance(run.get("metrics"), dict):
-                    cand_metrics.update(run["metrics"])
+                if run and run.get("metrics"):
+                    cand_metrics.update(_normalize_metrics_to_dict(run["metrics"]))
                 if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
                     client_art_metrics = body.metrics_by_artifact[public_candidate["artifact_id"]]
                     if isinstance(client_art_metrics, dict):

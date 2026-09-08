@@ -225,7 +225,19 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
             "outcome": "succeeded",
             "provenance": "real",
             "backend_reference": "qlib://runs/42",
+            "artifact_id": candidate_id,
             "artifact_digest": "sha256:d8a9e102f4c8b",
+            "artifact_refs": [
+                {
+                    "artifact_id": candidate_id,
+                    "ref": f"artifact://{candidate_id}",
+                    "digest": "sha256:d8a9e102f4c8b",
+                }
+            ],
+            "checksums": {
+                candidate_id: "sha256:d8a9e102f4c8b",
+                f"artifact://{candidate_id}": "sha256:d8a9e102f4c8b",
+            },
             "metrics": [
                 {"name": "sharpe_ratio", "value": 2.1, "category": "performance", "gate_result": "pass", "provenance": "real"},
                 {"name": "max_drawdown", "value": 0.065, "category": "risk", "gate_result": "pass", "provenance": "real"},
@@ -399,6 +411,33 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
     pool = research_ctx.build_candidate_pool(pool_req, scope, _utc_now())
     pool_id = pool["pool_id"]
     assert len(pool["candidates"]) == 1
+    admitted = pool["candidates"][0]
+    assert admitted["artifact_id"] == candidate_id
+    assert admitted["has_real_receipt"] is True
+    assert admitted["provenance"] == "real"
+    assert admitted["receipt_id"] == receipt_id
+    assert admitted["artifact_digest"] == artifact_checksum
+
+    # Negative control: unrelated artifact fails real candidate admission
+    unrelated_pool = research_ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id=user_id,
+            strategy_id=strategy_id,
+            strategy_version=version_id,
+            candidates=[
+                {
+                    "artifact_id": f"unrelated-{uuid.uuid4().hex[:8]}",
+                    "run_id": run_id,
+                    "lifecycle_state": "candidate",
+                }
+            ],
+        ),
+        scope,
+        _utc_now(),
+    )
+    assert unrelated_pool["candidates"][0]["has_real_receipt"] is False
+    assert unrelated_pool["candidates"][0]["provenance"] != "real"
+
     lineage["plan_id"] = plan_id
     lineage["run_id"] = run_id
     lineage["candidate_pool_id"] = pool_id
@@ -686,9 +725,9 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
         "metrics": {"observed_value": 1.42, "threshold_value": 1.25},
         "source_id": "gov-perf-v2.1",
         "source_type": "telemetry_engine",
-        "as_of": _utc_now(),
+        "as_of": persisted["as_of"],
     }
-    replayed_sugg = eval_consumer.replay(replay_outcome_event, utc_now=_utc_now())
+    replayed_sugg = eval_consumer.replay(replay_outcome_event, utc_now=persisted["as_of"])
     assert replayed_sugg.suggestion_id == sugg_id
     suggestion = replayed_sugg
     listed_suggs = perf_store.list_suggestions(tenant_id, strategy_id)

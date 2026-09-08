@@ -189,7 +189,6 @@ def test_backend_with_real_provenance_but_no_receipt_downgrades_to_simulation() 
 
 
 def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Full natural Agora pipeline from public plan create, approve, outbox dispatch, and worker drain to real research endpoint."""
     monkeypatch.setenv("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("RANKING_STORE_BOOTSTRAP", "0")
     sys.path.insert(0, str(Path.cwd() / "services/control-plane/bff/tests"))
@@ -381,6 +380,96 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert prov == receipt["mode"]
     assert resolved_receipt is not None
     assert resolved_receipt["receipt_id"] == receipt["receipt_id"]
+
+    # 10. Assert public candidate admission of the exact natural owner artifact
+    from agora.research.routes.common import (
+        AgoraResearchRouteContext,
+        CandidatePoolCreateRequest,
+        _extract_run_artifact_identities,
+    )
+    from types import SimpleNamespace
+
+    ids, digests = _extract_run_artifact_identities(completed_run)
+    owner_artifact_id = None
+    for r in completed_run.get("artifact_refs") or []:
+        if isinstance(r, dict) and r.get("artifact_id"):
+            owner_artifact_id = r["artifact_id"]
+            break
+        elif isinstance(r, str) and r.startswith("rart-"):
+            owner_artifact_id = r
+            break
+    assert owner_artifact_id is not None, f"Owner artifact_id not found in run artifact_refs: {completed_run.get('artifact_refs')}"
+    assert owner_artifact_id in ids, f"Owner artifact_id '{owner_artifact_id}' must be in projected artifact IDs: {sorted(ids)}"
+
+    owner_digest = digests.get(owner_artifact_id)
+    assert owner_digest == receipt["artifact_digest"], f"Owner digest '{owner_digest}' must match receipt '{receipt['artifact_digest']}'"
+
+    scope = SimpleNamespace(tenant_id="pantheon-dev", user_id="agora-test-user", auth_stub=False)
+    research_ctx = AgoraResearchRouteContext(
+        store=bff_main.research_store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        require_write_role=lambda *a, **k: None,
+        bff_error=lambda status, code, msg, *a: Exception(f"{code}: {msg}"),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+
+    # Candidate admission with genuine natural owner artifact
+    pool = research_ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="agora-test-user",
+            profile="production",
+            candidates=[
+                {
+                    "artifact_id": owner_artifact_id,
+                    "run_id": run_id,
+                    "lifecycle_state": "candidate",
+                    "artifact_digest": owner_digest,
+                }
+            ],
+            metrics_by_artifact={
+                owner_artifact_id: {"mean_total_return": 999.0}  # Client attempting to substitute authentic score
+            },
+        ),
+        scope,
+        "2026-09-08T07:00:00Z",
+    )
+    assert len(pool["candidates"]) == 1
+    cand = pool["candidates"][0]
+    assert cand["artifact_id"] == owner_artifact_id
+    assert cand["provenance"] == receipt["mode"]
+    assert cand["has_real_receipt"] == (receipt["mode"] == "real")
+    assert cand["receipt_id"] == receipt["receipt_id"]
+    assert cand["artifact_digest"] == receipt["artifact_digest"]
+
+    # Assert client cannot substitute authentic owner metrics
+    cand_metrics = bff_main.research_store.get_candidate_metrics(pool["pool_id"], owner_artifact_id)
+    assert cand_metrics.get("mean_total_return") != 999.0
+
+    # Negative control: synthetic artifact IDs fail admission
+    synth_pool = research_ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="agora-test-user",
+            profile="production",
+            candidates=[
+                {
+                    "artifact_id": "art:stage-natural-proto:vectorbt",
+                    "run_id": run_id,
+                    "lifecycle_state": "candidate",
+                },
+                {
+                    "artifact_id": "artifact",
+                    "run_id": run_id,
+                    "lifecycle_state": "candidate",
+                },
+            ],
+        ),
+        scope,
+        "2026-09-08T07:00:00Z",
+    )
+    for c in synth_pool["candidates"]:
+        assert c["has_real_receipt"] is False
+        assert c["provenance"] != "real"
 
 
 def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1026,3 +1115,100 @@ def test_postgres_dataset_owner_bootstrap_read_restart_regression() -> None:
     finally:
         with store._connect() as conn:
             conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def test_owner_metric_list_cannot_be_replaced_by_client() -> None:
+    from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
+    from agora.research.store import MemoryResearchPlanStore
+    from types import SimpleNamespace
+
+    store = MemoryResearchPlanStore()
+    artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}
+    store.create_run(dict(
+        run_id="run-review", plan_id="plan-review", tenant_id="tenant",
+        user_id="user", execution_status="succeeded", executor="vectorbt_executor",
+        correlation_id="corr-review", provenance="real", artifact_refs=[artifact],
+        metrics=[{"metric": "sharpe_ratio", "value": 0.1, "provenance": "real"}],
+    ))
+    store.record_execution_receipt(dict(
+        receipt_id="receipt-review", run_id="run-review",
+        executor="vectorbt_executor", mode="real", correlation_id="corr-review",
+        artifact_digest="sha256:actual", spec_version="1.0", completed_at="2026-09-08T07:00:00Z",
+    ))
+    ctx = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        require_write_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    pool = ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="user",
+            profile="production",
+            candidates=[dict(artifact_id="actual-artifact", run_id="run-review", lifecycle_state="candidate")],
+            metrics_by_artifact={"actual-artifact": {"sharpe_ratio": 999}},
+        ),
+        SimpleNamespace(tenant_id="tenant", user_id="user", auth_stub=False),
+        "2026-09-08T07:00:00Z",
+    )
+    assert pool["candidates"][0]["has_real_receipt"] is True
+    assert ctx.store.get_candidate_metrics(pool["pool_id"], "actual-artifact")["sharpe_ratio"] == 0.1
+
+
+def test_artifact_dict_digest_mismatch_fails_closed() -> None:
+    from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
+    from agora.research.store import MemoryResearchPlanStore
+    from types import SimpleNamespace
+
+    store = MemoryResearchPlanStore()
+    artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact", "digest": "sha256:wrong"}
+    store.create_run(dict(
+        run_id="run-review", plan_id="plan-review", tenant_id="tenant",
+        user_id="user", execution_status="succeeded", executor="vectorbt_executor",
+        correlation_id="corr-review", provenance="real", artifact_refs=[artifact],
+        metrics=[],
+    ))
+    store.record_execution_receipt(dict(
+        receipt_id="receipt-review", run_id="run-review",
+        executor="vectorbt_executor", mode="real", correlation_id="corr-review",
+        artifact_digest="sha256:actual", spec_version="1.0", completed_at="2026-09-08T07:00:00Z",
+    ))
+    ctx = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        require_write_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    candidate = ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="user",
+            profile="production",
+            candidates=[dict(artifact_id="actual-artifact", run_id="run-review", lifecycle_state="candidate")],
+        ),
+        SimpleNamespace(tenant_id="tenant", user_id="user", auth_stub=False),
+        "2026-09-08T07:00:00Z",
+    )["candidates"][0]
+    assert candidate["has_real_receipt"] is False, candidate
+
+
+def test_public_natural_chain_preserves_owner_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agora.research.routes.common import _extract_run_artifact_identities
+    modules = []
+    original_loader = _load_service_module
+    def load():
+        mod = original_loader()
+        modules.append(mod)
+        return mod
+    monkeypatch.setattr(sys.modules[__name__], "_load_service_module", load)
+    test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch)
+    import main as bff_main
+    artifacts = modules[0].store.list_artifacts()
+    assert artifacts
+    artifact = artifacts[-1]
+    run = bff_main.research_store.get_run(artifact["run_id"])
+    ids, digests = _extract_run_artifact_identities(run)
+    assert artifact["artifact_id"] in ids, dict(owner_artifact=artifact["artifact_id"], projected_ids=sorted(ids))

@@ -52,7 +52,7 @@
       "services/research/tests/test_research_orchestrator_http_service.py",
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
-    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Restored _handoffs_table in AgoraDatasetStore ensuring PostgreSQL 16 bootstrap, get_by_ref, and restart idempotency succeed without AttributeError. Candidate admission in routes/common.py validates against immutable receipt snapshot preventing AttributeError on multi-mismatch payloads, verifies candidate artifact identity against canonical run artifacts (_extract_run_artifact_identities), binds authentic receipt digest, and resolves admitted metrics from owner result while failing closed for unrelated or unverifiable candidates. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
+    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Restored _handoffs_table in AgoraDatasetStore ensuring PostgreSQL 16 bootstrap, get_by_ref, and restart idempotency succeed without AttributeError. Candidate admission in routes/common.py validates against immutable receipt snapshot preventing AttributeError on multi-mismatch payloads, verifies candidate artifact identity against canonical run artifacts (_extract_run_artifact_identities), binds authentic receipt digest, and resolves admitted metrics from owner result while failing closed for unrelated, mismatched-digest, or unverifiable candidates. Normalizes canonical [{\"metric\": ..., \"value\": ...}] owner metric lists and enforces that client-supplied metrics cannot replace authentic owner metrics. AuthenticStageAdapter and AuthenticResearchBackendClient extract genuine owner artifact_id and artifact_refs end-to-end and completely omit synthetic 'artifact' references. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
     "canonical_dataset_resolution": "Synthetic dataset resolver completely deleted from resolve_governed_dataset in dispatcher.py. Canonical dataset lookups resolve tenant-scoped records via AgoraDatasetStore (store.get_by_ref), failing closed for missing, invalid, or unavailable references. No mock/fabricated OHLCV records are generated for arbitrary input refs. AgoraInteractionWorker and separate-process entry point scripts/run_agora_interaction_worker.py wire durable AgoraDatasetStore backed by Postgres (AGORA_DATASET_STORE_BACKEND/DSN/SCHEMA) into ResearchDispatcher stage contexts.",
     "correlation_chain": "Single continuous correlation chain wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer. Server-side correlation resolution via _resolve_originating_correlation looks up originating trace_id or correlation_id from workshop events and request headers, preserving originating interaction trace rather than overwriting with workshop:<id>.",
     "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in \"real\" mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. Research orchestrator HTTP service (/stages/{stage_type}/execute) strictly rejects non-allowlisted stage types (400), enforces presence of governed datasets/inputs without synthetic fabrication (400 on missing input), dispatches only to configured execution owners failing closed (503) for unimplemented or unavailable backends, and strictly preserves simulation provenance (provenance=\"simulation\", receipt.mode=\"simulation\") whenever running stub engines rather than relabeling them as real.",
@@ -70,45 +70,57 @@
     "commands": [
       {
         "command": "REVIEW_TEST_DSN=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest /tmp/test_agora_review_5365.py -vv",
-        "result": "4 passed in 4.67s",
+        "result": "4 passed in 4.17s",
         "executed": 4,
         "collected": 4
       },
       {
+        "command": ".venv-pantheon/bin/python3 -m pytest /tmp/test_agora_review_f9d2.py -vv",
+        "result": "3 passed in 12.22s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
         "command": "REVIEW_TEST_DSN=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py -vv",
-        "result": "11 passed, 338 warnings in 32.73s",
-        "executed": 11,
-        "collected": 11
+        "result": "14 passed, 1 skipped in 41.11s",
+        "executed": 15,
+        "collected": 15
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -vv",
-        "result": "38 passed, 1 warning in 7.76s",
+        "result": "38 passed, 1 warning in 7.37s",
         "executed": 38,
         "collected": 38
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py -vv",
-        "result": "11 passed, 70 warnings in 14.35s",
+        "result": "11 passed, 70 warnings in 13.97s",
         "executed": 11,
         "collected": 11
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/research/tests/test_research_orchestrator_http_service.py -vv",
-        "result": "15 passed, 1 warning in 6.26s",
+        "result": "15 passed, 1 warning in 6.53s",
         "executed": 15,
         "collected": 15
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_run_agora_interaction_worker.py -vv",
-        "result": "14 passed in 20.98s",
+        "result": "14 passed in 21.81s",
         "executed": 14,
         "collected": 14
       },
       {
         "command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora/dataset_extraction/test_extractor.py -vv",
-        "result": "48 passed in 8.31s",
+        "result": "48 passed in 9.25s",
         "executed": 48,
         "collected": 48
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest tests/agora_product_journey/test_full_product_journey.py -vv",
+        "result": "1 passed in 1.76s",
+        "executed": 1,
+        "collected": 1
       },
       {
         "command": "git diff --check",
@@ -153,6 +165,10 @@
     "p1_candidate_admission_cannot_trust_client_real_provenance": true,
     "p1_postgres_dataset_owner_bootstrap_and_read_regression": true,
     "p1_candidate_admission_unrelated_artifact_fail_closed": true,
+    "p1_natural_owner_artifact_identity_preserved_end_to_end": true,
+    "p1_owner_metrics_list_cannot_be_substituted_by_client": true,
+    "p1_artifact_digest_mismatch_fails_closed": true,
+    "p1_agora_full_product_journey_natural_provenance_verified": true,
     "p2_candidate_admission_multi_mismatch_no_crash": true
   },
   "review": {

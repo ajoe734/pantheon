@@ -567,8 +567,62 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                 result.metrics = list(raw_metrics)
             else:
                 result.metrics = []
+
+            # Preserve genuine owner artifact IDs, refs, and digests end-to-end.
+            # Never admit synthetic refs or placeholder checksum keys like "artifact".
+            owner_art_id = backend_output.get("artifact_id")
+            owner_art_refs = backend_output.get("artifact_refs") or backend_output.get("artifacts")
+            owner_checksums = backend_output.get("checksums")
+
+            genuine_refs: List[Any] = []
+            genuine_checksums: Dict[str, str] = {}
+
+            if owner_art_refs and isinstance(owner_art_refs, (list, tuple)):
+                genuine_refs.extend(owner_art_refs)
+            elif owner_art_id:
+                genuine_refs.append({
+                    "artifact_id": owner_art_id,
+                    "ref": f"artifact://{owner_art_id}",
+                    "digest": checksum,
+                })
+
+            if owner_art_id:
+                has_owner = any(
+                    (r.get("artifact_id") == owner_art_id) if isinstance(r, dict) else (r == owner_art_id)
+                    for r in genuine_refs
+                )
+                if not has_owner:
+                    genuine_refs.append({
+                        "artifact_id": owner_art_id,
+                        "ref": f"artifact://{owner_art_id}",
+                        "digest": checksum,
+                    })
+
+            if owner_checksums and isinstance(owner_checksums, dict):
+                for k, v in owner_checksums.items():
+                    if str(k).lower() != "artifact":
+                        genuine_checksums[k] = v
+
             if checksum:
-                result.checksums["artifact"] = checksum
+                if owner_art_id:
+                    genuine_checksums[owner_art_id] = checksum
+                    genuine_checksums[f"artifact://{owner_art_id}"] = checksum
+                for r in genuine_refs:
+                    if isinstance(r, dict):
+                        for k in ("artifact_id", "ref_id", "id", "ref"):
+                            if r.get(k):
+                                genuine_checksums[str(r[k])] = r.get("digest") or checksum
+                    elif isinstance(r, str):
+                        genuine_checksums[r] = checksum
+
+            if genuine_refs:
+                result.artifact_refs = genuine_refs
+                result.checksums = genuine_checksums
+            else:
+                result.checksums.pop("artifact", None)
+                if checksum:
+                    for art_ref in result.artifact_refs:
+                        result.checksums[art_ref] = checksum
             for m in result.metrics:
                 if isinstance(m, dict):
                     if "provenance" not in m:
@@ -867,11 +921,32 @@ class AuthenticResearchBackendClient:
                         f"Backend metric provenance '{m['provenance']}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
                     )
 
+        artifact_id = str(resp_data.get("artifact_id") or "").strip()
+        artifact_refs = resp_data.get("artifact_refs")
+        if artifact_refs is None and resp_data.get("artifacts") is not None:
+            artifact_refs = resp_data.get("artifacts")
+        if not artifact_refs and artifact_id:
+            artifact_refs = [{
+                "artifact_id": artifact_id,
+                "ref": f"artifact://{artifact_id}",
+                "digest": artifact_digest,
+            }]
+
+        checksums = resp_data.get("checksums")
+        if not checksums and artifact_digest:
+            checksums = {}
+            if artifact_id:
+                checksums[artifact_id] = artifact_digest
+                checksums[f"artifact://{artifact_id}"] = artifact_digest
+
         return {
             "status": "succeeded",
             "outcome": "succeeded",
             "backend_reference": backend_ref,
+            "artifact_id": artifact_id,
             "artifact_digest": artifact_digest,
+            "artifact_refs": artifact_refs or [],
+            "checksums": checksums or {},
             "metrics": metrics,
             "receipt": receipt,
             "provenance": observed_prov,

@@ -1785,12 +1785,22 @@ def execute_research_stage(
         "spec_version": "1.0",
     }
 
+    artifact_ref_entry = {
+        "artifact_id": artifact_id,
+        "ref": f"artifact://{artifact_id}",
+        "digest": digest,
+    }
+
     result = {
         "status": "succeeded",
         "outcome": "succeeded",
         "provenance": provenance,
         "backend_reference": backend_ref,
+        "artifact_id": artifact_id,
         "artifact_digest": digest,
+        "artifact_refs": [artifact_ref_entry],
+        "artifacts": [artifact_ref_entry],
+        "checksums": {artifact_id: digest, f"artifact://{artifact_id}": digest},
         "metrics": metrics,
         "receipt": receipt,
     }
