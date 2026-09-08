@@ -208,6 +208,8 @@ class DependencyContractBatchTests(unittest.TestCase):
         code, result = self._run(self._request())
         self.assertEqual(code, 0)
         self.assertEqual(result['historical_missing_dependencies'], {'HISTORY': ['OLD-MISSING']})
+        self.assertIn(['DEP', 'HISTORY'], result['historical_unordered_writers'])
+        self.assertNotIn(['READ', 'PROTOCOL'], result['historical_unordered_writers'])
 
     def test_partial_track_cannot_replace_terminal_writer_order(self):
         self.state['tasks'][1]['dependency_tracks'] = {'READ': 'functional'}
@@ -316,6 +318,9 @@ class DependencyContractBatchTests(unittest.TestCase):
             self.assertTrue(ai_status._artifact_paths_overlap(left, right), (left, right))
             self.assertTrue(ai_status._artifact_paths_overlap(right, left), (right, left))
         self.assertFalse(ai_status._artifact_paths_overlap('src/*.ts', 'tests/a.ts'))
+        self.assertEqual(ai_status._normalized_task_artifact_scope({
+            'target_repo': 'execute_plans', 'artifacts': ['package.json', 'pantheon:package.json'],
+        }), [('execute-plans', 'package.json'), ('pantheon', 'package.json')])
         self.state['tasks'][1]['target_repo'] = 'pantheon'
         self._seed()
         self.assertEqual(self._run(self._request([('DEP', ['COVERAGE'])]))[0], 0)
@@ -458,6 +463,27 @@ class DependencyContractBatchTests(unittest.TestCase):
             supervisor.start_worker_for_request(config, self.runtime, request, dispatch_event=event,
                 queue_event_id=event['event_id'], attempt_count=1, event_id_for_log=event['event_id'])
         adapter.deliver.assert_not_called()
+
+    def test_request_bounds_duplicate_keys_and_dangling_tracks_fail_closed(self):
+        path = self._test_root / 'malformed-request.json'
+        for content in ['{"reason":"first","reason":"second","tasks":[]}', ' ' * 1_048_577]:
+            path.write_text(content)
+            with self.assertRaises(SystemExit):
+                ai_status.load_dependency_contract_batch(str(path))
+        for mutate in [lambda b: b.update(tasks=[]), lambda b: b.update(reason='a' * 4097),
+                       lambda b: b['tasks'][0].update(depends_on=[f'DEP-{i}' for i in range(257)])]:
+            batch = self._request()
+            mutate(batch)
+            before = self._snapshot()
+            with self.assertRaises(SystemExit):
+                self._run(batch)
+            self.assertEqual(self._snapshot(), before)
+        self.state['tasks'][1]['dependency_tracks'] = {'UNDECLARED': 'functional'}
+        self._seed()
+        before = self._snapshot()
+        with self.assertRaisesRegex(SystemExit, 'invalid existing dependency contract'):
+            self._run(self._request())
+        self.assertEqual(self._snapshot(), before)
 
 
 class HumanOpsStatusWrapperTests(unittest.TestCase):

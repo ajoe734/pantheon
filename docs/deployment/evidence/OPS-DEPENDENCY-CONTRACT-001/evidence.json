@@ -4,8 +4,8 @@
   "owner": "Codex",
   "reviewer": "Claude",
   "scope": "Atomic dependency-set revisions through the existing qualified Human/Ops CLI and authoritative TaskStore",
-  "source_base": "656c2beeb7e9c62e446cd5f6ec7be0105cd7c3b5",
-  "anchor_commit": "edaee605c",
+  "source_base": "39a3cbddd9fe479b23a7a63c28e0953889e5c417",
+  "anchor_commit": "fc5931b5c47c7e9f571d4cbcad0c3dec1667cd13",
   "source_contracts": [
     {
       "path": "/tmp/pantheon-tooling-root-repair-20260907/DEPENDENCY_CONTRACT_PLAN.md",
@@ -31,23 +31,63 @@
   },
   "validation": [
     {
-      "command": "AI_NAME=Codex timeout 120 python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests scripts.test_ai_status.DependencyTrackCommandTests scripts.test_ai_status.TaskMetadataTests -q",
+      "command": "AI_NAME=Codex timeout 300 python3 -m unittest scripts.test_ai_status -q",
       "exit_code": 0,
-      "tests": 62,
-      "log": "/tmp/ops-dependency-focused.log"
+      "tests": 475,
+      "seconds": 226.856,
+      "log": "/tmp/ops-dependency-full-final.log",
+      "log_sha256": "fb680a194607804cb0cfa1bf5c4fa983036d8b6d620cb87ad644744a5027a2e6"
+    },
+    {
+      "command": "AI_NAME=Codex timeout 120 .venv-pantheon/bin/python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests scripts.test_ai_status.DependencyTrackCommandTests scripts.test_ai_status.TaskMetadataTests scripts.test_status_command_runtime_pin -q",
+      "exit_code": 0,
+      "tests": 72,
+      "seconds": 17.014,
+      "log": "/tmp/ops-dependency-provisioned-focused.log",
+      "log_sha256": "7ab01434b2d9a9277db8c099be0b354fb9a70afbcb7a765ce4250f5935ec1c1b"
     },
     {
       "command": "AI_NAME=Codex timeout 180 python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k DurableQueueContractTests -q",
       "exit_code": 0,
       "tests": 20,
-      "log": "/tmp/ops-dependency-queue.log"
+      "log": "/tmp/ops-dependency-queue.log",
+      "log_sha256": "c80a66d984f869829b21da5dc83c245da161deb481acefa5480d110866c2fb32"
+    },
+    {
+      "command": "AI_NAME=Codex PYTHONPATH=.orchestrator timeout 120 /tmp/ops-dependency-contract-venv/bin/python -m unittest test_runtime_state test_worker_runner_heartbeat.TestCoordinationRootValidation.test_provider_cannot_chmod_or_write_command_runtime test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_reproduce_and_prevent_20260827_reviewer_checkout_mutation test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_prevent_cross_repo_file_mutations -q",
+      "exit_code": 0,
+      "tests": 34,
+      "skips": 0,
+      "seconds": 6.304,
+      "log": "/tmp/ops-dependency-boundaries-final.log",
+      "log_sha256": "7fb3a27cc69db042265416c1bb0b33ff3bb5ed4c16bccd540a41398243f8fc5f"
+    },
+    {
+      "command": "AI_NAME=Codex PYTHONPATH=.orchestrator timeout 120 /tmp/ops-dependency-contract-venv/bin/python -m pytest -q .orchestrator/rewrite/test_task_state_store.py",
+      "exit_code": 0,
+      "tests": 24,
+      "seconds": 5.1,
+      "log": "/tmp/ops-dependency-store.log",
+      "log_sha256": "8dab9734c96c96d9f281cc14da216933f8a27d03fd580b0489b1aa116a5e4170"
+    },
+    {
+      "command": "AI_NAME=Codex PATH=\"/tmp/ops-dependency-contract-venv/bin:$PATH\" timeout 300 scripts/run-acceptance.sh smoke",
+      "exit_code": 0,
+      "log": "/tmp/ops-dependency-smoke-rebased.log",
+      "note": "Full smoke completed on rebased source. Existing deploy_nonprod_vm suite reports 23 passed and 2 skipped; required real sandbox cases were separately run with zero skips.",
+      "log_sha256": "7e922d1093dee5782c7989c5b9faea6a9538a08163f47733609b26046a5db179"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /tmp/ops-dependency-contract-venv/bin/python",
+      "exit_code": 0,
+      "log": "/tmp/ops-dependency-python-provision.log",
+      "note": "Checkout-scoped distribution and pytest import verified from a foreign cwd without PYTHONPATH.",
+      "log_sha256": "e45463be8695d61a524af62ca83a304d8b88eb2c823dbc614a3aea95532d8c6f"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
     }
-  ],
-  "verification_in_progress": [
-    "Full scripts.test_ai_status suite",
-    "Status command runtime pin suite",
-    "Smoke acceptance in isolated venv with existing issuer requirements",
-    "Refresh branch onto current dev and repository checks"
   ],
   "activation_handoff": {
     "status": "pending_review_merge_and_existing_promoter_activation",
@@ -63,8 +103,33 @@
     "actual_fe_dispatch_proven": false
   },
   "delivery": {
-    "status": "implementation_validation_in_progress",
+    "status": "ready_for_independent_exact_head_review",
     "independent_review": "pending",
-    "merge_commit": null
-  }
+    "merge_commit": null,
+    "binding_location": "Canonical task delivery_binding at governed owner handoff; review/merge records are not fabricated in this pre-review manifest."
+  },
+  "original_source_base": "656c2beeb7e9c62e446cd5f6ec7be0105cd7c3b5",
+  "validation_anchor_commit": "5155cdbacbda568816150f388515253d61c9fdec",
+  "validated_file_sha256": {
+    "scripts/ai_status.py": "6065e8301934da77feec7aa13d650f92a109cae84a124982c97df17efaa39965",
+    "scripts/test_ai_status.py": "6ac293c49e3e4c209d94371822903fe94f50a45e5e0d268e013ed68f4f63fe6f",
+    "docs/operations/auto-worker-readiness.md": "34f22c34501f0f652560402a8811f034ec3ad5ecde9b35ce39971f34c2875344"
+  },
+  "initial_failed_attempts": [
+    {
+      "log": "/tmp/ops-dependency-smoke.log",
+      "exit_code": 1,
+      "reason": "System Python is externally managed; reran in isolated venv."
+    },
+    {
+      "log": "/tmp/ops-dependency-smoke-venv.log",
+      "exit_code": 1,
+      "reason": "Missing issuer PyJWT dependency; installed existing issuer requirements and reran full smoke."
+    },
+    {
+      "log": "/tmp/ops-dependency-boundaries.log",
+      "exit_code": 1,
+      "reason": "System Python lacked pytest for the pytest-style TaskStore suite; reran with venv and the correct test runner."
+    }
+  ]
 }
