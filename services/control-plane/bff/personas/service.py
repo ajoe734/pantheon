@@ -702,6 +702,18 @@ def _persona_provisioning_store():
     return _PERSONA_PROVISIONING_STORE
 
 
+# --- PERSONA_OWNER_SERVICE_ACTOR_ID ---
+# The single explicit service principal this module presents to strict owners.
+# Capital binds a mutation body's ``actor_id`` to the verified token subject (or
+# a verified delegated actor claim, which this BFF never mints), so the owner
+# transport subject/service claims, the ``X-Pantheon-Service`` header and the
+# coordinator's mutation ``actor_id`` must all be the same identity or every
+# Capital write fails closed with 403 ACTOR_ID_MISMATCH before persistence.
+# The human requester stays audit metadata (``requested_by``); it is never
+# asserted as the authenticated actor.
+PERSONA_OWNER_SERVICE_ACTOR_ID = "control-plane-bff"
+
+
 # --- _PersonaOwnerHttpTransport ---
 class _PersonaOwnerHttpTransport:
     """Strict synchronous transport to canonical provisioning owner APIs."""
@@ -738,8 +750,8 @@ class _PersonaOwnerHttpTransport:
 
         now = int(time.time())
         claims: dict[str, Any] = {
-            "sub": "control-plane-bff",
-            "service": "control-plane-bff",
+            "sub": PERSONA_OWNER_SERVICE_ACTOR_ID,
+            "service": PERSONA_OWNER_SERVICE_ACTOR_ID,
             "tenant_id": self.tenant_id,
             "allowed_tenants": [self.tenant_id],
             "roles": [
@@ -777,7 +789,7 @@ class _PersonaOwnerHttpTransport:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "X-Tenant-Id": tenant_id,
-            "X-Pantheon-Service": "control-plane-bff",
+            "X-Pantheon-Service": PERSONA_OWNER_SERVICE_ACTOR_ID,
         }
         idempotency_key = str(
             (payload or {}).get("idempotency_key")
@@ -792,7 +804,9 @@ class _PersonaOwnerHttpTransport:
             # Deployment and the other dev owner APIs use the repository's
             # bounded structured token in permissive dev mode.  Capital is the
             # exception: it remains strict and receives the JWT above.
-            headers["Authorization"] = "Bearer control-plane-bff:operator,admin,service"
+            headers["Authorization"] = (
+                f"Bearer {PERSONA_OWNER_SERVICE_ACTOR_ID}:operator,admin,service"
+            )
         return headers
 
     _OWNER_ENVIRONMENTS = {
@@ -1329,6 +1343,9 @@ def _reconcile_persona_provisioning_compensation(
             30,
             int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
         ),
+        # Compensation writes go to the same strict owners as forward
+        # coordination, so it must present the same authenticated principal.
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
     )
     try:
         reconciled = coordinator.reconcile_failure_compensation(record)
@@ -3994,6 +4011,9 @@ def _coordinate_persona_create(
             30,
             int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
         ),
+        # Owner mutations are authenticated as this BFF service principal; the
+        # requesting human stays audit metadata inside each owner payload.
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
     )
     try:
         active = coordinator.coordinate(active)
