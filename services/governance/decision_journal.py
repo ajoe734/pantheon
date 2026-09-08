@@ -27,6 +27,7 @@ SD §5.3 scorecard requirements satisfied:
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import time
 import uuid
@@ -34,7 +35,89 @@ from pathlib import Path
 import threading
 from typing import Any, Dict, List, Optional, Sequence
 
-from .record_store import GovernanceRecordStore, build_governance_record_store
+from .record_store import (
+    GovernanceRecordStore,
+    JsonGovernanceRecordStore,
+    build_governance_record_store,
+)
+
+
+class _FileLock:
+    def __init__(self, lock_path: Path) -> None:
+        self.lock_path = lock_path
+        self._fd: Optional[int] = None
+
+    def __enter__(self) -> _FileLock:
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o666)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        try:
+            if self._fd is not None:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+                os.close(self._fd)
+        finally:
+            self._fd = None
+
+
+class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
+    """Atomic file-locked and multi-instance coordinating JSON record store."""
+
+    def __init__(self, storage_path: str | Path, *, id_fields: Sequence[str]) -> None:
+        super().__init__(storage_path, id_fields=id_fields)
+        self._flock_path = self.storage_path.with_name(f".{self.storage_path.name}.flock")
+
+    def _file_lock(self) -> _FileLock:
+        return _FileLock(self._flock_path)
+
+    def _refresh(self) -> None:
+        if self.storage_path.exists():
+            self._load()
+        else:
+            self._records = {}
+
+    def get(self, record_id: str) -> Dict[str, Any] | None:
+        with self._file_lock(), self._lock:
+            self._refresh()
+            return super().get(record_id)
+
+    def list_all(self) -> list[Dict[str, Any]]:
+        with self._file_lock(), self._lock:
+            self._refresh()
+            return super().list_all()
+
+    def put(self, record: Dict[str, Any]) -> None:
+        with self._file_lock(), self._lock:
+            self._refresh()
+            super().put(record)
+
+    def insert_if_absent(
+        self, record: Dict[str, Any]
+    ) -> tuple[bool, Dict[str, Any]]:
+        with self._file_lock(), self._lock:
+            self._refresh()
+            return super().insert_if_absent(record)
+
+    def compare_and_set(
+        self,
+        expected_record: Dict[str, Any],
+        record: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]:
+        with self._file_lock(), self._lock:
+            self._refresh()
+            return super().compare_and_set(expected_record, record)
+
+    def delete(self, record_id: str) -> bool:
+        with self._file_lock(), self._lock:
+            self._refresh()
+            key = str(record_id)
+            if key in self._records:
+                del self._records[key]
+                self._save()
+                return True
+            return False
 
 
 def _delete_record(store: Any, record_id: str) -> bool:
@@ -151,6 +234,18 @@ class DecisionJournalStores:
         self._tx_lock = threading.RLock()
 
 
+def _build_journal_record_store(
+    storage_path: Path,
+    *,
+    table: str,
+    id_fields: Sequence[str],
+) -> GovernanceRecordStore:
+    backend = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower()
+    if backend in ("", "json"):
+        return CoordinatingJsonGovernanceRecordStore(storage_path, id_fields=id_fields)
+    return build_governance_record_store(storage_path, table=table, id_fields=id_fields)
+
+
 def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores:
     """Build the durable stores backing decision journal writes.
 
@@ -161,22 +256,22 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
     """
 
     base = Path(data_dir)
-    entries = build_governance_record_store(
+    entries = _build_journal_record_store(
         base / "decision_journal_entries.json",
         table="governance.decision_journal_entries",
         id_fields=_ENTRY_ID_FIELDS,
     )
-    idempotency = build_governance_record_store(
+    idempotency = _build_journal_record_store(
         base / "decision_journal_idempotency.json",
         table="governance.decision_journal_idempotency",
         id_fields=_IDEMPOTENCY_ID_FIELDS,
     )
-    audit = build_governance_record_store(
+    audit = _build_journal_record_store(
         base / "decision_journal_audit.json",
         table="governance.decision_journal_audit",
         id_fields=_AUDIT_ID_FIELDS,
     )
-    outbox = build_governance_record_store(
+    outbox = _build_journal_record_store(
         base / "decision_journal_outbox.json",
         table="governance.decision_journal_outbox",
         id_fields=_OUTBOX_ID_FIELDS,
@@ -233,75 +328,76 @@ def create_entry(
       canonical persisted record idempotently.
     """
 
-    clean_id = str(entry_id or "").strip()
-    if not clean_id:
-        raise DecisionJournalValidationError("entry_id is required")
+    with stores._tx_lock:
+        clean_id = str(entry_id or "").strip()
+        if not clean_id:
+            raise DecisionJournalValidationError("entry_id is required")
 
-    clean_tenant = str(tenant_id or "").strip()
-    clean_actor = str(actor_id or "").strip()
-    clean_user = str(user_id or clean_actor).strip()
+        clean_tenant = str(tenant_id or "").strip()
+        clean_actor = str(actor_id or "").strip()
+        clean_user = str(user_id or clean_actor).strip()
 
-    record = {
-        "id": clean_id,
-        "title": _validate_title(title),
-        "body": _validate_body(body),
-        "tags": list(tags or []),
-        "linkedStrategyIds": list(linked_strategy_ids or []),
-        "linkedPersonaIds": list(linked_persona_ids or []),
-        "visibility": str(visibility or "private"),
-        "createdAt": created_at,
-        "updatedAt": created_at,
-        "version": 1,
-        "createdBy": clean_actor,
-        "actor_id": clean_actor,
-        "tenant_id": clean_tenant,
-        "tenantId": clean_tenant,
-        "user_id": clean_user,
-        "userId": clean_user,
-        "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
-        "persistenceMode": _persistence_mode(),
-    }
-    inserted, canonical = stores.entries.insert_if_absent(record)
-    if not inserted:
-        # Existing record found. Verify ownership: must match tenant and actor/user
-        existing_tenant = str(canonical.get("tenant_id") or canonical.get("tenantId") or "").strip()
-        existing_actor = str(canonical.get("createdBy") or canonical.get("actor_id") or "").strip()
-        existing_user = str(canonical.get("user_id") or canonical.get("userId") or existing_actor).strip()
+        record = {
+            "id": clean_id,
+            "title": _validate_title(title),
+            "body": _validate_body(body),
+            "tags": list(tags or []),
+            "linkedStrategyIds": list(linked_strategy_ids or []),
+            "linkedPersonaIds": list(linked_persona_ids or []),
+            "visibility": str(visibility or "private"),
+            "createdAt": created_at,
+            "updatedAt": created_at,
+            "version": 1,
+            "createdBy": clean_actor,
+            "actor_id": clean_actor,
+            "tenant_id": clean_tenant,
+            "tenantId": clean_tenant,
+            "user_id": clean_user,
+            "userId": clean_user,
+            "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+            "persistenceMode": _persistence_mode(),
+        }
+        inserted, canonical = stores.entries.insert_if_absent(record)
+        if not inserted:
+            # Existing record found. Verify ownership: must match tenant and actor/user
+            existing_tenant = str(canonical.get("tenant_id") or canonical.get("tenantId") or "").strip()
+            existing_actor = str(canonical.get("createdBy") or canonical.get("actor_id") or "").strip()
+            existing_user = str(canonical.get("user_id") or canonical.get("userId") or existing_actor).strip()
 
-        # Check tenant match
-        tenant_match = (existing_tenant == clean_tenant)
-        # Check actor/user match
-        actor_match = (existing_actor == clean_actor) or (existing_user == clean_user)
+            # Check tenant match
+            tenant_match = (existing_tenant == clean_tenant)
+            # Check actor/user match
+            actor_match = (existing_actor == clean_actor) or (existing_user == clean_user)
 
-        if not tenant_match or not actor_match:
-            # Supplied ID collision across different actors or tenants!
-            raise DecisionJournalCollisionError(
-                f"Supplied entry ID {clean_id!r} collides with an existing record owned by another principal or tenant."
-            )
-        # Authorized idempotent recreate by same owner in same tenant
+            if not tenant_match or not actor_match:
+                # Supplied ID collision across different actors or tenants!
+                raise DecisionJournalCollisionError(
+                    f"Supplied entry ID {clean_id!r} collides with an existing record owned by another principal or tenant."
+                )
+            # Authorized idempotent recreate by same owner in same tenant
+            return _project(canonical)
+
+        # Publish outbox event
+        if stores.outbox is not None:
+            try:
+                event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
+                stores.outbox.put({
+                    "event_id": event_id,
+                    "id": event_id,
+                    "event_type": "decision_journal.entry.created",
+                    "aggregate_type": "DecisionJournalEntry",
+                    "aggregate_id": clean_id,
+                    "tenant_id": clean_tenant,
+                    "actor_id": clean_actor,
+                    "user_id": clean_user,
+                    "timestamp": created_at,
+                    "data": _project(canonical),
+                })
+            except Exception:
+                _delete_record(stores.entries, clean_id)
+                raise
+
         return _project(canonical)
-
-    # Publish outbox event
-    if stores.outbox is not None:
-        try:
-            event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
-            stores.outbox.put({
-                "event_id": event_id,
-                "id": event_id,
-                "event_type": "decision_journal.entry.created",
-                "aggregate_type": "DecisionJournalEntry",
-                "aggregate_id": clean_id,
-                "tenant_id": clean_tenant,
-                "actor_id": clean_actor,
-                "user_id": clean_user,
-                "timestamp": created_at,
-                "data": _project(canonical),
-            })
-        except Exception:
-            _delete_record(stores.entries, clean_id)
-            raise
-
-    return _project(canonical)
 
 
 def get_entry(
@@ -311,6 +407,7 @@ def get_entry(
     tenant_id: Optional[str] = None,
     actor_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    include_unscoped_legacy: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Retrieve a single decision journal entry by ID with scope enforcement."""
     clean_id = str(entry_id or "").strip()
@@ -321,23 +418,28 @@ def get_entry(
     if record is None:
         return None
 
+    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+    clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
+
     # Tenant isolation
-    if tenant_id is not None:
-        clean_tenant = str(tenant_id).strip()
-        record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-        if record_tenant != clean_tenant:
+    if record_tenant:
+        if clean_tenant is not None and clean_tenant != record_tenant:
+            return None
+    else:
+        if clean_tenant is not None and not include_unscoped_legacy:
             return None
 
     # User private visibility isolation
     visibility = str(record.get("visibility") or "private").strip().lower()
-    if visibility == "private" and (actor_id or user_id):
-        target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
-        record_actors = {
-            str(record.get("createdBy") or "").strip(),
-            str(record.get("actor_id") or "").strip(),
-            str(record.get("userId") or "").strip(),
-            str(record.get("user_id") or "").strip(),
-        } - {""}
+    target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
+    record_actors = {
+        str(record.get("createdBy") or "").strip(),
+        str(record.get("actor_id") or "").strip(),
+        str(record.get("userId") or "").strip(),
+        str(record.get("user_id") or "").strip(),
+    } - {""}
+
+    if visibility == "private" and target_actors:
         if not (record_actors & target_actors):
             return None
 
@@ -364,6 +466,17 @@ def list_entries(
     filtered: List[Dict[str, Any]] = []
     for record in all_records:
         record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+        record_actors = {
+            str(record.get("createdBy") or "").strip(),
+            str(record.get("actor_id") or "").strip(),
+            str(record.get("userId") or "").strip(),
+            str(record.get("user_id") or "").strip(),
+        } - {""}
+        visibility = str(record.get("visibility") or "private").strip().lower()
+
+        # An unscoped legacy row is one missing both tenant and author
+        is_legacy = (not record_tenant and not record_actors)
+
         if clean_tenant is not None:
             if record_tenant:
                 if record_tenant != clean_tenant:
@@ -376,16 +489,12 @@ def list_entries(
             # Caller has NO tenant scope: exclude any record that belongs to a specific tenant
             if record_tenant:
                 continue
+            if is_legacy and not include_unscoped_legacy:
+                continue
 
-        visibility = str(record.get("visibility") or "private").strip().lower()
-        if visibility == "private" and target_actors:
-            record_actors = {
-                str(record.get("createdBy") or "").strip(),
-                str(record.get("actor_id") or "").strip(),
-                str(record.get("userId") or "").strip(),
-                str(record.get("user_id") or "").strip(),
-            } - {""}
-            if not (record_actors & target_actors):
+        # Tenant-only query without authenticated actor must not see private actor records
+        if clean_tenant is not None and visibility == "private" and record_tenant:
+            if not target_actors or not (record_actors & target_actors):
                 continue
 
         filtered.append(_project(record))
@@ -517,142 +626,159 @@ def patch_entry(
             actor_id=clean_actor if clean_actor else None,
         )
 
-    try:
+    with stores._tx_lock:
         before: Optional[Dict[str, Any]] = None
         after: Optional[Dict[str, Any]] = None
         event_id: Optional[str] = None
         audit_id: Optional[str] = None
-        for _attempt in range(_MAX_CAS_ATTEMPTS):
-            stored = stores.entries.get(clean_id)
-            if stored is None:
-                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
-                return None
-
-            # Enforce tenant isolation on mutation
-            if clean_tenant:
-                rec_tenant = str(stored.get("tenant_id") or stored.get("tenantId") or "").strip()
-                if not rec_tenant or rec_tenant != clean_tenant:
+        try:
+            for _attempt in range(_MAX_CAS_ATTEMPTS):
+                stored = stores.entries.get(clean_id)
+                if stored is None:
                     stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
                     return None
 
-            # Enforce user private scope on mutation
-            visibility = str(stored.get("visibility") or "private").strip().lower()
-            if visibility == "private" and (clean_actor or clean_user):
-                target_actors = {clean_actor, clean_user} - {""}
+                # Enforce tenant isolation on mutation
+                rec_tenant = str(stored.get("tenant_id") or stored.get("tenantId") or "").strip()
                 record_actors = {
                     str(stored.get("createdBy") or "").strip(),
                     str(stored.get("actor_id") or "").strip(),
                     str(stored.get("userId") or "").strip(),
                     str(stored.get("user_id") or "").strip(),
                 } - {""}
-                if not (record_actors & target_actors):
+
+                # Unscoped legacy entry without author cannot be mutated via ordinary patch
+                if not rec_tenant and not record_actors:
                     stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
                     return None
 
-            before = dict(stored)
-            candidate = dict(before)
-            for field in _PATCHABLE_FIELDS:
-                if field not in patch:
-                    continue
-                value = patch[field]
-                if value is None and field in _LIST_FIELDS:
-                    candidate[field] = []
-                elif value is not None:
-                    candidate[field] = value
-            if "title" in patch and patch["title"] is not None:
-                candidate["title"] = _validate_title(candidate["title"])
-            if "body" in patch and patch["body"] is not None:
-                candidate["body"] = _validate_body(candidate["body"])
-            candidate["updatedAt"] = patched_at
-            candidate["version"] = int(before.get("version") or 0) + 1
-            candidate["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
-            candidate["persistenceMode"] = _persistence_mode()
+                # Tenant match check: tenant-scoped records require exact matching tenant;
+                # unscoped entries cannot be claimed or modified by mismatched tenant.
+                if rec_tenant != clean_tenant:
+                    stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                    return None
 
-            updated, canonical = stores.entries.compare_and_set(before, candidate)
-            if updated:
-                after = canonical if canonical is not None else candidate
-                break
-        else:
-            stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
-            raise DecisionJournalConcurrencyError(
-                f"decision journal entry {clean_id} could not be updated after "
-                f"{_MAX_CAS_ATTEMPTS} compare-and-set attempts"
+                # Enforce user private scope on mutation
+                visibility = str(stored.get("visibility") or "private").strip().lower()
+                if visibility == "private":
+                    target_actors = {clean_actor, clean_user} - {""}
+                    if not target_actors or not (record_actors & target_actors):
+                        stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                        return None
+
+                before = dict(stored)
+                candidate = dict(before)
+                for field in _PATCHABLE_FIELDS:
+                    if field not in patch:
+                        continue
+                    value = patch[field]
+                    if value is None and field in _LIST_FIELDS:
+                        candidate[field] = []
+                    elif value is not None:
+                        candidate[field] = value
+                if "title" in patch and patch["title"] is not None:
+                    candidate["title"] = _validate_title(candidate["title"])
+                if "body" in patch and patch["body"] is not None:
+                    candidate["body"] = _validate_body(candidate["body"])
+                candidate["updatedAt"] = patched_at
+                candidate["version"] = int(before.get("version") or 0) + 1
+                candidate["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
+                candidate["persistenceMode"] = _persistence_mode()
+
+                before_projected = _project(before)
+                after_projected = _project(candidate)
+                diff = _diff(before_projected, after_projected)
+
+                # 1. Publish outbox event FIRST (if configured)
+                if stores.outbox is not None:
+                    event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
+                    stores.outbox.put({
+                        "event_id": event_id,
+                        "id": event_id,
+                        "event_type": "decision_journal.entry.updated",
+                        "aggregate_type": "DecisionJournalEntry",
+                        "aggregate_id": clean_id,
+                        "tenant_id": clean_tenant,
+                        "actor_id": clean_actor,
+                        "user_id": clean_user,
+                        "timestamp": patched_at,
+                        "data": after_projected,
+                        "diff": diff,
+                    })
+
+                # 2. Append audit event
+                audit_id = f"aud-decision-journal-{uuid.uuid4().hex[:12]}"
+                audit = {
+                    "auditId": audit_id,
+                    "action": "governance.decision_journal.merge_patch",
+                    "target": {"type": "DecisionJournalEntry", "id": clean_id},
+                    "actorId": clean_actor,
+                    "actor_id": clean_actor,
+                    "tenantId": clean_tenant,
+                    "tenant_id": clean_tenant,
+                    "userId": clean_user,
+                    "user_id": clean_user,
+                    "correlationId": correlation_id,
+                    "idempotencyKey": idempotency_key,
+                    "recordedAt": patched_at,
+                    "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+                    "persistenceMode": _persistence_mode(),
+                    "diff": diff,
+                }
+                stores.audit.put({"audit_id": audit_id, **audit})
+
+                # 3. Commit entry via CAS
+                updated, canonical = stores.entries.compare_and_set(before, candidate)
+                if updated:
+                    after = canonical if canonical is not None else candidate
+                    break
+
+                # CAS failed: clean up staged outbox and audit before next attempt
+                if event_id and stores.outbox is not None:
+                    _delete_record(stores.outbox, event_id)
+                    event_id = None
+                if audit_id and stores.audit is not None:
+                    _delete_record(stores.audit, audit_id)
+                    audit_id = None
+            else:
+                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
+                raise DecisionJournalConcurrencyError(
+                    f"decision journal entry {clean_id} could not be updated after "
+                    f"{_MAX_CAS_ATTEMPTS} compare-and-set attempts"
+                )
+
+            # 4. Mark idempotency succeeded
+            stores.idempotency.put(
+                {
+                    "idempotency_key": scoped_idem_key,
+                    "raw_idempotency_key": idempotency_key,
+                    "tenant_id": clean_tenant,
+                    "actor_id": clean_actor,
+                    "user_id": clean_user,
+                    "request_hash": request_hash,
+                    "patch_id": audit_id,
+                    "status": _IDEM_STATUS_SUCCEEDED,
+                    "entry": after_projected,
+                    "audit": audit,
+                }
             )
 
-        before_projected = _project(before)
-        after_projected = _project(after)
-        diff = _diff(before_projected, after_projected)
-
-        # 1. Publish outbox event FIRST (if configured)
-        if stores.outbox is not None:
-            event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
-            stores.outbox.put({
-                "event_id": event_id,
-                "id": event_id,
-                "event_type": "decision_journal.entry.updated",
-                "aggregate_type": "DecisionJournalEntry",
-                "aggregate_id": clean_id,
-                "tenant_id": clean_tenant,
-                "actor_id": clean_actor,
-                "user_id": clean_user,
-                "timestamp": patched_at,
-                "data": after_projected,
-                "diff": diff,
-            })
-
-        # 2. Append audit event
-        audit_id = f"aud-decision-journal-{uuid.uuid4().hex[:12]}"
-        audit = {
-            "auditId": audit_id,
-            "action": "governance.decision_journal.merge_patch",
-            "target": {"type": "DecisionJournalEntry", "id": clean_id},
-            "actorId": clean_actor,
-            "actor_id": clean_actor,
-            "tenantId": clean_tenant,
-            "tenant_id": clean_tenant,
-            "userId": clean_user,
-            "user_id": clean_user,
-            "correlationId": correlation_id,
-            "idempotencyKey": idempotency_key,
-            "recordedAt": patched_at,
-            "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
-            "persistenceMode": _persistence_mode(),
-            "diff": diff,
-        }
-        stores.audit.put({"audit_id": audit_id, **audit})
-
-        # 3. Mark idempotency succeeded
-        stores.idempotency.put(
-            {
-                "idempotency_key": scoped_idem_key,
-                "raw_idempotency_key": idempotency_key,
-                "tenant_id": clean_tenant,
-                "actor_id": clean_actor,
-                "user_id": clean_user,
-                "request_hash": request_hash,
-                "patch_id": audit_id,
-                "status": _IDEM_STATUS_SUCCEEDED,
-                "entry": after_projected,
-                "audit": audit,
-            }
-        )
-
-        return {"status": "updated", "entry": after_projected, "audit": audit}
-    except Exception:
-        if before is not None and after is not None:
+            return {"status": "updated", "entry": after_projected, "audit": audit}
+        except Exception:
+            if event_id and stores.outbox is not None:
+                _delete_record(stores.outbox, event_id)
+            if audit_id and stores.audit is not None:
+                _delete_record(stores.audit, audit_id)
+            if before is not None and after is not None:
+                try:
+                    stores.entries.compare_and_set(after, before)
+                except Exception:
+                    pass
             try:
-                stores.entries.compare_and_set(after, before)
+                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
             except Exception:
                 pass
-        if event_id and stores.outbox is not None:
-            _delete_record(stores.outbox, event_id)
-        if audit_id and stores.audit is not None:
-            _delete_record(stores.audit, audit_id)
-        try:
-            stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
-        except Exception:
-            pass
-        raise
+            raise
 
 
 def list_audit_events(

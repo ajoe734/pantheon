@@ -598,5 +598,21 @@ sys.exit(0)
             self.assertEqual(ids[0], ids[1], "same principal/request/key created two durable entries concurrently")
 
 
+    def test_unscoped_detail_must_not_disclose_private_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stores = build_decision_journal_stores(tmp)
+            create_entry(
+                stores,
+                entry_id="private-a",
+                title="Synthetic",
+                body="original",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            adapter = DecisionJournalOwnerAdapter(stores=stores)
+            self.assertIsNone(adapter.get_decision_journal_entry("private-a"))
+
+
 if __name__ == "__main__":
     unittest.main()

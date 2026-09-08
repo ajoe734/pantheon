@@ -192,90 +192,188 @@ class JournalMigrationEngine:
             existing = self.destination_stores.entries.get(entry_id)
             if existing is not None:
                 existing_tenant = str(existing.get("tenant_id") or existing.get("tenantId") or "").strip()
-                if existing_tenant and existing_tenant != target_tenant_id:
-                    # Cross-tenant destination collision: entry ID already exists for another tenant
-                    report.total_conflicts += 1
-                    report.items.append(
-                        asdict(
-                            JournalMigrationItem(
-                                source_id=entry_id,
-                                entry_id=entry_id,
-                                checksum=checksum,
-                                source_tenant=source_tenant,
-                                target_tenant=target_tenant_id,
-                                target_actor=actor,
-                                status="conflict",
-                                error=f"Destination ID collision across tenants: existing record owned by {existing_tenant!r}, target is {target_tenant_id!r}",
-                                disposed=False,
+                if existing_tenant:
+                    if existing_tenant != target_tenant_id:
+                        # Cross-tenant destination collision: entry ID already exists for another tenant
+                        report.total_conflicts += 1
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="conflict",
+                                    error=f"Destination ID collision across tenants: existing record owned by {existing_tenant!r}, target is {target_tenant_id!r}",
+                                    disposed=False,
+                                )
                             )
                         )
-                    )
-                    continue
+                        continue
 
-                # Verify complete principal ownership:
-                existing_actor = str(existing.get("createdBy") or existing.get("actor_id") or "").strip()
-                existing_user = str(existing.get("userId") or existing.get("user_id") or existing_actor).strip()
-                source_actor = str(actor).strip()
-                source_user = str(user_id).strip()
-                if (existing_actor and source_actor and existing_actor != source_actor) or \
-                   (existing_user and source_user and existing_user != source_user):
-                    report.total_conflicts += 1
-                    report.items.append(
-                        asdict(
-                            JournalMigrationItem(
-                                source_id=entry_id,
-                                entry_id=entry_id,
-                                checksum=checksum,
-                                source_tenant=source_tenant,
-                                target_tenant=target_tenant_id,
-                                target_actor=actor,
-                                status="conflict",
-                                error=f"Principal ownership mismatch in destination: existing owned by {existing_actor!r}/{existing_user!r}, source is {source_actor!r}/{source_user!r}",
-                                disposed=False,
+                    # Verify complete principal ownership:
+                    existing_actor = str(existing.get("createdBy") or existing.get("actor_id") or "").strip()
+                    existing_user = str(existing.get("userId") or existing.get("user_id") or existing_actor).strip()
+                    source_actor = str(actor).strip()
+                    source_user = str(user_id).strip()
+                    if (existing_actor and source_actor and existing_actor != source_actor) or \
+                       (existing_user and source_user and existing_user != source_user):
+                        report.total_conflicts += 1
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="conflict",
+                                    error=f"Principal ownership mismatch in destination: existing owned by {existing_actor!r}/{existing_user!r}, source is {source_actor!r}/{source_user!r}",
+                                    disposed=False,
+                                )
                             )
                         )
-                    )
-                    continue
+                        continue
 
-                existing_checksum = compute_journal_row_checksum(existing)
-                if existing_checksum == checksum:
-                    report.total_skipped += 1
-                    disposed_status = False
-                    if dispose_source and not dry_run and source_store is not None:
-                        disposed_status = _dispose_source_record(source_store, entry_id)
-                    report.items.append(
-                        asdict(
-                            JournalMigrationItem(
-                                source_id=entry_id,
-                                entry_id=entry_id,
-                                checksum=checksum,
-                                source_tenant=source_tenant,
-                                target_tenant=target_tenant_id,
-                                target_actor=actor,
-                                status="skipped_identical",
-                                disposed=disposed_status,
+                    existing_checksum = compute_journal_row_checksum(existing)
+                    if existing_checksum == checksum:
+                        report.total_skipped += 1
+                        disposed_status = False
+                        if dispose_source and not dry_run and source_store is not None:
+                            disposed_status = _dispose_source_record(source_store, entry_id)
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="skipped_identical",
+                                    disposed=disposed_status,
+                                )
                             )
                         )
-                    )
-                    continue
+                        continue
+                    else:
+                        report.total_conflicts += 1
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="conflict",
+                                    error=f"Checksum mismatch with existing entry in destination (existing: {existing_checksum})",
+                                    disposed=False,
+                                )
+                            )
+                        )
+                        continue
                 else:
-                    report.total_conflicts += 1
-                    report.items.append(
-                        asdict(
-                            JournalMigrationItem(
-                                source_id=entry_id,
-                                entry_id=entry_id,
-                                checksum=checksum,
-                                source_tenant=source_tenant,
-                                target_tenant=target_tenant_id,
-                                target_actor=actor,
-                                status="conflict",
-                                error=f"Checksum mismatch with existing entry in destination (existing: {existing_checksum})",
-                                disposed=False,
+                    # Existing destination entry is an unscoped legacy row: scope and migrate it
+                    if dry_run:
+                        report.total_migrated += 1
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="dry_run_pending",
+                                    disposed=False,
+                                )
                             )
                         )
-                    )
-                    continue
+                        continue
+                    else:
+                        migrated_row = dict(existing)
+                        migrated_row["tenant_id"] = target_tenant_id
+                        migrated_row["tenantId"] = target_tenant_id
+                        migrated_row["createdBy"] = actor
+                        migrated_row["actor_id"] = actor
+                        migrated_row["userId"] = user_id
+                        migrated_row["user_id"] = user_id
+                        migrated_row["updatedAt"] = created_at
+                        migrated_row["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
+                        self.destination_stores.entries.put(migrated_row)
+
+                        if self.destination_stores.audit is not None:
+                            audit_id = f"aud-mig-{uuid.uuid4().hex[:12]}"
+                            self.destination_stores.audit.put({
+                                "audit_id": audit_id,
+                                "action": "governance.decision_journal.legacy_scoped",
+                                "target": {"type": "DecisionJournalEntry", "id": entry_id},
+                                "actorId": actor,
+                                "actor_id": actor,
+                                "tenantId": target_tenant_id,
+                                "tenant_id": target_tenant_id,
+                                "userId": user_id,
+                                "user_id": user_id,
+                                "recordedAt": created_at,
+                                "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+                                "diff": {
+                                    "changes": [
+                                        {"field": "tenant_id", "before": "", "after": target_tenant_id},
+                                        {"field": "createdBy", "before": existing.get("createdBy") or "", "after": actor},
+                                    ]
+                                },
+                            })
+
+                        # Readback verification with destination scope
+                        readback = get_entry(self.destination_stores, entry_id, tenant_id=target_tenant_id, actor_id=actor)
+                        if readback is None:
+                            report.total_conflicts += 1
+                            report.items.append(
+                                asdict(
+                                    JournalMigrationItem(
+                                        source_id=entry_id,
+                                        entry_id=entry_id,
+                                        checksum=checksum,
+                                        source_tenant=source_tenant,
+                                        target_tenant=target_tenant_id,
+                                        target_actor=actor,
+                                        status="conflict",
+                                        error="Destination readback verification failed after scoping legacy row",
+                                        disposed=False,
+                                    )
+                                )
+                            )
+                            continue
+
+                        disposed_status = False
+                        if dispose_source and not dry_run and source_store is not None:
+                            disposed_status = _dispose_source_record(source_store, entry_id)
+
+                        report.total_migrated += 1
+                        report.audit_events_recorded += 1
+                        report.items.append(
+                            asdict(
+                                JournalMigrationItem(
+                                    source_id=entry_id,
+                                    entry_id=entry_id,
+                                    checksum=checksum,
+                                    source_tenant=source_tenant,
+                                    target_tenant=target_tenant_id,
+                                    target_actor=actor,
+                                    status="migrated",
+                                    disposed=disposed_status,
+                                )
+                            )
+                        )
+                        checkpoint_key = f"{target_tenant_id}:{actor}:{entry_id}"
+                        self._checkpoint[checkpoint_key] = checksum
+                        continue
 
             # Checkpoint check for resumability with destination readback
             checkpoint_key = f"{target_tenant_id}:{actor}:{entry_id}"
@@ -287,7 +385,7 @@ class JournalMigrationEngine:
                     dest_tenant = str(dest_entry.get("tenant_id") or dest_entry.get("tenantId") or "").strip()
                     dest_actor = str(dest_entry.get("createdBy") or dest_entry.get("actor_id") or "").strip()
                     dest_user = str(dest_entry.get("userId") or dest_entry.get("user_id") or dest_actor).strip()
-                    if (not dest_tenant or dest_tenant == target_tenant_id) and \
+                    if dest_tenant == target_tenant_id and \
                        (not dest_actor or dest_actor == actor or dest_user == user_id):
                         if compute_journal_row_checksum(dest_entry) == checksum:
                             report.total_skipped += 1

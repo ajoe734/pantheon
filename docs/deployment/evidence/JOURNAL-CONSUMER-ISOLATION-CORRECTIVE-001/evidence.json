@@ -11,19 +11,19 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: compare_and_set on GovernanceRecordStore with version tracking, _MAX_CAS_ATTEMPTS retry budget, thread-safe stores transaction lock, and atomic rollback on audit/outbox failures (delete record on create outbox failure, CAS-restore to previous version and delete outbox event on patch audit failure; outbox errors trigger rollback before audit is committed)."
+      "implementation": "services/governance/decision_journal.py: _tx_lock acquired for critical write operations; staged outbox and audit events are emitted before entry compare_and_set commit. In case of CAS retry or error, staged outbox and audit events are cleaned up via _delete_record, preventing failed patches from contaminating concurrent interleaved patches."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, oldValues, and newValues and puts append-only record to audit store. Audit failures roll back entry mutation."
+      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, and tenant_id before entry CAS commit. Audit failures abort transaction without committing entry."
     },
     "durable_outbox_streaming": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types. Outbox errors are never swallowed and trigger rollback."
+      "implementation": "services/governance/decision_journal.py: outbox record store initialized and populated on entry creation and updates with decision_journal.entry.* event types with explicit tenant_id, actor_id, and user_id scoping. Outbox errors abort mutation before entry CAS commit."
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "Scoped get_entry, list_entries, create_entry, patch_entry, list_audit_events, and list_outbox_events across actor_id and tenant_id. Cross-tenant access strictly denied; private records isolated to authorized actor; unscoped queries cannot view tenant-scoped records; Agora daily brief enforces tenant/user isolation."
+      "implementation": "Scoped get_entry, list_entries, create_entry, patch_entry, list_audit_events, and list_outbox_events across actor_id, user_id, and tenant_id. Unscoped adapter detail queries fail closed against private/tenant-scoped records; tenant-only list queries without actor do not disclose private records; patch with missing tenant on tenant-scoped record is rejected; cross-tenant patches and idempotency conflicts fail closed."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -31,15 +31,15 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, author preservation, destination tenant collision detection (rejecting cross-tenant or different-principal collisions), dry-run mode, checkpointing bound to tenant/actor/entry ID with readback verification, verified source disposition via _dispose_source_record readback, and inventory/evidence reporting."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, author preservation, destination tenant collision detection (rejecting cross-tenant or different-principal collisions), dry-run mode, checkpointing bound to tenant/actor/entry ID with readback verification, verified source disposition via _dispose_source_record readback, destination legacy scoping for existing unscoped rows with verified tenant readback, and inventory/evidence reporting."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
-      "implementation": "Ordinary patch fails closed on unscoped legacy rows (missing scope cannot be claimed by tenant patch) pending governed migration."
+      "implementation": "Ordinary patch fails closed on unscoped legacy rows (missing scope cannot be claimed by tenant patch) pending governed migration; list_entries excludes legacy rows by default unless include_unscoped_legacy=True."
     },
     "fresh_process_restart_parity": {
       "status": "satisfied",
-      "implementation": "Restart parity verified with real subprocess restarts (subprocess.run); backing stores persist to JSON/Postgres via build_decision_journal_stores; DomainDecisionJournalReaderPort and JsonGovernanceRecordStore automatically reflect fresh on-disk writes."
+      "implementation": "CoordinatingJsonGovernanceRecordStore uses POSIX file locking (fcntl.flock) and cache invalidation on get/list_all/put/insert_if_absent/compare_and_set/delete to guarantee that multiple long-lived store instances across processes and threads coordinate safely without cache clobbering or losing committed records."
     }
   },
   "old_writer_retirement": {
@@ -83,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": "python3 -m unittest",
-        "tests": 20,
+        "tests": 26,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": "python3 -m unittest",
-        "tests": 19,
+        "tests": 20,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -100,6 +100,14 @@
         "name": "tests/agora_write_owner/",
         "runner": "python3 -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-codex-review-a0262f9.py",
+        "runner": "python3",
+        "tests": 7,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -121,7 +129,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 72
+    "total_tests_passed": 86
   },
   "artifacts": [
     "services/governance/decision_journal.py",

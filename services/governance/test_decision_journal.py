@@ -677,6 +677,142 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertEqual(report.total_conflicts, 1)
         self.assertIsNone(get_entry(self.stores, "source-foreign-tenant", tenant_id="tenant-alpha"))
 
+    def test_tenant_without_actor_must_not_list_private_record(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="private-scoped-entry",
+            title="Synthetic",
+            body="original",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        self.assertEqual(list_entries(self.stores, tenant_id="tenant-alpha"), [])
+
+    def test_legacy_without_scope_must_not_be_globally_visible(self) -> None:
+        self.stores.entries.put(
+            {"id": "legacy-unscoped", "title": "Synthetic legacy", "body": "private", "visibility": "private"}
+        )
+        self.assertEqual(list_entries(self.stores), [])
+
+    def test_patch_without_tenant_must_not_change_tenant_record(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="private-tenant-entry",
+            title="Synthetic",
+            body="original",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        result = patch_entry(
+            self.stores,
+            "private-tenant-entry",
+            patch={"body": "changed without tenant"},
+            actor_id="alice",
+            tenant_id=None,
+            idempotency_key="missing-tenant-key",
+            request_hash="missing-tenant-hash",
+            patched_at="2026-09-08T00:01:00Z",
+        )
+        self.assertIsNone(result)
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        entry = get_entry(fresh, "private-tenant-entry", tenant_id="tenant-alpha", actor_id="alice")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["body"], "original")
+        self.assertEqual(fresh.audit.list_all(), [])
+
+    def test_independent_owner_instances_must_not_lose_committed_entries(self) -> None:
+        other = build_decision_journal_stores(self.tmp_dir.name)
+        create_entry(
+            self.stores,
+            entry_id="first-inst-entry",
+            title="First",
+            body="First body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        create_entry(
+            other,
+            entry_id="second-inst-entry",
+            title="Second",
+            body="Second body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        self.assertEqual(
+            {r["id"] for r in list_entries(fresh, tenant_id="tenant-alpha", actor_id="alice")},
+            {"first-inst-entry", "second-inst-entry"},
+        )
+
+    def test_failed_patch_must_not_survive_in_successful_interleaved_patch(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="interleaved-target",
+            title="Synthetic",
+            body="original",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        original_put = self.stores.outbox.put
+        interleaved = False
+
+        def outbox_put(record):
+            nonlocal interleaved
+            if not interleaved:
+                interleaved = True
+                patch_entry(
+                    self.stores,
+                    "interleaved-target",
+                    patch={"title": "Successful second patch"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="successful-patch-b",
+                    request_hash="successful-patch-b",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+                raise OSError("synthetic first transaction outbox failure")
+            return original_put(record)
+
+        with unittest.mock.patch.object(self.stores.outbox, "put", side_effect=outbox_put):
+            with self.assertRaises(OSError):
+                patch_entry(
+                    self.stores,
+                    "interleaved-target",
+                    patch={"body": "uncommitted first patch"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="failed-patch-a",
+                    request_hash="failed-patch-a",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        row = get_entry(fresh, "interleaved-target", tenant_id="tenant-alpha", actor_id="alice")
+        self.assertEqual(row["title"], "Successful second patch")
+        self.assertEqual(row["body"], "original", "failed mutation persisted through a concurrent successful patch")
+
+    def test_migration_must_scope_existing_selected_owner_legacy_row(self) -> None:
+        source = {
+            "id": "legacy-destination-row",
+            "title": "Synthetic",
+            "body": "Legacy",
+            "createdBy": "alice",
+            "visibility": "private",
+        }
+        self.stores.entries.put(source)
+        report = JournalMigrationEngine(self.stores).run_migration(
+            [source],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+        )
+        migrated = get_entry(self.stores, "legacy-destination-row", tenant_id="tenant-alpha", actor_id="alice")
+        self.assertIsNotNone(migrated, report.to_dict())
+        self.assertEqual(migrated["createdBy"], "alice")
+
     def test_migration_does_not_claim_disposal_without_source(self) -> None:
         report = JournalMigrationEngine(self.stores).run_migration(
             [{"id": "legacy-no-source", "title": "Synthetic", "author": "alice"}],
