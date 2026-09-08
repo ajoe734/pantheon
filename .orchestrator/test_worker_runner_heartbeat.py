@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 
 from common import canonical_task_state_identity_for_paths, status_command_runtime_record_from_env
 from rewrite.task_state_store import append_state_commit, load_snapshot
+import runtime_state
 
 
 def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None,
@@ -45,7 +46,9 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
     for key in ("PANTHEON_TASK_STATE_STORE_MODE", "PANTHEON_TASK_STATE_EVENT_LOG",
                 "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON"):
         env.pop(key, None)
-    journal = central.parent / "test-task-store" / "events.jsonl"
+    task_state_dir = central.parent / "runtime" / "task-state"
+    task_state_dir.mkdir(parents=True, exist_ok=True)
+    journal = task_state_dir / "events.jsonl"
     projected = json.loads((central / "ai-status.json").read_text())
     if task is None:
         task = deepcopy((projected.get("tasks") or [{"id": "RUNNER-FIXTURE", "owner": "Codex",
@@ -173,6 +176,7 @@ def _write_status(path: Path) -> None:
     (path / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
     (path / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
     (path / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "runtime-admission.lock").touch()
 
 
 class TestDeriveAgent(unittest.TestCase):
@@ -1907,42 +1911,77 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             for repository in (central, command_root, worktree):
                 _init_repo(repository)
             _write_status(central)
+            state_file = central / ".orchestrator" / "worker-runtime" / "state.json"
+            state_file.write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
+
             runtime.mkdir()
             task_state_dir = runtime / "task-state"
             task_state_dir.mkdir()
             event_log = task_state_dir / "task-state-events-v2.jsonl"
-            head = task_state_dir / f"{event_log.name}.head.json"
-            lock = task_state_dir / f"{event_log.name}.lock"
-            event_log.write_text("event-0\n", encoding="utf-8")
-            head.write_text('{"seq": 0}\n', encoding="utf-8")
-            lock.touch()
+            append_state_commit(
+                event_log,
+                {"tasks": [{"id": "INIT-TASK", "status": "todo"}]},
+                source="test-fixture-init",
+            )
 
             live_config = runtime / "live-supervisor.json"
             live_config.write_text('{"live": true}\n', encoding="utf-8")
             coord_config = central / ".orchestrator" / "config.json"
-            state_file = central / ".orchestrator" / "worker-runtime" / "state.json"
 
             program = (
                 "import os, pathlib, sys, json\n"
-                "state, event, head, live_conf, coord_conf = map(pathlib.Path, sys.argv[1:6])\n"
-                "# 1. Atomic write to state.json under worker-runtime succeeds\n"
-                "tmp_state = state.with_name(state.name + '.tmp')\n"
-                "tmp_state.write_text(json.dumps({'version': 2, 'worker_committed': True}))\n"
-                "os.replace(tmp_state, state)\n"
-                "# 2. Append to event log and atomic replace head.json under task-state succeeds\n"
-                "with event.open('a') as h: h.write('worker-event-1\\n')\n"
-                "tmp_head = head.with_name(head.name + '.tmp')\n"
-                "tmp_head.write_text(json.dumps({'seq': 1, 'worker_committed': True}))\n"
-                "os.replace(tmp_head, head)\n"
-                "# 3. Attempt to mutate protected siblings outside task-state fails (EROFS)\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "from rewrite.task_state_store import append_state_commit, load_snapshot\n"
+                "import runtime_state\n"
+                "central, event_log_path, live_conf, coord_conf = map(pathlib.Path, sys.argv[2:6])\n"
+                "config = {\n"
+                "    'status_root': str(central),\n"
+                "    'paths': {\n"
+                "        'status_file': str(central / 'ai-status.json'),\n"
+                "        'state_file': str(central / '.orchestrator' / 'worker-runtime' / 'state.json'),\n"
+                "        'approval_queue': str(central / '.orchestrator' / 'worker-runtime' / 'approval-queue.json'),\n"
+                "    }\n"
+                "}\n"
+                "# 1. Real runtime_state API mutations inside bwrap succeed\n"
+                "state = runtime_state.load_runtime_state(config)\n"
+                "state['auto_commit_archive']['pending_token'] = 'worker-sandbox-token-1'\n"
+                "runtime_state.save_runtime_state(config, state)\n"
+                "# 2. Real TaskStore CAS commit inside bwrap succeeds\n"
+                "snap = load_snapshot(event_log_path)\n"
+                "snap['state']['tasks'].append({'id': 'SANDBOX-TASK-1', 'status': 'in_progress'})\n"
+                "append_state_commit(event_log_path, snap['state'], source='worker-sandbox-test')\n"
+                "# 3. Outer runtime siblings are protected against mutation and atomic replacement (EROFS)\n"
+                "dummy_file = pathlib.Path('/tmp/dummy_attacker.txt')\n"
+                "dummy_file.write_text('payload')\n"
                 "denied = 0\n"
-                "try: live_conf.write_text('mutated')\n"
-                "except OSError: denied += 1\n"
-                "try: coord_conf.write_text('mutated')\n"
-                "except OSError: denied += 1\n"
-                "sys.exit(0 if denied == 2 else 43)\n"
+                "try:\n"
+                "    live_conf.write_text('mutated')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "try:\n"
+                "    (live_conf.parent / 'live-supervisor.json.tmp').write_text('mutated')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "try:\n"
+                "    os.replace(dummy_file, live_conf)\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "try:\n"
+                "    os.link(dummy_file, live_conf.parent / 'live-supervisor-link.json')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "try:\n"
+                "    os.unlink(live_conf)\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "try:\n"
+                "    coord_conf.write_text('mutated')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "sys.exit(0 if denied == 6 else 43)\n"
             )
 
+            orch_dir = str(Path(__file__).resolve().parent)
             with mock.patch.dict(
                 os.environ,
                 {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
@@ -1953,9 +1992,9 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                         sys.executable,
                         "-c",
                         program,
-                        str(state_file),
+                        orch_dir,
+                        str(central),
                         str(event_log),
-                        str(head),
                         str(live_config),
                         str(coord_config),
                     ],
@@ -1965,12 +2004,149 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                     sandbox_binary=_FUNCTIONAL_BWRAP,
                 )
             proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(json.loads(state_file.read_text())["worker_committed"], True)
-            self.assertIn("worker-event-1", event_log.read_text())
-            self.assertEqual(json.loads(head.read_text())["worker_committed"], True)
+            self.assertEqual(proc.returncode, 0, f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+            config = {
+                "status_root": str(central),
+                "paths": {
+                    "status_file": str(central / "ai-status.json"),
+                    "state_file": str(state_file),
+                    "approval_queue": str(central / ".orchestrator" / "worker-runtime" / "approval-queue.json"),
+                },
+            }
+            reloaded_state = runtime_state.load_runtime_state(config)
+            self.assertEqual(
+                reloaded_state.get("auto_commit_archive", {}).get("pending_token"),
+                "worker-sandbox-token-1",
+            )
+            reloaded_snapshot = load_snapshot(event_log)
+            task_ids = [t["id"] for t in reloaded_snapshot["state"]["tasks"]]
+            self.assertIn("SANDBOX-TASK-1", task_ids)
             self.assertEqual(live_config.read_text(), '{"live": true}\n')
             self.assertEqual(coord_config.read_text(), "{}")
+
+    def test_bind_worker_sandbox_rejects_unqualified_layout_missing_task_state_dir(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-unqualified-missing-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            # Event log placed directly in runtime without a dedicated 'task-state' directory
+            event_log = runtime / "events.jsonl"
+            event_log.write_text("event\n", encoding="utf-8")
+            (runtime / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (runtime / f"{event_log.name}.lock").touch()
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "unqualified task-state layout: event log must reside in a dedicated 'task-state' directory"):
+                    wr.bind_worker_sandbox(
+                        ["python3", "-c", "pass"],
+                        command_root=command_root,
+                        workspace_path=worktree,
+                        coordination_root=central,
+                        sandbox_binary="/usr/bin/bwrap",
+                    )
+
+    def test_bind_worker_sandbox_rejects_unqualified_layout_with_extraneous_files(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-unqualified-extra-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "events.jsonl"
+            event_log.write_text("event\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.lock").touch()
+            # Extraneous non-task-state sibling inside task-state directory
+            (task_state_dir / "live-supervisor.json").write_text("{}\n", encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "unqualified task-state layout: directory .* contains non-task-state entry"):
+                    wr.bind_worker_sandbox(
+                        ["python3", "-c", "pass"],
+                        command_root=command_root,
+                        workspace_path=worktree,
+                        coordination_root=central,
+                        sandbox_binary="/usr/bin/bwrap",
+                    )
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_bind_worker_sandbox_preserves_overlapping_workspace_under_outer_runtime(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-overlapping-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            runtime = root / "runtime"
+            # Workspace is nested inside outer runtime
+            worktree = runtime / "nested-worktree"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir(parents=True)
+            event_log = task_state_dir / "events.jsonl"
+            event_log.write_text("event\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.lock").touch()
+
+            runtime_sibling = runtime / "live-supervisor.json"
+            runtime_sibling.write_text('{"live": true}\n', encoding="utf-8")
+
+            program = (
+                "import os, pathlib, sys\n"
+                "ws, sib = map(pathlib.Path, sys.argv[1:3])\n"
+                "# 1. Worktree nested under outer_runtime is writable\n"
+                "test_file = ws / 'output.txt'\n"
+                "test_file.write_text('ok')\n"
+                "tmp_file = ws / 'output.txt.tmp'\n"
+                "tmp_file.write_text('ok-atomic')\n"
+                "os.replace(tmp_file, test_file)\n"
+                "# 2. Outer runtime sibling remains read-only\n"
+                "try:\n"
+                "    sib.write_text('mutated')\n"
+                "    sys.exit(42)\n"
+                "except OSError:\n"
+                "    sys.exit(0)\n"
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    [sys.executable, "-c", program, str(worktree), str(runtime_sibling)],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary=_FUNCTIONAL_BWRAP,
+                )
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual((worktree / "output.txt").read_text(), "ok-atomic")
+            self.assertEqual(runtime_sibling.read_text(), '{"live": true}\n')
 
     @unittest.skipUnless(
         _FUNCTIONAL_BWRAP,
@@ -2177,7 +2353,7 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         proc = self.run_worker(mutate_receipt=review, code="print('read-only review fixture')")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(self.marker.exists())
-        journal = self.root / "test-task-store/events.jsonl"
+        journal = self.root / "runtime" / "task-state" / "events.jsonl"
         self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
         self.assertEqual(json.loads(self.runner_status.read_text())["role"], "reviewer")
 
@@ -2214,7 +2390,7 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertIn("Read-only file system", proc.stderr)
         self.assertFalse(self.marker.exists())
         self.assertEqual(json.loads(self.runner_status.read_text())["role"], "owner_finalize")
-        journal = self.root / "test-task-store/events.jsonl"
+        journal = self.root / "runtime" / "task-state" / "events.jsonl"
         self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
 
     def test_revocation_after_first_binding_before_popen_has_zero_effect(self):

@@ -425,6 +425,12 @@ def _append_task_store_mounts(
     if not parent.is_dir() or not event_path.is_file():
         raise RuntimeError(f"task-state store is unavailable: {event_path}")
 
+    # Reject unqualified legacy/mixed layouts: event log must live in a dedicated task-state directory
+    if parent.name != "task-state":
+        raise RuntimeError(
+            f"unqualified task-state layout: event log must reside in a dedicated 'task-state' directory: {parent}"
+        )
+
     allowed_names = {
         event_path.name,
         f"{event_path.name}.head.json",
@@ -439,24 +445,50 @@ def _append_task_store_mounts(
         if required.is_symlink() or not required.is_file():
             raise RuntimeError(f"task-state governed file is unavailable: {required}")
 
+    # Enforce that the dedicated task-state directory contains ONLY allowed task-state files
+    # and atomic publication temporary files. Any unrelated sibling file (e.g. live-supervisor.json)
+    # renders the layout unqualified and must be rejected.
+    for child in parent.iterdir():
+        if child.name in allowed_names:
+            continue
+        if (
+            child.is_file()
+            and not child.is_symlink()
+            and child.name.startswith(f"{event_path.name}.")
+            and (".tmp" in child.name or child.name.endswith(".tmp"))
+        ):
+            continue
+        raise RuntimeError(
+            f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
+        )
+
     # The dedicated task-state directory houses only task-state store files and
     # their atomic replacement temporary files. Keep the outer runtime (config,
     # keys, interpreter and unrelated entries) read-only at directory level,
     # and bind only the dedicated data directory writable without enumerating
     # transient publication temporary files.
     outer_runtime = parent.parent
-    if outer_runtime not in (Path("/"), parent):
-        def _conflicts_with(target: Path | None) -> bool:
-            if target is None:
-                return False
-            try:
-                target.resolve().relative_to(outer_runtime.resolve())
-                return True
-            except ValueError:
-                return False
+    outer_symlink = _first_symlink_component(outer_runtime)
+    if outer_symlink is not None or outer_runtime.is_symlink():
+        raise RuntimeError(
+            f"task-state store outer runtime cannot contain a symlink: {outer_symlink or outer_runtime}"
+        )
+    if not outer_runtime.is_dir() or outer_runtime in (Path("/"), parent):
+        raise RuntimeError(f"task-state store outer runtime is invalid: {outer_runtime}")
 
-        if not _conflicts_with(workspace_path) and not _conflicts_with(coordination_root):
-            bwrap_cmd.extend(["--ro-bind-try", str(outer_runtime), str(outer_runtime)])
+    # Directory-level protection for configured runtime siblings:
+    # Outer runtime is mounted read-only at directory level.
+    bwrap_cmd.extend(["--ro-bind-try", str(outer_runtime), str(outer_runtime)])
+
+    # If workspace_path is inside outer_runtime (overlapping outer-root case), re-assert
+    # writable mount because bubblewrap applies later mounts on top of earlier mounts.
+    if workspace_path is not None:
+        try:
+            workspace_path.resolve().relative_to(outer_runtime.resolve())
+            bwrap_cmd.extend(["--bind", str(workspace_path.resolve()), str(workspace_path.resolve())])
+        except ValueError:
+            pass
+
     bwrap_cmd.extend(["--bind", str(parent), str(parent)])
 
 

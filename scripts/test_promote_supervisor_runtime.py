@@ -1132,3 +1132,123 @@ def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
     # Live config should be restored to incumbent
     restored = json.loads(live_config.read_text(encoding="utf-8"))
     assert restored["paths"]["state_file"] == str(old_state)
+
+
+def test_migrate_storage_paths_fails_closed_when_store_lock_held(tmp_path: Path) -> None:
+    import fcntl
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    old_lock = runtime / "events.jsonl.lock"
+    old_lock.touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    # Hold the lock exclusively in the current process (simulating concurrent writer / supervisor)
+    lock_fd = os.open(old_lock, os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="task-state store lock .* is held by another process"):
+            promotion._migrate_storage_paths(incumbent, rendered)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+    # Authority preserved at old location
+    assert old_log.exists()
+    assert not new_log.exists()
+
+
+def test_migrate_storage_paths_preflight_rejects_symlinks(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    symlink_src = runtime / "symlink_events.jsonl"
+    target_src = runtime / "real_events.jsonl"
+    target_src.write_text("event data\n", encoding="utf-8")
+    symlink_src.symlink_to(target_src)
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(symlink_src)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    with pytest.raises(ValueError, match="contains symlink"):
+        promotion._migrate_storage_paths(incumbent, rendered)
+
+
+def test_migrate_storage_paths_preflight_rejects_target_collision(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    new_log.parent.mkdir(parents=True, exist_ok=True)
+    # Target file collision
+    new_log.write_text("collision data\n", encoding="utf-8")
+
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    with pytest.raises(RuntimeError, match="collision: .* already exists"):
+        promotion._migrate_storage_paths(incumbent, rendered)
+
+    # Old log unchanged
+    assert old_log.read_text(encoding="utf-8") == "event data\n"
+    assert new_log.read_text(encoding="utf-8") == "collision data\n"
+
+
+def test_migrate_storage_paths_atomic_rollback_on_rename_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    real_replace = os.replace
+
+    def faulty_replace(src, dst):
+        if "head.json" in str(src):
+            raise OSError("simulated disk error on head rename")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", faulty_replace)
+
+    with pytest.raises(OSError, match="simulated disk error"):
+        promotion._migrate_storage_paths(incumbent, rendered)
+
+    # All files rolled back to old path, preserving single authority
+    assert old_log.exists()
+    assert (runtime / "events.jsonl.head.json").exists()
+    assert not new_log.exists()
+
+
+def test_migrate_storage_paths_enforces_0700_permissions(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    promotion._migrate_storage_paths(incumbent, rendered)
+    # Check directory permissions is 0o700
+    dir_mode = stat.S_IMODE(new_log.parent.stat().st_mode)
+    assert dir_mode == 0o700

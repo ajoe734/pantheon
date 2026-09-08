@@ -103,21 +103,21 @@
       ".orchestrator/supervisor_watchdog.py": "d370b73df896947dd73c09a4d7585eb0bb4ca77d1df4e4c4e9479e47f3334223",
       ".orchestrator/test_common.py": "e2d8a310dcee3461206213429f8b2abda5c96cd5766ad147ccfe905831eaaa02",
       ".orchestrator/test_provider_permissions.py": "79944558ca4a933234ebfe8917623656a095abcbe0eb6b0ca0fd939168d35aa4",
-      ".orchestrator/test_worker_runner_heartbeat.py": "aab8e91ff6f92894649c3eff9d514b4e34ceebd7bb20700f6c4a87901a5cdf1f",
-      ".orchestrator/worker_runner.py": "ce8919631c3fc3e27af37f8369a03722edb60cba31b1421177cfba3fd287a744",
+      ".orchestrator/test_worker_runner_heartbeat.py": "f481c80833110b47c9aab463c2da8542bb073f6497a35abad096dcdc6a8b9bf0",
+      ".orchestrator/worker_runner.py": "25c4fefde33727ae7137dbae18cad7b608a735b5a863198bbd9404031441c4f1",
       "scripts/ai_status.py": "fd6e42eb8599f1b0ce45feeef808278f108ed24a716df7f4040858718ba57ab0",
-      "scripts/promote_supervisor_runtime.py": "0516a5906faa95d634848150bff2ea9ec3df7f5506589ee1159c6ab06c8d0dd4",
+      "scripts/promote_supervisor_runtime.py": "cb4d7259e725a294188af9cf95792d5eeeed6350e9d72dd7114f8b327207c205",
       "scripts/provision_live_supervisor_config.py": "c2252528253ffb8958f4cfa00b6165853bef3e9ee7de9532adb5665e57fd21ed",
       "scripts/supervisor_runtime_health.py": "760af2944435f74dd1406ce69f5040541f918b9ac902b71361d437567a24587b",
       "scripts/test_ai_status.py": "024d7100d78a0271c886d273ead10f04c01ff60e2135f2cb7203ced29b676674",
-      "scripts/test_promote_supervisor_runtime.py": "53502d2a3b20307be0239eff166cb23850cf241071a53fda7f471f57b792042f",
+      "scripts/test_promote_supervisor_runtime.py": "f1dedef2f508c54efb6325bd58be10096048ac1677358ad85e376673d5ee3c6f",
       "scripts/test_provision_live_supervisor_config.py": "09536e917286516557280c3b9b9800abba6dad8372460c29c3a787fb50d10fb2",
-      "docs/operations/worker-atomic-state-mounts.md": "093d4ed7fd10892d9225a10217be813fc67f5e2958e8acf1050677ed7c69fd7e"
+      "docs/operations/worker-atomic-state-mounts.md": "abf2b384c5b8dbf24da017f24f55fdddbe3b1eacfc64097f2a4a31a9fef90690"
     },
     "passed": [
       {
         "command": "pytest .orchestrator/test_worker_runner_heartbeat.py",
-        "result": "66 passed",
+        "result": "69 passed",
         "exit_status": 0
       },
       {
@@ -142,7 +142,7 @@
       },
       {
         "command": "pytest scripts/test_promote_supervisor_runtime.py",
-        "result": "45 passed",
+        "result": "50 passed",
         "exit_status": 0
       },
       {
@@ -156,5 +156,11 @@
         "exit_status": 0
       }
     ]
+  },
+  "review_remediation": {
+    "defect_1_mount_builder_layout_qualification_and_sibling_protection": "Enforced parent.name == 'task-state' in _append_task_store_mounts, rejecting legacy or mixed directory layouts. Verified parent directory contains only allowed TaskStore files and transient publication temp files. Applied directory-level read-only protection (--ro-bind-try) on outer_runtime preventing atomic replacement or linking over sibling files (e.g. live-supervisor.json) while preserving --bind writeability on nested leased worktrees.",
+    "defect_2_single_writer_cutover_and_watchdog_fencing": "Acquired runtime-admission.lock via fcntl.flock in _replace_supervisor_locked covering shutdown, migration, queue marker, config write, and supervisor launch. Added lock drain in _migrate_storage_paths acquiring nonblocking exclusive flock on events.jsonl.lock before cutover, failing closed if held by another process. Enforced 0o700 permissions on new parent directories.",
+    "defect_3_atomic_rollback_and_preflight": "Implemented _preflight_storage_migration verifying absolute paths, symlinks, target collisions, and same-filesystem (st_dev) constraints. Added _fsync_dir for durable directory publication. Implemented reverse-order file rollback with directory fsync on partial rename or launch failure, preserving single recoverable authority.",
+    "defect_4_unit_tests_and_doc_correction": "Replaced dummy string appends in test_worker_runner_heartbeat.py with real TaskStore CAS (append_state_commit) and real runtime_state APIs inside bwrap. Added unit tests for layout qualification, extraneous file rejection, and overlapping worktrees. Added unit tests in test_promote_supervisor_runtime.py for lock contention failure, preflight collision/symlink checks, 0700 permissions, and partial rename rollback. Corrected worker-atomic-state-mounts.md runbook claims and pytest verification command selectors."
   }
 }
