@@ -893,10 +893,11 @@ class WorkflowContractTests(unittest.TestCase):
             / "canonical-review-attestation-audit.yml"
         ).read_text(encoding="utf-8")
 
-    def test_workflow_runs_trusted_base_for_pr_and_comment_changes(self) -> None:
-        self.assertIn("pull_request_target:", self.workflow)
-        self.assertIn("issue_comment:", self.workflow)
-        self.assertIn('cron: "*/15 * * * *"', self.workflow)
+    def test_workflow_runs_trusted_base_for_manual_dispatch(self) -> None:
+        self.assertIn("workflow_dispatch:", self.workflow)
+        self.assertNotIn("pull_request_target:", self.workflow)
+        self.assertNotIn("issue_comment:", self.workflow)
+        self.assertNotIn('cron: "*/15 * * * *"', self.workflow)
         self.assertIn(
             "ref: ${{ steps.snapshot.outputs.base_sha }}",
             self.workflow,
@@ -906,10 +907,6 @@ class WorkflowContractTests(unittest.TestCase):
             self.workflow,
         )
         self.assertIn("persist-credentials: false", self.workflow)
-        self.assertIn(
-            'select(.base.ref == "dev" or .base.ref == "master")',
-            self.workflow,
-        )
 
     def test_tooling_delivery_uses_its_dedicated_review_gate(self) -> None:
         # The diagnostic signed-attestation audit is product-only.  Tooling
