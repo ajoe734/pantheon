@@ -1181,12 +1181,66 @@ def _validate_create_body(
             )
 
 
+def _resolve_originating_correlation(
+    workshop_id: Optional[str],
+    *,
+    workshop_store: Optional[Any] = None,
+    trace_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    fallback_id: Optional[str] = None,
+) -> str:
+    """Resolve originating interaction trace/correlation.
+
+    Prefers explicit request trace/correlation ID, then queries the workshop store
+    for the latest event's trace_id or correlation_id, and falls back to workshop/plan ID.
+    """
+    if trace_id and str(trace_id).strip():
+        return str(trace_id).strip()
+    if correlation_id and str(correlation_id).strip():
+        return str(correlation_id).strip()
+
+    store = workshop_store
+    if store is None:
+        try:
+            import main as bff_main
+            store = getattr(bff_main, "workshop_store", None)
+        except Exception:
+            store = None
+    if store is None:
+        try:
+            from services.control_plane.bff import main as bff_main
+            store = getattr(bff_main, "workshop_store", None)
+        except Exception:
+            store = None
+
+    if workshop_id and store is not None and hasattr(store, "list_events"):
+        try:
+            events = store.list_events(workshop_id)
+            if events:
+                for ev in reversed(events):
+                    ev_trace = ev.get("trace_id") or ev.get("correlation_id")
+                    if ev_trace:
+                        return str(ev_trace).strip()
+        except Exception:
+            pass
+
+    if workshop_id:
+        return f"workshop:{workshop_id}"
+    if fallback_id:
+        return f"plan:{fallback_id}"
+    return ""
+
+
 def _build_plan(
     body: ResearchPlanCreateRequest,
     workshop_id: str,
     plan_id: str,
     now: str,
     scope: Any,
+    *,
+    workshop_store: Optional[Any] = None,
+    trace_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     stages: List[Dict[str, Any]] = []
     for stage in body.stages:
@@ -1225,11 +1279,19 @@ def _build_plan(
             normalized["blocking_reasons"] = stage.blocking_reasons
         stages.append(normalized)
 
+    resolved_correlation = _resolve_originating_correlation(
+        workshop_id,
+        workshop_store=workshop_store,
+        trace_id=trace_id,
+        correlation_id=correlation_id,
+        fallback_id=plan_id,
+    )
+
     plan: Dict[str, Any] = {
         "spec_version": "1.0",
         "plan_id": plan_id,
         "workshop_id": workshop_id,
-        "correlation_id": f"workshop:{workshop_id}" if workshop_id else f"plan:{plan_id}",
+        "correlation_id": resolved_correlation,
         "strategy_id": body.strategy_id,
         "strategy_spec_registry_id": body.strategy_spec_registry_id,
         "tenant_id": scope.tenant_id,
@@ -1389,6 +1451,8 @@ class AgoraResearchRouteContext:
     require_write_role: Optional[Callable[..., None]] = None
     store: Any = None
     dispatcher: Optional[ResearchDispatcher] = None
+    workshop_store: Optional[Any] = None
+    dataset_store: Optional[Any] = None
 
     def error_code_enum(self) -> Any:
         try:

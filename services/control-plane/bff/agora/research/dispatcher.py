@@ -62,8 +62,19 @@ def compute_artifact_checksum(payload: Any) -> str:
     return hashlib.sha256(serialized).hexdigest()
 
 
-def resolve_governed_dataset(stage: Dict[str, Any], plan: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Resolve canonical input_refs into typed execution inputs (dataset) for research execution owners."""
+def resolve_governed_dataset(
+    stage: Dict[str, Any],
+    plan: Optional[Dict[str, Any]] = None,
+    *,
+    dataset_store: Optional[Any] = None,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve canonical input_refs into typed execution inputs through canonical dataset owner.
+
+    Deletes synthetic fixtures from the natural path. Fails closed when references
+    are missing, invalid, or unavailable. Never synthesizes fake OHLCV records.
+    """
     if stage.get("dataset"):
         return stage["dataset"]
     if plan and plan.get("dataset"):
@@ -79,74 +90,78 @@ def resolve_governed_dataset(stage: Dict[str, Any], plan: Optional[Dict[str, Any
     if not valid_refs:
         return None
 
-    stage_type = str(stage.get("stage_type") or "").strip()
+    resolved_tenant = str(
+        tenant_id
+        or stage.get("tenant_id")
+        or (plan.get("tenant_id") if plan else "")
+        or ""
+    ).strip()
+    resolved_user = str(
+        user_id
+        or stage.get("user_id")
+        or (plan.get("user_id") if plan else "")
+        or ""
+    ).strip()
+
+    # Consult canonical dataset store/owner
+    store = dataset_store
+    if store is None:
+        try:
+            from ..dataset_extraction.router import _default_store
+            store = _default_store()
+        except Exception:
+            try:
+                from services.control_plane.bff.agora.dataset_extraction.router import _default_store
+                store = _default_store()
+            except Exception:
+                store = None
+
+    if store is None:
+        return None
+
     strategy_id = str((plan.get("strategy_id") if plan else None) or stage.get("strategy_id") or "strategy-default")
 
-    if stage_type in ("prototype_backtest", "vectorbt"):
-        start = date(2026, 1, 1)
-        records = []
-        for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
-            for i in range(35):
-                d = (start + timedelta(days=i)).isoformat()
-                p = base + i * 0.5
-                records.append({
-                    "instrument": inst,
-                    "date": d,
-                    "open": p,
-                    "high": p + 1.0,
-                    "low": p - 0.5,
-                    "close": p + 0.2,
-                    "volume": 1000.0,
-                })
-        return {
-            "dataset_id": valid_refs[0] if valid_refs[0].startswith("dataset:") else f"dataset:{valid_refs[0]}",
-            "strategy_id": strategy_id,
-            "source_dataset_refs": valid_refs,
-            "data_frequency": "daily",
-            "records": records,
-        }
+    for ref in valid_refs:
+        record = None
+        if hasattr(store, "get_by_ref"):
+            record = store.get_by_ref(ref, tenant_id=resolved_tenant, user_id=resolved_user)
+        elif hasattr(store, "get"):
+            clean_id = ref.split(":", 1)[-1] if ":" in ref else ref
+            record = store.get(clean_id, tenant_id=resolved_tenant, user_id=resolved_user)
+            if record is None and clean_id != ref:
+                record = store.get(ref, tenant_id=resolved_tenant, user_id=resolved_user)
+            if record is None and hasattr(store, "_records"):
+                for r in store._records.values():
+                    if resolved_tenant and getattr(r, "tenant_id", None) != resolved_tenant:
+                        continue
+                    if resolved_user and getattr(r, "user_id", None) != resolved_user:
+                        continue
+                    if getattr(r, "evidence_id", None) in (ref, clean_id) or getattr(r, "dataset_version_id", None) in (ref, clean_id):
+                        record = r
+                        break
 
-    if stage_type in ("econometric_validation", "statsmodels"):
-        return {
-            "price_series": {"asset_1": [100.0 + i for i in range(25)], "asset_2": [50.0 + i * 0.5 for i in range(25)]},
-            "factor_series": {"factor_1": [1.0 + (i % 3) for i in range(25)]},
-            "metadata": {
-                "governed": True,
-                "dataset_id": valid_refs[0],
-                "source_dataset_refs": valid_refs,
-            },
-        }
+        if record is not None:
+            content = getattr(record, "content", {}) or {}
+            clean_id = ref.split(":", 1)[-1] if ":" in ref else ref
+            version_id = getattr(record, "dataset_version_id", clean_id)
 
-    if stage_type in ("derivatives_pricing_risk", "quantlib"):
-        return {
-            "dataset_id": valid_refs[0],
-            "source_dataset_refs": valid_refs,
-            "valuation_date": "2026-09-08",
-            "option_specs": [
-                {
-                    "option_id": "opt-1",
-                    "style": "european",
-                    "option_type": "call",
-                    "spot": 100.0,
-                    "strike": 100.0,
-                    "volatility": 0.2,
-                    "risk_free_rate": 0.05,
-                    "dividend_yield": 0.0,
-                    "maturity_days": 30,
-                }
-            ],
-            "bond_specs": [
-                {
-                    "instrument_id": "bond-1",
-                    "face_value": 1000.0,
-                    "coupon_rate": 0.05,
-                    "market_rate": 0.05,
-                    "maturity_years": 5,
-                }
-            ],
-            "metadata": {"governed": True},
-        }
+            if isinstance(content, dict):
+                ds = dict(content)
+            else:
+                ds = {"records": content}
 
+            ds.setdefault("dataset_id", ref if ref.startswith("dataset:") else f"dataset:{ref}")
+            ds.setdefault("strategy_id", strategy_id)
+            ds.setdefault("source_dataset_refs", valid_refs)
+            ds.setdefault("dataset_version_id", version_id)
+            ds.setdefault("tenant_id", getattr(record, "tenant_id", resolved_tenant))
+            ds.setdefault("user_id", getattr(record, "user_id", resolved_user))
+            ds.setdefault("lineage_ref", f"lineage://agora/dataset/{version_id}")
+            if getattr(record, "learning_eligible", None) is not None:
+                ds.setdefault("learning_eligible", record.learning_eligible)
+            return ds
+
+    # Missing, invalid, or unavailable references fail closed
     return None
 
 
@@ -396,6 +411,11 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
             # Preserve observed provenance from backend; do not rewrite to self.mode
             observed_prov = result.provenance if result.provenance in VALID_PROVENANCE_VALUES else self.mode
             result.provenance = observed_prov
+            if self.mode == "real" and observed_prov == "fixture":
+                raise RuntimeError("Generated fixture inputs must never be promoted to real provenance")
+            if observed_prov == "fixture" and getattr(result, "receipt", None) is not None:
+                if str(getattr(result.receipt, "mode", "")).lower() in ("real", "simulation"):
+                    raise RuntimeError("Generated fixture inputs must never be promoted to real provenance")
 
             checksum = next(iter(result.checksums.values()), None)
             backend_ref = self.backend_reference or getattr(result, "backend_job_id", None) or None
@@ -956,11 +976,13 @@ class ResearchDispatcher:
         adapter_registry: Optional[AdapterRegistry] = None,
         publish_progress_fn: Optional[Callable[..., str]] = None,
         utc_now: Optional[Callable[[], str]] = None,
+        dataset_store: Optional[Any] = None,
     ) -> None:
         self.store = store
         self.registry = adapter_registry or AdapterRegistry()
         self.publish_progress = publish_progress_fn
         self.utc_now = utc_now or _utc_now_iso
+        self.dataset_store = dataset_store
 
     def create_outbox_record(
         self,
@@ -1147,7 +1169,13 @@ class ResearchDispatcher:
             or ""
         )
         if not stage.get("dataset"):
-            resolved_ds = resolve_governed_dataset(stage, plan)
+            resolved_ds = resolve_governed_dataset(
+                stage,
+                plan,
+                dataset_store=getattr(self, "dataset_store", None),
+                tenant_id=getattr(scope, "tenant_id", None) or plan.get("tenant_id"),
+                user_id=getattr(scope, "user_id", None) or plan.get("user_id"),
+            )
             if resolved_ds:
                 stage["dataset"] = resolved_ds
 

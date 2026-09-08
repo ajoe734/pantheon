@@ -47,6 +47,8 @@ def create_research_router(
     utc_now: Callable[[], str],
     require_write_role: Optional[Callable[..., None]] = None,
     research_plan_store: Any = None,
+    workshop_store: Any = None,
+    dataset_store: Any = None,
 ) -> APIRouter:
     """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
@@ -55,6 +57,7 @@ def create_research_router(
         store=store,
         publish_progress_fn=publish_research_progress,
         utc_now=utc_now,
+        dataset_store=dataset_store,
     )
     ctx = AgoraResearchRouteContext(
         extract_identity=extract_identity,
@@ -64,6 +67,8 @@ def create_research_router(
         utc_now=utc_now,
         store=store,
         dispatcher=dispatcher,
+        workshop_store=workshop_store,
+        dataset_store=dataset_store,
     )
     router = APIRouter(tags=["agora-research"])
     router.routes.extend(build_candidates_router(ctx).routes)

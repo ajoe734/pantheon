@@ -11,6 +11,7 @@
       "docs/deployment/evidence/AGORA-CHAIN-001/evidence.json",
       "scripts/run_agora_interaction_worker.py",
       "scripts/test_run_agora_interaction_worker.py",
+      "services/control-plane/bff/agora/dataset_extraction/extractor.py",
       "services/control-plane/bff/agora/interaction/router.py",
       "services/control-plane/bff/agora/interaction/runner.py",
       "services/control-plane/bff/agora/interaction/test_worker.py",
@@ -26,6 +27,7 @@
       "services/control-plane/bff/agora/research/router.py",
       "services/control-plane/bff/agora/research/routes/candidates.py",
       "services/control-plane/bff/agora/research/routes/common.py",
+      "services/control-plane/bff/agora/research/routes/plans.py",
       "services/control-plane/bff/agora/research/routes/runs.py",
       "services/control-plane/bff/agora/research/store.py",
       "services/control-plane/bff/agora/router.py",
@@ -51,12 +53,14 @@
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
     "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
+    "canonical_dataset_resolution": "Synthetic dataset resolver completely deleted from resolve_governed_dataset in dispatcher.py. Canonical dataset lookups resolve tenant-scoped records via AgoraDatasetStore (store.get_by_ref), failing closed for missing, invalid, or unavailable references. No mock/fabricated OHLCV records are generated for arbitrary input refs.",
+    "correlation_chain": "Single continuous correlation chain wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer. Server-side correlation resolution via _resolve_originating_correlation looks up originating trace_id or correlation_id from workshop events and request headers, preserving originating interaction trace rather than overwriting with workshop:<id>.",
     "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in \"real\" mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. Research orchestrator HTTP service (/stages/{stage_type}/execute) strictly rejects non-allowlisted stage types (400), enforces presence of governed datasets/inputs without synthetic fabrication (400 on missing input), dispatches only to configured execution owners failing closed (503) for unimplemented or unavailable backends, and strictly preserves simulation provenance (provenance=\"simulation\", receipt.mode=\"simulation\") whenever running stub engines rather than relabeling them as real.",
-    "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer.",
     "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Wired CanonicalPerformanceEventTransport with acknowledged delivery: unacknowledged events when no subscribers are active fail closed (RuntimeError) and surface HTTP 503 retryable; outage failures propagate without marking published and successfully recover on replay; retry-safe durable identity prevents duplicate events. In incidents service, suggestions are durably stored in isolated incident-data volume (/data/incidents/agora_performance.sqlite3) and queried by BFF over HTTP (PANTHEON_INCIDENTS_API_URL), eliminating shared/injected SQLite across containers.",
     "mandatory_deletions": {
       "client_supplied_real_provenance_flags": "Deleted routing.get('backend_mode', 'real') default in _build_run_projection; initial projection defaults to unavailable until authentic ResearchExecutionReceipt is recorded and validated.",
       "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; removed generic synchronous fallback and hard-coded 0.88/0.92 metric generation for arbitrary stage types in research orchestrator; verified fail-closed lease, retry, DLQ, and crash recovery mechanics without fake synchronous fallback.",
+      "synthetic_dataset_resolver": "Deleted mock OHLCV/pricing fabrication in resolve_governed_dataset; unknown refs fail closed via canonical AgoraDatasetStore.",
       "manual_only_suggestion_production": "Replaced manual suggestion injection with EvaluationTelemetryConsumer attached to canonical ThresholdTelemetryIncidentConsumer."
     },
     "rollback_plan": "Disable new consumers and deploy the prior exact paper-safe release without deleting canonical receipts."
@@ -64,52 +68,34 @@
   "verification": {
     "commands": [
       {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py -v",
-        "result": "5 passed, 2 warnings in 2.34s",
-        "executed": 5,
-        "collected": 5
-      },
-      {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest /tmp/test_agora_chain_001_review_natural.py -v",
-        "result": "3 passed, 2 warnings in 3.99s",
+        "command": ".venv-pantheon/bin/python3 -m pytest /tmp/test_agora_chain_001_codex_review.py -vv",
+        "result": "3 passed, 71 warnings in 15.81s",
         "executed": 3,
         "collected": 3
       },
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/research/tests/ -q",
-        "result": "24 passed, 1 warning in 8.98s",
-        "executed": 24,
-        "collected": 24
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py -vv",
+        "result": "6 passed, 272 warnings in 29.66s",
+        "executed": 6,
+        "collected": 6
       },
       {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 9.57s",
-        "executed": 33,
-        "collected": 33
-      },
-      {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -q",
-        "result": "38 passed, 2 warnings in 10.11s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -vv",
+        "result": "38 passed, 2 warnings in 6.87s",
         "executed": 38,
         "collected": 38
       },
       {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest scripts/test_run_agora_interaction_worker.py -q",
-        "result": "14 passed in 16.89s",
-        "executed": 14,
-        "collected": 14
+        "command": ".venv-pantheon/bin/python3 -m pytest services/research/tests/test_research_orchestrator_http_service.py -vv",
+        "result": "15 passed, 2 warnings in 6.60s",
+        "executed": 15,
+        "collected": 15
       },
       {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/incidents/test_main_routes.py services/incidents/test_agora_performance_routes.py -q",
-        "result": "58 passed, 4 warnings in 17.37s",
-        "executed": 58,
-        "collected": 58
-      },
-      {
-        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
-        "result": "18 passed, 139 warnings in 17.81s",
-        "executed": 18,
-        "collected": 18
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py -vv",
+        "result": "11 passed, 71 warnings in 15.52s",
+        "executed": 11,
+        "collected": 11
       },
       {
         "command": "git diff --check",
@@ -126,6 +112,9 @@
     "telemetry_triggered_suggestions_no_new_scheduler": true,
     "mandatory_deletions_verified": true,
     "rollback_safe": true,
+    "p1_synthetic_dataset_resolver_deleted_and_canonical_store_resolution": true,
+    "p1_workshop_originating_trace_correlation_preserved": true,
+    "p1_public_routes_integration_and_unknown_dataset_fail_closed": true,
     "p1_authentic_stage_adapter_negative_controls": true,
     "p1_worker_durable_store_and_authentic_adapter_wiring": true,
     "p1_downstream_suggestion_retryable_surfacing_and_zero_duplicates": true,

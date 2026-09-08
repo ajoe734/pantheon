@@ -4,13 +4,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import uuid
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, Query, Response
 
 from .common import (
     AgoraResearchRouteContext,
     ResearchPlanCreateRequest,
     _CAPABILITY,
     _plan_detail_envelope,
+    _plan_etag,
     _validate_create_body,
     _build_plan,
 )
@@ -58,11 +59,14 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
     def create_workshop_research_plan(
         workshop_id: str,
         body: ResearchPlanCreateRequest,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
     ) -> Dict[str, Any]:
         scope = ctx.write_scope(authorization, x_tenant_id)
         ctx.require_idempotency_key(idempotency_key)
@@ -74,7 +78,16 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
         _validate_create_body(body, workshop_id, ctx.bff_error, ctx.error_code_enum)
         now = ctx.utc_now()
         plan_id = str(uuid.uuid4())
-        plan = _build_plan(body, workshop_id, plan_id, now, scope)
+        plan = _build_plan(
+            body,
+            workshop_id,
+            plan_id,
+            now,
+            scope,
+            workshop_store=ctx.workshop_store,
+            trace_id=x_trace_id,
+            correlation_id=x_correlation_id,
+        )
         plan = ctx.store.create_plan(plan)
         ctx.store.record_audit_action({
             "action_type": "research_plan.create",
@@ -90,7 +103,10 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             "research.plan.created",
             {"plan_id": plan_id, "status": plan["status"]},
         )
-        return _plan_detail_envelope(plan, ctx.utc_now, scope)
+        envelope = _plan_detail_envelope(plan, ctx.utc_now, scope)
+        if response is not None:
+            response.headers["ETag"] = envelope["meta"]["etag"]
+        return envelope
 
     # -------------------------------------------------------------------
     # GET /bff/agora/research-plans/{plan_id}
@@ -98,12 +114,16 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
     @router.get("/bff/agora/research-plans/{plan_id}")
     def get_agora_research_plan(
         plan_id: str,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         scope = ctx.read_scope(authorization, x_tenant_id)
         plan = ctx.get_plan_or_404(plan_id, scope)
-        return _plan_detail_envelope(plan, ctx.utc_now, scope)
+        envelope = _plan_detail_envelope(plan, ctx.utc_now, scope)
+        if response is not None:
+            response.headers["ETag"] = envelope["meta"]["etag"]
+        return envelope
 
     # -------------------------------------------------------------------
     # POST /bff/agora/research-plans/{plan_id}/approve
@@ -111,6 +131,7 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
     @router.post("/bff/agora/research-plans/{plan_id}/approve")
     def approve_agora_research_plan(
         plan_id: str,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
@@ -164,6 +185,9 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             "research.plan.approved",
             {"plan_id": plan_id, "status": "approved"},
         )
+        etag = _plan_etag(plan_id, plan.get("lock_version", 1) + 1)
+        if response is not None:
+            response.headers["ETag"] = etag
         return {
             "status": "completed",
             "data": {"plan_id": plan_id, "status": "approved"},
@@ -171,6 +195,7 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
                 "snapshot_at": now,
                 "capability": _CAPABILITY,
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": etag,
             },
         }
 

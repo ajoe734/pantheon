@@ -23016,6 +23016,8 @@ interaction_lifecycle = _agora_router.interaction_lifecycle
 workshop_store = _agora_router.workshop_store
 proposal_store = _agora_router.proposal_store
 research_store = getattr(_agora_router, "research_store", None)
+research_dispatcher = getattr(_agora_router, "research_dispatcher", None)
+dataset_store = getattr(_agora_router, "dataset_store", None)
 
 
 def _mounted_router_endpoint(router: Any, path: str) -> Any:
