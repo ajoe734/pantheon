@@ -156,14 +156,20 @@ class GovernanceService:
     def _default_dataset_surface_status(
         dataset: str, *, snapshot_at: str, source: Optional[str] = None, **_: Any
     ) -> Dict[str, Any]:
-        source = source or "ok"
-        if source in {"missing", "unavailable"}:
+        normalized_source = str(source or "").strip().lower()
+        if not normalized_source or normalized_source in {"missing", "unavailable"}:
             status = "unavailable"
-        elif source in {"local_snapshot", "degraded"}:
+            effective_source = normalized_source or "missing"
+        elif normalized_source in {"local_snapshot", "degraded", "stale"}:
             status = "degraded"
-        else:
+            effective_source = normalized_source
+        elif normalized_source in {"ok", "service_client", "service_store", "typed_store"}:
             status = "ok"
-        return {"status": status, "source": source, "dataset": dataset, "snapshot_at": snapshot_at}
+            effective_source = normalized_source
+        else:
+            status = "unavailable"
+            effective_source = normalized_source
+        return {"status": status, "source": effective_source, "dataset": dataset, "snapshot_at": snapshot_at}
 
     @staticmethod
     def _fail_closed_redact_evidence_refs(
@@ -179,7 +185,7 @@ class GovernanceService:
         del identity, capabilities
         redacted: List[Dict[str, Any]] = []
         for ref in refs:
-            ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else ""
+            ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else str(ref)
             redacted.append(
                 {
                     "ref_id": ref_id,
@@ -189,6 +195,14 @@ class GovernanceService:
             )
         return redacted, len(redacted)
 
+    def _safe_dataset_surface_status(
+        self, dataset: str, *, snapshot_at: str, source: Optional[str] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
+        try:
+            return self.dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source, **kwargs)
+        except Exception:
+            return self._default_dataset_surface_status(dataset, snapshot_at=snapshot_at, source="missing")
+
     def _call(self, name: str, *args: Any, default: Any = None, **kwargs: Any) -> Any:
         method = getattr(self.read_store, name, None)
         if not callable(method):
@@ -196,8 +210,12 @@ class GovernanceService:
         return method(*args, **kwargs)
 
     def dataset_source(self, dataset: str) -> str:
-        source = self._call("dataset_source", dataset, default="ok")
-        return str(source or "ok")
+        try:
+            source = self._call("dataset_source", dataset, default="missing")
+        except Exception:
+            return "missing"
+        clean_source = str(source or "").strip().lower()
+        return clean_source or "missing"
 
     # Approval decisions -------------------------------------------------
 
@@ -424,6 +442,49 @@ class GovernanceService:
             default=None,
         )
 
+    _OK_SOURCES = frozenset({"ok", "service_client", "service_store", "typed_store"})
+    _DEGRADED_SOURCES = frozenset({"local_snapshot", "degraded", "stale"})
+
+    def _resolve_collection_surface_state(self, *, source: str, surface: Dict[str, Any]) -> str:
+        raw_source = str(source or "").strip().lower()
+        surface_source = str(surface.get("source") or "").strip().lower() if isinstance(surface, dict) else ""
+        status = str(surface.get("status") or "").strip().lower() if isinstance(surface, dict) else ""
+
+        # Enforce provenance precedence: raw unavailable/missing/unknown provenance fails closed.
+        if (
+            not raw_source
+            or raw_source not in (self._OK_SOURCES | self._DEGRADED_SOURCES)
+            or (surface_source and surface_source not in (self._OK_SOURCES | self._DEGRADED_SOURCES))
+            or not status
+            or status == "unavailable"
+        ):
+            return "unavailable"
+
+        # Retain valid stale / degraded semantics
+        if (
+            raw_source in self._DEGRADED_SOURCES
+            or surface_source in self._DEGRADED_SOURCES
+            or status == "degraded"
+        ):
+            return "degraded"
+
+        if status == "ok" and raw_source in self._OK_SOURCES:
+            return "ok"
+
+        return "unavailable"
+
+    def committee_collection_surface_state(self, *, snapshot_at: Optional[str] = None) -> str:
+        snap = snapshot_at or self.utc_now()
+        source = self.dataset_source("consultation_sessions")
+        if source == "missing":
+            source = self.dataset_source("consult_requests")
+        surface = self._safe_dataset_surface_status(
+            "consultation_sessions",
+            snapshot_at=snap,
+            source=source,
+        )
+        return self._resolve_collection_surface_state(source=source, surface=surface)
+
     def list_committees(
         self,
         *,
@@ -431,7 +492,12 @@ class GovernanceService:
         consensus_state: Optional[str] = None,
         page_token: Optional[str],
         page_size: int,
+        snapshot_at: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[str], int]:
+        snap = snapshot_at or self.utc_now()
+        surface_state = self.committee_collection_surface_state(snapshot_at=snap)
+        if surface_state == "unavailable":
+            return [], None, 0
         records = self._call(
             "list_committees",
             quorum_states=split_csv(quorum_state),
@@ -446,19 +512,17 @@ class GovernanceService:
         return self._call("get_committee", committee_id, default=None)
 
     def _committee_surface_state(self, committee: Optional[Dict[str, Any]], *, snapshot_at: str) -> str:
-        surface = self.dataset_surface_status(
-            "consultation_sessions",
-            snapshot_at=snapshot_at,
-            source=self.dataset_source("consult_requests"),
-        )
-        if surface.get("status") == "unavailable" or committee is None:
+        if committee is None:
             return "unavailable"
+        dataset_state = self.committee_collection_surface_state(snapshot_at=snapshot_at)
         explicit_state = str(committee.get("surface_state") or "").strip().lower()
-        if explicit_state == "unavailable":
+        if explicit_state == "unavailable" or dataset_state == "unavailable":
             return "unavailable"
-        if explicit_state == "degraded":
+        if explicit_state == "degraded" or dataset_state == "degraded":
             return "degraded"
-        return str(surface.get("status") or "ok")
+        if explicit_state in {"ok", ""} and dataset_state == "ok":
+            return "ok"
+        return "unavailable"
 
     def _committee_allowed_actions(
         self, committee: Dict[str, Any], *, identity: Any, surface_state: str
@@ -512,9 +576,53 @@ class GovernanceService:
             },
         }
 
+    def _project_consult_memo_summary(
+        self, memo: Dict[str, Any], *, snapshot_at: str
+    ) -> Dict[str, Any]:
+        if not isinstance(memo, dict):
+            return {}
+        memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+        surface_state = self._memo_surface_state(memo, snapshot_at=snapshot_at)
+        hide_memo_content = surface_state == "unavailable"
+        if hide_memo_content:
+            rec_count = 0
+        else:
+            recs = memo.get("recommendations")
+            if isinstance(recs, list):
+                rec_count = len(recs)
+            elif isinstance(memo.get("recommendation_count"), int):
+                rec_count = memo.get("recommendation_count")
+            else:
+                rec_count = 0
+
+        obj_ref = memo.get("object_ref")
+        if not isinstance(obj_ref, dict):
+            obj_ref = {"type": "ConsultMemo", "id": memo_id}
+
+        route_href = memo.get("route_href") or (f"/consultation/memos/{memo_id}" if memo_id else None)
+
+        return {
+            "object_ref": copy.deepcopy(obj_ref),
+            "memo_id": memo_id,
+            "memo_type": memo.get("memo_type") or "red_team",
+            "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+            "linked_request_id": memo.get("linked_request_id"),
+            "recommendation_count": rec_count,
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "route_href": route_href,
+        }
+
     def list_consult_memos(
-        self, *, status: Optional[str], page_token: Optional[str], page_size: int, snapshot_at: Optional[str] = None
+        self,
+        *,
+        status: Optional[str],
+        page_token: Optional[str],
+        page_size: int,
+        snapshot_at: Optional[str] = None,
+        identity: Optional[Any] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[str], int, str]:
+        del identity
         statuses = split_csv(status)
         if statuses:
             normalized = [value.strip().lower() for value in statuses]
@@ -523,36 +631,52 @@ class GovernanceService:
                 raise ValueError("status")
             statuses = normalized
         records = list(self._call("list_consult_memos", statuses=statuses, default=[]) or [])
+        if statuses:
+            requested = set(statuses)
+            records = [
+                r
+                for r in records
+                if isinstance(r, dict)
+                and str(r.get("status") or r.get("lifecycle_state") or "draft").strip().lower() in requested
+            ]
         snap = snapshot_at or self.utc_now()
         surface_state = self._memo_collection_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             return [], None, 0, surface_state
-        page, token = self.page_slice(records, page_token, page_size)
-        return page, token, len(records), surface_state
+        projected = [
+            self._project_consult_memo_summary(memo, snapshot_at=snap)
+            for memo in records
+            if isinstance(memo, dict)
+        ]
+        page, token = self.page_slice(projected, page_token, page_size)
+        return page, token, len(projected), surface_state
 
     def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
         return self._call("get_consult_memo", memo_id, default=None)
 
-    def _memo_collection_surface_state(self, *, snapshot_at: str) -> str:
-        surface = self.dataset_surface_status(
+    def memo_collection_surface_state(self, *, snapshot_at: Optional[str] = None) -> str:
+        snap = snapshot_at or self.utc_now()
+        source = self.dataset_source("consult_memos")
+        surface = self._safe_dataset_surface_status(
             "consult_memos",
-            snapshot_at=snapshot_at,
-            source=self.dataset_source("consult_memos"),
+            snapshot_at=snap,
+            source=source,
         )
-        if surface.get("status") == "unavailable":
-            return "unavailable"
-        if surface.get("source") == "local_snapshot" or surface.get("status") == "degraded":
-            return "degraded"
-        return "ok"
+        return self._resolve_collection_surface_state(source=source, surface=surface)
+
+    def _memo_collection_surface_state(self, *, snapshot_at: str) -> str:
+        return self.memo_collection_surface_state(snapshot_at=snapshot_at)
 
     def _memo_surface_state(self, memo: Dict[str, Any], *, snapshot_at: str) -> str:
-        dataset_state = self._memo_collection_surface_state(snapshot_at=snapshot_at)
+        dataset_state = self.memo_collection_surface_state(snapshot_at=snapshot_at)
         explicit_state = str(memo.get("surface_state") or "").strip().lower()
-        if explicit_state == "unavailable":
+        if explicit_state == "unavailable" or dataset_state == "unavailable":
             return "unavailable"
-        if explicit_state == "degraded":
+        if explicit_state == "degraded" or dataset_state == "degraded":
             return "degraded"
-        return dataset_state
+        if explicit_state in {"ok", ""} and dataset_state == "ok":
+            return "ok"
+        return "unavailable"
 
     @staticmethod
     def _memo_staleness(surface_state: str, *, snapshot_at: str) -> Dict[str, Any]:
@@ -620,7 +744,10 @@ class GovernanceService:
             # every capability-required evidence ref, instead of silently
             # letting an unknown capability set through unredacted.
             capabilities = []
-        evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+        try:
+            evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+        except Exception:
+            evidence_refs, redacted_count = self._fail_closed_redact_evidence_refs(identity, evidence_refs, capabilities=[])
         meta = {
             "snapshot_at": snap,
             "staleness": self._memo_staleness(surface_state, snapshot_at=snap),

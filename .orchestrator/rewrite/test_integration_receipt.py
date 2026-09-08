@@ -153,9 +153,28 @@ def test_predicate_false_for_non_landed_result() -> None:
     assert ir.integration_receipt_consumes_candidate(task) is False
 
 
-def test_predicate_false_when_generation_changed() -> None:
+def test_receipt_survives_assignment_generation_for_same_immutable_delivery() -> None:
     task = task_row(generation=5, integration_receipt=valid_receipt_payload(task_generation=4))
+    assert ir.integration_receipt_consumes_candidate(task) is True
+    assert task["integration_receipt"]["task_generation"] == 4
+
+
+@pytest.mark.parametrize("generation", [0, -1, 3, True, "5"])
+def test_receipt_rejects_future_or_invalid_generation(generation) -> None:
+    task = task_row(generation=generation, integration_receipt=valid_receipt_payload())
     assert ir.integration_receipt_consumes_candidate(task) is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("pr", 999), ("head_sha", HEAD_B), ("base", "master"),
+    ("head_branch", "task/different"), ("kind", "artifact_contract"),
+])
+def test_old_receipt_cannot_consume_conflicting_current_delivery(field, value) -> None:
+    task = task_row(generation=5, integration_receipt=valid_receipt_payload())
+    task["delivery_binding"] = {"kind": "pull_request", **task["review_binding"]}
+    assert ir.integration_receipt_consumes_candidate(task)
+    task["delivery_binding"][field] = value
+    assert not ir.integration_receipt_consumes_candidate(task)
 
 
 def test_predicate_false_when_repository_id_is_not_default() -> None:
