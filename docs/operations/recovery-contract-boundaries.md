@@ -60,6 +60,15 @@ the whole batch. No lock, atomic batch, or termination guard is removed.
 CAS-conflict telemetry distinguishes runtime digest/token drift from canonical
 transition revalidation failure through `reason_code`.
 
+Activation follow-through also exercises operator retirement of duplicate work.
+An already-exited superseded worker must use the existing governance lease
+decision before generic lost-lease recovery, just as a still-live worker does.
+The initial normal-done-only guard preserved this dead attempt indefinitely;
+the follow-through correction recognizes the authorized cancellation, releases
+the queue once, and never issues a retry or changes the terminal task. Both
+boot and poll now cover completed/superseded outcomes, invalid archive proof,
+and proof drift at the final CAS boundary with real exited process identities.
+
 ### Merge receipt versus assignment epoch
 
 A valid canonical receipt for the same frozen repository, base, PR and head
