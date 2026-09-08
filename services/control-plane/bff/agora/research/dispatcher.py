@@ -219,11 +219,15 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
         executor: Optional[str] = None,
         mode: Literal["real", "simulation"] = "real",
         backend_reference: Optional[str] = None,
+        execution_owner: Optional[Any] = None,
+        execute_fn: Optional[Callable[..., Any]] = None,
     ) -> None:
         super().__init__(stage_type, preferred_backend, default_provenance=mode)
         self.executor = executor or f"{preferred_backend}_executor"
-        self.mode = mode
+        self.mode: Literal["real", "simulation"] = mode
         self.backend_reference = backend_reference
+        self.execution_owner = execution_owner
+        self.execute_fn = execute_fn
 
     def execute(
         self,
@@ -233,7 +237,6 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
         context: Dict[str, Any],
         downstream_key: str,
     ) -> ResearchStageResult:
-        result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
         run_id = str(context.get("run_id") or stage.get("run_id") or "")
         correlation_id = str(
             context.get("correlation_id")
@@ -241,20 +244,102 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
             or plan.get("trace_id")
             or ""
         )
+
+        # Fail closed on absent execution owner in real mode
+        if self.mode == "real" and self.execution_owner is None and self.execute_fn is None:
+            raise RuntimeError(
+                f"Backend execution owner is absent for authentic real execution of stage '{self.stage_type}' "
+                f"(backend: {self.preferred_backend}). Absent backend must fail closed."
+            )
+
+        # Execute authentic execution owner if supplied
+        backend_output: Any = None
+        if self.execute_fn is not None:
+            backend_output = self.execute_fn(
+                stage=stage,
+                plan=plan,
+                context=context,
+                downstream_key=downstream_key,
+            )
+        elif self.execution_owner is not None:
+            if hasattr(self.execution_owner, "execute"):
+                backend_output = self.execution_owner.execute(
+                    stage=stage,
+                    plan=plan,
+                    context=context,
+                    downstream_key=downstream_key,
+                )
+            elif callable(self.execution_owner):
+                backend_output = self.execution_owner(
+                    stage=stage,
+                    plan=plan,
+                    context=context,
+                    downstream_key=downstream_key,
+                )
+            else:
+                backend_output = self.execution_owner
+        else:
+            # Fallback for simulation mode only
+            backend_output = None
+
+        if isinstance(backend_output, ResearchStageResult):
+            result = backend_output
+            if result.receipt is None and run_id:
+                checksum = next(iter(result.checksums.values()), None)
+                result.receipt = ResearchExecutionReceipt(
+                    receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
+                    run_id=run_id,
+                    executor=self.executor,
+                    mode=self.mode,
+                    correlation_id=correlation_id,
+                    completed_at=_utc_now_iso(),
+                    backend_reference=self.backend_reference,
+                    artifact_digest=checksum,
+                )
+            result.provenance = self.mode
+            for m in result.metrics:
+                if isinstance(m, dict):
+                    m["provenance"] = self.mode
+            for ev in result.evidence_refs:
+                if isinstance(ev, dict):
+                    ev["provenance"] = self.mode
+            return result
+
+        result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
         checksum = next(iter(result.checksums.values()), None)
-        receipt = ResearchExecutionReceipt(
-            receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-            run_id=run_id,
-            executor=self.executor,
-            mode=self.mode,
-            correlation_id=correlation_id,
-            completed_at=_utc_now_iso(),
-            backend_reference=self.backend_reference or f"{self.preferred_backend}://runs/{uuid.uuid4().hex[:6]}",
-            artifact_digest=checksum,
-        )
+
+        backend_ref = self.backend_reference
+        if isinstance(backend_output, dict):
+            backend_ref = backend_output.get("backend_reference") or backend_ref
+            checksum = backend_output.get("artifact_digest") or backend_output.get("checksum") or checksum
+            if "metrics" in backend_output and isinstance(backend_output["metrics"], list):
+                result.metrics = list(backend_output["metrics"])
+
+        receipt: Optional[ResearchExecutionReceipt] = None
+        if run_id:
+            receipt = ResearchExecutionReceipt(
+                receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
+                run_id=run_id,
+                executor=self.executor,
+                mode=self.mode,
+                correlation_id=correlation_id,
+                completed_at=_utc_now_iso(),
+                backend_reference=backend_ref,
+                artifact_digest=checksum,
+            )
+
         result.receipt = receipt
         result.provenance = self.mode
         result.warnings = []
+
+        # Ensure all metrics and evidence reflect the authentic execution mode
+        for m in result.metrics:
+            if isinstance(m, dict):
+                m["provenance"] = self.mode
+        for ev in result.evidence_refs:
+            if isinstance(ev, dict):
+                ev["provenance"] = self.mode
+
         return result
 
 
@@ -280,6 +365,8 @@ class AdapterRegistry:
         executor: Optional[str] = None,
         mode: Literal["real", "simulation"] = "real",
         backend_reference: Optional[str] = None,
+        execution_owner: Optional[Any] = None,
+        execute_fn: Optional[Callable[..., Any]] = None,
     ) -> AuthenticStageAdapter:
         backend = preferred_backend or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, "unknown_backend")
         adapter = AuthenticStageAdapter(
@@ -288,6 +375,8 @@ class AdapterRegistry:
             executor=executor,
             mode=mode,
             backend_reference=backend_reference,
+            execution_owner=execution_owner,
+            execute_fn=execute_fn,
         )
         self.register(stage_type, adapter)
         return adapter

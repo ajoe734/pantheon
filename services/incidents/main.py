@@ -308,6 +308,37 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
     return _to_response(inc)
 
 
+_SUGGESTION_CONSUMER: Optional[Any] = None
+
+
+def attach_incident_suggestion_consumer(consumer_fn: Any) -> None:
+    """Attach a downstream suggestion consumer callback (SD §6.4)."""
+    global _SUGGESTION_CONSUMER
+    _SUGGESTION_CONSUMER = consumer_fn
+
+
+def get_incident_suggestion_consumer() -> Optional[Any]:
+    return _SUGGESTION_CONSUMER
+
+
+def _build_default_suggestion_consumer() -> Optional[Any]:
+    try:
+        from agora.performance.consumer import EvaluationTelemetryConsumer
+        from agora.performance.store import PerformanceSuggestionStore
+        perf_store = PerformanceSuggestionStore()
+        eval_consumer = EvaluationTelemetryConsumer(store=perf_store)
+        return eval_consumer.consume
+    except Exception:
+        try:
+            from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer
+            from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
+            perf_store = PerformanceSuggestionStore()
+            eval_consumer = EvaluationTelemetryConsumer(store=perf_store)
+            return eval_consumer.consume
+        except Exception:
+            return None
+
+
 @app.post(
     "/api/incidents/consume-threshold",
     response_model=IncidentResponse,
@@ -319,9 +350,11 @@ def consume_threshold_incident(
     body: Dict[str, Any] = Body(...),
 ) -> IncidentResponse:
     """Consume a threshold telemetry payload through the Incident domain writer."""
+    suggestion_cb = _SUGGESTION_CONSUMER or _build_default_suggestion_consumer()
     consumer = ThresholdTelemetryIncidentConsumer(
         incident_store=store,
         reference_validator=reference_validator,
+        suggestion_consumer=suggestion_cb,
     )
     try:
         result = consumer.consume(body)

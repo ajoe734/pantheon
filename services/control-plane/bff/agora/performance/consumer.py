@@ -207,6 +207,7 @@ class EvaluationTelemetryConsumer:
             telemetry_consumer,
             store=self.store,
             producer=self.producer,
+            publish_event_fn=self.publish_event_fn,
         )
         self._subscriptions.append(telemetry_consumer)
 
@@ -216,13 +217,19 @@ def attach_to_telemetry_consumer(
     *,
     store: Optional[PerformanceSuggestionStore] = None,
     producer: Optional[PerformanceSuggestionProducer] = None,
+    publish_event_fn: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
 ) -> None:
     """Attach PerformanceSuggestionProducer / consume_telemetry_outcome to a canonical telemetry consumer.
 
     Enables event-driven production of Agora AdjustmentSuggestions whenever the canonical
     consumer processes a threshold breach or evaluation outcome.
     """
-    callback = lambda ev: consume_telemetry_outcome(ev, store=store, producer=producer)
+    callback = lambda ev: consume_telemetry_outcome(
+        ev,
+        store=store,
+        producer=producer,
+        publish_event_fn=publish_event_fn,
+    )
     if hasattr(telemetry_consumer, "attach_suggestion_consumer"):
         telemetry_consumer.attach_suggestion_consumer(callback)
     elif hasattr(telemetry_consumer, "add_subscriber"):

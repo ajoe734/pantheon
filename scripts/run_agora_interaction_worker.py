@@ -23,6 +23,9 @@ from agora.governance.store import ProposalStore
 from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
+from agora.research.dispatcher import ResearchDispatcher
+from agora.research.routes.common import publish_research_progress
+from agora.research.store import make_research_plan_store
 from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
 
 logging.basicConfig(
@@ -83,6 +86,18 @@ def main() -> int:
     # always-empty implementation.
     read_store = build_canonical_persona_client()
 
+    # Durable research store and dispatcher
+    try:
+        research_store = make_research_plan_store()
+        research_dispatcher = ResearchDispatcher(
+            store=research_store,
+            publish_progress_fn=publish_research_progress,
+        )
+    except Exception as exc:
+        logger.warning("Could not initialize research dispatcher: %s", exc)
+        research_store = None
+        research_dispatcher = None
+
     tenant_id = args.tenant_id or os.getenv("PANTHEON_TENANT_ID")
 
     worker = AgoraInteractionWorker(
@@ -90,6 +105,8 @@ def main() -> int:
         workshop_store=workshop_store,
         read_store=read_store,
         proposal_store=proposal_store,
+        research_store=research_store,
+        research_dispatcher=research_dispatcher,
         worker_id=os.getenv("PANTHEON_AGORA_WORKER_ID", "agora-interaction-worker"),
     )
 

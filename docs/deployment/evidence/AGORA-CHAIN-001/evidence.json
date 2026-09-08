@@ -7,9 +7,11 @@
   "implementation": {
     "files_modified": [
       "docs/deployment/evidence/AGORA-CHAIN-001/evidence.json",
+      "scripts/run_agora_interaction_worker.py",
       "services/control-plane/bff/agora/interaction/router.py",
       "services/control-plane/bff/agora/interaction/runner.py",
       "services/control-plane/bff/agora/interaction/test_worker.py",
+      "services/control-plane/bff/agora/interaction/worker.py",
       "services/control-plane/bff/agora/performance/__init__.py",
       "services/control-plane/bff/agora/performance/consumer.py",
       "services/control-plane/bff/agora/performance/models.py",
@@ -28,17 +30,19 @@
       "services/control-plane/bff/agora/strategy_workshop/schemas.py",
       "services/control-plane/bff/agora/strategy_workshop/test_reconstruction.py",
       "services/control-plane/bff/agora/strategy_workshop/test_reconstruction_worker.py",
+      "services/control-plane/bff/agora/trading_room/routes/common.py",
       "services/control-plane/bff/main.py",
       "services/control-plane/bff/tests/test_agora_research_run_projection.py",
       "services/control-plane/specs/agora/bundle_index.v1_3.json",
       "services/control-plane/specs/agora/v4/research_run_projection.schema.json",
       "services/incidents/consumer.py",
+      "services/incidents/main.py",
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
     "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, and correlation validation in receipt.py and routes/common.py. Unreceipted runs never return 'real' (resolving to 'fixture' or 'simulation'). Non-terminal runs, absent receipts, missing receipt_id/completed_at, spec_version != '1.0', wrong owner, or wrong correlation return 'unavailable'. Route-level negative tests prove fail-closed provenance projection.",
-    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) records ResearchExecutionReceipt into ResearchStore via store.record_execution_receipt upon stage completion. Natural execution via dispatcher.drain_outbox() persists receipts durably; tests prove execution and restart readback without pre-seeding receipts.",
-    "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members, Trading Room decisions, Outbox handoffs, and telemetry-triggered AdjustmentSuggestions.",
-    "performance_suggestion_consumer": "Added EvaluationTelemetryConsumer attached to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Proved event-driven persistence into PerformanceSuggestionStore, readback, and idempotent replay.",
+    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in 'real' mode. It invokes the real backend, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. AgoraInteractionWorker is wired with durable ResearchPlanStore and ResearchDispatcher to drain queued research outbox records naturally without manual test draining. Durability is backed by JSON snapshot persistence on all mutating operations, verified by reconstructing the store from disk across worker restarts.",
+    "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer.",
+    "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Preserved publish_event_fn upon attachment to ensure read-model events are published. Wired canonical telemetry entry point in services/incidents/main.py and verified via threshold_consumer.consume(threshold_payload) with persistent incident creation, suggestion storage, event publishing, and replay idempotency.",
     "mandatory_deletions": {
       "client_supplied_real_provenance_flags": "Deleted routing.get('backend_mode', 'real') default in _build_run_projection; initial projection defaults to unavailable until authentic ResearchExecutionReceipt is recorded and validated.",
       "fake_synchronous_terminal_fallbacks": "Removed fake synchronous completion assumptions; dispatch leaves runs in queued state for outbox worker consumption; verified fail-closed lease, retry, DLQ, and crash recovery mechanics.",
@@ -50,13 +54,13 @@
     "commands": [
       {
         "command": "python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 10.81s",
+        "result": "33 passed in 12.78s",
         "executed": 33,
         "collected": 33
       },
       {
         "command": "python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/agora/performance/ services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_research_store_backend.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
-        "result": "52 passed, 2 skipped, 210 warnings in 37.20s",
+        "result": "52 passed, 2 skipped, 210 warnings in 46.51s",
         "executed": 52,
         "collected": 54
       },

@@ -12,6 +12,7 @@ import os
 import re
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -22,10 +23,12 @@ def _utc_now_iso() -> str:
 class MemoryResearchPlanStore:
     """Thread-safe in-memory store for ResearchPlanExecution and ResearchRunProjection.
 
-    Used when AGORA_RESEARCH_STORE_BACKEND=off (default).
+    Used when AGORA_RESEARCH_STORE_BACKEND=off (default). Supports optional durable snapshot
+    reconstruction via storage_path.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, storage_path: Optional[str] = None) -> None:
+        self._storage_path = str(storage_path) if storage_path else None
         self._plans: Dict[str, Dict[str, Any]] = {}
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._candidate_pools: Dict[str, Dict[str, Any]] = {}
@@ -39,6 +42,56 @@ class MemoryResearchPlanStore:
         self._receipts: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, bool] = {}
         self._lock = threading.Lock()
+        if self._storage_path:
+            self._load_from_storage()
+
+    def _save_to_storage(self) -> None:
+        if not self._storage_path:
+            return
+        payload = {
+            "plans": self._plans,
+            "runs": self._runs,
+            "candidate_pools": self._candidate_pools,
+            "candidate_scores": self._candidate_scores,
+            "candidate_reviews": self._candidate_reviews,
+            "candidate_discussions": self._candidate_discussions,
+            "candidate_monitoring": self._candidate_monitoring,
+            "candidate_metrics": self._candidate_metrics,
+            "outbox": self._outbox,
+            "audit_actions": self._audit_actions,
+            "receipts": self._receipts,
+            "idempotency": self._idempotency,
+        }
+        target = Path(self._storage_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, default=str)
+        tmp.replace(target)
+
+    def _load_from_storage(self) -> None:
+        if not self._storage_path:
+            return
+        target = Path(self._storage_path)
+        if not target.exists():
+            return
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._plans = data.get("plans", {})
+            self._runs = data.get("runs", {})
+            self._candidate_pools = data.get("candidate_pools", {})
+            self._candidate_scores = data.get("candidate_scores", {})
+            self._candidate_reviews = data.get("candidate_reviews", {})
+            self._candidate_discussions = data.get("candidate_discussions", {})
+            self._candidate_monitoring = data.get("candidate_monitoring", {})
+            self._candidate_metrics = data.get("candidate_metrics", {})
+            self._outbox = data.get("outbox", {})
+            self._audit_actions = data.get("audit_actions", [])
+            self._receipts = data.get("receipts", {})
+            self._idempotency = data.get("idempotency", {})
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Idempotency
@@ -51,6 +104,7 @@ class MemoryResearchPlanStore:
             if combined in self._idempotency:
                 return True
             self._idempotency[combined] = True
+            self._save_to_storage()
             return False
 
     # ------------------------------------------------------------------
@@ -60,6 +114,7 @@ class MemoryResearchPlanStore:
     def create_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             self._plans[plan["plan_id"]] = dict(plan)
+            self._save_to_storage()
             return dict(self._plans[plan["plan_id"]])
 
     def get_plan(
@@ -96,6 +151,7 @@ class MemoryResearchPlanStore:
             if user_id is not None and entry.get("user_id") and entry.get("user_id") != user_id:
                 return None
             entry.update(updates)
+            self._save_to_storage()
             return dict(entry)
 
     def list_plans_for_workshop(
@@ -124,6 +180,7 @@ class MemoryResearchPlanStore:
     def create_run(self, run: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             self._runs[run["run_id"]] = dict(run)
+            self._save_to_storage()
             return dict(self._runs[run["run_id"]])
 
     def get_run(
@@ -160,6 +217,7 @@ class MemoryResearchPlanStore:
             if user_id is not None and entry.get("user_id") and entry.get("user_id") != user_id:
                 return None
             entry.update(updates)
+            self._save_to_storage()
             return dict(entry)
 
     def list_runs_for_plan(
@@ -189,6 +247,7 @@ class MemoryResearchPlanStore:
         with self._lock:
             data = dict(receipt)
             self._receipts[str(data["run_id"])] = data
+            self._save_to_storage()
             return dict(data)
 
     def get_execution_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -218,6 +277,7 @@ class MemoryResearchPlanStore:
                 }
             else:
                 self._candidate_metrics.setdefault(pool["pool_id"], {})
+            self._save_to_storage()
             return dict(self._candidate_pools[pool["pool_id"]])
 
     def get_candidate_pool(
@@ -328,6 +388,7 @@ class MemoryResearchPlanStore:
             if user_id is not None and pool.get("user_id") and pool.get("user_id") != user_id:
                 return None
             pool.update(updates)
+            self._save_to_storage()
             return dict(pool)
 
     def get_candidate_member(
@@ -373,6 +434,7 @@ class MemoryResearchPlanStore:
                     updated = {**candidate, **updates}
                     pool["candidates"][index] = updated
                     pool["total"] = len(pool.get("candidates", []))
+                    self._save_to_storage()
                     return dict(updated)
             return None
 
@@ -395,6 +457,7 @@ class MemoryResearchPlanStore:
                 artifact_id: dict(score)
                 for artifact_id, score in scores_by_artifact.items()
             }
+            self._save_to_storage()
 
     def list_candidate_scores(self, pool_id: str) -> List[Dict[str, Any]]:
         with self._lock:
@@ -422,6 +485,7 @@ class MemoryResearchPlanStore:
             reviews_by_member = self._candidate_reviews.setdefault(pool_id, {})
             bucket = reviews_by_member.setdefault(artifact_id, [])
             bucket.append(dict(review))
+            self._save_to_storage()
             return dict(review)
 
     def list_candidate_reviews(
@@ -435,11 +499,14 @@ class MemoryResearchPlanStore:
                 for review in self._candidate_reviews.get(pool_id, {}).get(artifact_id, [])
             ]
 
-    def add_candidate_discussion(self, discussion: Dict[str, Any]) -> Dict[str, Any]:
+    def add_candidate_discussion(
+        self, discussion: Dict[str, Any]
+    ) -> Dict[str, Any]:
         with self._lock:
             pool_id = discussion["pool_id"]
             bucket = self._candidate_discussions.setdefault(pool_id, [])
             bucket.append(dict(discussion))
+            self._save_to_storage()
             return dict(discussion)
 
     def list_candidate_discussions(
@@ -480,6 +547,7 @@ class MemoryResearchPlanStore:
         with self._lock:
             bucket = self._candidate_monitoring.setdefault(pool_id, {})
             bucket[artifact_id] = dict(monitoring)
+            self._save_to_storage()
             return dict(monitoring)
 
     def get_candidate_monitoring(
@@ -512,6 +580,7 @@ class MemoryResearchPlanStore:
     def create_outbox_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             self._outbox[record["outbox_id"]] = dict(record)
+            self._save_to_storage()
             return dict(self._outbox[record["outbox_id"]])
 
     def get_outbox_record(
@@ -548,6 +617,7 @@ class MemoryResearchPlanStore:
             if user_id is not None and entry.get("user_id") and entry.get("user_id") != user_id:
                 return None
             entry.update(updates)
+            self._save_to_storage()
             return dict(entry)
 
     def acquire_outbox_lease(
@@ -574,6 +644,7 @@ class MemoryResearchPlanStore:
             exp_dt = datetime.fromtimestamp(dt.timestamp() + lease_duration_seconds, tz=timezone.utc)
             entry["lease_expires_at"] = exp_dt.isoformat()
             entry["updated_at"] = now
+            self._save_to_storage()
             return dict(entry)
 
     def list_outbox_records(
@@ -610,6 +681,7 @@ class MemoryResearchPlanStore:
             doc = dict(action)
             doc.setdefault("recorded_at", _utc_now_iso())
             self._audit_actions.append(doc)
+            self._save_to_storage()
             return dict(doc)
 
     def list_audit_actions(
@@ -1224,13 +1296,14 @@ class PostgresResearchPlanStore:
         return sorted(filtered, key=lambda a: str(a.get("recorded_at", "")))
 
 
-def make_research_plan_store():
+def make_research_plan_store(storage_path: Optional[str] = None):
     backend = os.environ.get(
         "AGORA_RESEARCH_STORE_BACKEND",
         os.environ.get("AGORA_RESEARCH_PLAN_STORE_BACKEND", "off"),
     ).strip().lower()
     if backend in ("", "off", "memory"):
-        return MemoryResearchPlanStore()
+        path = storage_path or os.environ.get("AGORA_RESEARCH_STORE_STORAGE_PATH")
+        return MemoryResearchPlanStore(storage_path=path)
     if backend != "postgres":
         raise ValueError("AGORA_RESEARCH_STORE_BACKEND must be off or postgres")
     dsn = os.environ.get("AGORA_RESEARCH_STORE_DSN") or os.environ.get("DATABASE_URL")

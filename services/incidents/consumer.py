@@ -102,7 +102,7 @@ class ThresholdTelemetryIncidentConsumer:
         strategy_id = (
             str(payload.get("strategy_id") or "")
             or str(event.get("strategy_id") or "")
-            or str(incident.runtime_id or "")
+            or str(getattr(incident, "runtime_id", "") or "")
         )
         if not strategy_id:
             return
@@ -111,12 +111,18 @@ class ThresholdTelemetryIncidentConsumer:
             or payload.get("trace_id")
             or event.get("correlation_id")
             or event.get("trace_id")
-            or incident.correlation_id
+            or getattr(incident, "trace_id", "")
             or ""
+        )
+        tenant_id = str(
+            payload.get("tenant_id")
+            or event.get("tenant_id")
+            or getattr(incident, "capital_pool_id", "")
+            or "default"
         )
         outcome_type = "drawdown_breach" if "drawdown" in str(threshold.get("metric_name", "")).lower() else "execution_drift"
         outcome_event = {
-            "tenant_id": incident.tenant_id,
+            "tenant_id": tenant_id,
             "owner_user_id": payload.get("owner_user_id") or payload.get("user_id") or "telemetry-engine",
             "strategy_id": strategy_id,
             "outcome_type": outcome_type,
