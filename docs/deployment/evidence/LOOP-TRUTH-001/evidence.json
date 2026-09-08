@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "LOOP-TRUTH-001",
-  "base_ref": "dev@b14df5d155537458446e44527815ad704dbf9b0b",
+  "base_ref": "dev@68ca49f8e8dd7b1cec830f922f8f1301049e669c",
   "depends_on": "AGORA-CHAIN-001 (done), OVERLAY-RETIRE-001 (done)",
   "normative_plan": "SD §7.2 Twelve-loop truth projector, SA ADR-05, GAP-MGMT-02; pkt-pantheon-structural-closure-functional-v2-20260903",
   "implementation": {
