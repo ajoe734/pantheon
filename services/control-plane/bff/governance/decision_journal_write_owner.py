@@ -18,6 +18,7 @@ schema and the only write path.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
@@ -68,13 +69,17 @@ class DecisionJournalOwnerAdapter:
         *,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
         include_unscoped_legacy: bool = False,
         **_kwargs: Any,
     ) -> List[Dict[str, Any]]:
+        resolved_actor = actor_id or _kwargs.get("actor_id")
+        resolved_user = user_id or _kwargs.get("user_id") or resolved_actor
         return list_entries(
             self._stores,
             tenant_id=tenant_id,
-            user_id=user_id,
+            actor_id=resolved_actor,
+            user_id=resolved_user,
             include_unscoped_legacy=include_unscoped_legacy,
         )
 
@@ -84,13 +89,17 @@ class DecisionJournalOwnerAdapter:
         *,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
         **_kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
+        resolved_actor = actor_id or _kwargs.get("actor_id")
+        resolved_user = user_id or _kwargs.get("user_id") or resolved_actor
         return get_entry(
             self._stores,
             entry_id,
             tenant_id=tenant_id,
-            user_id=user_id,
+            actor_id=resolved_actor,
+            user_id=resolved_user,
         )
 
     def create_decision_journal_entry(
@@ -164,12 +173,65 @@ class DecisionJournalOwnerAdapter:
         scoped_key: str,
         request_hash: str,
     ) -> Optional[Dict[str, Any]]:
-        record = self._stores.idempotency.get(scoped_key)
-        if record is None:
+        if not hasattr(self, "_stores") or self._stores is None or not hasattr(self._stores, "idempotency"):
             return None
-        if record.get("request_hash") != request_hash:
-            return {"conflict": True, "record": record}
-        return {"conflict": False, "result": record.get("result")}
+        reservation = {
+            "idempotency_key": scoped_key,
+            "request_hash": request_hash,
+            "status": "pending",
+            "result": None,
+        }
+        reserved, existing = self._stores.idempotency.insert_if_absent(reservation)
+        if reserved:
+            return None
+
+        if existing.get("request_hash") != request_hash:
+            return {"conflict": True, "record": existing}
+
+        status = str(existing.get("status") or "")
+        if status == "pending":
+            return {"conflict": False, "pending": True, "scoped_key": scoped_key}
+
+        if status == "failed":
+            self._stores.idempotency.put(reservation)
+            return None
+
+        return {"conflict": False, "result": existing.get("result")}
+
+    def await_create_idempotency(
+        self,
+        *,
+        scoped_key: str,
+        request_hash: str,
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            record = self._stores.idempotency.get(scoped_key)
+            if record is not None:
+                if record.get("request_hash") != request_hash:
+                    return {"conflict": True, "record": record}
+                status = str(record.get("status") or "")
+                if status == "succeeded":
+                    return {"conflict": False, "result": record.get("result")}
+                if status == "failed":
+                    return {"conflict": False, "failed": True}
+            time.sleep(0.005)
+        return {"conflict": True, "error": "timed out waiting for concurrent idempotency"}
+
+    def fail_create_idempotency(
+        self,
+        *,
+        scoped_key: str,
+        request_hash: str,
+    ) -> None:
+        if hasattr(self, "_stores") and self._stores is not None and hasattr(self._stores, "idempotency"):
+            self._stores.idempotency.put({
+                "idempotency_key": scoped_key,
+                "request_hash": request_hash,
+                "status": "failed",
+                "result": None,
+            })
 
     def record_create_idempotency(
         self,

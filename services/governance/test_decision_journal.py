@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from services.governance.decision_journal import (
@@ -505,6 +506,7 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry["version"], 1)
         self.assertEqual(entry["title"], "Initial Title")
+        self.assertEqual(fresh.audit.list_all(), [])
 
     def test_patch_cannot_claim_unscoped_legacy(self) -> None:
         create_entry(
@@ -631,6 +633,59 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         entry = get_entry(fresh, "dje-cas-conflict", tenant_id="tenant-alpha")
         self.assertEqual(entry["version"], 1)
         self.assertEqual(entry["title"], "Base Title")
+
+    def test_migration_does_not_dispose_another_authors_identical_row(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="dje-author-collision",
+            title="Synthetic",
+            body="Private synthetic body",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        source = {
+            "id": "dje-author-collision",
+            "title": "Synthetic",
+            "body": "Private synthetic body",
+            "createdBy": "bob",
+            "actor_id": "bob",
+            "userId": "bob",
+            "user_id": "bob",
+        }
+        report = JournalMigrationEngine(self.stores).run_migration(
+            [source],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+            dispose_source=True,
+        )
+        self.assertEqual(report.total_conflicts, 1)
+
+    def test_migration_rejects_source_from_another_tenant(self) -> None:
+        source = {
+            "id": "source-foreign-tenant",
+            "title": "Synthetic",
+            "body": "Private foreign tenant body",
+            "author": "bob",
+            "tenant_id": "tenant-beta",
+        }
+        report = JournalMigrationEngine(self.stores).run_migration(
+            [source],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+        )
+        self.assertEqual(report.total_conflicts, 1)
+        self.assertIsNone(get_entry(self.stores, "source-foreign-tenant", tenant_id="tenant-alpha"))
+
+    def test_migration_does_not_claim_disposal_without_source(self) -> None:
+        report = JournalMigrationEngine(self.stores).run_migration(
+            [{"id": "legacy-no-source", "title": "Synthetic", "author": "alice"}],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+            dispose_source=True,
+        )
+        self.assertEqual(len(report.items), 1)
+        self.assertFalse(report.items[0]["disposed"])
 
 
 if __name__ == "__main__":

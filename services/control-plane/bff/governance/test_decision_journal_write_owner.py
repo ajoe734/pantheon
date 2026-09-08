@@ -37,6 +37,8 @@ from services.governance.decision_journal import (
     DecisionJournalAccessDeniedError,
     DecisionJournalCollisionError,
     DecisionJournalValidationError,
+    build_decision_journal_stores,
+    create_entry,
 )
 
 
@@ -542,6 +544,58 @@ sys.exit(0)
 """
             p3 = subprocess.run([sys.executable, "-c", code_3], capture_output=True, text=True, env=env)
             self.assertEqual(p3.returncode, 0, f"stdout: {p3.stdout}\nstderr: {p3.stderr}")
+
+    def test_daily_brief_does_not_publish_unscoped_private_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stores = build_decision_journal_stores(tmp)
+            create_entry(
+                stores,
+                entry_id="synthetic-entry",
+                title="Synthetic",
+                body="Private synthetic body",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            reader = DomainDecisionJournalReaderPort(data_dir=tmp)
+            service = AgoraService(get_read_store=lambda: reader)
+            result = service.get_daily_brief()
+            self.assertEqual(
+                result["data"]["sections"]["journal"],
+                [],
+                "daily brief published tenant-a/alice private journal without any authenticated principal",
+            )
+
+    def test_concurrent_create_retry_is_one_entry(self) -> None:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stores = build_decision_journal_stores(tmp)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            barrier = threading.Barrier(2)
+            original = owner.check_create_idempotency
+
+            def synchronized_read(**kw):
+                result = original(**kw)
+                barrier.wait(timeout=10)
+                return result
+
+            def run():
+                service = AgoraService(journal_write_owner=owner)
+                return service.create_journal_entry(
+                    payload={"title": "Synthetic", "body": "Private synthetic body"},
+                    identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                    idempotency_key="same-key",
+                    x_idempotency_key=None,
+                    tenant_id="tenant-a",
+                )["data"]["id"]
+
+            with patch.object(owner, "check_create_idempotency", side_effect=synchronized_read):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    ids = list(executor.map(lambda _: run(), range(2)))
+            self.assertEqual(ids[0], ids[1], "same principal/request/key created two durable entries concurrently")
 
 
 if __name__ == "__main__":

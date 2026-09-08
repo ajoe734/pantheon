@@ -34,8 +34,6 @@ class GovernanceRecordStore(Protocol):
         record: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]: ...
 
-    def delete(self, record_id: str) -> bool: ...
-
 
 def _copy_record(record: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(record))
@@ -59,50 +57,24 @@ class JsonGovernanceRecordStore:
             raise ValueError("id_fields must not be empty")
         self._lock = threading.RLock()
         self._records: Dict[str, Dict[str, Any]] = {}
-        self._last_mtime_ns: Optional[int] = None
-        self._last_size: Optional[int] = None
-        self._last_ino: Optional[int] = None
         if self.storage_path.exists():
             self._load()
-
-    def _refresh_if_needed(self) -> None:
-        if not self.storage_path.exists():
-            if self._records:
-                self._records = {}
-                self._last_mtime_ns = None
-                self._last_size = None
-                self._last_ino = None
-            return
-        try:
-            st = self.storage_path.stat()
-            current_sig = (st.st_mtime_ns, st.st_size, st.st_ino)
-            cached_sig = (self._last_mtime_ns, self._last_size, self._last_ino)
-            if cached_sig != current_sig:
-                self._load()
-        except FileNotFoundError:
-            self._records = {}
-            self._last_mtime_ns = None
-            self._last_size = None
-            self._last_ino = None
 
     def put(self, record: Dict[str, Any]) -> None:
         if not isinstance(record, dict):
             raise TypeError("record must be a dictionary")
         record_id = _record_id(record, self.id_fields)
         with self._lock:
-            self._refresh_if_needed()
             self._records[record_id] = _copy_record(record)
             self._save()
 
     def get(self, record_id: str) -> Dict[str, Any] | None:
         with self._lock:
-            self._refresh_if_needed()
             record = self._records.get(str(record_id))
             return _copy_record(record) if record is not None else None
 
     def list_all(self) -> list[Dict[str, Any]]:
         with self._lock:
-            self._refresh_if_needed()
             return [_copy_record(record) for record in self._records.values()]
 
     def insert_if_absent(
@@ -110,7 +82,6 @@ class JsonGovernanceRecordStore:
     ) -> tuple[bool, Dict[str, Any]]:
         record_id = _record_id(record, self.id_fields)
         with self._lock:
-            self._refresh_if_needed()
             existing = self._records.get(record_id)
             if existing is not None:
                 return False, _copy_record(existing)
@@ -132,7 +103,6 @@ class JsonGovernanceRecordStore:
         if expected_id != record_id:
             raise ValueError("compare_and_set record identities must match")
         with self._lock:
-            self._refresh_if_needed()
             current = self._records.get(record_id)
             if current != expected_record:
                 return False, _copy_record(current) if current is not None else None
@@ -144,36 +114,9 @@ class JsonGovernanceRecordStore:
                 raise
             return True, _copy_record(record)
 
-    def delete(self, record_id: str) -> bool:
-        with self._lock:
-            self._refresh_if_needed()
-            if str(record_id) in self._records:
-                del self._records[str(record_id)]
-                self._save()
-                return True
-            return False
-
     def _load(self) -> None:
-        if not self.storage_path.exists():
-            self._records = {}
-            self._last_mtime_ns = None
-            self._last_size = None
-            self._last_ino = None
-            return
-        try:
-            st = self.storage_path.stat()
-            text = self.storage_path.read_text(encoding="utf-8").strip()
-            self._last_mtime_ns = st.st_mtime_ns
-            self._last_size = st.st_size
-            self._last_ino = st.st_ino
-        except FileNotFoundError:
-            self._records = {}
-            self._last_mtime_ns = None
-            self._last_size = None
-            self._last_ino = None
-            return
+        text = self.storage_path.read_text(encoding="utf-8").strip()
         if not text:
-            self._records = {}
             return
         payload = json.loads(text)
         if isinstance(payload, dict):
@@ -199,13 +142,6 @@ class JsonGovernanceRecordStore:
         payload = json.dumps(self._records, indent=2, sort_keys=True) + "\n"
         temporary_path.write_text(payload, encoding="utf-8")
         os.replace(temporary_path, self.storage_path)
-        try:
-            st = self.storage_path.stat()
-            self._last_mtime_ns = st.st_mtime_ns
-            self._last_size = st.st_size
-            self._last_ino = st.st_ino
-        except FileNotFoundError:
-            pass
 
 
 class PostgresGovernanceRecordStore:
@@ -260,12 +196,6 @@ class PostgresGovernanceRecordStore:
             record_id, expected_record, record
         )
         return updated, _copy_record(canonical) if canonical is not None else None
-
-    def delete(self, record_id: str) -> bool:
-        with self._records._use_conn(None) as conn:
-            query = f"DELETE FROM {self._records.table_name} WHERE record_id = %s"
-            cursor = conn.execute(query, (str(record_id),))
-            return bool(getattr(cursor, "rowcount", 0) > 0)
 
 
 def build_governance_record_store(

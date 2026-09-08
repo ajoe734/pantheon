@@ -68,6 +68,40 @@ class JournalMigrationReport:
         return asdict(self)
 
 
+def _dispose_source_record(source_store: Optional[Any], entry_id: str) -> bool:
+    """Verify durable legacy source removal via source_store delete and readback."""
+    if source_store is None:
+        return False
+    deleted = False
+    if hasattr(source_store, "delete_decision_journal_entry") and callable(source_store.delete_decision_journal_entry):
+        try:
+            source_store.delete_decision_journal_entry(entry_id)
+            deleted = True
+        except Exception:
+            deleted = False
+    elif hasattr(source_store, "_journal"):
+        if isinstance(source_store._journal, dict):
+            deleted = bool(source_store._journal.pop(entry_id, None) is not None)
+        elif hasattr(source_store._journal, "delete") and callable(source_store._journal.delete):
+            deleted = bool(source_store._journal.delete(entry_id))
+    elif hasattr(source_store, "delete") and callable(source_store.delete):
+        try:
+            deleted = bool(source_store.delete(entry_id))
+        except Exception:
+            deleted = False
+
+    if deleted:
+        if hasattr(source_store, "get_journal_entry") and callable(source_store.get_journal_entry):
+            try:
+                return source_store.get_journal_entry(entry_id) is None
+            except Exception:
+                return False
+        elif hasattr(source_store, "_journal") and isinstance(source_store._journal, dict):
+            return entry_id not in source_store._journal
+        return True
+    return False
+
+
 class JournalMigrationEngine:
     """Resumable, tenant-scoped migration runner for decision journal entries."""
 
@@ -134,6 +168,26 @@ class JournalMigrationEngine:
                 "source_tenant": source_tenant,
             })
 
+            # Check source tenant: reject source from another known tenant
+            if source_tenant and str(source_tenant).strip() != target_tenant_id:
+                report.total_conflicts += 1
+                report.items.append(
+                    asdict(
+                        JournalMigrationItem(
+                            source_id=entry_id,
+                            entry_id=entry_id,
+                            checksum=checksum,
+                            source_tenant=str(source_tenant).strip(),
+                            target_tenant=target_tenant_id,
+                            target_actor=actor,
+                            status="conflict",
+                            error=f"Source tenant {source_tenant!r} does not match target tenant {target_tenant_id!r}",
+                            disposed=False,
+                        )
+                    )
+                )
+                continue
+
             # Check destination store
             existing = self.destination_stores.entries.get(entry_id)
             if existing is not None:
@@ -158,15 +212,37 @@ class JournalMigrationEngine:
                     )
                     continue
 
+                # Verify complete principal ownership:
+                existing_actor = str(existing.get("createdBy") or existing.get("actor_id") or "").strip()
+                existing_user = str(existing.get("userId") or existing.get("user_id") or existing_actor).strip()
+                source_actor = str(actor).strip()
+                source_user = str(user_id).strip()
+                if (existing_actor and source_actor and existing_actor != source_actor) or \
+                   (existing_user and source_user and existing_user != source_user):
+                    report.total_conflicts += 1
+                    report.items.append(
+                        asdict(
+                            JournalMigrationItem(
+                                source_id=entry_id,
+                                entry_id=entry_id,
+                                checksum=checksum,
+                                source_tenant=source_tenant,
+                                target_tenant=target_tenant_id,
+                                target_actor=actor,
+                                status="conflict",
+                                error=f"Principal ownership mismatch in destination: existing owned by {existing_actor!r}/{existing_user!r}, source is {source_actor!r}/{source_user!r}",
+                                disposed=False,
+                            )
+                        )
+                    )
+                    continue
+
                 existing_checksum = compute_journal_row_checksum(existing)
                 if existing_checksum == checksum:
                     report.total_skipped += 1
-                    disposed_status = bool(dispose_source and not dry_run)
-                    if disposed_status and source_store is not None:
-                        if hasattr(source_store, "delete_decision_journal_entry"):
-                            source_store.delete_decision_journal_entry(entry_id)
-                        elif hasattr(source_store, "_journal") and isinstance(source_store._journal, dict):
-                            source_store._journal.pop(entry_id, None)
+                    disposed_status = False
+                    if dispose_source and not dry_run and source_store is not None:
+                        disposed_status = _dispose_source_record(source_store, entry_id)
                     report.items.append(
                         asdict(
                             JournalMigrationItem(
@@ -201,30 +277,38 @@ class JournalMigrationEngine:
                     )
                     continue
 
-            # Checkpoint check for resumability
-            if entry_id in self._checkpoint and self._checkpoint[entry_id] == checksum:
-                report.total_skipped += 1
-                disposed_status = bool(dispose_source and not dry_run)
-                if disposed_status and source_store is not None:
-                    if hasattr(source_store, "delete_decision_journal_entry"):
-                        source_store.delete_decision_journal_entry(entry_id)
-                    elif hasattr(source_store, "_journal") and isinstance(source_store._journal, dict):
-                        source_store._journal.pop(entry_id, None)
-                report.items.append(
-                    asdict(
-                        JournalMigrationItem(
-                            source_id=entry_id,
-                            entry_id=entry_id,
-                            checksum=checksum,
-                            source_tenant=source_tenant,
-                            target_tenant=target_tenant_id,
-                            target_actor=actor,
-                            status="skipped_identical",
-                            disposed=disposed_status,
-                        )
-                    )
-                )
-                continue
+            # Checkpoint check for resumability with destination readback
+            checkpoint_key = f"{target_tenant_id}:{actor}:{entry_id}"
+            has_checkpoint = (checkpoint_key in self._checkpoint and self._checkpoint[checkpoint_key] == checksum) or \
+                             (entry_id in self._checkpoint and self._checkpoint[entry_id] == checksum)
+            if has_checkpoint:
+                dest_entry = self.destination_stores.entries.get(entry_id)
+                if dest_entry is not None:
+                    dest_tenant = str(dest_entry.get("tenant_id") or dest_entry.get("tenantId") or "").strip()
+                    dest_actor = str(dest_entry.get("createdBy") or dest_entry.get("actor_id") or "").strip()
+                    dest_user = str(dest_entry.get("userId") or dest_entry.get("user_id") or dest_actor).strip()
+                    if (not dest_tenant or dest_tenant == target_tenant_id) and \
+                       (not dest_actor or dest_actor == actor or dest_user == user_id):
+                        if compute_journal_row_checksum(dest_entry) == checksum:
+                            report.total_skipped += 1
+                            disposed_status = False
+                            if dispose_source and not dry_run and source_store is not None:
+                                disposed_status = _dispose_source_record(source_store, entry_id)
+                            report.items.append(
+                                asdict(
+                                    JournalMigrationItem(
+                                        source_id=entry_id,
+                                        entry_id=entry_id,
+                                        checksum=checksum,
+                                        source_tenant=source_tenant,
+                                        target_tenant=target_tenant_id,
+                                        target_actor=actor,
+                                        status="skipped_identical",
+                                        disposed=disposed_status,
+                                    )
+                                )
+                            )
+                            continue
 
             if dry_run:
                 report.total_migrated += 1
@@ -280,19 +364,17 @@ class JournalMigrationEngine:
                             "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
                             "source_checksum": checksum,
                             "source_id": entry_id,
-                            "disposed": bool(dispose_source),
+                            "disposed": bool(dispose_source and source_store is not None),
                         })
                         report.audit_events_recorded += 1
                     except Exception:
                         pass
 
+                self._save_checkpoint(checkpoint_key, checksum)
                 self._save_checkpoint(entry_id, checksum)
-                disposed_status = bool(dispose_source)
-                if disposed_status and source_store is not None:
-                    if hasattr(source_store, "delete_decision_journal_entry"):
-                        source_store.delete_decision_journal_entry(entry_id)
-                    elif hasattr(source_store, "_journal") and isinstance(source_store._journal, dict):
-                        source_store._journal.pop(entry_id, None)
+                disposed_status = False
+                if dispose_source and source_store is not None:
+                    disposed_status = _dispose_source_record(source_store, entry_id)
 
                 report.total_migrated += 1
                 report.items.append(
@@ -310,12 +392,14 @@ class JournalMigrationEngine:
                     )
                 )
 
+        total_disp = len([it for it in report.items if it.get("disposed")])
         report.disposition_evidence = {
-            "disposed": bool(dispose_source and not dry_run),
+            "disposed": bool(dispose_source and not dry_run and source_store is not None and total_disp > 0),
             "target_tenant": target_tenant_id,
             "disposed_entry_ids": [it["entry_id"] for it in report.items if it.get("disposed")],
-            "total_disposed": len([it for it in report.items if it.get("disposed")]),
+            "total_disposed": total_disp,
             "source_store_type": type(source_store).__name__ if source_store is not None else None,
+            "verified_durable_removal": bool(source_store is not None and total_disp > 0),
         }
         return report
 

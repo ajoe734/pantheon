@@ -2555,16 +2555,20 @@ class DomainDecisionJournalReaderPort:
         *,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
         include_unscoped_legacy: bool = False,
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         stores = self.stores
         if stores is None or governance_list_journal_entries is None:
             return []
+        resolved_actor = actor_id or kwargs.get("actor_id")
+        resolved_user = user_id or kwargs.get("user_id") or resolved_actor
         return governance_list_journal_entries(
             stores,
             tenant_id=tenant_id,
-            user_id=user_id,
+            actor_id=resolved_actor,
+            user_id=resolved_user,
             include_unscoped_legacy=include_unscoped_legacy,
         )
 
@@ -2574,16 +2578,20 @@ class DomainDecisionJournalReaderPort:
         *,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         stores = self.stores
         if stores is None or governance_get_journal_entry is None:
             return None
+        resolved_actor = actor_id or kwargs.get("actor_id")
+        resolved_user = user_id or kwargs.get("user_id") or resolved_actor
         return governance_get_journal_entry(
             stores,
             entry_id,
             tenant_id=tenant_id,
-            user_id=user_id,
+            actor_id=resolved_actor,
+            user_id=resolved_user,
         )
 
 

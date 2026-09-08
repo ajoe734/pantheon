@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
@@ -913,12 +914,26 @@ class AgoraService:
 
     # --- Signals & Feedback --- #
 
-    def get_daily_brief(self) -> Dict[str, Any]:
+    def get_daily_brief(
+        self,
+        *,
+        identity: Optional[OperatorIdentity] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
         store = self.read_store
+        resolved_tenant = tenant_id or (getattr(identity, "tenant_id", None) if identity else None)
+        resolved_user = user_id or (getattr(identity, "user_id", None) if identity else None) or (getattr(identity, "operator_id", None) if identity else None)
         signals = store.list_agora_signals() if store and hasattr(store, "list_agora_signals") else []
         watchlist = store.list_agora_watchlist() if store and hasattr(store, "list_agora_watchlist") else []
-        journal = store.list_decision_journal_entries() if store and hasattr(store, "list_decision_journal_entries") else []
+        journal = []
+        if store and hasattr(store, "list_decision_journal_entries"):
+            if resolved_tenant or resolved_user:
+                try:
+                    journal = store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
+                except TypeError:
+                    journal = store.list_decision_journal_entries()
         tasks = store.list_research_tickets(statuses=["new", "triaged", "open", "in_progress"]) if store and hasattr(store, "list_research_tickets") else []
 
         pending_signals = [s for s in signals if str(s.get("reviewStatus") or s.get("status") or "") in ("pending", "open", "new", "pending_trader_review")]
@@ -1590,13 +1605,24 @@ class AgoraService:
             if hasattr(owner, "check_create_idempotency"):
                 idem_check = owner.check_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
             elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
-                record = owner.stores.idempotency.get(scoped_idem_key)
-                if record is None:
+                reservation = {
+                    "idempotency_key": scoped_idem_key,
+                    "request_hash": request_hash,
+                    "status": "pending",
+                    "result": None,
+                }
+                reserved, existing = owner.stores.idempotency.insert_if_absent(reservation)
+                if reserved:
                     idem_check = None
-                elif record.get("request_hash") != request_hash:
-                    idem_check = {"conflict": True, "record": record}
+                elif existing.get("request_hash") != request_hash:
+                    idem_check = {"conflict": True, "record": existing}
+                elif existing.get("status") == "pending":
+                    idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
+                elif existing.get("status") == "failed":
+                    owner.stores.idempotency.put(reservation)
+                    idem_check = None
                 else:
-                    idem_check = {"conflict": False, "result": record.get("result")}
+                    idem_check = {"conflict": False, "result": existing.get("result")}
             else:
                 idem_check = None
 
@@ -1610,6 +1636,39 @@ class AgoraService:
                         precondition_failed="idempotency_conflict",
                         suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
                     )
+                if idem_check.get("pending"):
+                    resolved_idem = None
+                    if hasattr(owner, "await_create_idempotency"):
+                        resolved_idem = owner.await_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                    elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                        deadline = time.monotonic() + 10.0
+                        while time.monotonic() < deadline:
+                            rec = owner.stores.idempotency.get(scoped_idem_key)
+                            if rec is not None:
+                                if rec.get("request_hash") != request_hash:
+                                    resolved_idem = {"conflict": True}
+                                    break
+                                if rec.get("status") == "succeeded":
+                                    resolved_idem = {"conflict": False, "result": rec.get("result")}
+                                    break
+                                if rec.get("status") == "failed":
+                                    resolved_idem = {"conflict": False, "failed": True}
+                                    break
+                            time.sleep(0.005)
+                    if resolved_idem and resolved_idem.get("conflict"):
+                        raise self.bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key was already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different Agora request hash",
+                            precondition_failed="idempotency_conflict",
+                        )
+                    if resolved_idem and resolved_idem.get("result"):
+                        cached_result = copy.deepcopy(resolved_idem["result"])
+                        if "meta" in cached_result and isinstance(cached_result["meta"], dict):
+                            if "idempotency" in cached_result["meta"] and isinstance(cached_result["meta"]["idempotency"], dict):
+                                cached_result["meta"]["idempotency"]["replayed"] = True
+                        return cached_result
                 cached = idem_check.get("result")
                 if cached is not None:
                     cached_result = copy.deepcopy(cached)
@@ -1650,6 +1709,11 @@ class AgoraService:
                 user_id=resolved_user,
             )
         except DecisionJournalCollisionError as exc:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
             raise self.bff_error(
                 409,
                 ErrorCode.CONFLICT,
@@ -1658,6 +1722,11 @@ class AgoraService:
                 precondition_failed="entry_id",
             )
         except DecisionJournalAccessDeniedError as exc:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
             raise self.bff_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -1665,6 +1734,13 @@ class AgoraService:
                 str(exc),
                 precondition_failed="tenant_scope",
             )
+        except Exception:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
+            raise
 
         result = {
             "data": created,

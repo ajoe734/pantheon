@@ -11,7 +11,7 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: compare_and_set on GovernanceRecordStore with version tracking, _MAX_CAS_ATTEMPTS retry budget, and atomic rollback on audit/outbox failures (delete on create failure, CAS-restore on patch failure)."
+      "implementation": "services/governance/decision_journal.py: compare_and_set on GovernanceRecordStore with version tracking, _MAX_CAS_ATTEMPTS retry budget, thread-safe stores transaction lock, and atomic rollback on audit/outbox failures (delete record on create outbox failure, CAS-restore to previous version and delete outbox event on patch audit failure; outbox errors trigger rollback before audit is committed)."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "Scoped get_entry, list_entries, create_entry, patch_entry, list_audit_events, and list_outbox_events across actor_id and tenant_id. Cross-tenant access strictly denied; private records isolated to authorized actor."
+      "implementation": "Scoped get_entry, list_entries, create_entry, patch_entry, list_audit_events, and list_outbox_events across actor_id and tenant_id. Cross-tenant access strictly denied; private records isolated to authorized actor; unscoped queries cannot view tenant-scoped records; Agora daily brief enforces tenant/user isolation."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -31,7 +31,7 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, author preservation, destination tenant collision detection, dry-run mode, checkpointing, source disposition, and inventory/evidence reporting."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, author preservation, destination tenant collision detection (rejecting cross-tenant or different-principal collisions), dry-run mode, checkpointing bound to tenant/actor/entry ID with readback verification, verified source disposition via _dispose_source_record readback, and inventory/evidence reporting."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -83,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": "python3 -m unittest",
-        "tests": 17,
+        "tests": 20,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": "python3 -m unittest",
-        "tests": 17,
+        "tests": 19,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -111,13 +111,20 @@
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-corrective-001-second-review-probes.py",
+        "runner": "python3",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
       }
     ],
-    "total_tests_passed": 61
+    "total_tests_passed": 72
   },
   "artifacts": [
     "services/governance/decision_journal.py",
-    "services/governance/record_store.py",
     "services/governance/test_decision_journal.py",
     "services/governance/migrations/journal_migration.py",
     "services/control-plane/bff/agora/service.py",

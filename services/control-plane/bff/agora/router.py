@@ -224,7 +224,10 @@ def create_agora_router(
         )
         result["journal"] = _read_list(
             "journal",
-            lambda: read_store.list_decision_journal_entries(),
+            lambda: read_store.list_decision_journal_entries(
+                tenant_id=scope.tenant_id if scope else None,
+                user_id=scope.user_id if scope else None,
+            ),
         )
         result["decision_events"] = _read_list(
             "decision_events",
@@ -464,10 +467,23 @@ def create_agora_router(
     @router.get("/bff/agora/daily")
     def agora_daily_brief(
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return agora_service.get_daily_brief()
+        scope = None
+        try:
+            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
+        resolved_tenant = (scope.tenant_id if scope else None) or (x_tenant_id.strip() if x_tenant_id else None)
+        resolved_user = (scope.user_id if scope else None) or (x_user_id.strip() if x_user_id else None) or getattr(identity, "operator_id", None)
+        return agora_service.get_daily_brief(
+            identity=identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
 
     @router.get("/bff/agora/signals")
     def agora_list_signals(

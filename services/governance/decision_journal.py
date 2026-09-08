@@ -31,9 +31,41 @@ import os
 import time
 import uuid
 from pathlib import Path
+import threading
 from typing import Any, Dict, List, Optional, Sequence
 
 from .record_store import GovernanceRecordStore, build_governance_record_store
+
+
+def _delete_record(store: Any, record_id: str) -> bool:
+    """Safely delete a record across json and postgres stores without requiring record_store changes."""
+    if store is None:
+        return False
+    if hasattr(store, "delete") and callable(store.delete):
+        try:
+            return bool(store.delete(record_id))
+        except Exception:
+            pass
+    # JsonGovernanceRecordStore compatibility
+    if hasattr(store, "_records") and hasattr(store, "_save") and hasattr(store, "_lock"):
+        with store._lock:
+            if hasattr(store, "_refresh_if_needed") and callable(store._refresh_if_needed):
+                store._refresh_if_needed()
+            if str(record_id) in store._records:
+                del store._records[str(record_id)]
+                store._save()
+                return True
+            return False
+    # PostgresGovernanceRecordStore compatibility
+    if hasattr(store, "_records") and hasattr(store._records, "_use_conn"):
+        try:
+            with store._records._use_conn(None) as conn:
+                query = f"DELETE FROM {store._records.table_name} WHERE record_id = %s"
+                cursor = conn.execute(query, (str(record_id),))
+                return bool(getattr(cursor, "rowcount", 0) > 0)
+        except Exception:
+            return False
+    return False
 
 CANONICAL_WRITE_AUTHORITY = "governance-decision-journal-svc"
 
@@ -116,6 +148,7 @@ class DecisionJournalStores:
         self.idempotency = idempotency
         self.audit = audit
         self.outbox = outbox
+        self._tx_lock = threading.RLock()
 
 
 def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores:
@@ -265,11 +298,7 @@ def create_entry(
                 "data": _project(canonical),
             })
         except Exception:
-            if hasattr(stores.entries, "delete"):
-                try:
-                    stores.entries.delete(clean_id)
-                except Exception:
-                    pass
+            _delete_record(stores.entries, clean_id)
             raise
 
     return _project(canonical)
@@ -343,6 +372,10 @@ def list_entries(
                 # Legacy row missing scope: do not default to globally visible when a specific tenant is requested
                 if not include_unscoped_legacy:
                     continue
+        else:
+            # Caller has NO tenant scope: exclude any record that belongs to a specific tenant
+            if record_tenant:
+                continue
 
         visibility = str(record.get("visibility") or "private").strip().lower()
         if visibility == "private" and target_actors:
@@ -487,6 +520,8 @@ def patch_entry(
     try:
         before: Optional[Dict[str, Any]] = None
         after: Optional[Dict[str, Any]] = None
+        event_id: Optional[str] = None
+        audit_id: Optional[str] = None
         for _attempt in range(_MAX_CAS_ATTEMPTS):
             stored = stores.entries.get(clean_id)
             if stored is None:
@@ -547,6 +582,25 @@ def patch_entry(
         before_projected = _project(before)
         after_projected = _project(after)
         diff = _diff(before_projected, after_projected)
+
+        # 1. Publish outbox event FIRST (if configured)
+        if stores.outbox is not None:
+            event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
+            stores.outbox.put({
+                "event_id": event_id,
+                "id": event_id,
+                "event_type": "decision_journal.entry.updated",
+                "aggregate_type": "DecisionJournalEntry",
+                "aggregate_id": clean_id,
+                "tenant_id": clean_tenant,
+                "actor_id": clean_actor,
+                "user_id": clean_user,
+                "timestamp": patched_at,
+                "data": after_projected,
+                "diff": diff,
+            })
+
+        # 2. Append audit event
         audit_id = f"aud-decision-journal-{uuid.uuid4().hex[:12]}"
         audit = {
             "auditId": audit_id,
@@ -566,6 +620,8 @@ def patch_entry(
             "diff": diff,
         }
         stores.audit.put({"audit_id": audit_id, **audit})
+
+        # 3. Mark idempotency succeeded
         stores.idempotency.put(
             {
                 "idempotency_key": scoped_idem_key,
@@ -581,23 +637,6 @@ def patch_entry(
             }
         )
 
-        # Publish outbox event
-        if stores.outbox is not None:
-            event_id = f"evt-dj-{uuid.uuid4().hex[:12]}"
-            stores.outbox.put({
-                "event_id": event_id,
-                "id": event_id,
-                "event_type": "decision_journal.entry.updated",
-                "aggregate_type": "DecisionJournalEntry",
-                "aggregate_id": clean_id,
-                "tenant_id": clean_tenant,
-                "actor_id": clean_actor,
-                "user_id": clean_user,
-                "timestamp": patched_at,
-                "data": after_projected,
-                "diff": diff,
-            })
-
         return {"status": "updated", "entry": after_projected, "audit": audit}
     except Exception:
         if before is not None and after is not None:
@@ -605,6 +644,10 @@ def patch_entry(
                 stores.entries.compare_and_set(after, before)
             except Exception:
                 pass
+        if event_id and stores.outbox is not None:
+            _delete_record(stores.outbox, event_id)
+        if audit_id and stores.audit is not None:
+            _delete_record(stores.audit, audit_id)
         try:
             stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
         except Exception:
