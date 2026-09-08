@@ -18,13 +18,89 @@ from .store import PerformanceSuggestionStore
 logger = logging.getLogger(__name__)
 
 
+class CanonicalPerformanceEventTransport:
+    """Canonical event transport for Agora performance read-model events with acknowledged delivery."""
+
+    def __init__(self) -> None:
+        self._subscribers: List[Callable[[str, str, Dict[str, Any]], None]] = []
+
+    def subscribe(self, callback: Callable[[str, str, Dict[str, Any]], None]) -> None:
+        """Register a subscriber for performance read-model events."""
+        if callback not in self._subscribers:
+            self._subscribers.append(callback)
+
+    def unsubscribe(self, callback: Callable[[str, str, Dict[str, Any]], None]) -> None:
+        """Unregister a subscriber."""
+        if callback in self._subscribers:
+            self._subscribers.remove(callback)
+
+    def clear(self) -> None:
+        """Clear all registered subscribers."""
+        self._subscribers.clear()
+
+    @property
+    def has_subscribers(self) -> bool:
+        return len(self._subscribers) > 0
+
+    def publish(self, topic: str, entity_id: str, payload: Dict[str, Any]) -> bool:
+        """Deliver event to all subscribers with acknowledged delivery.
+
+        Returns True if delivery was acknowledged by one or more subscribers.
+        If no subscriber is registered, returns False (unacknowledged).
+        If any subscriber raises an exception, the exception propagates (outage/failure).
+        """
+        if not self._subscribers:
+            logger.info(
+                "Canonical performance event transport: no subscriber registered for topic=%s entity_id=%s; unacknowledged",
+                topic,
+                entity_id,
+            )
+            return False
+        for sub in list(self._subscribers):
+            sub(topic, entity_id, payload)
+        logger.info(
+            "Delivered canonical performance event to %d subscribers: topic=%s entity_id=%s",
+            len(self._subscribers),
+            topic,
+            entity_id,
+        )
+        return True
+
+
+_CANONICAL_PERFORMANCE_TRANSPORT = CanonicalPerformanceEventTransport()
+
+
+def get_canonical_performance_transport() -> CanonicalPerformanceEventTransport:
+    return _CANONICAL_PERFORMANCE_TRANSPORT
+
+
+def register_performance_subscriber(
+    subscriber: Callable[[str, str, Dict[str, Any]], None]
+) -> None:
+    """Register a subscriber for canonical performance events."""
+    _CANONICAL_PERFORMANCE_TRANSPORT.subscribe(subscriber)
+
+
+def clear_performance_subscribers() -> None:
+    """Clear registered performance subscribers (for testing)."""
+    _CANONICAL_PERFORMANCE_TRANSPORT.clear()
+
+
 def canonical_performance_publisher(
     topic: str,
     entity_id: str,
     payload: Dict[str, Any],
-) -> None:
-    """Canonical publisher for Agora performance events."""
-    logger.info("Published canonical performance event: topic=%s entity_id=%s", topic, entity_id)
+) -> bool:
+    """Canonical publisher for Agora performance events with acknowledged delivery."""
+    return _CANONICAL_PERFORMANCE_TRANSPORT.publish(topic, entity_id, payload)
+
+
+canonical_performance_publisher.subscribe = _CANONICAL_PERFORMANCE_TRANSPORT.subscribe  # type: ignore[attr-defined]
+canonical_performance_publisher.unsubscribe = _CANONICAL_PERFORMANCE_TRANSPORT.unsubscribe  # type: ignore[attr-defined]
+canonical_performance_publisher.clear = _CANONICAL_PERFORMANCE_TRANSPORT.clear  # type: ignore[attr-defined]
+canonical_performance_publisher.transport = _CANONICAL_PERFORMANCE_TRANSPORT  # type: ignore[attr-defined]
+canonical_performance_publisher.has_subscribers = lambda: _CANONICAL_PERFORMANCE_TRANSPORT.has_subscribers  # type: ignore[attr-defined]
+
 
 
 def consume_telemetry_outcome(
@@ -162,8 +238,17 @@ def consume_telemetry_outcome(
             "tenant_id": tenant_id,
         }
         # Fail closed on publisher failure: do NOT swallow exceptions so retry/outage recovery works
-        publisher(topic, entity_id, payload)
-        if store is not None and hasattr(store, "mark_event_published"):
+        ack_result = publisher(topic, entity_id, payload)
+        is_acked = True
+        if ack_result is False:
+            is_acked = False
+        elif getattr(publisher, "has_subscribers", None) is not None:
+            is_acked = bool(publisher.has_subscribers() if callable(publisher.has_subscribers) else publisher.has_subscribers)
+        elif hasattr(publisher, "transport") and hasattr(publisher.transport, "has_subscribers"):
+            t_has = publisher.transport.has_subscribers
+            is_acked = bool(t_has() if callable(t_has) else t_has)
+
+        if is_acked and store is not None and hasattr(store, "mark_event_published"):
             store.mark_event_published(topic, entity_id, payload, published_at=utc_now)
 
     return suggestion
@@ -205,6 +290,15 @@ class EvaluationTelemetryConsumer:
             publish_event_fn=self.publish_event_fn,
             utc_now=utc_now,
         )
+
+    def add_subscriber(self, callback: Callable[[str, str, Dict[str, Any]], None]) -> None:
+        """Register a subscriber for acknowledged read-model event delivery."""
+        if hasattr(self.publish_event_fn, "subscribe"):
+            self.publish_event_fn.subscribe(callback)
+        elif self.publish_event_fn is canonical_performance_publisher:
+            _CANONICAL_PERFORMANCE_TRANSPORT.subscribe(callback)
+        else:
+            self._subscriptions.append(callback)
 
     def replay(
         self,

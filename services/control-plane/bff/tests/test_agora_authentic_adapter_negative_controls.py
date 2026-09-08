@@ -19,11 +19,13 @@ import pytest
 
 from agora.research.dispatcher import (
     ALLOWLISTED_STAGE_BACKENDS,
+    AuthenticResearchBackendClient,
     AuthenticStageAdapter,
     DefaultAllowlistedAdapter,
     ResearchDispatcher,
     ResearchStageResult,
     build_authentic_adapter_registry,
+    build_canonical_research_backend_clients,
 )
 from agora.research.receipt import (
     ResearchExecutionReceipt,
@@ -491,4 +493,109 @@ def test_invalid_owner_emitted_receipt_run_id_raises() -> None:
             plan=_plan(),
             context=_context(run_id="expected-run-id"),
             downstream_key="key-8",
+        )
+
+
+def test_authentic_research_backend_client_absent_backend_fails_closed() -> None:
+    """When base_url and backend_fn are absent, AuthenticResearchBackendClient must fail closed."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url=None,
+        backend_fn=None,
+    )
+    with pytest.raises(RuntimeError, match="is absent"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-absent",
+        )
+
+
+def test_authentic_research_backend_client_unreachable_backend_fails_closed() -> None:
+    """When base_url is unreachable, AuthenticResearchBackendClient must fail closed."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://127.0.0.1:59998",
+        backend_fn=None,
+    )
+    with pytest.raises(RuntimeError, match="submission/readback failed"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-unreachable",
+        )
+
+
+def test_authentic_research_backend_client_recording_transport_records_and_succeeds() -> None:
+    """Recording transport captures actual submission, delivers genuine output, and validates receipt."""
+    recorded_calls = []
+
+    def recording_transport(req):
+        import json
+        body = json.loads(req.data.decode("utf-8")) if req.data else {}
+        recorded_calls.append({
+            "url": req.full_url,
+            "headers": dict(req.headers),
+            "body": body,
+        })
+        return {
+            "status": "succeeded",
+            "outcome": "succeeded",
+            "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
+            "artifact_digest": "sha256:digest_vectorbt_genuine_12345",
+            "metrics": [{"name": "sharpe_ratio", "value": 2.34, "category": "performance", "provenance": "real"}],
+        }
+
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=recording_transport,
+    )
+    run_id = "run-recorded-001"
+    corr_id = "corr-recorded-001"
+    result = client.execute(
+        stage=_stage(),
+        plan=_plan(),
+        context=_context(run_id=run_id, correlation_id=corr_id),
+        downstream_key="key-recorded",
+    )
+
+    assert len(recorded_calls) == 1
+    assert recorded_calls[0]["url"] == "http://vectorbt-service:8000/stages/prototype_backtest/execute"
+    assert recorded_calls[0]["body"]["run_id"] == run_id
+    assert recorded_calls[0]["body"]["correlation_id"] == corr_id
+    assert result["status"] == "succeeded"
+    assert result["artifact_digest"] == "sha256:digest_vectorbt_genuine_12345"
+    assert result["receipt"].artifact_digest == "sha256:digest_vectorbt_genuine_12345"
+    assert result["receipt"].mode == "real"
+
+
+def test_authentic_research_backend_client_empty_metrics_fails_closed() -> None:
+    """If backend returns empty metrics, AuthenticResearchBackendClient must fail closed."""
+    def empty_metrics_transport(req):
+        return {
+            "status": "succeeded",
+            "outcome": "succeeded",
+            "backend_reference": "vectorbt://runs/123",
+            "artifact_digest": "sha256:digest123",
+            "metrics": [],
+        }
+
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=empty_metrics_transport,
+    )
+    with pytest.raises(RuntimeError, match="missing genuine metrics"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-empty-metrics",
         )

@@ -10,13 +10,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import sqlite3
 from typing import Any, Dict, List, Optional
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 
 from .models import AdjustmentSuggestion, SuggestionActionReceipt
+
+logger = logging.getLogger(__name__)
 
 
 STORE_PATH_ENV = "PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH"
@@ -37,7 +43,19 @@ class PerformanceSuggestionConflict(PerformanceSuggestionError):
 class PerformanceSuggestionStore:
     """Durable suggestion source/disposition and receipt ledger."""
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        path: Optional[str] = None,
+        *,
+        incidents_api_url: Optional[str] = None,
+    ) -> None:
+        self.incidents_api_url = (
+            incidents_api_url
+            or os.getenv("PANTHEON_INCIDENTS_API_URL")
+            or os.getenv("PANTHEON_INCIDENTS_URL")
+        )
+        if self.incidents_api_url:
+            self.incidents_api_url = self.incidents_api_url.strip().rstrip("/")
         resolved = path or os.getenv(STORE_PATH_ENV)
         if not resolved:
             resolved = str(
@@ -45,18 +63,27 @@ class PerformanceSuggestionStore:
                 / "agora_performance.sqlite3"
             )
         self.path = str(Path(resolved).expanduser().resolve())
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._bootstrap()
+        self._bootstrapped = False
+        if not self.incidents_api_url:
+            self._bootstrap()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _raw_connect(self) -> sqlite3.Connection:
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
+    def _connect(self) -> sqlite3.Connection:
+        if not self._bootstrapped:
+            self._bootstrap()
+        return self._raw_connect()
+
     def _bootstrap(self) -> None:
-        with self._connect() as conn:
+        if self._bootstrapped:
+            return
+        with self._raw_connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(
                 """
@@ -218,6 +245,31 @@ class PerformanceSuggestionStore:
         sugg_id = suggestion_id or kwargs.get("suggestion_id")
         u_id = owner_user_id or kwargs.get("owner_user_id")
 
+        if self.incidents_api_url and sugg_id:
+            query_params: Dict[str, str] = {}
+            if t_id:
+                query_params["tenant_id"] = t_id
+            if s_id:
+                query_params["strategy_id"] = s_id
+            if u_id:
+                query_params["owner_user_id"] = u_id
+            qs = urllib.parse.urlencode(query_params)
+            url = f"{self.incidents_api_url}/api/incidents/agora/performance/suggestions/{sugg_id}"
+            if qs:
+                url = f"{url}?{qs}"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict):
+                        return data.get("suggestion", data)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return None
+                logger.warning("Failed querying incidents service for suggestion %s: %s", sugg_id, exc)
+            except Exception as exc:
+                logger.warning("Failed querying incidents service for suggestion %s: %s", sugg_id, exc)
+
         clauses = ["tenant_id = ?"]
         params: List[Any] = [t_id]
         if u_id:
@@ -249,6 +301,31 @@ class PerformanceSuggestionStore:
         u_id = owner_user_id or kwargs.get("owner_user_id")
         p = period or kwargs.get("period")
 
+        if self.incidents_api_url:
+            query_params = {}
+            if t_id:
+                query_params["tenant_id"] = t_id
+            if s_id:
+                query_params["strategy_id"] = s_id
+            if u_id:
+                query_params["owner_user_id"] = u_id
+            if p:
+                query_params["period"] = p
+            qs = urllib.parse.urlencode(query_params)
+            url = f"{self.incidents_api_url}/api/incidents/agora/performance/suggestions"
+            if qs:
+                url = f"{url}?{qs}"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict) and "suggestions" in data:
+                        return data["suggestions"]
+                    elif isinstance(data, list):
+                        return data
+            except Exception as exc:
+                logger.warning("Failed querying incidents service for performance suggestions: %s", exc)
+
         clauses = ["tenant_id = ?"]
         params: List[Any] = [t_id]
         if u_id:
@@ -277,14 +354,40 @@ class PerformanceSuggestionStore:
         owner_user_id: str,
         receipt_id: str,
     ) -> Optional[Dict[str, Any]]:
+        if self.incidents_api_url:
+            query_params = {}
+            if tenant_id:
+                query_params["tenant_id"] = tenant_id
+            if owner_user_id:
+                query_params["owner_user_id"] = owner_user_id
+            qs = urllib.parse.urlencode(query_params)
+            url = f"{self.incidents_api_url}/api/incidents/agora/performance/action-receipts/{receipt_id}"
+            if qs:
+                url = f"{url}?{qs}"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict):
+                        return data.get("receipt", data)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return None
+                logger.warning("Failed querying receipt %s from incidents service: %s", receipt_id, exc)
+            except Exception as exc:
+                logger.warning("Failed querying receipt %s from incidents service: %s", receipt_id, exc)
+
+        clauses = ["receipt_id=?"]
+        params: List[Any] = [receipt_id]
+        if tenant_id:
+            clauses.append("tenant_id=?")
+            params.append(tenant_id)
+        if owner_user_id:
+            clauses.append("owner_user_id=?")
+            params.append(owner_user_id)
+        query = f"SELECT receipt_json FROM performance_action_receipts WHERE {' AND '.join(clauses)}"
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT receipt_json FROM performance_action_receipts
-                WHERE tenant_id=? AND owner_user_id=? AND receipt_id=?
-                """,
-                (tenant_id, owner_user_id, receipt_id),
-            ).fetchone()
+            row = conn.execute(query, tuple(params)).fetchone()
         return json.loads(row["receipt_json"]) if row else None
 
     def list_audit_events(
@@ -294,6 +397,28 @@ class PerformanceSuggestionStore:
         owner_user_id: str,
         suggestion_id: str,
     ) -> List[Dict[str, Any]]:
+        if self.incidents_api_url:
+            query_params = {
+                "tenant_id": tenant_id,
+                "owner_user_id": owner_user_id,
+            }
+            qs = urllib.parse.urlencode(query_params)
+            url = f"{self.incidents_api_url}/api/incidents/agora/performance/suggestions/{suggestion_id}/audit-events?{qs}"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict) and "audit_events" in data:
+                        return data["audit_events"]
+                    elif isinstance(data, list):
+                        return data
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return []
+                logger.warning("Failed querying audit events from incidents service: %s", exc)
+            except Exception as exc:
+                logger.warning("Failed querying audit events from incidents service: %s", exc)
+
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -319,6 +444,48 @@ class PerformanceSuggestionStore:
         idempotency_key: str,
         recorded_at: str,
     ) -> tuple[Dict[str, Any], bool]:
+        if self.incidents_api_url:
+            url = f"{self.incidents_api_url}/api/incidents/agora/performance/suggestions/{suggestion_id}/actions"
+            body = {
+                "tenant_id": tenant_id,
+                "owner_user_id": owner_user_id,
+                "strategy_id": strategy_id,
+                "action": action,
+                "expected_version": expected_version,
+                "reason": reason,
+                "actor_id": actor_id,
+                "recorded_at": recorded_at,
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Idempotency-Key": idempotency_key,
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    receipt = data.get("receipt", data)
+                    idempotent_replay = bool(data.get("idempotent_replay", False))
+                    return receipt, idempotent_replay
+            except urllib.error.HTTPError as exc:
+                err_body = exc.read().decode("utf-8")
+                err_msg = ""
+                try:
+                    err_json = json.loads(err_body)
+                    err_msg = err_json.get("detail", err_msg)
+                except Exception:
+                    err_msg = err_body
+                if exc.code == 404:
+                    raise PerformanceSuggestionNotFound(err_msg or "suggestion not found")
+                elif exc.code == 409:
+                    raise PerformanceSuggestionConflict(err_msg or "suggestion conflict")
+                raise
+
         request_hash = self.request_hash(
             strategy_id=strategy_id,
             suggestion_id=suggestion_id,

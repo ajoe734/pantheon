@@ -307,7 +307,32 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
 
             # 2. Separate worker opens the store from disk with authentic adapter and drains outbox
             worker_store = MemoryResearchPlanStore(storage_path=storage_path)
-            backend_clients = build_canonical_research_backend_clients(mode="real")
+            recorded_requests = []
+
+            def recording_transport(req):
+                import json
+                body = json.loads(req.data.decode("utf-8")) if req.data else {}
+                recorded_requests.append({
+                    "url": req.full_url,
+                    "method": req.get_method(),
+                    "headers": dict(req.headers),
+                    "body": body,
+                })
+                return {
+                    "status": "succeeded",
+                    "outcome": "succeeded",
+                    "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
+                    "artifact_digest": "sha256:authentic_vectorbt_artifact_digest_12345",
+                    "metrics": [
+                        {"name": "sharpe", "value": 2.5, "category": "performance", "provenance": "real"}
+                    ],
+                }
+
+            backend_clients = build_canonical_research_backend_clients(
+                mode="real",
+                default_base_url="http://vectorbt:8000",
+                default_transport=recording_transport,
+            )
             adapter_registry = build_authentic_adapter_registry(
                 mode="real",
                 execution_owners=backend_clients,
@@ -323,6 +348,9 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             )
             drained = worker.drain_research_outbox()
             self.assertGreaterEqual(drained, 1)
+            self.assertEqual(len(recorded_requests), 1)
+            self.assertIn("vectorbt", recorded_requests[0]["url"])
+            self.assertEqual(recorded_requests[0]["body"]["run_id"], run_id)
             del worker
             del dispatcher
             del worker_store
@@ -340,6 +368,7 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             self.assertIsNotNone(receipt)
             self.assertEqual(receipt["mode"], "real")
             self.assertEqual(receipt["run_id"], run_id)
+            self.assertEqual(receipt["artifact_digest"], "sha256:authentic_vectorbt_artifact_digest_12345")
             self.assertTrue(receipt["backend_reference"].startswith("vectorbt://runs/"))
 
             prov, resolved_receipt = resolve_run_provenance(
@@ -350,6 +379,92 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             )
             self.assertEqual(prov, "real")
             self.assertIsNotNone(resolved_receipt)
+
+    def test_worker_outbox_fails_closed_on_absent_backend(self) -> None:
+        """Worker outbox draining must fail closed when authentic research backend is absent."""
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from agora.interaction.worker import AgoraInteractionWorker
+        from agora.research.dispatcher import (
+            ResearchDispatcher,
+            build_authentic_adapter_registry,
+            build_canonical_research_backend_clients,
+        )
+        from agora.research.store import MemoryResearchPlanStore
+
+        store = MemoryResearchPlanStore()
+        plan_id = "plan-absent-test"
+        run_id = "run-absent-test"
+        stage_item = {
+            "stage_id": "stage-proto-absent",
+            "stage_type": "prototype_backtest",
+            "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+        }
+        plan = {
+            "plan_id": plan_id,
+            "strategy_id": "strat-absent",
+            "lock_version": 1,
+            "stages": [stage_item],
+            "correlation_id": "corr-absent",
+            "tenant_id": "t1",
+            "user_id": "u1",
+        }
+        store.create_plan(plan)
+        store.create_run({
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "stage_id": "stage-proto-absent",
+            "stage_type": "prototype_backtest",
+            "execution_status": "queued",
+            "outcome": "inconclusive",
+            "correlation_id": "corr-absent",
+            "provenance": "unavailable",
+            "tenant_id": "t1",
+            "user_id": "u1",
+        })
+        store.create_outbox_record({
+            "outbox_id": f"rob:{plan_id}:stage-proto-absent:{run_id}",
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "stage_id": "stage-proto-absent",
+            "stage_type": "prototype_backtest",
+            "stage": stage_item,
+            "plan": plan,
+            "backend": "vectorbt",
+            "status": "queued",
+            "tenant_id": "t1",
+            "user_id": "u1",
+            "payload": {"plan": plan, "stage": stage_item},
+            "downstream_idempotency_key": f"idemp:{run_id}",
+        })
+
+        # Client built in clean environment without base_url or backend_fn
+        backend_clients = build_canonical_research_backend_clients(mode="real")
+        adapter_registry = build_authentic_adapter_registry(
+            mode="real",
+            execution_owners=backend_clients,
+        )
+        dispatcher = ResearchDispatcher(
+            store=store,
+            adapter_registry=adapter_registry,
+        )
+        worker = AgoraInteractionWorker(
+            research_store=store,
+            research_dispatcher=dispatcher,
+            worker_id="absent-backend-worker",
+        )
+        worker.drain_research_outbox()
+
+        # Run must NOT succeed, and no real receipt must exist
+        run = store.get_run(run_id)
+        self.assertNotEqual(run.get("execution_status"), "succeeded")
+        receipt = store.get_execution_receipt(run_id)
+        self.assertIsNone(receipt)
 
 
 if __name__ == "__main__":
