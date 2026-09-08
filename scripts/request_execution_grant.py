@@ -6,11 +6,11 @@ Source of record: ISSUER-SA-SD-20260908.md.
 
 Enforces:
 1. Reads canonical task through the qualified existing status CLI (not raw JSON).
-2. Fails closed on unauthorized tasks (initial scope limited to DEV502-TRACE-001 / pantheon-dev).
-3. Strictly rejects S5 / step-5 tasks.
-4. Accepts operator token from protected file or stdin (NEVER argv).
-5. Verifies downloaded grant locally using existing verifier and configured public trust.
-6. Submits only through existing governed Human/Ops CLI (no new task writer).
+2. Supports requesting exact task IDs without becoming an authorization authority;
+   issuer-side configured exact scope and canonical task policy remain authoritative.
+3. Accepts operator token from protected file or stdin (NEVER argv).
+4. Verifies downloaded grant locally using existing verifier and configured public trust.
+5. Submits only through existing governed Human/Ops CLI (no new task writer).
 """
 from __future__ import annotations
 
@@ -112,27 +112,18 @@ def validate_task_eligibility(
     task: Mapping[str, Any],
     **kwargs: Any,
 ) -> tuple[dict[str, Any], int]:
-    """Validate task against S5 restrictions, target scope, and execution policy.
-    
-    Bypasses and alternative tasks are strictly prohibited. Scope is immutably
-    DEV502-TRACE-001 in pantheon-dev.
+    """Validate task against target scope and execution policy.
+
+    The CLI supports requesting exact task IDs without becoming an authorization
+    authority. Issuer-side configured exact scope and canonical task binding
+    remain authoritative.
     """
     task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        raise ValueError("Task has no 'id' field")
 
-    # Strict S5 / Step 5 guard
-    if "s5" in task_id.lower() or "step-5" in task_id.lower() or "step5" in task_id.lower():
-        raise ValueError(f"Task {task_id} is associated with Step 5 / S5, which remains paused")
-
-    phase = str(task.get("phase") or "").lower()
-    if "s5" in phase or "step-5" in phase or "step5" in phase:
-        raise ValueError(f"Task {task_id} is in phase {phase!r}, which remains paused")
-
-    # Immutable Scope limit (no bypasses permitted)
-    if task_id != DEFAULT_ALLOWED_TASK:
-        raise ValueError(
-            f"Execution grant preparation is strictly limited to {DEFAULT_ALLOWED_TASK}; "
-            f"task {task_id} is not authorized for live issuance"
-        )
+    if any(c in task_id for c in ("*", "?", "[", "]", "{", "}", " ", "\t", "\n")):
+        raise ValueError(f"Task ID contains invalid characters or wildcards: {task_id!r}")
 
     ea_record = task.get("execution_authorization")
     if not isinstance(ea_record, Mapping):
@@ -146,6 +137,8 @@ def validate_task_eligibility(
         raise ValueError(f"Task {task_id} policy does not require execution authorization")
 
     env = str(policy.get("environment") or "").strip()
+    if not env:
+        raise ValueError(f"Task {task_id} policy has no environment")
     if env != DEFAULT_ALLOWED_ENV:
         raise ValueError(f"Task {task_id} environment {env!r} does not match required {DEFAULT_ALLOWED_ENV!r}")
 

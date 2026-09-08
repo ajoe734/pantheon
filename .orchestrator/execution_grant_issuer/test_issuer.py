@@ -60,7 +60,13 @@ from execution_grant_issuer.secure_io import (
     read_private_file_strict,
     write_private_exclusive_file,
 )
-from execution_grant_issuer.service import ExecutionGrantIssuerService
+from execution_grant_issuer.service import (
+    DEFAULT_ALLOWED_ENVIRONMENTS,
+    DEFAULT_ALLOWED_TASKS,
+    ExecutionGrantIssuerService,
+    validate_allowed_environments,
+    validate_allowed_tasks,
+)
 from execution_grant_issuer.signer import Ed25519GrantSigner
 from execution_grant_issuer.token_verifier import IdentityPlatformTokenVerifier
 
@@ -1134,6 +1140,477 @@ class TestExecutionGrantIssuer(unittest.TestCase):
                 now=self.now,
             )
         self.assertIn("allowed task scope", str(cm.exception).lower())
+
+    # -------------------------------------------------------------------------
+    # 5b. Configured Execution Scope and Step 5 Resume (OPS-EXECUTION-SCOPE-RESUME-001)
+    # -------------------------------------------------------------------------
+
+    def test_validate_allowed_tasks_fails_closed(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        validate_allowed_tasks must reject None, non-list, empty, whitespace, and wildcard scopes.
+        """
+        bad_values = [
+            None,
+            [],
+            (),
+            "DEV502-TRACE-001",  # string instead of sequence
+            b"DEV502-TRACE-001",
+            {"task": "DEV502-TRACE-001"},
+            123,
+            [""],
+            ["   "],
+            ["*"],
+            ["?"],
+            ["[abc]"],
+            ["{foo}"],
+            ["all"],
+            ["ALL"],
+            ["any"],
+            ["ANY"],
+            ["S5-*"],
+            ["S5-PAIR-001", ""],
+            ["S5-PAIR-001", "  "],
+            ["S5-PAIR-001", "S5-PAIR 001"],  # embedded space
+            ["S5-PAIR-001", 123],  # non-string item
+        ]
+        for val in bad_values:
+            with self.subTest(val=val):
+                with self.assertRaises(ValueError):
+                    validate_allowed_tasks(val)
+
+        # Valid list must return a frozenset of stripped task IDs
+        valid = validate_allowed_tasks(["DEV502-TRACE-001", "S5-PAIR-001"])
+        self.assertEqual(valid, frozenset({"DEV502-TRACE-001", "S5-PAIR-001"}))
+
+    def test_validate_allowed_environments_fails_closed(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        validate_allowed_environments must reject None, non-list, empty, whitespace, and wildcard scopes.
+        """
+        bad_values = [
+            None,
+            [],
+            (),
+            "pantheon-dev",
+            {"env": "pantheon-dev"},
+            456,
+            [""],
+            ["   "],
+            ["*"],
+            ["?"],
+            ["all"],
+            ["any"],
+            ["pantheon-*"],
+            ["pantheon-dev", ""],
+            ["pantheon-dev", "pantheon dev"],
+            ["pantheon-dev", None],
+        ]
+        for val in bad_values:
+            with self.subTest(val=val):
+                with self.assertRaises(ValueError):
+                    validate_allowed_environments(val)
+
+        valid = validate_allowed_environments(["pantheon-dev"])
+        self.assertEqual(valid, frozenset({"pantheon-dev"}))
+
+    def test_default_config_denies_all_six_canonical_s5_tasks(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify default configuration denies all six canonical S5 task IDs.
+        """
+        default_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+        )
+        s5_ids = [
+            "S5-PAIR-001",
+            "S5-LOOPS-001",
+            "S5-PROVENANCE-001",
+            "S5-JOURNEYS-001",
+            "S5-ROLLBACK-001",
+            "S5-REPORT-001",
+        ]
+        token = self._mint_id_token()
+        for task_id in s5_ids:
+            with self.subTest(task_id=task_id):
+                s5_spec = deepcopy(self.spec)
+                s5_spec["id"] = task_id
+                s5_spec["artifacts"] = [f"docs/deployment/evidence/{task_id}/"]
+                s5_policy = ea.derive_execution_policy(
+                    task_id=task_id,
+                    work_class="hosted",
+                    repository="pantheon",
+                    environment="pantheon-dev",
+                    resources=["pantheon-dev"],
+                    action_scope="execute",
+                    artifacts=[f"docs/deployment/evidence/{task_id}/"],
+                    task_spec=s5_spec,
+                )
+                with self.assertRaises(PolicyValidationError) as cm:
+                    default_service.handle_create_challenge(
+                        token,
+                        {
+                            "task_id": task_id,
+                            "generation": 1,
+                            "policy_snapshot": s5_policy,
+                        },
+                        now=self.now,
+                    )
+                self.assertIn("step 5 / s5", str(cm.exception).lower())
+
+    def test_configured_s5_allowed_tasks_accepts_configured_task_with_valid_binding(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify explicit allowlist accepts configured S5 task with valid canonical binding.
+        """
+        s5_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        token = self._mint_id_token()
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_spec["artifacts"] = ["docs/deployment/evidence/S5-PAIR-001/"]
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        s5_task = {
+            **s5_spec,
+            "id": "S5-PAIR-001",
+            "generation": 1,
+            "status": "todo",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "summary_zh": s5_spec["summary"],
+            "target_repo": "pantheon",
+            "execution_resources": ["pantheon-dev"],
+            "artifacts": ["docs/deployment/evidence/S5-PAIR-001/"],
+            "dev_bridge": {
+                "work_class": "hosted",
+                "operator_authorization_required": True,
+                "task_spec": deepcopy(s5_spec),
+                "task_spec_hash": s5_policy["task_spec_hash"],
+            },
+            "execution_authorization": {
+                "state": "pending_authorization",
+                "policy": s5_policy,
+            },
+        }
+
+        challenge_resp = s5_service.handle_create_challenge(
+            token,
+            {
+                "task_id": "S5-PAIR-001",
+                "generation": 1,
+                "policy_snapshot": s5_policy,
+            },
+            now=self.now,
+        )
+        cid = challenge_resp["challenge_id"]
+
+        issue_resp = s5_service.handle_issue_grant(
+            token,
+            {
+                "challenge_id": cid,
+                "task_id": "S5-PAIR-001",
+                "generation": 1,
+                "policy_snapshot": s5_policy,
+            },
+            now=self.now,
+        )
+        grant = issue_resp["grant"]
+        self.assertEqual(grant["task_id"], "S5-PAIR-001")
+        self.assertEqual(grant["generation"], 1)
+
+        fp = ea.verify_execution_grant(
+            grant,
+            policy=s5_policy,
+            task_id="S5-PAIR-001",
+            generation=1,
+            trusted_issuers={self.signer_key_id: self.signer.public_key_base64url},
+            now=self.now + timedelta(seconds=10),
+            task=s5_task,
+        )
+        self.assertEqual(fp, self.signer.public_key_fingerprint)
+
+    def test_configured_s5_issuer_denies_unlisted_s5_and_unknown_tasks(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify unlisted S5 task and unknown IDs are denied by configured issuer.
+        """
+        s5_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        token = self._mint_id_token()
+
+        # Unlisted S5 task must fail with explicit S5 pause explanation
+        unlisted_spec = deepcopy(self.spec)
+        unlisted_spec["id"] = "S5-LOOPS-001"
+        unlisted_spec["artifacts"] = ["docs/deployment/evidence/S5-LOOPS-001/"]
+        unlisted_policy = ea.derive_execution_policy(
+            task_id="S5-LOOPS-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-LOOPS-001/"],
+            task_spec=unlisted_spec,
+        )
+        with self.assertRaises(PolicyValidationError) as cm:
+            s5_service.handle_create_challenge(
+                token,
+                {
+                    "task_id": "S5-LOOPS-001",
+                    "generation": 1,
+                    "policy_snapshot": unlisted_policy,
+                },
+                now=self.now,
+            )
+        self.assertIn("step 5 / s5", str(cm.exception).lower())
+
+        # Unknown non-S5 task must fail with allowed task scope message
+        unknown_spec = deepcopy(self.spec)
+        unknown_spec["id"] = "UNKNOWN-001"
+        unknown_policy = ea.derive_execution_policy(
+            task_id="UNKNOWN-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/DEV502-TRACE-001/"],
+            task_spec=unknown_spec,
+        )
+        with self.assertRaises(PolicyValidationError) as cm:
+            s5_service.handle_create_challenge(
+                token,
+                {
+                    "task_id": "UNKNOWN-001",
+                    "generation": 1,
+                    "policy_snapshot": unknown_policy,
+                },
+                now=self.now,
+            )
+        self.assertIn("allowed task scope", str(cm.exception).lower())
+
+    def test_configured_s5_issuer_rejects_wrong_environment(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify environment outside allowed_environments fails closed.
+        """
+        s5_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        token = self._mint_id_token()
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_spec["artifacts"] = ["docs/deployment/evidence/S5-PAIR-001/"]
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-prod",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        with self.assertRaises(PolicyValidationError) as cm:
+            s5_service.handle_create_challenge(
+                token,
+                {
+                    "task_id": "S5-PAIR-001",
+                    "generation": 1,
+                    "policy_snapshot": s5_policy,
+                },
+                now=self.now,
+            )
+        self.assertIn("is not permitted", str(cm.exception).lower())
+        self.assertIn("environment", str(cm.exception).lower())
+
+    def test_configured_s5_issuer_rejects_tampered_policy_digest(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify tampered policy between challenge and issue is rejected.
+        """
+        s5_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        token = self._mint_id_token()
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_spec["artifacts"] = ["docs/deployment/evidence/S5-PAIR-001/"]
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        challenge_resp = s5_service.handle_create_challenge(
+            token,
+            {
+                "task_id": "S5-PAIR-001",
+                "generation": 1,
+                "policy_snapshot": s5_policy,
+            },
+            now=self.now,
+        )
+        cid = challenge_resp["challenge_id"]
+
+        tampered_policy = deepcopy(s5_policy)
+        tampered_policy["action_scope"] = "tampered"
+        tampered_policy["policy_digest"] = ea.execution_policy_digest(
+            task_id="S5-PAIR-001",
+            repository=tampered_policy["repository"],
+            environment=tampered_policy["environment"],
+            resources=tampered_policy["resources"],
+            action_scope=tampered_policy["action_scope"],
+            artifacts=tampered_policy["artifacts"],
+            work_class=tampered_policy["work_class"],
+            task_spec_hash=tampered_policy["task_spec_hash"],
+        )
+        with self.assertRaises(ChallengeError) as cm:
+            s5_service.handle_issue_grant(
+                token,
+                {
+                    "challenge_id": cid,
+                    "task_id": "S5-PAIR-001",
+                    "generation": 1,
+                    "policy_snapshot": tampered_policy,
+                },
+                now=self.now,
+            )
+        self.assertIn("does not match", str(cm.exception).lower())
+
+    def test_configured_s5_issuer_rejects_missing_mfa(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify token without MFA second factor is rejected even for configured S5 task.
+        """
+        s5_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        non_mfa_token = self._mint_id_token(second_factor=None)
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_spec["artifacts"] = ["docs/deployment/evidence/S5-PAIR-001/"]
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            s5_service.handle_create_challenge(
+                non_mfa_token,
+                {
+                    "task_id": "S5-PAIR-001",
+                    "generation": 1,
+                    "policy_snapshot": s5_policy,
+                },
+                now=self.now,
+            )
+        self.assertIn("second-factor", str(cm.exception).lower())
+
+    def test_configured_s5_issuer_rejects_replayed_challenge(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify replaying a challenge for a configured S5 task fails closed.
+        """
+        s5_service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        token = self._mint_id_token()
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_spec["artifacts"] = ["docs/deployment/evidence/S5-PAIR-001/"]
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        challenge_resp = s5_service.handle_create_challenge(
+            token,
+            {
+                "task_id": "S5-PAIR-001",
+                "generation": 1,
+                "policy_snapshot": s5_policy,
+            },
+            now=self.now,
+        )
+        cid = challenge_resp["challenge_id"]
+
+        # First consumption succeeds
+        s5_service.handle_issue_grant(
+            token,
+            {
+                "challenge_id": cid,
+                "task_id": "S5-PAIR-001",
+                "generation": 1,
+                "policy_snapshot": s5_policy,
+            },
+            now=self.now,
+        )
+
+        # Replay attempt fails closed
+        with self.assertRaises(ChallengeError) as cm:
+            s5_service.handle_issue_grant(
+                token,
+                {
+                    "challenge_id": cid,
+                    "task_id": "S5-PAIR-001",
+                    "generation": 1,
+                    "policy_snapshot": s5_policy,
+                },
+                now=self.now,
+            )
+        self.assertIn("already consumed", str(cm.exception).lower())
 
     # -------------------------------------------------------------------------
     # 6. Redaction Verification (No Secrets Leaked)

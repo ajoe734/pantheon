@@ -11,7 +11,7 @@ The Execution Grant Issuer is a small development-tooling service that verifies 
 - **Isolated Authority:** The service runs under its own system identity (`pantheon-issuer`) outside worker authority. Workers must NOT have sudo rights or write permissions to the issuer's key or configuration.
 - **Dedicated Signing Key:** The service signs grants using an Ed25519 private key generated specifically for execution authorization. The private key never leaves the issuer host.
 - **No Client Policy Substitutions:** Challenges bind the full canonical task policy snapshot. The issuer rejects any client-selected policy changes at issue time.
-- **Strict S5 / Step 5 Pause:** The service strictly rejects tasks associated with Step 5 / S5.
+- **Exact Configured Scope & Fail-Closed Default:** The service strictly enforces configured allowed task scope (default TRACE-only: `DEV502-TRACE-001` in `pantheon-dev`). Default configuration denies all S5 tasks. An explicit-resume configuration example (`issuer-config.step5-resume.example.json`) documents scope for the six canonical S5 task IDs (`S5-PAIR-001`, `S5-LOOPS-001`, `S5-PROVENANCE-001`, `S5-JOURNEYS-001`, `S5-ROLLBACK-001`, `S5-REPORT-001`) in `pantheon-dev`. Wildcards (`*`, `?`), non-list, empty, or unknown scopes fail closed.
 - **Redacted Audit Receipts:** Audit logs record only non-sensitive metadata (`task_id`, `generation`, `actor_uid`, `nonce`, `policy_digest`). No raw ID tokens, bearer secrets, or private keys are ever printed or committed.
 
 ## 2. Deployment Instructions
@@ -43,6 +43,8 @@ Copy `issuer-config.example.json` to `/etc/pantheon/execution-grant-issuer/confi
 2. `identity_platform.allowed_operator_uids`: Allowlist of human operator UIDs permitted to authorize execution.
 3. `signing.private_key_file`: Path to the generated Ed25519 private key.
 4. `signing.key_id`: Matching key ID.
+5. `policy.allowed_tasks`: Explicit task ID list (default: `["DEV502-TRACE-001"]`). For explicit Step 5 resume, see `issuer-config.step5-resume.example.json` listing the six canonical S5 task IDs (`S5-PAIR-001`, `S5-LOOPS-001`, `S5-PROVENANCE-001`, `S5-JOURNEYS-001`, `S5-ROLLBACK-001`, `S5-REPORT-001`). Note: do not enable S5 on a live issuer during source prerequisite tasks.
+6. `policy.allowed_environments`: Explicit environment list (default: `["pantheon-dev"]`). Wildcard scopes are strictly prohibited.
 
 ### Step 2.4: Configure Systemd Service
 ```bash

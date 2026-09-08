@@ -20,8 +20,12 @@ The **Execution Grant Issuer** is an isolated development-tooling authority serv
      ```bash
      AI_NAME=Human/Ops EXECUTION_GRANT_JSON='<grant>' scripts/ai-status.sh execution-grant-submit <task-id>
      ```
-3. **Step 5 Strict Pause:**
-   - Per operator instructions and SA/SD specifications, Step 5 remains strictly paused. The issuer strictly rejects any request associated with S5 or step-5 tasks.
+3. **Exact Configured Scope & Step 5 Resume:**
+   - Per operator instructions and SA/SD specifications (`OPS-EXECUTION-SCOPE-RESUME-001`), the unconditional lexical S5 prohibition is replaced by explicit trusted issuer configuration of exact allowed task IDs.
+   - Default configuration remains TRACE-only (`DEV502-TRACE-001` in `pantheon-dev`) and fails closed on all S5 tasks.
+   - For an explicit Step 5 resume, a documented example configuration (`deploy/execution-grant-issuer/issuer-config.step5-resume.example.json`) lists only the six canonical S5 task IDs (`S5-PAIR-001`, `S5-LOOPS-001`, `S5-PROVENANCE-001`, `S5-JOURNEYS-001`, `S5-ROLLBACK-001`, `S5-REPORT-001`) and `pantheon-dev`.
+   - Wildcards (`*`, `?`), non-list, empty, or unknown scopes fail closed.
+   - The CLI client (`scripts/request_execution_grant.py`) supports requesting exact task IDs (including S5 IDs) without inventing local authorization authority; the issuer service and canonical task state remain authoritative.
 
 ---
 
@@ -98,9 +102,12 @@ sequenceDiagram
 
 ---
 
-## 4. Scoped TRACE Request CLI
+## 4. Execution Grant Request CLI
 
 The repository includes `scripts/request_execution_grant.py` for operators to interact with the service safely:
+
+### Exact Task Scope Support
+The CLI client supports requesting exact configured task IDs (`--task <task-id>`, defaulting to `DEV502-TRACE-001`, and capable of requesting exact S5 IDs such as `S5-PAIR-001` when configured on the issuer). The CLI validates that the requested task requires execution authorization, belongs to `pantheon-dev`, and has valid generation without inventing local authorization authority. Authorization scope authority remains enforced by the issuer service and canonical task state.
 
 ### Security Guard: No Tokens on `sys.argv`
 Passing authentication tokens as command-line arguments is strictly prohibited to prevent credential disclosure in system process listings (`ps`). The script aborts with code 2 if `--token` or `--token=...` is present.
