@@ -143,6 +143,10 @@ as the exclusive, authoritative policy owner for CW01/CW03/CW04:
   - Exception guarding: All callbacks (`dataset_source`, `dataset_surface_status`, `redact_evidence_refs`,
     `capabilities_for_identity`) in `GovernanceService` are wrapped in fail-closed error
     handling so callback exceptions resolve to `"unavailable"` or redaction-policy-unavailable.
+    Exception fallback is strictly limited to these intended policy/provenance callbacks;
+    actual store read operations (`list_consult_memos`, `list_committees`, `get_consult_memo`, etc.)
+    never swallow errors into empty results, ensuring that store read failures fail closed and are never
+    mislabeled healthy-empty.
   - Explicit collection surface state helpers: Added `committee_collection_surface_state`
     and `memo_collection_surface_state` methods with provenance precedence (`_resolve_collection_surface_state`),
     enforcing that raw unavailable/missing/unknown provenance always forces the collection surface state

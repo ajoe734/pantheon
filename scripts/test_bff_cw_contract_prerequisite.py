@@ -1473,6 +1473,119 @@ def test_cw_callback_errors_fail_closed() -> None:
     assert proj_caps["evidence_refs"][0]["redacted"] is True
 
 
+def test_cw_store_read_failure_fails_closed_not_healthy_empty() -> None:
+    """Store read failures must fail closed and never be labeled healthy empty."""
+    class _UnreachableStore:
+        def dataset_source(self, dataset: str) -> str:
+            return "service_client"
+
+        def list_consult_memos(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            raise RuntimeError("synthetic upstream read failure")
+
+        def list_committees(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            raise RuntimeError("synthetic upstream read failure")
+
+    service = GovernanceService(_UnreachableStore())
+    try:
+        result = service.list_consult_memos(status=None, page_token=None, page_size=25)
+        assert result[3] != "ok", result
+    except RuntimeError:
+        pass
+
+    try:
+        service.list_committees(
+            quorum_state=None,
+            consensus_state=None,
+            page_token=None,
+            page_size=20,
+        )
+    except RuntimeError:
+        pass
+
+    app = FastAPI()
+    identity = type("Identity", (), {"operator_id": "synthetic-reviewer", "roles": {"reviewer", "operator"}})()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _UnreachableStore(),
+            extract_identity=lambda auth: identity,
+        )
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        # GET /api/v1/consult/memos
+        res_memos = client.get("/api/v1/consult/memos")
+        if res_memos.status_code < 500:
+            body = res_memos.json()
+            state = body["meta"]["surfaces"]["redteam_memo"]
+            if isinstance(state, dict):
+                state = state["state"]
+            assert state != "ok", body
+
+        # GET /api/v1/committees
+        res_comm = client.get("/api/v1/committees")
+        if res_comm.status_code < 500:
+            body = res_comm.json()
+            state = body["meta"]["surfaces"]["committee_board"]
+            if isinstance(state, dict):
+                state = state["state"]
+            assert state != "ok", body
+
+
+def test_cw_healthy_genuine_empty_positive() -> None:
+    """Healthy genuine-empty reads must return empty data with state=ok."""
+    class _GenuineEmptyStore:
+        def dataset_source(self, dataset: str) -> str:
+            return "service_client"
+
+        def list_consult_memos(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return []
+
+        def list_committees(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return []
+
+    service = GovernanceService(_GenuineEmptyStore())
+    memos, tok, tot, memo_state = service.list_consult_memos(status=None, page_token=None, page_size=25)
+    assert memos == []
+    assert tok is None
+    assert tot == 0
+    assert memo_state == "ok"
+
+    comm_items, comm_tok, comm_tot = service.list_committees(
+        quorum_state=None,
+        consensus_state=None,
+        page_token=None,
+        page_size=20,
+    )
+    assert comm_items == []
+    assert comm_tok is None
+    assert comm_tot == 0
+
+    app = FastAPI()
+    identity = type("Identity", (), {"operator_id": "synthetic-reviewer", "roles": {"reviewer", "operator"}})()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _GenuineEmptyStore(),
+            extract_identity=lambda auth: identity,
+        )
+    )
+    with TestClient(app) as client:
+        # GET /api/v1/consult/memos
+        res_memos = client.get("/api/v1/consult/memos")
+        assert res_memos.status_code == 200
+        body_memos = res_memos.json()
+        assert body_memos["items"] == []
+        assert body_memos["page_info"]["total"] == 0
+        assert body_memos["meta"]["surfaces"]["redteam_memo"]["state"] == "ok"
+        assert body_memos["meta"]["staleness"]["status"] == "fresh"
+
+        # GET /api/v1/committees
+        res_comm = client.get("/api/v1/committees")
+        assert res_comm.status_code == 200
+        body_comm = res_comm.json()
+        assert body_comm["data"] == []
+        assert body_comm["page_info"]["total"] == 0
+        assert body_comm["meta"]["surfaces"]["committee_board"] == "ok"
+
+
 @pytest.mark.parametrize("record_state", ["ok", "degraded"])
 def test_production_callback_cannot_override_unavailable_source(record_state: str) -> None:
     """Production callback main._dataset_surface_status cannot override unavailable source."""

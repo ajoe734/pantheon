@@ -207,13 +207,13 @@ class GovernanceService:
         method = getattr(self.read_store, name, None)
         if not callable(method):
             return copy.deepcopy(default)
-        try:
-            return method(*args, **kwargs)
-        except Exception:
-            return copy.deepcopy(default)
+        return method(*args, **kwargs)
 
     def dataset_source(self, dataset: str) -> str:
-        source = self._call("dataset_source", dataset, default="missing")
+        try:
+            source = self._call("dataset_source", dataset, default="missing")
+        except Exception:
+            return "missing"
         clean_source = str(source or "").strip().lower()
         return clean_source or "missing"
 
