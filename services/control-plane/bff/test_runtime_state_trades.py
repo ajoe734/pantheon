@@ -147,5 +147,77 @@ class TestRealTradingPulseHelperPreservesTelemetryOwnerFailure(unittest.TestCase
         self.assertIn("telemetry owner offline", encoded, surface)
 
 
+class TestAuxiliaryOwnerReadFailurePreservesCollectedObservations(unittest.TestCase):
+    """MGMT-READ-001 seventh review: a bare
+    read_store.get_paper_runtime_monitoring_session/get_rollbacks raise
+    inside _project_operator_runtime_state_row previously propagated past
+    _mgmt_nl_trading_pulse_snippet/_mgmt_nl_collect_context and discarded
+    every already-collected owner (runtime, telemetry), returning a bare
+    status=unavailable/source=error with no owner or reason. Both reads now
+    go through typed accessors that never raise."""
+
+    def _run(self, method: str):
+        binding = dict(
+            runtime_id="r1",
+            tenant_id="tenant-a",
+            owner="runtime-owner",
+            status="ok",
+            source_kind="live",
+            source_version="rv1",
+        )
+        telemetry = dict(
+            runtime_id="r1",
+            owner="telemetry-owner",
+            status="ok",
+            source_kind="live",
+            source_version="tv1",
+        )
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError(method + " owner offline")
+
+        from types import SimpleNamespace
+
+        kwargs = {
+            "list_runtime_bindings": lambda: [binding],
+            "get_telemetry_summary": lambda _runtime_id: telemetry,
+            "get_paper_runtime_monitoring_session": lambda **_kwargs: None,
+            "get_rollbacks": lambda _runtime_id: [],
+        }
+        kwargs[method] = fail
+        store = SimpleNamespace(**kwargs)
+        original_read_store = bff_main.read_store
+        original_context_service = bff_main._management_ai_context_service
+        bff_main.read_store = store
+        bff_main._management_ai_context_service = ManagementService(read_store=store)
+        try:
+            return bff_main._mgmt_nl_collect_context(
+                "trading_pulse", "2026-09-08T18:00:00Z", "tenant-a"
+            )
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main._management_ai_context_service = original_context_service
+
+    def test_monitoring_session_failure_preserves_collected_observations(self):
+        import json
+
+        result = self._run("get_paper_runtime_monitoring_session")
+        surface = result["surfaces"]["management_trading_pulse"]
+        encoded = json.dumps(surface)
+        self.assertIn("runtime-owner", encoded, surface)
+        self.assertIn("telemetry-owner", encoded, surface)
+        self.assertIn("get_paper_runtime_monitoring_session owner offline", encoded, surface)
+
+    def test_rollbacks_failure_preserves_collected_observations(self):
+        import json
+
+        result = self._run("get_rollbacks")
+        surface = result["surfaces"]["management_trading_pulse"]
+        encoded = json.dumps(surface)
+        self.assertIn("runtime-owner", encoded, surface)
+        self.assertIn("telemetry-owner", encoded, surface)
+        self.assertIn("get_rollbacks owner offline", encoded, surface)
+
+
 if __name__ == "__main__":
     unittest.main()

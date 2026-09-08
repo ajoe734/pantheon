@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from management_read_models.service import ManagementService
 from ports import create_in_memory_read_surface_ports
 
 
@@ -243,3 +247,68 @@ def test_bff_management_cockpit_requires_read_auth() -> None:
     response = client.get("/bff/management/cockpit")
 
     assert response.status_code == 401
+
+
+@pytest.fixture
+def _healthy_cockpit_context(monkeypatch):
+    """MGMT-READ-001 seventh review: a healthy runtime/telemetry read with
+    every alerts/human-inbox/anomalies payload's own meta.surfaces empty, so
+    the only failure signal in each parametrized case below comes from the
+    single contributing surface under test."""
+    binding = dict(
+        runtime_id="r1",
+        tenant_id="tenant-a",
+        owner="runtime-owner",
+        status="ok",
+        source_kind="live",
+        source_version="rv1",
+    )
+    telemetry = dict(
+        runtime_id="r1", owner="telemetry-owner", status="ok", source_kind="live", source_version="tv1"
+    )
+    store = SimpleNamespace(
+        list_runtime_bindings=lambda: [binding],
+        get_telemetry_summary=lambda _runtime_id: telemetry,
+        get_paper_runtime_monitoring_session=lambda **_kwargs: None,
+        get_rollbacks=lambda _runtime_id: [],
+    )
+    monkeypatch.setattr(bff_main, "read_store", store)
+    monkeypatch.setattr(bff_main, "_management_ai_context_service", ManagementService(read_store=store))
+    monkeypatch.setattr(bff_main, "_build_operator_alerts_payload", lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}})
+    monkeypatch.setattr(bff_main, "_human_inbox_payload", lambda *args, **kwargs: {"data": {"items": []}, "meta": {"surfaces": {}}})
+    monkeypatch.setattr(bff_main, "_build_management_anomalies_payload", lambda _snapshot_at: {"items": [], "meta": {"surfaces": {}}})
+
+
+@pytest.mark.parametrize(
+    "helper,rows_key,surface_key",
+    [
+        ("_build_operator_alerts_payload", "alerts", "incident_feed"),
+        ("_human_inbox_payload", "data", "approval_queue"),
+        ("_build_management_anomalies_payload", "items", "sentinel_findings"),
+    ],
+)
+def test_cockpit_preserves_non_runtime_owner_unavailability(
+    _healthy_cockpit_context, monkeypatch, helper, rows_key, surface_key
+) -> None:
+    """MGMT-READ-001 seventh review: management_cockpit previously merged
+    only runtime/telemetry owner observations, so an unavailable
+    incident_feed/approval_queue/sentinel_findings surface was reported as
+    status=ok while its failed owner and reason were silently dropped."""
+    failure = dict(
+        status="unavailable",
+        source="missing",
+        owner=surface_key + "-owner",
+        message=surface_key + " offline",
+        source_version="v-failed",
+    )
+    payload = {
+        rows_key: {"items": []} if rows_key == "data" else [],
+        "meta": {"surfaces": {surface_key: failure}},
+    }
+    monkeypatch.setattr(bff_main, helper, lambda *args, **kwargs: payload)
+
+    result = bff_main._mgmt_nl_collect_context("cockpit", "2026-09-08T18:00:00Z", "tenant-a")
+
+    surface = result["surfaces"]["management_cockpit"]
+    assert surface["status"] != "ok", surface
+    assert surface_key + " offline" in json.dumps(surface), surface
