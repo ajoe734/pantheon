@@ -65,6 +65,27 @@ SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES = (
 )
 
 
+class StorageMigrationError(RuntimeError, OSError):
+    """Raised when storage path migration or rollback encounters an error."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        forward_error: Exception | None = None,
+        migration_record: dict[str, Any] | None = None,
+        rollback_errors: list[str] | None = None,
+        restoration_verified: bool = False,
+        lock_fd: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.forward_error = forward_error
+        self.migration_record = migration_record
+        self.rollback_errors = rollback_errors or []
+        self.restoration_verified = restoration_verified
+        self.lock_fd = lock_fd
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -730,17 +751,14 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
 
 
 def _fsync_dir(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
     try:
-        descriptor = os.open(
-            path,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
-        )
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError:
-        pass
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _preflight_storage_migration(
@@ -822,38 +840,40 @@ def _preflight_storage_migration(
 def qualify_incumbent_identity(
     incumbent: Mapping[str, Any] | None,
     *,
-    candidate_identity: Mapping[str, str],
+    candidate_identity: Mapping[str, str] | None = None,
 ) -> dict[str, str] | None:
     if not incumbent:
         return None
-    if "identity" in incumbent and isinstance(incumbent["identity"], Mapping):
-        return dict(incumbent["identity"])
+
+    candidate_root: Path | None = None
     watchdog = incumbent.get("watchdog")
     if isinstance(watchdog, Mapping):
         cmd = watchdog.get("supervisor_command")
         if isinstance(cmd, list):
             for item in cmd:
                 if isinstance(item, str) and item.endswith(".orchestrator/supervisor.py"):
-                    incumbent_root = Path(item).expanduser().resolve().parent.parent
-                    try:
-                        return validated_immutable_command_root(incumbent_root)
-                    except Exception:
-                        return {
-                            "root": str(incumbent_root),
-                            "head": incumbent_root.name,
-                            "repository": candidate_identity.get("repository", "ajoe734/pantheon"),
-                        }
-    if "command_root" in incumbent and isinstance(incumbent["command_root"], str):
-        c_root = Path(incumbent["command_root"]).expanduser().resolve()
-        try:
-            return validated_immutable_command_root(c_root)
-        except Exception:
-            return {
-                "root": str(c_root),
-                "head": c_root.name,
-                "repository": candidate_identity.get("repository", "ajoe734/pantheon"),
-            }
-    return dict(candidate_identity)
+                    candidate_root = Path(item).expanduser().resolve().parent.parent
+                    break
+
+    if candidate_root is None and "command_root" in incumbent and isinstance(incumbent["command_root"], str):
+        candidate_root = Path(incumbent["command_root"]).expanduser().resolve()
+
+    if candidate_root is None and "identity" in incumbent and isinstance(incumbent["identity"], Mapping):
+        ident_root = incumbent["identity"].get("root")
+        if isinstance(ident_root, str) and ident_root.strip():
+            candidate_root = Path(ident_root).expanduser().resolve()
+
+    if candidate_root is None:
+        return None
+
+    ident = validated_immutable_command_root(candidate_root)
+    if "identity" in incumbent and isinstance(incumbent["identity"], Mapping):
+        expected_head = incumbent["identity"].get("head")
+        if expected_head and ident["head"] != expected_head:
+            raise ValueError(
+                f"incumbent identity head mismatch: expected {expected_head}, found {ident['head']}"
+            )
+    return ident
 
 
 def _migrate_storage_paths(
@@ -864,7 +884,7 @@ def _migrate_storage_paths(
 ) -> dict[str, Any]:
     """Atomically relocate storage files when live config paths change."""
     if not incumbent:
-        return {"migrated": False, "files": [], "lock_fd": None}
+        return {"migrated": False, "files": [], "lock_fd": None, "fsynced_directories": []}
 
     _preflight_storage_migration(incumbent, rendered)
 
@@ -911,6 +931,8 @@ def _migrate_storage_paths(
                 os.chmod(new_event_log.parent, 0o700)
                 dirs_to_fsync.add(old_event_log.parent)
                 dirs_to_fsync.add(new_event_log.parent)
+                if new_event_log.parent.parent.exists():
+                    dirs_to_fsync.add(new_event_log.parent.parent)
 
                 for suffix in ("", ".head.json", ".lock", ".legacy-anchor.json"):
                     old_file = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
@@ -934,6 +956,8 @@ def _migrate_storage_paths(
                     os.chmod(new_p.parent, 0o700)
                     dirs_to_fsync.add(old_p.parent)
                     dirs_to_fsync.add(new_p.parent)
+                    if new_p.parent.parent.exists():
+                        dirs_to_fsync.add(new_p.parent.parent)
                     os.replace(old_p, new_p)
                     moved_files.append((str(old_p), str(new_p)))
 
@@ -941,19 +965,44 @@ def _migrate_storage_paths(
             _fsync_dir(d)
 
     except Exception as exc:
-        # Durable rollback preserving history and one recoverable authority
+        rollback_errors: list[str] = []
+        rollback_dirs: set[Path] = set()
+        unrestored_files: list[tuple[str, str]] = []
+
         for old_file, new_file in reversed(moved_files):
             if os.path.exists(new_file):
                 try:
                     os.replace(new_file, old_file)
-                except Exception:
-                    pass
-        for d in dirs_to_fsync:
+                    rollback_dirs.add(Path(old_file).parent)
+                    rollback_dirs.add(Path(new_file).parent)
+                except Exception as r_exc:
+                    rollback_errors.append(f"file rollback failed ({new_file} -> {old_file}): {r_exc}")
+                    unrestored_files.append((old_file, new_file))
+
+        for d in rollback_dirs:
             try:
                 _fsync_dir(d)
-            except Exception:
-                pass
-        if old_lock_fd is not None:
+            except Exception as r_exc:
+                rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
+
+        restoration_verified = (len(rollback_errors) == 0) and all(
+            Path(old_file).exists() and not Path(new_file).exists()
+            for old_file, new_file in moved_files
+        )
+
+        migration_record = {
+            "migrated": bool(moved_files),
+            "files": moved_files,
+            "unrestored_files": unrestored_files,
+            "lock_fd": old_lock_fd,
+            "restoration_verified": restoration_verified,
+            "rollback_errors": rollback_errors,
+            "fsynced_directories": sorted(str(d) for d in dirs_to_fsync),
+        }
+
+        # Retain exclusion through verified recovery:
+        # If keep_lock is True, OR if restoration is NOT verified, DO NOT release old_lock_fd!
+        if not keep_lock and restoration_verified and old_lock_fd is not None:
             try:
                 fcntl.flock(old_lock_fd, fcntl.LOCK_UN)
             except OSError:
@@ -963,7 +1012,17 @@ def _migrate_storage_paths(
             except OSError:
                 pass
             old_lock_fd = None
-        raise exc
+
+        err_msg = f"{exc}; rollback failures: {'; '.join(rollback_errors)}" if rollback_errors else str(exc)
+        migration_err = StorageMigrationError(
+            err_msg,
+            forward_error=exc,
+            migration_record=migration_record,
+            rollback_errors=rollback_errors,
+            restoration_verified=restoration_verified,
+            lock_fd=old_lock_fd,
+        )
+        raise migration_err from exc
     finally:
         if not keep_lock and old_lock_fd is not None:
             try:
@@ -978,6 +1037,7 @@ def _migrate_storage_paths(
     return {
         "migrated": bool(moved_files),
         "files": moved_files,
+        "fsynced_directories": sorted(str(d) for d in dirs_to_fsync),
         "lock_fd": old_lock_fd if keep_lock else None,
     }
 
@@ -1066,22 +1126,25 @@ def _replace_supervisor_locked(
                 Path(identity["root"]), python_executable=python_executable,
             )
         )
+        incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
+
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
         )
         result["stopped_pid"] = stopped_pid
 
-        incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
-
         migration_record: dict[str, Any] | None = None
         lock_fd: int | None = None
         config_written = False
+        restoration_verified = False
+        launch_succeeded = False
         try:
             migration_record = _migrate_storage_paths(incumbent, rendered, keep_lock=True)
             lock_fd = migration_record.get("lock_fd")
             result["storage_migration"] = {
                 "migrated": migration_record["migrated"],
                 "files": migration_record["files"],
+                "fsynced_directories": migration_record.get("fsynced_directories", []),
             }
             ensure_approval_queue_marker(approval_queue_path)
             write_json_atomic(live_config_path, rendered)
@@ -1092,14 +1155,23 @@ def _replace_supervisor_locked(
                 status_root=status_root,
                 authority_env_file=authority_env_file,
             )
+            launch_succeeded = True
         except Exception as launch_exc:
             rollback_errors: list[str] = []
+            if getattr(launch_exc, "migration_record", None):
+                migration_record = launch_exc.migration_record
+            if getattr(launch_exc, "lock_fd", None) is not None:
+                lock_fd = launch_exc.lock_fd
+            if getattr(launch_exc, "rollback_errors", None):
+                rollback_errors.extend(launch_exc.rollback_errors)
+
             if config_written and incumbent:
                 try:
                     write_json_atomic(live_config_path, incumbent)
                 except Exception as r_exc:
                     rollback_errors.append(f"config restoration failed: {r_exc}")
-            if migration_record:
+
+            if migration_record and not getattr(launch_exc, "restoration_verified", False):
                 rollback_dirs: set[Path] = set()
                 for old_file, new_file in reversed(migration_record.get("files", [])):
                     if os.path.exists(new_file):
@@ -1114,17 +1186,49 @@ def _replace_supervisor_locked(
                         _fsync_dir(d)
                     except Exception as r_exc:
                         rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
-            if stopped_pid is not None and incumbent:
-                try:
-                    restarted_pid = launch_v2_supervisor(
-                        incumbent,
-                        identity=incumbent_identity or identity,
-                        status_root=status_root,
-                        authority_env_file=authority_env_file,
+
+            if migration_record:
+                restoration_verified = (
+                    len(rollback_errors) == 0
+                    and all(
+                        Path(old_file).exists() and not Path(new_file).exists()
+                        for old_file, new_file in migration_record.get("files", [])
                     )
-                    result["restarted_pid"] = restarted_pid
-                except Exception as r_exc:
-                    rollback_errors.append(f"incumbent restart failed: {r_exc}")
+                )
+            else:
+                restoration_verified = len(rollback_errors) == 0
+
+            if stopped_pid is not None and incumbent:
+                if not restoration_verified:
+                    rollback_errors.append(
+                        "refusing to restart incumbent against incomplete restoration / split storage"
+                    )
+                elif incumbent_identity is None:
+                    rollback_errors.append(
+                        "refusing to restart incumbent: incumbent identity is not qualified"
+                    )
+                else:
+                    if lock_fd is not None:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                        try:
+                            os.close(lock_fd)
+                        except OSError:
+                            pass
+                        lock_fd = None
+                    try:
+                        restarted_pid = launch_v2_supervisor(
+                            incumbent,
+                            identity=incumbent_identity,
+                            status_root=status_root,
+                            authority_env_file=authority_env_file,
+                        )
+                        result["restarted_pid"] = restarted_pid
+                    except Exception as r_exc:
+                        rollback_errors.append(f"incumbent restart failed: {r_exc}")
+
             if rollback_errors:
                 result["rollback_errors"] = rollback_errors
                 err_msg = f"{launch_exc}; rollback failures: {'; '.join(rollback_errors)}"
@@ -1132,14 +1236,15 @@ def _replace_supervisor_locked(
             raise launch_exc
         finally:
             if lock_fd is not None:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                except OSError:
-                    pass
-                try:
-                    os.close(lock_fd)
-                except OSError:
-                    pass
+                if launch_succeeded or restoration_verified:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                    try:
+                        os.close(lock_fd)
+                    except OSError:
+                        pass
 
         result["outcome"] = "launched"
         result["exit_code"] = 0

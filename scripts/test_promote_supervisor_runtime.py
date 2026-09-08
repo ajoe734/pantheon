@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
@@ -7,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -1330,6 +1332,19 @@ def test_replace_supervisor_restarts_incumbent_with_incumbent_identity_on_launch
 
     monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
 
+    real_validate = promotion.validated_immutable_command_root
+
+    def mock_validate(root, **kwargs):
+        if Path(root) == incumbent_root:
+            return {
+                "root": str(incumbent_root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            }
+        return real_validate(root, **kwargs)
+
+    monkeypatch.setattr(promotion, "validated_immutable_command_root", mock_validate)
+
     calls = []
 
     def mock_launch(rendered_conf, *, identity, status_root, authority_env_file=None):
@@ -1378,13 +1393,43 @@ def test_replace_supervisor_reports_rollback_failure_on_restart_crash(
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
+    incumbent_root = tmp_path / "incumbent-runtime"
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    (incumbent_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    incumbent_supervisor_py = incumbent_root / ".orchestrator" / "supervisor.py"
+    incumbent_supervisor_py.touch()
+
     incumbent = {
         "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
         "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+        "watchdog": {
+            "supervisor_command": [
+                sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                "--config", str(live_config), "--verbose"
+            ]
+        },
+        "identity": {
+            "root": str(incumbent_root),
+            "head": "1111111111111111111111111111111111111111",
+            "repository": "ajoe734/pantheon",
+        }
     }
     live_config.write_text(json.dumps(incumbent), encoding="utf-8")
 
     monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+
+    real_validate = promotion.validated_immutable_command_root
+
+    def mock_validate(root, **kwargs):
+        if Path(root) == incumbent_root:
+            return {
+                "root": str(incumbent_root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            }
+        return real_validate(root, **kwargs)
+
+    monkeypatch.setattr(promotion, "validated_immutable_command_root", mock_validate)
 
     def failing_launch(*a, **k):
         raise RuntimeError("always failing launch")
@@ -1403,3 +1448,258 @@ def test_replace_supervisor_reports_rollback_failure_on_restart_crash(
     assert "rollback failures" in result["error"]
     assert "rollback_errors" in result
     assert any("incumbent restart failed" in err for err in result["rollback_errors"])
+
+
+def test_fsync_dir_propagates_durability_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_dir = tmp_path / "sync_target"
+    test_dir.mkdir()
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError(errno.EIO, "injected directory fsync failure")
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+
+    with pytest.raises(OSError, match="injected directory fsync failure"):
+        promotion._fsync_dir(test_dir)
+
+
+def test_migrate_storage_paths_fails_closed_on_fsync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError(errno.EIO, "injected directory fsync failure")
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+
+    with pytest.raises(promotion.StorageMigrationError) as exc_info:
+        promotion._migrate_storage_paths(incumbent, rendered)
+
+    err = exc_info.value
+    assert "injected directory fsync failure" in str(err)
+    assert err.forward_error is not None
+    assert err.migration_record is not None
+    assert str(new_log.parent) in err.migration_record["fsynced_directories"]
+
+
+def test_migrate_storage_paths_partial_rollback_retains_lock_and_reports_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True)
+    old_log = runtime / "events.jsonl"
+    old_log.write_text("event data\n", encoding="utf-8")
+    (runtime / "events.jsonl.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (runtime / "events.jsonl.lock").touch()
+
+    new_log = runtime / "task-state" / "events.jsonl"
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(old_log)}}
+    rendered = {"task_state_store": {"mode": "authoritative", "event_log": str(new_log)}}
+
+    original_replace = os.replace
+
+    def fail_head_move_and_journal_rollback(src, dst):
+        if str(src) == str(old_log) + ".head.json":
+            raise OSError(errno.EIO, "injected forward head move failure")
+        if Path(src) == new_log and Path(dst) == old_log:
+            raise OSError(errno.EIO, "injected journal rollback failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fail_head_move_and_journal_rollback)
+
+    with pytest.raises(promotion.StorageMigrationError) as exc_info:
+        promotion._migrate_storage_paths(incumbent, rendered, keep_lock=True)
+
+    err = exc_info.value
+    assert not err.restoration_verified
+    assert err.lock_fd is not None
+    assert any("injected journal rollback failure" in e for e in err.rollback_errors)
+    try:
+        os.close(err.lock_fd)
+    except OSError:
+        pass
+
+
+def test_qualify_incumbent_identity_fails_closed_on_unqualified_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_identity = {
+        "root": "/tmp/candidate",
+        "head": "2" * 40,
+        "repository": "ajoe734/pantheon",
+    }
+    # Case 1: Incumbent defines watchdog command, but validation fails closed
+    incumbent_with_bad_root = {
+        "watchdog": {
+            "supervisor_command": ["python3", "/tmp/unqualified-runtime/.orchestrator/supervisor.py"]
+        }
+    }
+    monkeypatch.setattr(
+        promotion,
+        "validated_immutable_command_root",
+        mock.Mock(side_effect=ValueError("rejected unqualified runtime")),
+    )
+    with pytest.raises(ValueError, match="rejected unqualified runtime"):
+        promotion.qualify_incumbent_identity(
+            incumbent_with_bad_root, candidate_identity=candidate_identity
+        )
+
+    # Case 2: Incumbent specifies identity head mismatch
+    monkeypatch.setattr(
+        promotion,
+        "validated_immutable_command_root",
+        mock.Mock(return_value={"root": "/tmp/good-root", "head": "1" * 40, "repository": "ajoe734/pantheon"}),
+    )
+    incumbent_head_mismatch = {
+        "command_root": "/tmp/good-root",
+        "identity": {"root": "/tmp/good-root", "head": "3" * 40},
+    }
+    with pytest.raises(ValueError, match="incumbent identity head mismatch"):
+        promotion.qualify_incumbent_identity(
+            incumbent_head_mismatch, candidate_identity=candidate_identity
+        )
+
+    # Case 3: Incumbent with no command / identity returns None (never candidate identity)
+    incumbent_empty = {"paths": {"state_file": "/tmp/state.json"}}
+    result = promotion.qualify_incumbent_identity(
+        incumbent_empty, candidate_identity=candidate_identity
+    )
+    assert result is None
+
+
+def test_replace_supervisor_refuses_incumbent_restart_on_incomplete_restoration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    old_log = tmp_path / "runtime" / "task-state-events-v2.jsonl"
+    old_log.write_text("old events\n", encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.head.json").write_text('{"seq": 1}\n', encoding="utf-8")
+    (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
+
+    old_state = status_root / ".orchestrator" / "state.json"
+    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_queue = status_root / ".orchestrator" / "approval-queue.json"
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+    incumbent_root = tmp_path / "incumbent-runtime"
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    (incumbent_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    incumbent_supervisor_py = incumbent_root / ".orchestrator" / "supervisor.py"
+    incumbent_supervisor_py.touch()
+
+    incumbent = {
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+        "paths": {"state_file": str(old_state), "approval_queue": str(old_queue)},
+        "watchdog": {
+            "supervisor_command": [
+                sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                "--config", str(live_config), "--verbose"
+            ]
+        },
+        "identity": {
+            "root": str(incumbent_root),
+            "head": "1111111111111111111111111111111111111111",
+            "repository": "ajoe734/pantheon",
+        }
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+
+    real_validate = promotion.validated_immutable_command_root
+
+    def mock_validate(root, **kwargs):
+        if Path(root) == incumbent_root:
+            return {
+                "root": str(incumbent_root),
+                "head": "1111111111111111111111111111111111111111",
+                "repository": "ajoe734/pantheon",
+            }
+        return real_validate(root, **kwargs)
+
+    monkeypatch.setattr(promotion, "validated_immutable_command_root", mock_validate)
+
+    restarted = []
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *a, **k: restarted.append(True) or 999)
+
+    def failing_migration(*a, **k):
+        raise promotion.StorageMigrationError(
+            "split storage simulated",
+            migration_record={"migrated": True, "files": []},
+            rollback_errors=["reverse rollback failed"],
+            restoration_verified=False,
+            lock_fd=None,
+        )
+
+    monkeypatch.setattr(promotion, "_migrate_storage_paths", failing_migration)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "refusing to restart incumbent against incomplete restoration / split storage" in result["error"]
+    assert len(restarted) == 0
+
+
+def test_replace_supervisor_qualifies_incumbent_before_stopping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir(parents=True, exist_ok=True)
+
+    incumbent_root = tmp_path / "unqualified-incumbent"
+    incumbent_supervisor_py = incumbent_root / ".orchestrator" / "supervisor.py"
+    incumbent = {
+        "paths": {"state_file": str(status_root / ".orchestrator" / "state.json")},
+        "watchdog": {
+            "supervisor_command": [
+                sys.executable, "-u", "-B", str(incumbent_supervisor_py),
+                "--config", str(live_config)
+            ]
+        }
+    }
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    stopped = []
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: stopped.append(True) or 41)
+
+    real_validate = promotion.validated_immutable_command_root
+
+    def mock_validate(root, **kwargs):
+        if Path(root) == incumbent_root:
+            raise ValueError("incumbent command root validation failed")
+        return real_validate(root, **kwargs)
+
+    monkeypatch.setattr(promotion, "validated_immutable_command_root", mock_validate)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "incumbent command root validation failed" in result["error"]
+    assert len(stopped) == 0
+

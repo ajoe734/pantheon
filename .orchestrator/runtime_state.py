@@ -331,6 +331,22 @@ def _assert_canonical_runtime_data_leaf(path: Path, *, source_id: str) -> None:
         )
 
 
+def _canonical_runtime_source_path(config: dict[str, Any], key: str) -> Path:
+    raw = config_path(config, key).expanduser()
+    if raw.parent.name == ".orchestrator":
+        worker_runtime_path = raw.parent / "worker-runtime" / raw.name
+        if worker_runtime_path.exists() or (not raw.exists() and (raw.parent / "worker-runtime").is_dir()):
+            return worker_runtime_path
+    elif raw.parent.name != "worker-runtime":
+        status_file = config.get("paths", {}).get("status_file")
+        if status_file:
+            status_root = Path(status_file).expanduser().parent
+            worker_runtime_path = status_root / ".orchestrator" / "worker-runtime" / raw.name
+            if worker_runtime_path.exists() or (not raw.exists() and (status_root / ".orchestrator" / "worker-runtime").is_dir()):
+                return worker_runtime_path
+    return raw
+
+
 def _runtime_source_layout(
     config: dict[str, Any],
     *,
@@ -358,7 +374,7 @@ def _runtime_source_layout(
         key = key_by_source[source_id]
         if not configured.get(key):
             continue
-        requested = config_path(config, key).expanduser()
+        requested = _canonical_runtime_source_path(config, key)
         if validate_data_leaves:
             _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
         if not requested.parent.exists():
@@ -519,7 +535,7 @@ def runtime_state_lock(
 
 def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     state = normalize_v2_runtime_cache(
-        load_json(config_path(config, "state_file"), default=None)
+        load_json(_canonical_runtime_source_path(config, "state_file"), default=None)
     )
 
     valid_pending_event_ids = set(
@@ -554,7 +570,7 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
 
 def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) -> None:
     _write_runtime_json_unlocked(
-        config_path(config, "state_file"),
+        _canonical_runtime_source_path(config, "state_file"),
         normalize_v2_runtime_cache(state),
         source_id="runtime_state",
     )
@@ -587,7 +603,9 @@ def load_runtime_state_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     must never be used for an admission or write decision.
     """
 
-    return _load_runtime_state_unlocked(config)
+    return normalize_v2_runtime_cache(
+        load_json(_canonical_runtime_source_path(config, "state_file"), default=None)
+    )
 
 
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
@@ -765,7 +783,7 @@ def _normalize_approval_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def _load_approval_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     raw = load_json(
-        config_path(config, "approval_queue"),
+        _canonical_runtime_source_path(config, "approval_queue"),
         default=default_approval_state(),
     )
     state = deepcopy(default_approval_state())
@@ -800,7 +818,7 @@ def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         payload["version"] = 2
         payload["updated_at"] = utc_now()
         _write_runtime_json_unlocked(
-            config_path(config, "approval_queue"),
+            _canonical_runtime_source_path(config, "approval_queue"),
             payload,
             source_id="approval_queue",
         )
@@ -855,6 +873,13 @@ def _write_runtime_bytes_unlocked(
     *,
     source_id: str,
 ) -> None:
+    if path.parent.name == ".orchestrator" and (path.parent / "worker-runtime").is_dir():
+        migrated_target = path.parent / "worker-runtime" / path.name
+        if migrated_target.exists():
+            raise RuntimeError(
+                f"cannot write to retired runtime {source_id} path {path}; "
+                f"retained old-path writers must use canonical authority {migrated_target}"
+            )
     _assert_canonical_runtime_data_leaf(path, source_id=source_id)
     durable_write_bytes(path, payload)
     if _read_canonical_runtime_source(path, source_id=source_id) != payload:

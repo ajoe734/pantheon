@@ -84,10 +84,19 @@ When promoting a new supervisor runtime version:
    - Acquires `events.jsonl.lock` nonblocking via `fcntl.flock(LOCK_EX | LOCK_NB)` to ensure no active writers or legacy processes are mutating state during cutover. Fails closed if the lock is held.
    - Creates destination parent directories with strict `0o700` permissions.
    - Atomically relocates store files (`events.jsonl`, `.head.json`, `.lock`, `.legacy-anchor.json`, and worker runtime paths) using `os.replace`.
-   - Flushes directory metadata changes durably using `_fsync_dir` on source and target directories.
-4. **Durable Rollback**:
+   - Flushes directory metadata changes durably using `_fsync_dir` on source and target directory hierarchies (including enclosing parents). `_fsync_dir` propagates all durability errors directly, and all fsynced directories are published in the migration record.
+4. **Durable Rollback & Lock Retention**:
    - If an unexpected error occurs during migration (e.g. partial rename failure), all moved files are rolled back in reverse order, directory changes are fsynced via `_fsync_dir`, and single recoverable authority is restored at the incumbent path.
-   - If candidate supervisor launch fails after migration, `_replace_supervisor_locked` retains the single-writer lock exclusion throughout rollback, restores migrated files, writes back incumbent configuration, fsyncs rollback directories, qualifies the incumbent identity, and restarts the incumbent supervisor. Any rollback or restart errors are accumulated and raised rather than silently swallowed.
+   - `_migrate_storage_paths` raises `StorageMigrationError` carrying forward and rollback diagnostics, `restoration_verified`, and `lock_fd`.
+   - If rollback cannot be verified or leaves split storage, `_replace_supervisor_locked` retains the single-writer lock exclusion and refuses incumbent restart against unverified restoration.
+   - If candidate supervisor launch fails after verified migration, `_replace_supervisor_locked` restores migrated files, writes back incumbent configuration, fsyncs rollback directories, and restarts the qualified incumbent supervisor. Any rollback or restart errors are accumulated and raised rather than silently swallowed.
+5. **Strict Incumbent Source Qualification**:
+   - `qualify_incumbent_identity` validates exact immutable command roots using `validated_immutable_command_root` prior to shutdown, failing closed if validation rejects the incumbent root.
+   - Fabricated heads from directory basenames and silent candidate identity substitutions are removed.
+   - `_replace_supervisor_locked` validates the incumbent identity before calling `stop_existing_supervisor`, failing closed before any shutdown.
+6. **Retained Old-Path Writer Qualification and Fencing**:
+   - `runtime_state._canonical_runtime_source_path` transparently redirects legacy `.orchestrator/` state and queue paths to canonical `.orchestrator/worker-runtime/` files when worker-runtime authority exists.
+   - Direct writes to retired `.orchestrator/` state or approval-queue files are hard-fenced in `_write_runtime_bytes_unlocked`, preventing split storage or divergent tokens without compatibility copies.
 
 ### Verification Commands
 ```bash

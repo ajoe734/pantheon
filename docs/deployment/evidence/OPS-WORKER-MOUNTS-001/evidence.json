@@ -28,7 +28,7 @@
     }
   ],
   "scope": {
-    "artifacts_count": 22,
+    "artifacts_count": 23,
     "artifacts": [
       ".orchestrator/common.py",
       ".orchestrator/config.example.json",
@@ -40,6 +40,7 @@
       ".orchestrator/supervisor_watchdog.py",
       ".orchestrator/test_common.py",
       ".orchestrator/test_provider_permissions.py",
+      ".orchestrator/test_runtime_state.py",
       ".orchestrator/test_supervisor.py",
       ".orchestrator/test_worker_runner_heartbeat.py",
       ".orchestrator/worker_runner.py",
@@ -98,22 +99,23 @@
       ".orchestrator/config.json": "d6827446afc82cdfd86d89b01b8187187a607b2306c5c5b100c7d738803c7e8e",
       ".orchestrator/model_rotation.py": "e79e6cda2a77555bc54642b256ed12a71c9800a50234b9a6f8308a9f3e25de9c",
       ".orchestrator/permission_broker.py": "5a45b7d1c7feb6e521b987ecad271d1d0655d2bc54ccf28314980632018c11a5",
-      ".orchestrator/runtime_state.py": "96774656d5db5ebbd9045f384b45409716280aabc33b857cd26ef4df2bb2e4b2",
+      ".orchestrator/runtime_state.py": "2f1c0eb516e441f4eacfbc4d1c1a3ae7f7d421c9bcb575d2b2720848899e0e52",
       ".orchestrator/supervisor.py": "71fdb6021ff0a40af8f888210504261028e883cea84828819af3ac15d7a8fa74",
       ".orchestrator/supervisor_watchdog.py": "e2030f151f28219d7438435ca95baf70a9efc39ce2ab0be184d20e3a6d4213aa",
       ".orchestrator/test_common.py": "e2d8a310dcee3461206213429f8b2abda5c96cd5766ad147ccfe905831eaaa02",
       ".orchestrator/test_provider_permissions.py": "79944558ca4a933234ebfe8917623656a095abcbe0eb6b0ca0fd939168d35aa4",
+      ".orchestrator/test_runtime_state.py": "0f14b5ae605857f6258c513d33e25245c6076ecf4f7b0f59d4b8dce8314b0b98",
       ".orchestrator/test_supervisor.py": "57153863f8103afe32f6948d65a55e47114c94c01b2364a382776d708067ebe1",
       ".orchestrator/test_worker_runner_heartbeat.py": "6c7cbe73ab8115390d4a234fdded5d700c6bae5d11856d292fb6cb9871941f44",
       ".orchestrator/worker_runner.py": "683a3b5215e21a0b4497dce3c43201e0f171e596177b2a4e22c04b660d32a29e",
       "scripts/ai_status.py": "fd6e42eb8599f1b0ce45feeef808278f108ed24a716df7f4040858718ba57ab0",
-      "scripts/promote_supervisor_runtime.py": "2e4ab5945ebe513ae18616a48776c64688312c59de00c8db59da834ac2b25d62",
+      "scripts/promote_supervisor_runtime.py": "e4a84431d1261ba7d6ac5410d154f59e5f1ef0d44bff0cd66950057a8b7031ef",
       "scripts/provision_live_supervisor_config.py": "c2252528253ffb8958f4cfa00b6165853bef3e9ee7de9532adb5665e57fd21ed",
       "scripts/supervisor_runtime_health.py": "760af2944435f74dd1406ce69f5040541f918b9ac902b71361d437567a24587b",
       "scripts/test_ai_status.py": "024d7100d78a0271c886d273ead10f04c01ff60e2135f2cb7203ced29b676674",
-      "scripts/test_promote_supervisor_runtime.py": "d7d64534584c3f78988eeb1449791601795e189da621f3e2aaf50fb4cbc034c7",
+      "scripts/test_promote_supervisor_runtime.py": "cc570d42d416fecfa1f58ffa20cda6a4baaf7d8f583ada3f8bd2657c97b5a421",
       "scripts/test_provision_live_supervisor_config.py": "09536e917286516557280c3b9b9800abba6dad8372460c29c3a787fb50d10fb2",
-      "docs/operations/worker-atomic-state-mounts.md": "8baf79a33d92acec836be0217f7a37bb776fde6c1d1ed4ca93b28efaeb2a3c2e"
+      "docs/operations/worker-atomic-state-mounts.md": "21c2e489c7f97885f16663cfa411aaff1ae99df0336b2aef3ab16d9eac6020c2"
     },
     "passed": [
       {
@@ -123,7 +125,7 @@
       },
       {
         "command": "pytest .orchestrator/test_runtime_state.py",
-        "result": "29 passed",
+        "result": "30 passed",
         "exit_status": 0
       },
       {
@@ -143,7 +145,7 @@
       },
       {
         "command": "pytest scripts/test_promote_supervisor_runtime.py",
-        "result": "53 passed",
+        "result": "59 passed",
         "exit_status": 0
       },
       {
@@ -162,8 +164,8 @@
         "exit_status": 0
       },
       {
-        "command": "pytest -q .orchestrator/test_worker_runner_heartbeat.py scripts/test_promote_supervisor_runtime.py .orchestrator/test_common.py .orchestrator/test_runtime_state.py scripts/test_provision_live_supervisor_config.py scripts/test_supervisor_runtime_health.py",
-        "result": "311 passed, 74 subtests passed in 154.16s",
+        "command": "pytest -q .orchestrator/test_worker_runner_heartbeat.py .orchestrator/test_runtime_state.py .orchestrator/test_common.py scripts/test_ai_status.py scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py",
+        "result": "775 passed, 265 subtests passed in 462.58s",
         "exit_status": 0
       }
     ]
@@ -177,6 +179,10 @@
     "cycle_2_defect_2_preflight_destination_lock_collision_check": "promote_supervisor_runtime._preflight_storage_migration now validates all target sidecars (.lock, .head.json, .legacy-anchor.json) across destination parent hierarchies, failing closed with target task-state collision error if any target lock or sidecar file exists or is a symlink before any moves occur.",
     "cycle_2_defect_3_transient_publication_scan_race_handling": "worker_runner._append_task_store_mounts catches FileNotFoundError when checking legitimate transient .tmp publication files that disappear mid-scan due to atomic os.replace, avoiding unqualified layout failures while preserving strict rejection for unrelated sibling files and symlinks.",
     "cycle_2_defect_4_fixture_seeding_preserves_production_guard": "test_supervisor.ExecutionAuthorizationProcessTests seeds tasks.jsonl explicitly via canonical TaskStore API append_state_commit, preserving the strict production guard snapshot['event_count'] > 0 in common.py:4642.",
-    "cycle_2_defect_5_durable_rollback_retention_and_incumbent_restart": "promote_supervisor_runtime._replace_supervisor_locked keeps single-writer flock exclusion across rollback and restart via keep_lock=True, durably fsyncs rollback directories, qualifies incumbent identity from incumbent config or command arguments, restarts incumbent supervisor with incumbent identity on candidate launch failure, and aggregates and raises rollback errors."
+    "cycle_2_defect_5_durable_rollback_retention_and_incumbent_restart": "promote_supervisor_runtime._replace_supervisor_locked keeps single-writer flock exclusion across rollback and restart via keep_lock=True, durably fsyncs rollback directories, qualifies incumbent identity from incumbent config or command arguments, restarts incumbent supervisor with incumbent identity on candidate launch failure, and aggregates and raises rollback errors.",
+    "cycle_3_defect_1_partial_migration_rollback_propagation_and_lock_retention": "scripts/promote_supervisor_runtime.py now raises StorageMigrationError carrying forward_error, migration_record, rollback_errors, restoration_verified, and lock_fd. In _replace_supervisor_locked, recovery diagnostics are extracted, single-writer lock exclusion is retained across rollback when restoration is not verified, and incumbent restart is refused against incomplete restoration / split storage.",
+    "cycle_3_defect_2_retained_old_path_writer_qualification_and_fencing": ".orchestrator/runtime_state.py resolves legacy .orchestrator paths to .orchestrator/worker-runtime/ via _canonical_runtime_source_path when worker-runtime authority exists. Direct write attempts to retired .orchestrator state/queue paths are hard-fenced in _write_runtime_bytes_unlocked, preventing split authority or divergent tokens without compatibility copies.",
+    "cycle_3_defect_3_incumbent_source_qualification_and_fail_closed": "promote_supervisor_runtime.qualify_incumbent_identity validates exact immutable command root via validated_immutable_command_root before supervisor shutdown, verifies expected git head against incumbent identity when specified, removes arbitrary unvalidated mappings and directory basename head fabrication, and does not substitute candidate identity when absent. _replace_supervisor_locked validates incumbent identity prior to calling stop_existing_supervisor, failing closed before shutdown.",
+    "cycle_3_defect_4_durability_error_propagation_and_destination_publication": "promote_supervisor_runtime._fsync_dir removes OSError suppression so directory durability errors propagate directly into rollback and caller evidence. Destination directory hierarchy publication fsyncs new_event_log.parent.parent and new_p.parent.parent, and all fsynced directories are tracked and reported in migration evidence."
   }
 }
