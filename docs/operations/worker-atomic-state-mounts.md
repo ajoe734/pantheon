@@ -47,9 +47,11 @@ External V2 TaskStore files are placed in a dedicated directory:
 
 #### Bubblewrap Mount Strategy:
 1. `task-state/` is mounted as a single writable directory (`--bind`).
-2. All commit locks and temporary publication files (`*.tmp`) remain entirely inside `task-state/`.
-3. `_append_task_store_mounts` mounts the dedicated `task-state/` directory rather than scanning individual sibling files, eliminating `ENOENT` races from disappearing temp files.
-4. The outer runtime directory (`runtime_parent`) is mounted `--ro-bind-try` with conflict checks against `workspace_path` and `coordination_root` to ensure runtime configuration files remain read-only without clobbering the leased worktree.
+2. Layout qualification check: The event log must reside in a dedicated directory named `task-state`. Legacy or mixed parent layouts are rejected fail-closed.
+3. Strict containment: The `task-state/` directory must contain only allowed TaskStore files (`events.jsonl`, `.head.json`, `.lock`, `.legacy-anchor.json`) and transient publication temporary files (`*.tmp`). Sibling files such as supervisor configuration or certificates are forbidden and trigger immediate rejection.
+4. Outer runtime sibling protection: The outer runtime directory (`runtime_parent`) is mounted `--ro-bind-try` (read-only) at the directory level, preventing atomic file replacement, linking, unlinking, or modification of siblings (e.g. `live-supervisor.json`).
+5. Overlapping workspace write preservation: If the leased worktree (`workspace_path`) is nested under `runtime_parent`, `--bind` is re-asserted after the read-only outer runtime mount, preserving full writeability of the leased worktree.
+6. Transient file resilience: Mounting the dedicated directory eliminates `ENOENT` races from ephemeral temp files that may disappear during sandbox launch.
 
 ### 3. Strict Authority Precondition in `common.write_status`
 To prevent retired or uninitialized state journals from being recreated:
@@ -72,21 +74,29 @@ These paths are derived directly from the coordination root (`status_root / .orc
 
 ### Automatic Storage Migration (`promote_supervisor_runtime.py`)
 When promoting a new supervisor runtime version:
-1. `_migrate_storage_paths(incumbent_config, rendered_config)` inspects the incumbent configuration.
-2. If task-store paths are in the legacy root (`runtime_parent`) and the new configuration targets `runtime_parent/task-state/`, the script:
-   - Acquires the task-state store lock.
-   - Ensures `runtime_parent/task-state/` exists with `0o700` permissions.
-   - Migrates existing `task-state-events-v2.jsonl`, `head.json`, `lock`, and `legacy-anchor.json` files.
-3. If supervisor launch fails during promotion, single-writer rollback restores the migrated files to their original paths.
+1. **Watchdog Fencing**: `_replace_supervisor_locked` acquires an exclusive `fcntl.flock` on `.orchestrator/runtime-admission.lock` covering supervisor shutdown, storage migration, approval queue marker verification, configuration installation, and supervisor launch.
+2. **Preflight Validation (`_preflight_storage_migration`)**:
+   - Ensures all source and destination paths are absolute.
+   - Rejects any symlinks across the entire path hierarchy for incumbent and rendered files.
+   - Verifies target destination files do not already exist (collision preflight).
+   - Verifies source and destination reside on the same filesystem (`st_dev` check) to guarantee atomic renames.
+3. **Writer Drain & Lock Acquisition (`_migrate_storage_paths`)**:
+   - Acquires `events.jsonl.lock` nonblocking via `fcntl.flock(LOCK_EX | LOCK_NB)` to ensure no active writers or legacy processes are mutating state during cutover. Fails closed if the lock is held.
+   - Creates destination parent directories with strict `0o700` permissions.
+   - Atomically relocates store files (`events.jsonl`, `.head.json`, `.lock`, `.legacy-anchor.json`, and worker runtime paths) using `os.replace`.
+   - Flushes directory metadata changes durably using `_fsync_dir` on source and target directories.
+4. **Durable Rollback**:
+   - If an unexpected error occurs during migration (e.g. partial rename failure), all moved files are rolled back in reverse order, directory changes are fsynced, and single recoverable authority is restored at the incumbent path.
+   - If supervisor launch fails after migration, `_replace_supervisor_locked` restores migrated files, writes back incumbent configuration, and restarts the incumbent supervisor.
 
 ### Verification Commands
 ```bash
-# Verify worker sandbox mount behavior and concurrent publication
-python3 -m pytest .orchestrator/test_worker_runner_heartbeat.py -k "test_bwrap"
+# Verify worker sandbox mount behavior, layout qualification, and governed writes
+python3 -m pytest .orchestrator/test_worker_runner_heartbeat.py -k "test_bind_worker_sandbox or test_governed_writer"
 
 # Verify common authority preconditions
 python3 -m pytest .orchestrator/test_common.py -k "TestWriteStatusPrecondition"
 
-# Verify promotion storage migration and rollback
-python3 -m pytest scripts/test_promote_supervisor_runtime.py -k "storage_migration"
+# Verify promotion storage migration, lock drain, preflight, and rollback
+python3 -m pytest scripts/test_promote_supervisor_runtime.py -k "migrate_storage_paths or storage_migration"
 ```
