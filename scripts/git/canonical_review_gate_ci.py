@@ -37,7 +37,9 @@ CLI:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
+import re
 import subprocess
 import sys
 import time
@@ -50,22 +52,33 @@ sys.path.insert(0, str(ROOT / "scripts" / "git"))
 
 from github_review_bridge import (  # noqa: E402
     CANONICAL_REVIEW_CONTEXT,
+    GitHubReviewBridgeError,
+    REOPEN,
+    _is_not_found,
     operator_acceptance_proof_tag_name,
     review_proof_tag_name,
 )
 
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
 APPROVE_DECISION = "approve"
+REOPEN_DECISION = REOPEN
 PRODUCT_DELIVERY_CLASS = "product"
 TOOLING_DELIVERY_CLASS = "tooling"
 _DELIVERY_CLASSES = frozenset({PRODUCT_DELIVERY_CLASS, TOOLING_DELIVERY_CLASS})
+MAX_TAG_PEEL_DEPTH = 5
+OID_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 # GitHub's commit-status `description` field is truncated server-side at 140
 # characters; truncate ourselves so the stored payload and the API's stored
 # value never disagree.
 _DESCRIPTION_LIMIT = 140
 
-TagLookup = Callable[[str, str], Mapping[str, Any] | None]
+@dataclass(frozen=True)
+class MalformedPayload:
+    raw: Any = None
+
+
+TagLookup = Callable[[str, str], Any]
 
 
 def resolve_task_id(head_ref: str, *, prefix: str = DEFAULT_TASK_BRANCH_PREFIX) -> str | None:
@@ -79,44 +92,240 @@ def resolve_task_id(head_ref: str, *, prefix: str = DEFAULT_TASK_BRANCH_PREFIX) 
 def _run_gh_json(args: list[str]) -> Any:
     proc = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
     if proc.returncode != 0:
-        return None
+        err = (proc.stderr or "").strip()
+        out = (proc.stdout or "").strip()
+        combined = f"{err}\n{out}".strip()
+        if _is_not_found(combined):
+            return None
+        raise GitHubReviewBridgeError(
+            f"gh {' '.join(args)} failed (exit {proc.returncode}): {err or out}"
+        )
     text = (proc.stdout or "").strip()
     if not text:
-        return None
+        return MalformedPayload("")
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise GitHubReviewBridgeError(
+            f"invalid JSON from gh {' '.join(args)}: {exc}"
+        ) from exc
+    if parsed is None:
+        return MalformedPayload(None)
+    return parsed
 
 
-def default_tag_lookup(repository: str, ref: str) -> Mapping[str, Any] | None:
-    # `ref` is a full ref path ("refs/tags/pantheon-review/approve/<sha>").
-    # GitHub's git-refs lookup route wants `git/refs/tags/<name>` with
-    # `refs/tags/` literal and only the tag's own internal slashes encoded --
-    # encoding the whole ref (as the first version of this script did) 404s
-    # even for a tag that exists; verified against the live API.
+def default_tag_lookup(repository: str, ref_or_sha: str) -> Any:
     prefix = "refs/tags/"
-    assert ref.startswith(prefix), f"expected a refs/tags/ ref, got {ref!r}"
-    tag_name = ref[len(prefix):]
-    encoded_tag_name = quote(tag_name, safe="")
-    result = _run_gh_json(["api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"])
-    return result if isinstance(result, Mapping) else None
+    if ref_or_sha.startswith(prefix):
+        tag_name = ref_or_sha[len(prefix):]
+        encoded_tag_name = quote(tag_name, safe="")
+        result = _run_gh_json(["api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"])
+        if result is None:
+            return None
+        return result
+    result = _run_gh_json(["api", f"repos/{repository}/git/tags/{ref_or_sha}"])
+    if result is None:
+        return None
+    return result
+
+
+@dataclass(frozen=True)
+class TagInspection:
+    status: str  # "confirmed_absent" | "valid" | "mismatched" | "malformed" | "api_error"
+    detail: str = ""
+    target_sha: str | None = None
+
+    @property
+    def is_valid(self) -> bool:
+        return self.status == "valid"
+
+    @property
+    def is_absent(self) -> bool:
+        return self.status == "confirmed_absent"
+
+
+def inspect_proof_tag(
+    *,
+    repository: str,
+    ref: str,
+    expected_head_sha: str,
+    lookup: TagLookup = default_tag_lookup,
+    max_peel_depth: int = MAX_TAG_PEEL_DEPTH,
+) -> TagInspection:
+    normalized_expected = str(expected_head_sha or "").strip().lower()
+    try:
+        found = lookup(repository, ref)
+    except Exception as exc:
+        return TagInspection(
+            status="api_error",
+            detail=f"API lookup failed for {ref}: {exc}",
+        )
+
+    if found is None:
+        return TagInspection(status="confirmed_absent", detail=f"ref {ref} confirmed absent")
+
+    if not isinstance(found, Mapping):
+        return TagInspection(
+            status="malformed",
+            detail=f"ref {ref} returned non-mapping payload: {type(found).__name__}",
+        )
+
+    observed_ref = str(found.get("ref") or "").strip()
+    if observed_ref != ref:
+        return TagInspection(
+            status="malformed",
+            detail=f"ref mismatch: payload ref {observed_ref!r} != {ref!r}",
+        )
+
+    obj = found.get("object")
+    if not isinstance(obj, Mapping):
+        return TagInspection(
+            status="malformed",
+            detail=f"ref {ref} object is missing or not a mapping",
+        )
+
+    obj_type = str(obj.get("type") or "").strip().lower()
+    obj_sha = str(obj.get("sha") or "").strip().lower()
+    if not OID_RE.fullmatch(obj_sha):
+        return TagInspection(
+            status="malformed",
+            detail=f"ref {ref} has invalid object sha {obj_sha!r}",
+        )
+
+    if obj_type == "commit":
+        if normalized_expected and obj_sha != normalized_expected:
+            return TagInspection(
+                status="mismatched",
+                target_sha=obj_sha,
+                detail=f"ref {ref} targets commit {obj_sha[:12]}, expected {normalized_expected[:12]}",
+            )
+        return TagInspection(
+            status="valid",
+            target_sha=obj_sha,
+            detail=f"ref {ref} targets commit {obj_sha[:12]}",
+        )
+
+    if obj_type != "tag":
+        return TagInspection(
+            status="malformed",
+            detail=f"ref {ref} has unsupported object type {obj_type!r}",
+        )
+
+    current_sha = obj_sha
+    for depth in range(max(1, max_peel_depth)):
+        try:
+            tag_obj = lookup(repository, current_sha)
+        except Exception as exc:
+            return TagInspection(
+                status="api_error",
+                detail=f"API lookup failed peeling tag {current_sha}: {exc}",
+            )
+        if tag_obj is None:
+            return TagInspection(
+                status="malformed",
+                detail=f"tag object {current_sha} not found during peel",
+            )
+        if not isinstance(tag_obj, Mapping):
+            return TagInspection(
+                status="malformed",
+                detail=f"tag object {current_sha} is not a mapping",
+            )
+        target = tag_obj.get("object")
+        if not isinstance(target, Mapping):
+            return TagInspection(
+                status="malformed",
+                detail=f"tag object {current_sha} has missing or non-mapping target",
+            )
+        target_type = str(target.get("type") or "").strip().lower()
+        target_sha = str(target.get("sha") or "").strip().lower()
+        if not OID_RE.fullmatch(target_sha):
+            return TagInspection(
+                status="malformed",
+                detail=f"tag object {current_sha} has invalid target sha {target_sha!r}",
+            )
+        if target_type == "commit":
+            if normalized_expected and target_sha != normalized_expected:
+                return TagInspection(
+                    status="mismatched",
+                    target_sha=target_sha,
+                    detail=f"ref {ref} targets commit {target_sha[:12]}, expected {normalized_expected[:12]}",
+                )
+            return TagInspection(
+                status="valid",
+                target_sha=target_sha,
+                detail=f"ref {ref} targets commit {target_sha[:12]}",
+            )
+        if target_type == "tag":
+            current_sha = target_sha
+            continue
+        return TagInspection(
+            status="malformed",
+            detail=f"tag object {current_sha} points to unsupported type {target_type!r}",
+        )
+
+    return TagInspection(
+        status="malformed",
+        detail=f"tag peeling exceeded max depth {max_peel_depth} for {ref}",
+    )
+
+
+def resolve_proof_tag_target(
+    *,
+    repository: str,
+    ref: str,
+    lookup: TagLookup = default_tag_lookup,
+    max_peel_depth: int = MAX_TAG_PEEL_DEPTH,
+) -> str | None:
+    """Resolve the exact commit object targeted by a git ref, peeling tags as needed.
+
+    Returns the 40-hex lowercase commit SHA if the ref resolves to a commit
+    object within bounded peel depth, or None if the ref is missing, malformed,
+    points to a non-commit object, or lookup fails.
+    """
+    inspection = inspect_proof_tag(
+        repository=repository,
+        ref=ref,
+        expected_head_sha="",
+        lookup=lookup,
+        max_peel_depth=max_peel_depth,
+    )
+    return inspection.target_sha
 
 
 def review_proof_tag_exists(
     *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
 ) -> bool:
-    ref = f"refs/tags/{review_proof_tag_name(decision=APPROVE_DECISION, head_sha=head_sha)}"
-    found = lookup(repository, ref)
-    return isinstance(found, Mapping) and found.get("ref") == ref
+    normalized_head = str(head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(normalized_head):
+        return False
+    ref = f"refs/tags/{review_proof_tag_name(decision=APPROVE_DECISION, head_sha=normalized_head)}"
+    return inspect_proof_tag(
+        repository=repository, ref=ref, expected_head_sha=normalized_head, lookup=lookup
+    ).is_valid
 
 
 def operator_acceptance_proof_tag_exists(
     *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
 ) -> bool:
-    ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=head_sha)}"
-    found = lookup(repository, ref)
-    return isinstance(found, Mapping) and found.get("ref") == ref
+    normalized_head = str(head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(normalized_head):
+        return False
+    ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=normalized_head)}"
+    return inspect_proof_tag(
+        repository=repository, ref=ref, expected_head_sha=normalized_head, lookup=lookup
+    ).is_valid
+
+
+def reopen_proof_tag_exists(
+    *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
+) -> bool:
+    normalized_head = str(head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(normalized_head):
+        return False
+    ref = f"refs/tags/{review_proof_tag_name(decision=REOPEN_DECISION, head_sha=normalized_head)}"
+    return inspect_proof_tag(
+        repository=repository, ref=ref, expected_head_sha=normalized_head, lookup=lookup
+    ).is_valid
 
 
 def build_status_payload(
@@ -164,11 +373,53 @@ def build_status_payload(
             "target_url": target_url,
         }
 
-    # `lookup` defaults late (resolved here, not bound at def-time) so that
-    # patching the module-level `default_tag_lookup` -- e.g. in tests --
-    # is actually observed by callers, like main(), that don't pass one.
     active_lookup = lookup if lookup is not None else default_tag_lookup
-    if review_proof_tag_exists(repository=repository, head_sha=head_sha, lookup=active_lookup):
+    reopen_ref = f"refs/tags/{review_proof_tag_name(decision=REOPEN_DECISION, head_sha=head_sha)}"
+    approve_ref = f"refs/tags/{review_proof_tag_name(decision=APPROVE_DECISION, head_sha=head_sha)}"
+    operator_ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=head_sha)}"
+
+    reopen_inspection = inspect_proof_tag(
+        repository=repository, ref=reopen_ref, expected_head_sha=head_sha, lookup=active_lookup
+    )
+    approve_inspection = inspect_proof_tag(
+        repository=repository, ref=approve_ref, expected_head_sha=head_sha, lookup=active_lookup
+    )
+    operator_inspection = inspect_proof_tag(
+        repository=repository, ref=operator_ref, expected_head_sha=head_sha, lookup=active_lookup
+    )
+
+    if reopen_inspection.is_valid:
+        if approve_inspection.is_valid or operator_inspection.is_valid:
+            return {
+                "state": "failure",
+                "context": CANONICAL_REVIEW_CONTEXT,
+                "description": (
+                    f"{task_id}: conflicting review-proof tags at {head_sha[:12]} -- "
+                    "reopen tag invalidates approval"
+                )[:_DESCRIPTION_LIMIT],
+                "target_url": target_url,
+            }
+        return {
+            "state": "failure",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": (
+                f"{task_id}: review changes requested / reopened for head {head_sha[:12]} -- not approved"
+            )[:_DESCRIPTION_LIMIT],
+            "target_url": target_url,
+        }
+
+    if not reopen_inspection.is_absent:
+        # Reopen tag is not confirmed absent; fail closed on malformed, mismatched, or API error.
+        return {
+            "state": "failure",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": (
+                f"{task_id}: cannot verify absence of reopen tag ({reopen_inspection.status}: {reopen_inspection.detail})"
+            )[:_DESCRIPTION_LIMIT],
+            "target_url": target_url,
+        }
+
+    if approve_inspection.is_valid:
         return {
             "state": "success",
             "context": CANONICAL_REVIEW_CONTEXT,
@@ -178,15 +429,33 @@ def build_status_payload(
             "target_url": target_url,
         }
 
-    if operator_acceptance_proof_tag_exists(
-        repository=repository, head_sha=head_sha, lookup=active_lookup
-    ):
+    if operator_inspection.is_valid:
         return {
             "state": "success",
             "context": CANONICAL_REVIEW_CONTEXT,
             "description": f"{task_id}: Human/Ops exact-head acceptance present at {head_sha[:12]}"[
                 :_DESCRIPTION_LIMIT
             ],
+            "target_url": target_url,
+        }
+
+    if not approve_inspection.is_absent:
+        return {
+            "state": "failure",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": (
+                f"{task_id}: review-proof tag evaluation failed ({approve_inspection.status}: {approve_inspection.detail})"
+            )[:_DESCRIPTION_LIMIT],
+            "target_url": target_url,
+        }
+
+    if not operator_inspection.is_absent:
+        return {
+            "state": "failure",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": (
+                f"{task_id}: operator acceptance tag evaluation failed ({operator_inspection.status}: {operator_inspection.detail})"
+            )[:_DESCRIPTION_LIMIT],
             "target_url": target_url,
         }
 

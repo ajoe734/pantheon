@@ -1,0 +1,147 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-REVIEW-PROOF-001",
+  "title": "Repair canonical review publication and exact-version GitHub gate",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "base_sha_at_dispatch": "3cabdbbca47f68dbb32d7478719fb1b084144966",
+  "task_branch": "task/OPS-REVIEW-PROOF-001",
+  "depends_on": [
+    "OPS-COMMIT-IDENTITY-001",
+    "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9"
+  ],
+  "depends_on_status_at_dispatch": "done, satisfied=true",
+  "delivery_state": "ready_for_review",
+  "plan": {
+    "path": "/tmp/pantheon-tooling-root-repair-20260907/REVIEW_PROOF_PLAN.md",
+    "sha256": "07b330d425946fb363e8b94a0e707595bb0e3c7af6be0d161ad9ab88705471f0",
+    "source_ref": "pantheon-dev@46bbfe935df1e68740569fb5dc6233897de98b0b"
+  },
+  "scope": {
+    "artifacts_count": 13,
+    "artifacts": [
+      "scripts/git/canonical_review_gate_ci.py",
+      "scripts/git/github_review_bridge.py",
+      "scripts/git/auto_integrator.py",
+      "scripts/git/test_canonical_review_gate_workflow.py",
+      "scripts/git/test_github_review_bridge.py",
+      "scripts/git/test_canonical_review_check.py",
+      "scripts/git/test_auto_integrator.py",
+      ".github/workflows/canonical-review-gate.yml",
+      ".github/workflows/canonical-review-attestation-audit.yml",
+      "docs/operations/review-publication-recovery.md",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/OPS-REVIEW-PROOF-001/evidence.json"
+    ],
+    "owned": [
+      "Exact Git target commit validation in canonical_review_gate_ci.py via bounded tag peeling (up to depth 5), rejecting mismatched commits, non-commit objects, and malformed tags; introduces 5-state TagInspection distinguishing confirmed absence from malformed/mismatched/api_error and failing closed.",
+      "Observable workflow_dispatch in github_review_bridge.py defaulting to required=True on both APPROVE and REOPEN decisions.",
+      "Retirement of legacy direct PAT status submission (_submit_required_status) in github_review_bridge.py and convergence of GITHUB_REVIEW_MODES to only pull_request_review across bridge and ai_status.",
+      "Intent-fenced deletion of opposing decision tags on approve, operator_accept, and reopen decisions verifying PR reviews timeline nonce ordering, preventing conflicting proof tags and rejecting stale concurrent retries.",
+      "Fail-closed evaluation in canonical_review_gate_ci.py when a reopen tag or conflicting tags exist for the target commit.",
+      "Canonical review gate reconciliation in auto_integrator.py: re-dispatching review gate workflow when TaskStore approval and GitHub proof tag are valid and reopen tag is strictly absent, recording observable failure details without claiming false re-dispatch; substantive test failures fail closed immediately.",
+      "Attestation audit workflow simplification in canonical-review-attestation-audit.yml to manual workflow_dispatch only, removing automated triggers and obsolete external issuer claims."
+    ],
+    "not_changing": [
+      "TaskStore canonical approval authority, state machine, or review locks.",
+      "External signed attestation audit issuer architecture or diagnostic contracts.",
+      "No second mechanisms, queues, background daemons, or alternate approval APIs introduced."
+    ],
+    "composes_with": [
+      "OPS-COMMIT-IDENTITY-001",
+      "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9",
+      "the existing per-task PR review/merge flow and supervisor integration runner"
+    ]
+  },
+  "failure_reproduction": {
+    "case_1_tag_target_commit": "canonical_review_gate_ci previously checked only ref name presence, accepting tags pointing to wrong commits or non-commit objects.",
+    "case_2_swallowed_dispatch": "github_review_bridge previously caught and swallowed workflow_dispatch failures when required=False, leaving PRs red without observable errors while posting conflicting PAT status.",
+    "case_3_reopen_approve_conflict": "Reopening an approved candidate on the same commit left both approved and reopen tags; gate checked only approved tag and reported false green.",
+    "case_4_integrator_stagnation": "auto_integrator had no way to reconcile a red/pending review gate check when TaskStore approval and GitHub proof tags were valid, causing pipeline stalls.",
+    "case_5_stale_retry_unfenced_deletion": "github_review_bridge deleted opposing tags unconditionally without verifying timeline ordering, allowing stale retries to delete newer reopens.",
+    "case_6_reopen_ref_silent_collapse": "canonical_review_gate_ci collapsed unreadable/malformed reopen refs and API errors to False, allowing gate approval to pass when reopen proof was ambiguous or unverified."
+  },
+  "implementation": {
+    "canonical_review_gate_ci": "Implemented resolve_proof_tag_target with bounded peel depth (MAX_TAG_PEEL_DEPTH=5) verifying target commit against head_sha. Introduced TagInspection with 5 distinct states: confirmed_absent, valid, mismatched, malformed, and api_error. Updated build_status_payload to require confirmed absence of reopen tag before evaluating approval.",
+    "github_review_bridge": "Implemented intent-fenced _delete_ref and _resolve_ref_target_commit verifying PR reviews timeline sequence. Set _dispatch_canonical_review_gate_workflow default to required=True. Retired _submit_required_status and converged GITHUB_REVIEW_MODES to only pull_request_review.",
+    "auto_integrator": "Implemented is_canonical_review_gate_green and make_integrator_tag_lookup propagating non-404 API errors. Added review gate re-dispatch reconciliation for valid TaskStore approvals with valid GitHub proof tags and strictly absent reopen tags, recording dispatch failures with observable detail without claiming success.",
+    "canonical_review_attestation_audit": "Simplified workflow triggers to manual workflow_dispatch only, removing automated pull_request_target, issue_comment, and schedule triggers. Updated documentation headers to reflect manual-only diagnostic posture."
+  },
+  "verification": {
+    "environment": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "interpreter": ".venv-pantheon/bin/python3"
+    },
+    "checksums": {
+      "scripts/git/canonical_review_gate_ci.py": "e4db00e5b4c0d962c368f71f6a31867529aebee75e9537889c538084fa4ee826",
+      "scripts/git/github_review_bridge.py": "6070a3aa4636d01ecdfde38c425d2d840248608c2a70ed55ede9570753ca9306",
+      "scripts/git/auto_integrator.py": "8f024ccbd1802d5d4090e876ede2e0b6297986183173137ddd89cea40567d229",
+      "scripts/git/test_canonical_review_gate_workflow.py": "7c298e4190fd3ebcb77627850775e5ff72db28a74f24685f133d06a8d5542d04",
+      "scripts/git/test_github_review_bridge.py": "a0041a18f0db77add45841273376a279464b8d3ca7da2cba92b4fda7a1ca7796",
+      "scripts/git/test_canonical_review_check.py": "6ee8eae665c29ac150116e44d04f001092367e71774f26e94df34742c23dd47d",
+      "scripts/git/test_auto_integrator.py": "6eb988aa1688dbd08bd5467b69baa32269176eb3d101e32c5b617f96f229b405",
+      ".github/workflows/canonical-review-gate.yml": "14af70bd8b08e6407aadba85f6bcb492d9d701b043fb0c3902e34f37972b2e49",
+      ".github/workflows/canonical-review-attestation-audit.yml": "92013c2f717e1c526e292dd78acce6c713c1c77ee5ad81abd5c6a3b4a1c8993e",
+      "docs/operations/review-publication-recovery.md": "a9a99b24a0b2c7a8a26f91e5a131b5f80bd8e256e239b21fbc7a9e003bdee77a",
+      "scripts/ai_status.py": "d637ff92dec48ba74348c5e2530f874a3823c7f19738ebd4c66e2dd6d8fb9f6a",
+      "scripts/test_ai_status.py": "fb8fd70ed4ea21ae89ff22f01fa2b6119b8634db7b8fa4d5afe700ce2e0e6208"
+    },
+    "passed": [
+      {
+        "command": "pytest scripts/git/test_canonical_review_gate_workflow.py",
+        "result": "51 passed in 4.92s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/git/test_github_review_bridge.py",
+        "result": "57 passed in 5.21s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/git/test_canonical_review_check.py",
+        "result": "39 passed in 4.41s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/git/test_auto_integrator.py",
+        "result": "127 passed in 14.95s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/git/test_canonical_review_gate_workflow.py scripts/git/test_github_review_bridge.py scripts/git/test_canonical_review_check.py scripts/git/test_auto_integrator.py",
+        "result": "274 passed in 31.80s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest scripts/test_ai_status.py",
+        "result": "457 passed in 232.80s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest /tmp/test_ops_review_proof_001_codex_probes.py",
+        "result": "11 passed in 2.89s",
+        "exit_status": 0
+      },
+      {
+        "command": "pytest /tmp/test_ops_review_proof_001_review_http_errors.py",
+        "result": "5 passed in 4.48s",
+        "exit_status": 0
+      }
+    ],
+    "failed": []
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Ready for exact-head independent review by Codex."
+  },
+  "runtime_activation": {
+    "status": "not_performed",
+    "handoff_document": "docs/operations/review-publication-recovery.md#qualified-activation-handoff-pending-merge",
+    "requires": "Genuine assigned exact-head review, required checks and sole integrator merge before existing qualified runtime promotion."
+  }
+}
