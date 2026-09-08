@@ -968,6 +968,140 @@ sys.exit(0)
             self.assertTrue(checked.get("conflict"))
             self.assertEqual(checked.get("reason"), "cross_tenant_scope_mismatch")
 
+    def test_patch_cannot_authorize_using_uncommitted_visibility_and_recovers_later(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            create_entry(
+                stores,
+                entry_id="entry-sec",
+                title="private title",
+                body="COMMITTED PRIVATE BODY",
+                created_at="2026-09-08T10:00:00Z",
+                tenant_id="tenant-a",
+                actor_id="alice",
+                user_id="alice",
+            )
+            child_code = (
+                "import os, sys\n"
+                "from services.governance.decision_journal import build_decision_journal_stores, patch_entry\n"
+                "s = build_decision_journal_stores(sys.argv[1])\n"
+                "s.outbox.put = lambda event: os._exit(74)\n"
+                "patch_entry(s, 'entry-sec', patch={'visibility': 'public', 'body': 'UNCOMMITTED BODY'}, "
+                "tenant_id='tenant-a', actor_id='alice', user_id='alice', idempotency_key='publish', request_hash='publish', patched_at='2026-09-08T10:01:00Z')\n"
+            )
+            child = subprocess.run([sys.executable, "-c", child_code, path], timeout=10)
+            self.assertEqual(child.returncode, 74)
+
+            fresh = build_decision_journal_stores(path)
+            real_put = fresh.outbox.put
+            def reject_crashed_event(event: Any) -> None:
+                if event.get("raw_idempotency_key") == "publish":
+                    raise OSError("prior transaction outbox unavailable")
+                return real_put(event)
+            fresh.outbox.put = reject_crashed_event  # type: ignore[assignment]
+
+            owner = DecisionJournalOwnerAdapter(stores=fresh)
+            service = AgoraService(get_read_store=lambda: owner, journal_write_owner=owner)
+            bob = OperatorIdentity(operator_id="bob", claims={"tenant_id": "tenant-a"}, roles=["operator"], mfa_verified=True)
+
+            # 1. Bob cannot see or mutate using uncommitted public visibility (must 404 / fail closed)
+            with self.assertRaises(Exception) as cm:
+                service.patch_journal_entry(
+                    entry_id="entry-sec",
+                    patch={"title": "bob changed"},
+                    identity=bob,
+                    resolved_key="bob-patch",
+                    tenant_id="tenant-a",
+                    user_id="bob",
+                )
+            self.assertIn(getattr(cm.exception, "status_code", None), (403, 404, 409, 503))
+
+            # 2. Alice attempting to patch while predecessor outbox is unavailable fails closed (409)
+            alice = OperatorIdentity(operator_id="alice", claims={"tenant_id": "tenant-a"}, roles=["operator"], mfa_verified=True)
+            with self.assertRaises(Exception) as cm2:
+                service.patch_journal_entry(
+                    entry_id="entry-sec",
+                    patch={"title": "alice changed"},
+                    identity=alice,
+                    resolved_key="alice-patch-blocked",
+                    tenant_id="tenant-a",
+                    user_id="alice",
+                )
+            self.assertIn(getattr(cm2.exception, "status_code", None), (409, 503))
+
+            # 3. Outbox recovers: later recovery succeeds and subsequent mutation succeeds
+            fresh.outbox.put = real_put  # type: ignore[assignment]
+            succ = service.patch_journal_entry(
+                entry_id="entry-sec",
+                patch={"title": "alice changed after recovery"},
+                identity=alice,
+                resolved_key="alice-patch-success",
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertEqual(succ.status, "completed")
+            self.assertEqual(succ.data.title, "alice changed after recovery")
+            self.assertEqual(succ.data.visibility, "public")
+            self.assertEqual(succ.data.body, "UNCOMMITTED BODY")
+
+    def test_supplied_id_recreate_resolves_committed_snapshot_and_recovers_later(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            create_entry(
+                stores,
+                entry_id="entry-rec",
+                title="private title",
+                body="COMMITTED PRIVATE BODY",
+                created_at="2026-09-08T10:00:00Z",
+                tenant_id="tenant-a",
+                actor_id="alice",
+                user_id="alice",
+            )
+            child_code = (
+                "import os, sys\n"
+                "from services.governance.decision_journal import build_decision_journal_stores, patch_entry\n"
+                "s = build_decision_journal_stores(sys.argv[1])\n"
+                "s.outbox.put = lambda event: os._exit(74)\n"
+                "patch_entry(s, 'entry-rec', patch={'visibility': 'public', 'body': 'UNCOMMITTED BODY'}, "
+                "tenant_id='tenant-a', actor_id='alice', user_id='alice', idempotency_key='publish', request_hash='publish', patched_at='2026-09-08T10:01:00Z')\n"
+            )
+            child = subprocess.run([sys.executable, "-c", child_code, path], timeout=10)
+            self.assertEqual(child.returncode, 74)
+
+            fresh = build_decision_journal_stores(path)
+            real_put = fresh.outbox.put
+            def reject_crashed_event(event: Any) -> None:
+                if event.get("raw_idempotency_key") == "publish":
+                    raise OSError("prior transaction outbox unavailable")
+                return real_put(event)
+            fresh.outbox.put = reject_crashed_event  # type: ignore[assignment]
+
+            owner = DecisionJournalOwnerAdapter(stores=fresh)
+            service = AgoraService(get_read_store=lambda: owner, journal_write_owner=owner)
+            alice = OperatorIdentity(operator_id="alice", claims={"tenant_id": "tenant-a"}, roles=["operator"], mfa_verified=True)
+
+            # 1. Supplied-ID recreate during outbox outage returns committed private body, not uncommitted patch
+            res = service.create_journal_entry(
+                payload={"id": "entry-rec", "title": "private title", "body": "COMMITTED PRIVATE BODY"},
+                identity=alice,
+                tenant_id="tenant-a",
+                user_id="alice",
+                idempotency_key="recreate-1",
+                x_idempotency_key=None,
+            )
+            self.assertEqual(res["data"]["body"], "COMMITTED PRIVATE BODY")
+            self.assertEqual(res["data"]["visibility"], "private")
+
+            # 2. Later recovery when outbox recovers
+            fresh.outbox.put = real_put  # type: ignore[assignment]
+            get_res = owner.get_decision_journal_entry(
+                "entry-rec",
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertIsNotNone(get_res)
+            self.assertEqual(get_res["id"], "entry-rec")
+
 
 if __name__ == "__main__":
     unittest.main()

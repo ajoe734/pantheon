@@ -273,9 +273,9 @@ class DecisionJournalOwnerAdapter:
 
         resolved_raw_key = raw_key or record.get("raw_idempotency_key") or ""
         reconstructed = {
-            "data": _project(persisted),
+            "data": dict(scoped_entry),
             "meta": {
-                "snapshot_at": str(persisted.get("createdAt") or persisted.get("updatedAt") or ""),
+                "snapshot_at": str(scoped_entry.get("createdAt") or scoped_entry.get("updatedAt") or ""),
                 "idempotency": {"idempotencyKey": resolved_raw_key, "replayed": True},
                 "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
             },

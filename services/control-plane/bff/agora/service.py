@@ -869,10 +869,18 @@ class AgoraService:
         except DecisionJournalConcurrencyError as exc:
             raise self.bff_error(
                 409,
-                ErrorCode.CONCURRENCY_CONFLICT,
+                ErrorCode.RESOURCE_CONFLICT,
                 "Concurrent update conflict on decision journal entry",
                 str(exc),
                 precondition_failed="version",
+            )
+        except (OSError, IOError) as exc:
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision journal storage or outbox unavailable",
+                str(exc),
+                precondition_failed="decision_journal_storage",
             )
 
         if result is None:
@@ -1839,6 +1847,19 @@ class AgoraService:
                 "Decision journal access denied",
                 str(exc),
                 precondition_failed="tenant_scope",
+            )
+        except DecisionJournalConcurrencyError as exc:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
+            raise self.bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent update conflict on decision journal entry",
+                str(exc),
+                precondition_failed="version",
             )
         except Exception:
             if scoped_idem_key and not dry_run:

@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
-  "worker": "Antigravity",
+  "worker": "Antigravity2",
   "reviewer": "Codex",
   "governing_spec": {
     "document": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md",
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 28,
+        "tests": 30,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -100,6 +100,14 @@
         "name": "tests/agora_write_owner/",
         "runner": ".venv-pantheon/bin/python -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-3f28402a.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 2,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -145,7 +153,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 115
+    "total_tests_passed": 119
   },
   "artifacts": [
     "services/governance/decision_journal.py",

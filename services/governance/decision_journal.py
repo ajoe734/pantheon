@@ -417,18 +417,20 @@ def patch_idempotency_key(
     return clean_key
 
 
-def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[str, Any]]) -> None:
-    """Coordinate pending transactions and outbox events for committed entries across crashes."""
+def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[str, Any]]) -> bool:
+    """Coordinate pending transactions and outbox events for committed entries across crashes.
+
+    Returns True if all pending transactions/events are coordinated and committed (or none were pending),
+    False if any pending transaction's secondary write failed.
+    """
     if not isinstance(entry, dict):
-        return
+        return True
 
     clean_id = str(entry.get("id") or "").strip()
     if not clean_id:
-        return
+        return True
 
-    # If bundle lock is held by another process/thread, a live writer is actively in progress; never coordinate
-    if stores.is_bundle_locked():
-        return
+    all_coordinated = True
 
     # 1. Coordinate creation outbox
     creation_outbox = entry.get("_creation_outbox")
@@ -449,6 +451,7 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
                     stores.outbox.put(creation_outbox)
                 except Exception:
                     secondary_ok = False
+                    all_coordinated = False
 
         if secondary_ok:
             with stores.bundle_lock(), stores._tx_lock:
@@ -464,7 +467,7 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
                             if updated:
                                 if stores.idempotency is not None:
                                     idem_rec = stores.idempotency.get(create_idem_key)
-                                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
+                                    if idem_rec is not None and idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
                                         try:
                                             stores.idempotency.put({
                                                 **idem_rec,
@@ -477,10 +480,10 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
     with stores.bundle_lock(), stores._tx_lock:
         fresh_entry = stores.entries.get(clean_id)
         if not isinstance(fresh_entry, dict):
-            return
+            return all_coordinated
         tx_history = fresh_entry.get("_tx_history")
         if not tx_history or not isinstance(tx_history, list):
-            return
+            return all_coordinated
 
         for tx in tx_history:
             if not isinstance(tx, dict):
@@ -491,6 +494,12 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
             outbox_id = tx.get("outbox_id")
             idem_key = tx.get("idempotency_key")
 
+            # Check if this tx is already succeeded
+            if idem_key and stores.idempotency is not None:
+                existing_idem = stores.idempotency.get(idem_key)
+                if existing_idem is not None and existing_idem.get("status") == _IDEM_STATUS_SUCCEEDED:
+                    continue
+
             # Never finalize with failed secondary writes
             secondary_ok = True
             if audit and audit_id and stores.audit is not None:
@@ -499,6 +508,7 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
                         stores.audit.put({"audit_id": audit_id, **audit})
                     except Exception:
                         secondary_ok = False
+                        all_coordinated = False
 
             if outbox and outbox_id and stores.outbox is not None:
                 if stores.outbox.get(outbox_id) is None:
@@ -506,6 +516,7 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
                         stores.outbox.put(outbox)
                     except Exception:
                         secondary_ok = False
+                        all_coordinated = False
 
             if secondary_ok and idem_key and stores.idempotency is not None:
                 idem_rec = stores.idempotency.get(idem_key)
@@ -520,6 +531,49 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
                         })
                     except Exception:
                         pass
+            elif not secondary_ok:
+                all_coordinated = False
+
+    return all_coordinated
+
+
+def _has_uncommitted_transactions(
+    stores: DecisionJournalStores,
+    entry: Optional[Dict[str, Any]],
+) -> tuple[bool, Optional[Dict[str, Any]]]:
+    """Check if an entry has any pending uncommitted creation or patch transactions."""
+    if not isinstance(entry, dict):
+        return False, None
+
+    clean_id = str(entry.get("id") or "").strip()
+    if not clean_id:
+        return False, None
+
+    if entry.get("_creation_outbox") is not None:
+        clean_tenant = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
+        clean_actor = str(entry.get("createdBy") or entry.get("actor_id") or "").strip()
+        create_idem_key = domain_creation_idempotency_key(
+            tenant_id=clean_tenant,
+            actor_id=clean_actor,
+            entry_id=clean_id,
+        )
+        if stores.idempotency is not None:
+            idem_rec = stores.idempotency.get(create_idem_key)
+            if idem_rec is None or idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
+                return True, {"type": "creation", "entry_id": clean_id}
+
+    tx_history = entry.get("_tx_history")
+    if isinstance(tx_history, list) and tx_history:
+        for tx in reversed(tx_history):
+            if not isinstance(tx, dict):
+                continue
+            idem_key = tx.get("idempotency_key")
+            if idem_key and stores.idempotency is not None:
+                idem_rec = stores.idempotency.get(idem_key)
+                if idem_rec is None or idem_rec.get("status") != _IDEM_STATUS_SUCCEEDED:
+                    return True, tx
+
+    return False, None
 
 
 def create_entry(
@@ -640,8 +694,41 @@ def create_entry(
             if stores.outbox is not None and creation_outbox_to_publish is not None:
                 evt_id = str(creation_outbox_to_publish.get("event_id") or creation_outbox_to_publish.get("id") or "")
                 if not evt_id or stores.outbox.get(evt_id) is None:
-                    stores.outbox.put(creation_outbox_to_publish)
+                    try:
+                        stores.outbox.put(creation_outbox_to_publish)
+                    except Exception as exc:
+                        raise exc
 
+            if "_creation_outbox" in canonical:
+                committed_canonical = dict(canonical)
+                committed_canonical.pop("_creation_outbox", None)
+                stores.entries.put(committed_canonical)
+                canonical = committed_canonical
+
+            # Coordinate pending transactions on canonical
+            _coordinate_pending_txs(stores, canonical)
+            fresh_canonical = stores.entries.get(clean_id)
+            if fresh_canonical is not None:
+                canonical = fresh_canonical
+
+            # Resolve committed snapshot or fail closed
+            committed = _get_committed_entry_snapshot(stores, canonical, coordinate_if_unlocked=False)
+            if committed is None:
+                if stores.idempotency is not None:
+                    stores.idempotency.put({
+                        "idempotency_key": create_idem_key,
+                        "tenant_id": clean_tenant,
+                        "actor_id": clean_actor,
+                        "user_id": clean_user,
+                        "entry_id": clean_id,
+                        "status": _IDEM_STATUS_FAILED,
+                        "created_at": time.time(),
+                    })
+                raise DecisionJournalConcurrencyError(
+                    f"Entry {clean_id} could not be resolved to a committed snapshot"
+                )
+
+            projected_committed = _project(committed)
             if stores.idempotency is not None:
                 stores.idempotency.put({
                     "idempotency_key": create_idem_key,
@@ -650,15 +737,11 @@ def create_entry(
                     "user_id": clean_user,
                     "entry_id": clean_id,
                     "status": _IDEM_STATUS_SUCCEEDED,
+                    "entry": projected_committed,
                     "created_at": time.time(),
                 })
-            if "_creation_outbox" in canonical:
-                committed_canonical = dict(canonical)
-                committed_canonical.pop("_creation_outbox", None)
-                stores.entries.put(committed_canonical)
-                canonical = committed_canonical
-            # Authorized idempotent recreate by same owner in same tenant
-            return _project(canonical)
+            # Authorized idempotent recreate by same owner in same tenant: return committed snapshot
+            return projected_committed
 
         if stores.idempotency is not None:
             stores.idempotency.put({
@@ -797,19 +880,25 @@ def _get_committed_entry_snapshot(
     # 2. Check patch transaction history
     tx_history = entry.get("_tx_history")
     if isinstance(tx_history, list) and tx_history:
-        latest_tx = tx_history[-1]
-        if isinstance(latest_tx, dict):
-            idem_key = latest_tx.get("idempotency_key")
+        candidate_entry = dict(entry)
+        for tx in reversed(tx_history):
+            if not isinstance(tx, dict):
+                continue
+            idem_key = tx.get("idempotency_key")
             is_committed = False
             if idem_key and stores.idempotency is not None:
                 idem_rec = stores.idempotency.get(idem_key)
                 if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
                     is_committed = True
             if not is_committed:
-                before_entry = latest_tx.get("before_entry")
+                before_entry = tx.get("before_entry")
                 if before_entry is not None and isinstance(before_entry, dict):
-                    return dict(before_entry)
-                return None
+                    candidate_entry = dict(before_entry)
+                else:
+                    return None
+            else:
+                break
+        return candidate_entry
 
     return dict(entry)
 
@@ -1206,27 +1295,48 @@ def patch_entry(
 
                 # Coordinate pending transactions on stored
                 _coordinate_pending_txs(stores, stored)
+                fresh_stored = stores.entries.get(clean_id)
+                if fresh_stored is not None:
+                    stored = fresh_stored
 
-                # Enforce tenant isolation on mutation: deny ordinary unscoped legacy rows
-                rec_tenant = str(stored.get("tenant_id") or stored.get("tenantId") or "").strip()
+                # 1. Resolve committed snapshot for authorization
+                committed = _get_committed_entry_snapshot(stores, stored, coordinate_if_unlocked=False)
+                if committed is None:
+                    stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                    return None
+
+                # 2. Enforce tenant isolation on mutation using committed snapshot
+                rec_tenant = str(committed.get("tenant_id") or committed.get("tenantId") or "").strip()
                 if not rec_tenant or rec_tenant != clean_tenant:
                     stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
                     return None
 
                 record_actors = {
-                    str(stored.get("createdBy") or "").strip(),
-                    str(stored.get("actor_id") or "").strip(),
-                    str(stored.get("userId") or "").strip(),
-                    str(stored.get("user_id") or "").strip(),
+                    str(committed.get("createdBy") or "").strip(),
+                    str(committed.get("actor_id") or "").strip(),
+                    str(committed.get("userId") or "").strip(),
+                    str(committed.get("user_id") or "").strip(),
                 } - {""}
 
-                # Enforce user private scope on mutation
-                visibility = str(stored.get("visibility") or "private").strip().lower()
+                # 3. Enforce user private scope on mutation using committed snapshot
+                visibility = str(committed.get("visibility") or "private").strip().lower()
                 if visibility == "private":
                     target_actors = {clean_actor, clean_user} - {""}
                     if not target_actors or not (record_actors & target_actors):
                         stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
                         return None
+
+                # 4. Require transaction recovery/fencing:
+                # A pending predecessor MUST NOT be incorporated into a successful successor
+                # without its durable secondary commit!
+                has_pending, pending_tx = _has_uncommitted_transactions(stores, stored)
+                if has_pending:
+                    stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
+                    tx_desc = (pending_tx or {}).get("tx_id") or (pending_tx or {}).get("type") or "prior"
+                    raise DecisionJournalConcurrencyError(
+                        f"Entry {clean_id} has pending uncommitted predecessor transaction ({tx_desc}); "
+                        "mutation fenced until prior secondary commit is durable."
+                    )
 
                 before = dict(stored)
                 candidate = dict(before)
@@ -1416,16 +1526,17 @@ def list_audit_events(
     - Legacy un-tenanted audit events require governed legacy access.
     - Gates event visibility on committed transaction outcome: never exposes provisional or rolled-back events.
     """
-    try:
-        if entry_id:
-            entry = stores.entries.get(entry_id)
-            if entry:
-                _coordinate_pending_txs(stores, entry)
-        else:
-            for entry in stores.entries.list_all():
-                _coordinate_pending_txs(stores, entry)
-    except Exception:
-        pass
+    if not stores.is_bundle_locked():
+        try:
+            if entry_id:
+                entry = stores.entries.get(entry_id)
+                if entry:
+                    _coordinate_pending_txs(stores, entry)
+            else:
+                for entry in stores.entries.list_all():
+                    _coordinate_pending_txs(stores, entry)
+        except Exception:
+            pass
 
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
@@ -1550,16 +1661,17 @@ def list_outbox_events(
     if stores.outbox is None:
         return []
 
-    try:
-        if entry_id:
-            entry = stores.entries.get(entry_id)
-            if entry:
-                _coordinate_pending_txs(stores, entry)
-        else:
-            for entry in stores.entries.list_all():
-                _coordinate_pending_txs(stores, entry)
-    except Exception:
-        pass
+    if not stores.is_bundle_locked():
+        try:
+            if entry_id:
+                entry = stores.entries.get(entry_id)
+                if entry:
+                    _coordinate_pending_txs(stores, entry)
+            else:
+                for entry in stores.entries.list_all():
+                    _coordinate_pending_txs(stores, entry)
+        except Exception:
+            pass
 
     events = list(stores.outbox.list_all())
     entry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
