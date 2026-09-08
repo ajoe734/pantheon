@@ -36,6 +36,7 @@
       "services/control-plane/bff/agora/trading_room/routes/common.py",
       "services/control-plane/bff/main.py",
       "services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py",
+      "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
       "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
       "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
       "services/control-plane/bff/tests/test_agora_research_run_projection.py",
@@ -63,10 +64,16 @@
   "verification": {
     "commands": [
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest /tmp/test_agora_chain_001_review_provenance.py -v",
-        "result": "5 passed, 1 warning in 4.91s",
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py -v",
+        "result": "5 passed, 2 warnings in 2.34s",
         "executed": 5,
         "collected": 5
+      },
+      {
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest /tmp/test_agora_chain_001_review_natural.py -v",
+        "result": "3 passed, 2 warnings in 3.99s",
+        "executed": 3,
+        "collected": 3
       },
       {
         "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/research/tests/ -q",
@@ -75,31 +82,31 @@
         "collected": 24
       },
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 11.02s",
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
+        "result": "33 passed in 9.57s",
         "executed": 33,
         "collected": 33
       },
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -q",
-        "result": "38 passed, 1 warning in 5.92s",
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -q",
+        "result": "38 passed, 2 warnings in 10.11s",
         "executed": 38,
         "collected": 38
       },
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest scripts/test_run_agora_interaction_worker.py -q",
-        "result": "14 passed in 23.68s",
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest scripts/test_run_agora_interaction_worker.py -q",
+        "result": "14 passed in 16.89s",
         "executed": 14,
         "collected": 14
       },
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/incidents/test_main_routes.py services/incidents/test_agora_performance_routes.py -q",
-        "result": "58 passed, 3 warnings in 14.25s",
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/incidents/test_main_routes.py services/incidents/test_agora_performance_routes.py -q",
+        "result": "58 passed, 4 warnings in 17.37s",
         "executed": 58,
         "collected": 58
       },
       {
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/agora-chain-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
+        "command": "PYTHONPATH=.:/tmp/issuer-venv/lib/python3.12/site-packages /tmp/pantheon-auth-venv/bin/pytest services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
         "result": "18 passed, 139 warnings in 17.81s",
         "executed": 18,
         "collected": 18
@@ -137,7 +144,9 @@
     "p1_receipt_completed_at_preserved_and_fail_closed_validation": true,
     "p1_fail_closed_missing_dataset_and_unimplemented_owner": true,
     "p1_simulation_provenance_preservation": true,
-    "p1_allowlisted_stage_types_enforced_no_synthetic_metrics": true
+    "p1_allowlisted_stage_types_enforced_no_synthetic_metrics": true,
+    "p1_natural_path_server_side_correlation_and_input_refs_resolution": true,
+    "p1_receipt_provenance_fail_closed_no_synthetic_mint": true
   },
   "review": {
     "reviewer": "Codex",

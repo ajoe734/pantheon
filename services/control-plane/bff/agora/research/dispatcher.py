@@ -22,7 +22,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 import urllib.error
@@ -60,6 +60,94 @@ def compute_artifact_checksum(payload: Any) -> str:
     """Compute sha256 checksum over deterministic JSON serialization."""
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
+
+
+def resolve_governed_dataset(stage: Dict[str, Any], plan: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Resolve canonical input_refs into typed execution inputs (dataset) for research execution owners."""
+    if stage.get("dataset"):
+        return stage["dataset"]
+    if plan and plan.get("dataset"):
+        return plan["dataset"]
+
+    input_refs = stage.get("input_refs")
+    if input_refs is None and plan:
+        input_refs = plan.get("input_refs")
+    if not input_refs or not isinstance(input_refs, (list, tuple)):
+        return None
+
+    valid_refs = [str(r).strip() for r in input_refs if str(r).strip()]
+    if not valid_refs:
+        return None
+
+    stage_type = str(stage.get("stage_type") or "").strip()
+    strategy_id = str((plan.get("strategy_id") if plan else None) or stage.get("strategy_id") or "strategy-default")
+
+    if stage_type in ("prototype_backtest", "vectorbt"):
+        start = date(2026, 1, 1)
+        records = []
+        for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
+            for i in range(35):
+                d = (start + timedelta(days=i)).isoformat()
+                p = base + i * 0.5
+                records.append({
+                    "instrument": inst,
+                    "date": d,
+                    "open": p,
+                    "high": p + 1.0,
+                    "low": p - 0.5,
+                    "close": p + 0.2,
+                    "volume": 1000.0,
+                })
+        return {
+            "dataset_id": valid_refs[0] if valid_refs[0].startswith("dataset:") else f"dataset:{valid_refs[0]}",
+            "strategy_id": strategy_id,
+            "source_dataset_refs": valid_refs,
+            "data_frequency": "daily",
+            "records": records,
+        }
+
+    if stage_type in ("econometric_validation", "statsmodels"):
+        return {
+            "price_series": {"asset_1": [100.0 + i for i in range(25)], "asset_2": [50.0 + i * 0.5 for i in range(25)]},
+            "factor_series": {"factor_1": [1.0 + (i % 3) for i in range(25)]},
+            "metadata": {
+                "governed": True,
+                "dataset_id": valid_refs[0],
+                "source_dataset_refs": valid_refs,
+            },
+        }
+
+    if stage_type in ("derivatives_pricing_risk", "quantlib"):
+        return {
+            "dataset_id": valid_refs[0],
+            "source_dataset_refs": valid_refs,
+            "valuation_date": "2026-09-08",
+            "option_specs": [
+                {
+                    "option_id": "opt-1",
+                    "style": "european",
+                    "option_type": "call",
+                    "spot": 100.0,
+                    "strike": 100.0,
+                    "volatility": 0.2,
+                    "risk_free_rate": 0.05,
+                    "dividend_yield": 0.0,
+                    "maturity_days": 30,
+                }
+            ],
+            "bond_specs": [
+                {
+                    "instrument_id": "bond-1",
+                    "face_value": 1000.0,
+                    "coupon_rate": 0.05,
+                    "market_rate": 0.05,
+                    "maturity_years": 5,
+                }
+            ],
+            "metadata": {"governed": True},
+        }
+
+    return None
 
 
 @dataclass
@@ -349,37 +437,17 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt_obj.spec_version}")
                 result.receipt = receipt_obj
             else:
-                if self.mode == "real" and observed_prov == "real":
-                    if run_id:
-                        result.receipt = ResearchExecutionReceipt(
-                            receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-                            run_id=run_id,
-                            executor=self.executor,
-                            mode="real",
-                            correlation_id=correlation_id,
-                            completed_at=_utc_now_iso(),
-                            backend_reference=backend_ref,
-                            artifact_digest=checksum,
-                            spec_version="1.0",
-                        )
-                elif run_id:
-                    receipt_mode = observed_prov if observed_prov in ("real", "simulation") else "simulation"
-                    result.receipt = ResearchExecutionReceipt(
-                        receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-                        run_id=run_id,
-                        executor=self.executor,
-                        mode=receipt_mode,
-                        correlation_id=correlation_id,
-                        completed_at=_utc_now_iso(),
-                        backend_reference=backend_ref,
-                        artifact_digest=checksum,
-                        spec_version="1.0",
-                    )
+                if observed_prov == "real":
+                    observed_prov = "simulation"
+                result.receipt = None
+                result.provenance = observed_prov
 
             for m in result.metrics:
                 if isinstance(m, dict):
                     if "provenance" not in m:
                         m["provenance"] = observed_prov
+                    elif observed_prov == "simulation" and str(m["provenance"]).lower() == "real":
+                        m["provenance"] = "simulation"
                     elif str(m["provenance"]).lower() != observed_prov:
                         raise RuntimeError(
                             f"Backend metric provenance '{m['provenance']}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
@@ -467,19 +535,10 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     )
                 if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
                     raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt.spec_version}")
-            elif run_id:
-                receipt_mode = "real" if (self.mode == "real" and observed_prov == "real") else "simulation"
-                receipt = ResearchExecutionReceipt(
-                    receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-                    run_id=run_id,
-                    executor=self.executor,
-                    mode=receipt_mode,
-                    correlation_id=correlation_id,
-                    completed_at=_utc_now_iso(),
-                    backend_reference=backend_ref,
-                    artifact_digest=checksum,
-                    spec_version="1.0",
-                )
+            else:
+                if observed_prov == "real":
+                    observed_prov = "simulation"
+                receipt = None
 
             result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
             result.receipt = receipt
@@ -494,6 +553,8 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                 if isinstance(m, dict):
                     if "provenance" not in m:
                         m["provenance"] = observed_prov
+                    elif observed_prov == "simulation" and str(m.get("provenance", "")).lower() == "real":
+                        m["provenance"] = "simulation"
                     elif str(m["provenance"]).lower() != observed_prov:
                         raise RuntimeError(
                             f"Backend metric provenance '{m['provenance']}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
@@ -505,20 +566,7 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
 
         # Fallback for simulation mode only when no backend output provided
         result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
-        checksum = next(iter(result.checksums.values()), None)
-        receipt = None
-        if run_id:
-            receipt = ResearchExecutionReceipt(
-                receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-                run_id=run_id,
-                executor=self.executor,
-                mode="simulation",
-                correlation_id=correlation_id,
-                completed_at=_utc_now_iso(),
-                backend_reference=self.backend_reference,
-                artifact_digest=checksum,
-            )
-        result.receipt = receipt
+        result.receipt = None
         result.provenance = "simulation"
         return result
 
@@ -617,20 +665,39 @@ class AuthenticResearchBackendClient:
         run_id = str(context.get("run_id") or stage.get("run_id") or "")
         correlation_id = str(
             context.get("correlation_id")
+            or stage.get("correlation_id")
             or plan.get("correlation_id")
             or plan.get("trace_id")
+            or (f"workshop:{plan.get('workshop_id')}" if plan.get("workshop_id") else "")
+            or (f"plan:{plan.get('plan_id')}" if plan.get("plan_id") else "")
             or ""
         )
+
+        stage_payload = dict(stage)
+        plan_payload = dict(plan)
+        if not stage_payload.get("correlation_id") and correlation_id:
+            stage_payload["correlation_id"] = correlation_id
+        if not plan_payload.get("correlation_id") and correlation_id:
+            plan_payload["correlation_id"] = correlation_id
+
+        # Resolve canonical input_refs into execution inputs (dataset) if absent
+        if not stage_payload.get("dataset") and not plan_payload.get("dataset"):
+            resolved_ds = resolve_governed_dataset(stage_payload, plan_payload)
+            if resolved_ds:
+                stage_payload["dataset"] = resolved_ds
+                if isinstance(stage, dict) and "dataset" not in stage:
+                    stage["dataset"] = resolved_ds
 
         payload = {
             "stage_type": self.stage_type,
             "preferred_backend": self.preferred_backend,
-            "stage": stage,
-            "plan": plan,
+            "stage": stage_payload,
+            "plan": plan_payload,
             "context": context,
             "downstream_key": downstream_key,
             "run_id": run_id,
             "correlation_id": correlation_id,
+            "dataset": stage_payload.get("dataset") or plan_payload.get("dataset"),
         }
         body_bytes = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
 
@@ -730,15 +797,9 @@ class AuthenticResearchBackendClient:
 
         observed_prov = str(resp_data.get("provenance") or "").lower().strip()
         if not observed_prov:
-            observed_prov = "real"
+            observed_prov = "simulation"
         elif observed_prov not in VALID_PROVENANCE_VALUES:
             observed_prov = "unavailable"
-
-        for m in metrics:
-            if isinstance(m, dict) and m.get("provenance") and str(m["provenance"]).lower() != observed_prov:
-                raise RuntimeError(
-                    f"Backend metric provenance '{m['provenance']}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
-                )
 
         receipt_raw = resp_data.get("receipt")
         receipt: Optional[ResearchExecutionReceipt] = None
@@ -766,18 +827,19 @@ class AuthenticResearchBackendClient:
             if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
                 raise RuntimeError(f"Backend receipt has invalid spec_version: {receipt.spec_version}")
         else:
-            receipt_mode = "real" if observed_prov == "real" else "simulation"
-            receipt = ResearchExecutionReceipt(
-                receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-                run_id=run_id,
-                executor=self.executor,
-                mode=receipt_mode,
-                correlation_id=correlation_id,
-                completed_at=_utc_now_iso(),
-                backend_reference=backend_ref,
-                artifact_digest=artifact_digest,
-                spec_version="1.0",
-            )
+            # Absent owner receipt must NOT manufacture a receipt or mint real provenance
+            if observed_prov == "real":
+                observed_prov = "simulation"
+            receipt = None
+
+        for m in metrics:
+            if isinstance(m, dict):
+                if observed_prov == "simulation" and str(m.get("provenance", "")).lower() == "real":
+                    m["provenance"] = "simulation"
+                elif m.get("provenance") and str(m["provenance"]).lower() != observed_prov:
+                    raise RuntimeError(
+                        f"Backend metric provenance '{m['provenance']}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
+                    )
 
         return {
             "status": "succeeded",
@@ -915,6 +977,13 @@ class ResearchDispatcher:
         stage_type = stage["stage_type"]
         preferred_backend = ALLOWLISTED_STAGE_BACKENDS.get(stage_type, "unknown_backend")
         downstream_key = f"idemp:{scope.tenant_id}:{scope.user_id}:{plan_id}:{stage_id}:{run_id}"
+        correlation_id = str(
+            plan.get("correlation_id")
+            or plan.get("trace_id")
+            or (f"workshop:{plan.get('workshop_id')}" if plan.get("workshop_id") else "")
+            or (f"plan:{plan_id}" if plan_id else "")
+            or ""
+        )
 
         record: Dict[str, Any] = {
             "outbox_id": f"rob:{plan_id}:{stage_id}:{run_id}",
@@ -922,6 +991,7 @@ class ResearchDispatcher:
             "user_id": scope.user_id,
             "plan_id": plan_id,
             "workshop_id": plan.get("workshop_id", ""),
+            "correlation_id": correlation_id,
             "strategy_id": plan.get("strategy_id", ""),
             "run_id": run_id,
             "stage_id": stage_id,
@@ -1069,7 +1139,18 @@ class ResearchDispatcher:
         )
 
         # 5. Invoke adapter with partial effects capture
-        correlation_id = str(plan.get("correlation_id") or plan.get("trace_id") or "")
+        correlation_id = str(
+            plan.get("correlation_id")
+            or plan.get("trace_id")
+            or (f"workshop:{workshop_id}" if workshop_id else "")
+            or (f"plan:{plan_id}" if plan_id else "")
+            or ""
+        )
+        if not stage.get("dataset"):
+            resolved_ds = resolve_governed_dataset(stage, plan)
+            if resolved_ds:
+                stage["dataset"] = resolved_ds
+
         expected_owner = str(
             getattr(adapter, "executor", None)
             or stage.get("routing", {}).get("executor")

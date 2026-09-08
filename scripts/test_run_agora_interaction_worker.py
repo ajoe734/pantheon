@@ -347,11 +347,23 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
                 return {
                     "status": "succeeded",
                     "outcome": "succeeded",
+                    "provenance": "real",
                     "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
                     "artifact_digest": "sha256:authentic_vectorbt_artifact_digest_12345",
                     "metrics": [
                         {"name": "sharpe", "value": 2.5, "category": "performance", "provenance": "real"}
                     ],
+                    "receipt": {
+                        "receipt_id": f"rcpt-{body.get('run_id')}",
+                        "run_id": body.get("run_id"),
+                        "executor": "vectorbt_executor",
+                        "mode": "real",
+                        "correlation_id": body.get("correlation_id"),
+                        "completed_at": "2026-09-08T00:00:00Z",
+                        "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
+                        "artifact_digest": "sha256:authentic_vectorbt_artifact_digest_12345",
+                        "spec_version": "1.0",
+                    },
                 }
 
             backend_clients = build_canonical_research_backend_clients(

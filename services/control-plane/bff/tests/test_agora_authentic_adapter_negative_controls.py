@@ -174,6 +174,17 @@ def test_simulation_stage_result_preserves_provenance_and_receipt_mode() -> None
             provenance="simulation",
             checksums={"artifact": "sha256:simartifact123"},
             backend_job_id="sim-job-42",
+            receipt=ResearchExecutionReceipt(
+                receipt_id="rcpt-sim-42",
+                run_id=run_id,
+                executor="vectorbt_executor",
+                mode="simulation",
+                correlation_id=corr_id,
+                completed_at="2026-09-08T00:00:00Z",
+                backend_reference="vectorbt://jobs/sim-job-42",
+                artifact_digest="sha256:simartifact123",
+                spec_version="1.0",
+            ),
         ),
     )
     result = adapter.execute(
@@ -549,9 +560,21 @@ def test_authentic_research_backend_client_recording_transport_records_and_succe
         return {
             "status": "succeeded",
             "outcome": "succeeded",
+            "provenance": "real",
             "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
             "artifact_digest": "sha256:digest_vectorbt_genuine_12345",
             "metrics": [{"name": "sharpe_ratio", "value": 2.34, "category": "performance", "provenance": "real"}],
+            "receipt": {
+                "receipt_id": f"rcpt-{body.get('run_id')}",
+                "run_id": body.get("run_id"),
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": body.get("correlation_id"),
+                "completed_at": "2026-09-08T00:00:00Z",
+                "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
+                "artifact_digest": "sha256:digest_vectorbt_genuine_12345",
+                "spec_version": "1.0",
+            },
         }
 
     client = AuthenticResearchBackendClient(
@@ -701,19 +724,30 @@ def test_authentic_research_backend_client_running_outcome_raises() -> None:
 
 def test_authentic_research_backend_client_preserves_simulation_provenance_and_receipt_mode() -> None:
     """AuthenticResearchBackendClient and AuthenticStageAdapter must preserve reported provenance='simulation'."""
-    body = {
+    body_with_receipt = {
         "status": "succeeded",
         "outcome": "succeeded",
         "provenance": "simulation",
         "backend_reference": "vectorbt://run-sim-test",
         "artifact_digest": "a" * 64,
-        "metrics": [{"name": "sharpe", "value": 0.3}],
+        "metrics": [{"name": "sharpe", "value": 0.3, "provenance": "simulation"}],
+        "receipt": {
+            "receipt_id": "rcpt-sim-test-1",
+            "run_id": "run-neg-001",
+            "executor": "vectorbt_executor",
+            "mode": "simulation",
+            "correlation_id": "corr-test-1",
+            "completed_at": "2026-09-08T00:00:00Z",
+            "backend_reference": "vectorbt://run-sim-test",
+            "artifact_digest": "a" * 64,
+            "spec_version": "1.0",
+        },
     }
     client = AuthenticResearchBackendClient(
         "prototype_backtest",
         "vectorbt",
         base_url="http://vectorbt-service:8000",
-        transport=lambda req: body,
+        transport=lambda req: body_with_receipt,
     )
     adapter = AuthenticStageAdapter("prototype_backtest", "vectorbt", execution_owner=client)
     result = adapter.execute(
@@ -726,6 +760,32 @@ def test_authentic_research_backend_client_preserves_simulation_provenance_and_r
     assert result.provenance == "simulation"
     assert result.receipt is not None
     assert result.receipt.mode == "simulation"
+
+    # Absent owner receipt must retain simulation provenance but set receipt to None
+    body_without_receipt = {
+        "status": "succeeded",
+        "outcome": "succeeded",
+        "provenance": "simulation",
+        "backend_reference": "vectorbt://run-sim-test-2",
+        "artifact_digest": "b" * 64,
+        "metrics": [{"name": "sharpe", "value": 0.4, "provenance": "simulation"}],
+    }
+    client_no_rcpt = AuthenticResearchBackendClient(
+        "prototype_backtest",
+        "vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: body_without_receipt,
+    )
+    adapter_no_rcpt = AuthenticStageAdapter("prototype_backtest", "vectorbt", execution_owner=client_no_rcpt)
+    result_no_rcpt = adapter_no_rcpt.execute(
+        stage=_stage(),
+        plan=_plan(),
+        context=_context(),
+        downstream_key="key-sim-no-rcpt",
+    )
+    assert result_no_rcpt.outcome == "succeeded"
+    assert result_no_rcpt.provenance == "simulation"
+    assert result_no_rcpt.receipt is None
 
 
 def test_build_canonical_research_backend_clients_rejects_missing_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:

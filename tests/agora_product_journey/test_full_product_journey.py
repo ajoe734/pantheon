@@ -223,13 +223,25 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
         return {
             "status": "succeeded",
             "outcome": "succeeded",
+            "provenance": "real",
             "backend_reference": "qlib://runs/42",
             "artifact_digest": "sha256:d8a9e102f4c8b",
             "metrics": [
-                {"name": "sharpe_ratio", "value": 2.1, "category": "performance", "gate_result": "pass"},
-                {"name": "max_drawdown", "value": 0.065, "category": "risk", "gate_result": "pass"},
-                {"name": "profit_factor", "value": 1.78, "category": "performance", "gate_result": "pass"},
+                {"name": "sharpe_ratio", "value": 2.1, "category": "performance", "gate_result": "pass", "provenance": "real"},
+                {"name": "max_drawdown", "value": 0.065, "category": "risk", "gate_result": "pass", "provenance": "real"},
+                {"name": "profit_factor", "value": 1.78, "category": "performance", "gate_result": "pass", "provenance": "real"},
             ],
+            "receipt": {
+                "receipt_id": f"rcpt-qlib-{run_id}",
+                "run_id": run_id,
+                "executor": "qlib_executor",
+                "mode": "real",
+                "correlation_id": trace_id,
+                "completed_at": _utc_now(),
+                "backend_reference": "qlib://runs/42",
+                "artifact_digest": "sha256:d8a9e102f4c8b",
+                "spec_version": "1.0",
+            },
         }
 
     dispatcher = ResearchDispatcher(
