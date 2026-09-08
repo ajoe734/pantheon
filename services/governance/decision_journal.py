@@ -277,6 +277,27 @@ class DecisionJournalStores:
     def bundle_lock(self) -> _BundleFileLock:
         return _BundleFileLock(self._bundle_flock_path)
 
+    def is_bundle_locked(self) -> bool:
+        """Check if any thread or process is actively holding the bundle lock."""
+        held = getattr(_HELD_BUNDLE_LOCKS, "held", {})
+        key = str(self._bundle_flock_path.resolve())
+        if held.get(key, [0])[0] > 0:
+            return True
+        if not self._bundle_flock_path.exists():
+            return False
+        try:
+            fd = os.open(str(self._bundle_flock_path), os.O_RDWR, 0o666)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                return False
+            except (BlockingIOError, OSError):
+                return True
+            finally:
+                os.close(fd)
+        except OSError:
+            return False
+
 
 def _build_journal_record_store(
     storage_path: Path,
@@ -359,6 +380,10 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
     if not isinstance(entry, dict):
         return
 
+    # If bundle lock is held, a live writer is actively in progress; never coordinate or finalize
+    if stores.is_bundle_locked():
+        return
+
     # 1. Coordinate creation outbox
     creation_outbox = entry.get("_creation_outbox")
     if creation_outbox and stores.outbox is not None:
@@ -379,24 +404,27 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
             continue
         audit = tx.get("audit")
         audit_id = tx.get("audit_id")
+        outbox = tx.get("outbox")
+        outbox_id = tx.get("outbox_id")
+        idem_key = tx.get("idempotency_key")
+
+        # Never finalize with failed secondary writes
+        secondary_ok = True
         if audit and audit_id and stores.audit is not None:
             if stores.audit.get(audit_id) is None:
                 try:
                     stores.audit.put({"audit_id": audit_id, **audit})
                 except Exception:
-                    pass
+                    secondary_ok = False
 
-        outbox = tx.get("outbox")
-        outbox_id = tx.get("outbox_id")
         if outbox and outbox_id and stores.outbox is not None:
             if stores.outbox.get(outbox_id) is None:
                 try:
                     stores.outbox.put(outbox)
                 except Exception:
-                    pass
+                    secondary_ok = False
 
-        idem_key = tx.get("idempotency_key")
-        if idem_key and stores.idempotency is not None:
+        if secondary_ok and idem_key and stores.idempotency is not None:
             idem_rec = stores.idempotency.get(idem_key)
             if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
                 try:
@@ -634,7 +662,24 @@ def get_entry(
     if record is None:
         return None
 
-    _coordinate_pending_txs(stores, record)
+    # Coordinate reads with live writer transaction outcome
+    if stores.is_bundle_locked():
+        tx_history = record.get("_tx_history")
+        if isinstance(tx_history, list) and tx_history:
+            latest_tx = tx_history[-1]
+            if isinstance(latest_tx, dict):
+                idem_key = latest_tx.get("idempotency_key")
+                is_committed = False
+                if idem_key and stores.idempotency is not None:
+                    idem_rec = stores.idempotency.get(idem_key)
+                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                        is_committed = True
+                if not is_committed:
+                    before_entry = latest_tx.get("before_entry")
+                    if before_entry is not None and isinstance(before_entry, dict):
+                        record = before_entry
+    else:
+        _coordinate_pending_txs(stores, record)
 
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
@@ -660,8 +705,27 @@ def list_entries(
 ) -> List[Dict[str, Any]]:
     """List decision journal entries with fail-closed tenant and user isolation."""
     all_records = stores.entries.list_all()
-    for record in all_records:
-        _coordinate_pending_txs(stores, record)
+    is_locked = stores.is_bundle_locked()
+    for i, record in enumerate(all_records):
+        if not isinstance(record, dict):
+            continue
+        if is_locked:
+            tx_history = record.get("_tx_history")
+            if isinstance(tx_history, list) and tx_history:
+                latest_tx = tx_history[-1]
+                if isinstance(latest_tx, dict):
+                    idem_key = latest_tx.get("idempotency_key")
+                    is_committed = False
+                    if idem_key and stores.idempotency is not None:
+                        idem_rec = stores.idempotency.get(idem_key)
+                        if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                            is_committed = True
+                    if not is_committed:
+                        before_entry = latest_tx.get("before_entry")
+                        if before_entry is not None and isinstance(before_entry, dict):
+                            all_records[i] = before_entry
+        else:
+            _coordinate_pending_txs(stores, record)
 
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
@@ -700,6 +764,9 @@ def _attempt_crash_recovery(
     record: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """Recover an in-flight reservation across instance or process crash."""
+    if stores.is_bundle_locked():
+        return None
+
     entry_id = str(record.get("entry_id") or "").strip()
     if not entry_id:
         return None
@@ -718,7 +785,10 @@ def _attempt_crash_recovery(
 
     rec_tx_id = record.get("tx_id")
     rec_idem_key = record.get("idempotency_key")
-    rec_raw_key = record.get("raw_idempotency_key")
+    rec_tenant = str(record.get("tenant_id") or "").strip()
+    rec_actor = str(record.get("actor_id") or "").strip()
+    rec_user = str(record.get("user_id") or rec_actor).strip()
+    rec_hash = record.get("request_hash")
 
     tx_history = current_entry.get("_tx_history", [])
     matching_tx = None
@@ -726,46 +796,77 @@ def _attempt_crash_recovery(
         for tx in tx_history:
             if not isinstance(tx, dict):
                 continue
-            if rec_tx_id and tx.get("tx_id") == rec_tx_id:
-                matching_tx = tx
-                break
-            if rec_idem_key and tx.get("idempotency_key") == rec_idem_key:
-                matching_tx = tx
-                break
-            if rec_raw_key and tx.get("raw_idempotency_key") == rec_raw_key:
-                matching_tx = tx
-                break
+            tx_id = tx.get("tx_id")
+            tx_idem_key = tx.get("idempotency_key")
+            id_match = False
+            if rec_tx_id and tx_id and rec_tx_id == tx_id:
+                id_match = True
+            elif rec_idem_key and tx_idem_key and rec_idem_key == tx_idem_key:
+                id_match = True
 
-    # Fallback for fabricated test data without _tx_history
-    if matching_tx is None and not tx_history:
-        cand_version = record.get("candidate_version")
-        cand_entry = record.get("candidate_entry")
-        curr_version = current_entry.get("version")
-        if (
-            cand_version is not None
-            and curr_version is not None
-            and int(cand_version) == int(curr_version)
-            and isinstance(cand_entry, dict)
-            and cand_entry.get("title") == current_entry.get("title")
-        ):
-            matching_tx = {
-                "audit": record.get("staged_audit"),
-                "outbox": record.get("staged_outbox"),
-                "entry": cand_entry,
-            }
+            if not id_match:
+                continue
+
+            tx_tenant = str(tx.get("tenant_id") or "").strip()
+            if rec_tenant != tx_tenant:
+                continue
+
+            tx_actor = str(tx.get("actor_id") or "").strip()
+            if rec_actor != tx_actor:
+                continue
+
+            tx_user = str(tx.get("user_id") or tx_actor).strip()
+            if rec_user != tx_user:
+                continue
+
+            tx_hash = tx.get("request_hash")
+            if rec_hash and tx_hash and rec_hash != tx_hash:
+                continue
+
+            tx_entry_id = str(tx.get("entry_id") or "").strip()
+            if tx_entry_id and tx_entry_id != entry_id:
+                continue
+
+            matching_tx = tx
+            break
 
     if matching_tx is not None:
-        staged_audit = matching_tx.get("audit") or record.get("staged_audit")
-        if staged_audit and stores.audit is not None:
-            audit_id = str(staged_audit.get("auditId") or staged_audit.get("audit_id") or "")
-            if audit_id and stores.audit.get(audit_id) is None:
-                stores.audit.put({"audit_id": audit_id, **staged_audit})
+        target_entry = matching_tx.get("entry") or current_entry
+        target_actors = {rec_actor, rec_user} - {""}
+        if not _is_entry_accessible(
+            target_entry,
+            clean_tenant=rec_tenant if rec_tenant else None,
+            target_actors=target_actors,
+        ):
+            failed_record = {
+                **record,
+                "status": _IDEM_STATUS_FAILED,
+                "reason": "unauthorized_replay_access_denied",
+            }
+            stores.idempotency.put(failed_record)
+            return failed_record
 
+        staged_audit = matching_tx.get("audit") or record.get("staged_audit")
         staged_outbox = matching_tx.get("outbox") or record.get("staged_outbox")
-        if staged_outbox and stores.outbox is not None:
-            event_id = str(staged_outbox.get("event_id") or staged_outbox.get("id") or "")
-            if event_id and stores.outbox.get(event_id) is None:
-                stores.outbox.put(staged_outbox)
+
+        try:
+            if staged_audit and stores.audit is not None:
+                audit_id = str(staged_audit.get("auditId") or staged_audit.get("audit_id") or "")
+                if audit_id and stores.audit.get(audit_id) is None:
+                    stores.audit.put({"audit_id": audit_id, **staged_audit})
+
+            if staged_outbox and stores.outbox is not None:
+                event_id = str(staged_outbox.get("event_id") or staged_outbox.get("id") or "")
+                if event_id and stores.outbox.get(event_id) is None:
+                    stores.outbox.put(staged_outbox)
+        except Exception:
+            failed_record = {
+                **record,
+                "status": _IDEM_STATUS_FAILED,
+                "reason": "secondary_writes_failed_during_recovery",
+            }
+            stores.idempotency.put(failed_record)
+            return failed_record
 
         recovered_record = {
             **record,
@@ -777,7 +878,6 @@ def _attempt_crash_recovery(
         stores.idempotency.put(recovered_record)
         return recovered_record
 
-    # Mutation did NOT commit before process crash. Mark failed.
     failed_record = {
         **record,
         "status": _IDEM_STATUS_FAILED,
@@ -819,6 +919,8 @@ def _await_idempotency_resolution(
         record = stores.idempotency.get(idempotency_key)
     else:
         if isinstance(record, dict) and record.get("status") == _IDEM_STATUS_PENDING:
+            if stores.is_bundle_locked() or not is_dead:
+                return record
             recovered = _attempt_crash_recovery(stores, record)
             if recovered is not None:
                 return recovered
@@ -832,6 +934,7 @@ def _resolved_idempotency_result(
     *,
     tenant_id: Optional[str] = None,
     actor_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     # Scope check on reservation replay
     if tenant_id is not None:
@@ -852,6 +955,16 @@ def _resolved_idempotency_result(
         }
     status = record.get("status")
     if status == _IDEM_STATUS_SUCCEEDED:
+        res_entry = record.get("entry")
+        if isinstance(res_entry, dict):
+            clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
+            target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
+            if not _is_entry_accessible(res_entry, clean_tenant=clean_tenant, target_actors=target_actors):
+                return {
+                    "status": "failed",
+                    "reason": "unauthorized_replay_access_denied",
+                    "idempotency_key": record.get("idempotency_key"),
+                }
         return {"status": "replayed", "entry": record.get("entry"), "audit": record.get("audit")}
     if status == _IDEM_STATUS_NOT_FOUND:
         return None
@@ -927,6 +1040,7 @@ def patch_entry(
             request_hash,
             tenant_id=clean_tenant if clean_tenant else None,
             actor_id=clean_actor if clean_actor else None,
+            user_id=clean_user if clean_user else None,
         )
 
     with stores.bundle_lock(), stores._tx_lock:
@@ -1034,12 +1148,16 @@ def patch_entry(
                     "tx_id": tx_id,
                     "idempotency_key": scoped_idem_key,
                     "raw_idempotency_key": idempotency_key,
+                    "entry_id": clean_id,
+                    "request_hash": request_hash,
                     "version": candidate["version"],
                     "audit_id": audit_id,
                     "audit": audit,
                     "outbox_id": event_id,
                     "outbox": outbox_event,
                     "entry": after_projected,
+                    "before_entry": before,
+                    "diff": diff,
                     "patched_at": patched_at,
                     "actor_id": clean_actor,
                     "tenant_id": clean_tenant,

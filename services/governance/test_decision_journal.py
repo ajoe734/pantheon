@@ -13,6 +13,7 @@ Covers:
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -1023,22 +1024,44 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
             "version": 2,
             "title": "Committed Before Crash",
         }
-        self.stores.entries.put(entry_v2)
+        entry_snapshot = dict(entry_v2)
 
         staged_audit = {
             "auditId": "aud-crash-recovery-1",
             "action": "governance.decision_journal.merge_patch",
             "actorId": "alice",
             "tenantId": "tenant-a",
-            "diff": {"after": entry_v2},
+            "diff": {"after": entry_snapshot},
         }
         staged_outbox = {
             "event_id": "evt-crash-recovery-1",
             "event_type": "decision_journal.entry.updated",
             "tenant_id": "tenant-a",
-            "data": entry_v2,
+            "data": entry_snapshot,
         }
         scoped_key = "tenant-a:alice:idem-crash-1"
+        tx_id = "tx-crash-recovery-1"
+        tx_record = {
+            "tx_id": tx_id,
+            "idempotency_key": scoped_key,
+            "entry_id": "crash-after-cas",
+            "request_hash": "hash-crash-1",
+            "version": 2,
+            "audit_id": "aud-crash-recovery-1",
+            "audit": staged_audit,
+            "outbox_id": "evt-crash-recovery-1",
+            "outbox": staged_outbox,
+            "entry": entry_snapshot,
+            "before_entry": dict(self.stores.entries.get("crash-after-cas")),
+            "patched_at": "2026-09-08T00:01:00Z",
+            "actor_id": "alice",
+            "tenant_id": "tenant-a",
+            "user_id": "alice",
+        }
+        entry_v2["_last_tx_id"] = tx_id
+        entry_v2["_tx_history"] = [tx_record]
+        self.stores.entries.put(entry_v2)
+
         self.stores.idempotency.put({
             "idempotency_key": scoped_key,
             "raw_idempotency_key": "idem-crash-1",
@@ -1213,6 +1236,17 @@ elif mode == 'crash-before-cas':
 elif mode == 'crash-after-cas':
     stores.outbox.put = lambda *_: os._exit(73)
     patch(stores, 'crashed', 'committed before crash')
+elif mode == 'crash-unauthorized':
+    stores.entries.get = lambda *_: os._exit(74)
+    patch_entry(stores, 'private-entry', patch={'title': 'bob attempt'}, actor_id='bob', tenant_id='tenant-b', idempotency_key='shared', request_hash='bobbob attempt', patched_at='2026-09-08')
+    sys.exit(99)
+elif mode == 'read-and-replay':
+    import json
+    from services.governance.decision_journal import get_entry
+    get_entry(stores, 'private-entry', actor_id='alice', tenant_id='tenant-a')
+    res = patch_entry(stores, 'private-entry', patch={'title': 'alice updated'}, actor_id='alice', tenant_id='tenant-a', idempotency_key='shared', request_hash='alicealice updated', patched_at='2026-09-08')
+    print(json.dumps(res))
+    sys.exit(0)
 sys.exit(99)
 """
 
@@ -1333,6 +1367,77 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
         self.assertIsNotNone(
             source.get("legacy"),
             "source deleted despite missing durable migration audit",
+        )
+
+    def test_crashed_unauthorized_reservation_never_replays_other_tenant(self) -> None:
+        create_entry(self.stores, entry_id="private-entry", title="alice private", body="private body", actor_id="alice", tenant_id="tenant-a", created_at="2026-09-08")
+        patch_entry(self.stores, "private-entry", patch={"title": "alice updated"}, actor_id="alice", tenant_id="tenant-a", idempotency_key="shared", request_hash="alicealice updated", patched_at="2026-09-08")
+        crashed = subprocess.run(
+            [sys.executable, "-c", _CRASH_HELPER_SCRIPT, "crash-unauthorized", self.tmp.name],
+            env=dict(os.environ, PYTHONPATH="."),
+            timeout=10,
+        )
+        self.assertEqual(crashed.returncode, 74)
+        fresh = build_decision_journal_stores(self.tmp.name)
+        self.assertIsNone(get_entry(fresh, "private-entry", actor_id="bob", tenant_id="tenant-b"))
+        result = patch_entry(fresh, "private-entry", patch={"title": "bob attempt"}, actor_id="bob", tenant_id="tenant-b", idempotency_key="shared", request_hash="bobbob attempt", patched_at="2026-09-08")
+        self.assertFalse(result and result.get("entry"), "Cross-tenant private entry returned: " + str(result))
+
+    def test_migration_retry_requires_durable_audit_before_disposal(self) -> None:
+        source = build_decision_journal_stores(Path(self.tmp.name) / "source").entries
+        row = {"id": "legacy", "title": "legacy", "body": "body", "createdBy": "alice"}
+        source.put(row)
+
+        def fail(_: Any) -> None:
+            raise OSError("synthetic audit outage")
+
+        self.stores.audit.put = fail
+        with self.assertRaises(OSError):
+            JournalMigrationEngine(self.stores).run_migration(
+                [row],
+                target_tenant_id="tenant-a",
+                dry_run=False,
+                dispose_source=True,
+                source_store=source,
+            )
+        self.assertIsNotNone(source.get("legacy"))
+        fresh = build_decision_journal_stores(self.tmp.name)
+        report = JournalMigrationEngine(fresh).run_migration(
+            [row],
+            target_tenant_id="tenant-a",
+            dry_run=False,
+            dispose_source=True,
+            source_store=source,
+        )
+        self.assertFalse(
+            source.get("legacy") is None and not fresh.audit.list_all(),
+            "Retry deleted source without migration audit: " + str(report.to_dict()),
+        )
+
+    def test_reader_cannot_replay_transaction_that_rolls_back(self) -> None:
+        create_entry(self.stores, entry_id="private-entry", title="alice private", body="private body", actor_id="alice", tenant_id="tenant-a", created_at="2026-09-08")
+        fresh = build_decision_journal_stores(self.tmp.name)
+        observed = []
+
+        def read_then_fail(_: Any) -> None:
+            child = subprocess.run(
+                [sys.executable, "-c", _CRASH_HELPER_SCRIPT, "read-and-replay", self.tmp.name],
+                env=dict(os.environ, PYTHONPATH="."),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(child.returncode, 0, child.stderr)
+            observed.append(json.loads(child.stdout))
+            raise OSError("original writer outbox failure")
+
+        self.stores.outbox.put = read_then_fail
+        with self.assertRaises(OSError):
+            patch_entry(self.stores, "private-entry", patch={"title": "alice updated"}, actor_id="alice", tenant_id="tenant-a", idempotency_key="shared", request_hash="alicealice updated", patched_at="2026-09-08")
+        final = get_entry(fresh, "private-entry", actor_id="alice", tenant_id="tenant-a")
+        self.assertFalse(
+            observed[0].get("status") == "replayed" and final["title"] == "alice private",
+            "Reader replayed rolled-back transaction: " + str(observed[0]) + "; final=" + str(final),
         )
 
 

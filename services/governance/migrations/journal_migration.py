@@ -127,6 +127,72 @@ class JournalMigrationEngine:
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         self.checkpoint_path.write_text(json.dumps(self._checkpoint, indent=2), encoding="utf-8")
 
+    def _find_migration_audit(
+        self,
+        entry_id: str,
+        checksum: str,
+        target_tenant_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        if self.destination_stores.audit is None:
+            return None
+        try:
+            records = self.destination_stores.audit.list_all()
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                target = rec.get("target") or {}
+                target_id = target.get("id") if isinstance(target, dict) else None
+                rec_id = target_id or rec.get("source_id") or rec.get("entry_id")
+                rec_tenant = str(rec.get("tenant_id") or rec.get("tenantId") or "").strip()
+                rec_checksum = rec.get("source_checksum")
+                if rec_id == entry_id and rec_tenant == target_tenant_id:
+                    if rec_checksum is None or rec_checksum == checksum:
+                        return rec
+        except Exception:
+            pass
+        return None
+
+    def _ensure_durable_migration_audit(
+        self,
+        entry_id: str,
+        checksum: str,
+        target_tenant_id: str,
+        actor: str,
+        user_id: str,
+        created_at: str,
+        *,
+        action: str = "governance.decision_journal.migrated",
+        disposed: bool = False,
+    ) -> bool:
+        if self.destination_stores.audit is None:
+            return False
+        existing = self._find_migration_audit(entry_id, checksum, target_tenant_id)
+        if existing is not None:
+            return True
+        try:
+            audit_id = f"aud-mig-{uuid.uuid4().hex[:12]}"
+            audit_rec = {
+                "audit_id": audit_id,
+                "auditId": audit_id,
+                "action": action,
+                "target": {"type": "DecisionJournalEntry", "id": entry_id},
+                "actorId": actor,
+                "actor_id": actor,
+                "tenantId": target_tenant_id,
+                "tenant_id": target_tenant_id,
+                "userId": user_id,
+                "user_id": user_id,
+                "recordedAt": created_at,
+                "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+                "source_checksum": checksum,
+                "source_id": entry_id,
+                "disposed": disposed,
+            }
+            self.destination_stores.audit.put(audit_rec)
+            return self._find_migration_audit(entry_id, checksum, target_tenant_id) is not None
+        except Exception:
+            return False
+
     def run_migration(
         self,
         source_records: Sequence[Dict[str, Any]],
@@ -261,7 +327,17 @@ class JournalMigrationEngine:
                     report.total_skipped += 1
                     disposed_status = False
                     if dispose_source and not dry_run and source_store is not None:
-                        disposed_status = _dispose_source_record(source_store, entry_id)
+                        has_audit = self._ensure_durable_migration_audit(
+                            entry_id,
+                            checksum,
+                            target_tenant_id,
+                            actor,
+                            user_id,
+                            created_at,
+                            disposed=True,
+                        )
+                        if has_audit:
+                            disposed_status = _dispose_source_record(source_store, entry_id)
                     checkpoint_key = f"{target_tenant_id}:{actor}:{entry_id}"
                     self._save_checkpoint(checkpoint_key, checksum)
                     self._save_checkpoint(entry_id, checksum)
@@ -360,7 +436,18 @@ class JournalMigrationEngine:
 
                         disposed_status = False
                         if dispose_source and not dry_run and source_store is not None:
-                            disposed_status = _dispose_source_record(source_store, entry_id)
+                            has_audit = self._ensure_durable_migration_audit(
+                                entry_id,
+                                checksum,
+                                target_tenant_id,
+                                actor,
+                                user_id,
+                                created_at,
+                                action="governance.decision_journal.legacy_scoped",
+                                disposed=True,
+                            )
+                            if has_audit:
+                                disposed_status = _dispose_source_record(source_store, entry_id)
 
                         report.total_migrated += 1
                         report.audit_events_recorded += 1
@@ -396,7 +483,18 @@ class JournalMigrationEngine:
                             report.total_skipped += 1
                             disposed_status = False
                             if dispose_source and not dry_run and source_store is not None:
-                                disposed_status = _dispose_source_record(source_store, entry_id)
+                                has_audit = self._ensure_durable_migration_audit(
+                                    entry_id,
+                                    checksum,
+                                    target_tenant_id,
+                                    actor,
+                                    user_id,
+                                    created_at,
+                                    disposed=True,
+                                )
+                                if has_audit:
+                                    disposed_status = _dispose_source_record(source_store, entry_id)
+                                    report.audit_events_recorded += 1
                             report.items.append(
                                 asdict(
                                     JournalMigrationItem(
@@ -495,7 +593,17 @@ class JournalMigrationEngine:
                 self._save_checkpoint(entry_id, checksum)
                 disposed_status = False
                 if dispose_source and source_store is not None:
-                    disposed_status = _dispose_source_record(source_store, entry_id)
+                    has_audit = self._ensure_durable_migration_audit(
+                        entry_id,
+                        checksum,
+                        target_tenant_id,
+                        actor,
+                        user_id,
+                        created_at,
+                        disposed=True,
+                    )
+                    if has_audit:
+                        disposed_status = _dispose_source_record(source_store, entry_id)
 
                 report.total_migrated += 1
                 report.items.append(

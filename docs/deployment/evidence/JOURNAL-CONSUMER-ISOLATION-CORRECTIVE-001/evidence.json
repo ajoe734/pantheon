@@ -11,7 +11,7 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound to durable transaction identity (_tx_id and _tx_history). Reservation is registered in idempotency store with status pending. Entry CAS commits atomically first with durable transaction history, followed by secondary store commit (outbox and audit), after which idempotency is finalized with status succeeded. Readers and subsequent writers coordinate pending recovery for committed entries. Retries and concurrent readers observe pending rather than replayed uncommitted data. Crash recovery checks durable transaction identity against entry history rather than version alone, preventing phantom replays after aborted mutations and recovering committed mutations across later versions. Both recovery interleavings verified."
+      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Entry CAS commits atomically first with durable transaction history and before-entry snapshot, followed by secondary store commit (outbox and audit), after which idempotency is finalized with status succeeded. Readers and subsequent writers coordinate reads and recovery with live writer transaction outcome. While a writer holds bundle lock, readers read committed before-entry state, and concurrent retries return pending without falsely finalizing or replaying uncommitted CAS writes that subsequently roll back. Fabricated-data version/title and raw-key success fallbacks removed; crash recovery never finalizes with failed secondary writes."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id)."
+      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records missing tenant require explicit include_unscoped_legacy=True (ordinary unscoped reads denied even for authored legacy); and private records require matching authorized principal (actor_id/user_id). Recovery and replay strictly recheck result access so crashed unauthorized reservations never replay other principals' private entries."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -31,7 +31,7 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Migration audit failures do not delete source; source is preserved and checkpoints saved only after durable audit write and destination readback/checksum verification succeed."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal-bound durable migration audit before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -82,15 +82,15 @@
     "suites": [
       {
         "name": "services/governance/test_decision_journal.py",
-        "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
-        "tests": 41,
+        "runner": ".venv-pantheon/bin/python -m pytest",
+        "tests": 44,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       },
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-        "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
+        "runner": ".venv-pantheon/bin/python -m pytest",
         "tests": 22,
         "failures": 0,
         "errors": 0,
@@ -98,22 +98,22 @@
       },
       {
         "name": "tests/agora_write_owner/",
-        "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
+        "runner": ".venv-pantheon/bin/python -m pytest",
         "tests": 19,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       },
       {
-        "name": "/tmp/journal-review-abf97fb5.py",
-        "runner": "PYTHONPATH=. python3",
-        "tests": 5,
+        "name": "/tmp/journal-review-e17c12e5.py",
+        "runner": "PYTHONPATH=. .venv-pantheon/bin/python",
+        "tests": 3,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 87
+    "total_tests_passed": 88
   },
   "artifacts": [
     "services/governance/decision_journal.py",
