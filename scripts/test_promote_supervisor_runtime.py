@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -2234,5 +2235,130 @@ def test_retained_immutable_writer_after_fence_creation_failure(
 
     updated = json.loads(old_state.read_text(encoding="utf-8"))
     assert updated["auto_commit_archive"]["pending_token"] == "incumbent-updated-token"
+
+
+def test_drain_does_not_signal_terminal_or_completed_worker_pids(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "workers": {
+            "run-1": {"status": "completed", "pid": 424242},
+            "run-2": {"status": "failed", "pid": 424243},
+            "run-3": {"status": "cancelled", "pid": 424244},
+            "run-4": {"status": "superseded", "pid": 424245},
+        }
+    }))
+    sent = []
+    with mock.patch.object(promotion, "_pid_alive", return_value=True), \
+         mock.patch.object(promotion.os, "kill", side_effect=lambda pid, sig: sent.append((pid, sig))):
+        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+    assert sent == [], f"signalled terminal worker PIDs: {sent}"
+    assert result["drained"] is True
+    assert result["workers_drained"] == []
+
+
+def test_drain_fails_closed_on_unverified_or_reused_active_worker_pid(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "workers": {
+            "active-run": {
+                "status": "running",
+                "pid": 55555,
+                "pid_start_ticks": 12345,
+                "process_generation": "forged_generation",
+                "task_id": "TASK-1",
+                "queue_event_id": "Q-1",
+            }
+        }
+    }))
+    sent = []
+    with mock.patch.object(promotion, "_pid_alive", return_value=True), \
+         mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=99999), \
+         mock.patch.object(promotion.os, "kill", side_effect=lambda pid, sig: sent.append((pid, sig))):
+        with pytest.raises(RuntimeError, match="unknown or reused process identity"):
+            promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+    assert sent == [], f"signalled unverified active worker PID: {sent}"
+
+
+def test_drain_signals_and_drains_verified_active_worker(tmp_path: Path) -> None:
+    import common
+    state = tmp_path / "state.json"
+    gen_id = common.worker_process_generation_id(
+        task_id="TASK-1",
+        worker_run_id="run-1",
+        queue_event_id="Q-1",
+        pid=77777,
+        pid_start_ticks=33333,
+    )
+    state.write_text(json.dumps({
+        "workers": {
+            "run-1": {
+                "status": "running",
+                "pid": 77777,
+                "pid_start_ticks": 33333,
+                "process_generation": gen_id,
+                "task_id": "TASK-1",
+                "queue_event_id": "Q-1",
+            }
+        }
+    }))
+    sent = []
+    alive_states = [True, True, False]
+    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda pid: alive_states.pop(0) if alive_states else False), \
+         mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=33333), \
+         mock.patch.object(promotion.os, "kill", side_effect=lambda pid, sig: sent.append((pid, sig))):
+        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+    assert sent == [(77777, signal.SIGTERM)]
+    assert result["workers_drained"] == [77777]
+
+
+def test_drain_waits_for_active_task_state_store_lock_writer(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    event_log = runtime / "events.jsonl"
+    event_log.touch()
+    lock_file = runtime / "events.jsonl.lock"
+    lock_file.touch()
+
+    incumbent = {"task_state_store": {"mode": "authoritative", "event_log": str(event_log)}}
+
+    result = promotion.qualify_and_drain_incumbent_writers(incumbent)
+    assert result["drained"] is True
+
+
+def test_retained_immutable_writer_cannot_recreate_migrated_task_state(tmp_path: Path) -> None:
+    from rewrite import task_state_store
+    status = tmp_path / "status"
+    status.mkdir()
+    old_log = tmp_path / "runtime" / "events.jsonl"
+    old_log.parent.mkdir()
+    new_log = old_log.parent / "task-state" / old_log.name
+    old_cfg = {
+        "paths": {"status_file": str(status / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+    }
+    new_cfg = {
+        "paths": old_cfg["paths"],
+        "task_state_store": {"mode": "authoritative", "event_log": str(new_log)},
+    }
+    task_state_store.append_state_commit(old_log, {"tasks": []}, source="isolated-test-seed")
+    promotion._migrate_storage_paths(old_cfg, new_cfg)
+    before = new_log.read_bytes()
+
+    program = '''import json,sys
+sys.path.insert(0, sys.argv[1])
+import common
+common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-writer"}, source="isolated-test")
+'''
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PANTHEON_", "AI_"))}
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(Path(os.environ["PANTHEON_COMMAND_ROOT"]) / ".orchestrator"), json.dumps(old_cfg)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert new_log.read_bytes() == before
+    assert result.returncode != 0
+    assert not old_log.exists()
 
 

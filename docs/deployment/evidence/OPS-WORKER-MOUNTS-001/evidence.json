@@ -110,13 +110,13 @@
       ".orchestrator/test_worker_runner_heartbeat.py": "6c7cbe73ab8115390d4a234fdded5d700c6bae5d11856d292fb6cb9871941f44",
       ".orchestrator/worker_runner.py": "683a3b5215e21a0b4497dce3c43201e0f171e596177b2a4e22c04b660d32a29e",
       "scripts/ai_status.py": "fd6e42eb8599f1b0ce45feeef808278f108ed24a716df7f4040858718ba57ab0",
-      "scripts/promote_supervisor_runtime.py": "a0ea1f2b871f11f728292094365b2c0b46f5825321dea9ddf7401e56673fbcb3",
+      "scripts/promote_supervisor_runtime.py": "d77dc21aa85e8761838d6303738d2d6502bbc499ce7616288841fb729be4090a",
       "scripts/provision_live_supervisor_config.py": "c2252528253ffb8958f4cfa00b6165853bef3e9ee7de9532adb5665e57fd21ed",
       "scripts/supervisor_runtime_health.py": "760af2944435f74dd1406ce69f5040541f918b9ac902b71361d437567a24587b",
       "scripts/test_ai_status.py": "024d7100d78a0271c886d273ead10f04c01ff60e2135f2cb7203ced29b676674",
-      "scripts/test_promote_supervisor_runtime.py": "4f11751f600e09e5e3e4d59ef94520a35310e00169b882d42a173fd81810f3e2",
+      "scripts/test_promote_supervisor_runtime.py": "f3a95c27b7d3a32caebe5b6dd50a7fb49782eac12f7d0c5b605bc975f4a65d54",
       "scripts/test_provision_live_supervisor_config.py": "09536e917286516557280c3b9b9800abba6dad8372460c29c3a787fb50d10fb2",
-      "docs/operations/worker-atomic-state-mounts.md": "ea4eefc574cdf5fba2ae0f810ee614adb47f97d46d108da60a73954f17b7f4b1"
+      "docs/operations/worker-atomic-state-mounts.md": "31d774318a2c4f2c1813ac8dc903d17d8b286fc1af81a5931fcd9fdde538712a"
     },
     "passed": [
       {
@@ -146,7 +146,7 @@
       },
       {
         "command": "pytest scripts/test_promote_supervisor_runtime.py",
-        "result": "68 passed",
+        "result": "73 passed in 22.57s",
         "exit_status": 0
       },
       {
@@ -165,8 +165,8 @@
         "exit_status": 0
       },
       {
-        "command": "pytest -q -s /tmp/test_ops_worker_mounts_review.py",
-        "result": "2 passed in 4.69s",
+        "command": "pytest -q -s /tmp/test_ops_worker_mounts_codex_20260908.py",
+        "result": "2 passed in 3.60s",
         "exit_status": 0
       },
       {
@@ -176,7 +176,7 @@
       },
       {
         "command": "pytest -q .orchestrator/test_worker_runner_heartbeat.py .orchestrator/test_runtime_state.py .orchestrator/test_common.py scripts/test_ai_status.py scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py",
-        "result": "784 passed, 265 subtests passed",
+        "result": "789 passed, 265 subtests passed",
         "exit_status": 0
       }
     ]
@@ -200,6 +200,8 @@
     "cycle_4_defect_3_post_rename_config_durability_and_incumbent_restoration": "In _replace_supervisor_locked, if write_json_atomic encounters a directory fsync error (EIO) after rename, the rollback handler restores and verifies incumbent config on disk, rolls back migrated storage files, and only restarts the incumbent supervisor once on-disk verification succeeds. If restoration or verification fails, restart is refused and single-writer exclusion is retained.",
     "cycle_4_defect_4_absent_incumbent_identity_fails_closed_before_shutdown": "In _replace_supervisor_locked, if qualify_incumbent_identity returns None (e.g. incumbent config lacks identity and watchdog commands), promotion fails closed immediately with RuntimeError before calling stop_existing_supervisor, preventing shutdown of incumbents without a qualified rollback target.",
     "cycle_5_defect_1_fence_cleanup_restriction_and_idempotent_rollback": "_remove_retired_path_fence uses lstat mode checking and restricts cleanup strictly to verified fence objects (FIFOs or directories), leaving regular files and symlinks untouched. _rollback_storage_files implements idempotent reverse rollback, preserving already-restored files (where the original exists and destination is absent) and preventing outer rollback from unlinking restored state or head files on repeated rollback cycles. Comprehensive regression covers replace_supervisor with mixed restored/unrestored files and directory fsync durability errors.",
-    "cycle_5_defect_2_retired_fence_creation_fail_closed_and_transactional_rollback": "_create_retired_path_fence raises RuntimeError when FIFO and fallback directory creation fail (e.g. ENOSPC) or when verification fails, preventing migration from reporting false success with missing paths. Migration triggers transactional rollback, restoring original files and failing closed. Retained immutable writers continue operating safely against restored incumbent state without recreating empty state files."
+    "cycle_5_defect_2_retired_fence_creation_fail_closed_and_transactional_rollback": "_create_retired_path_fence raises RuntimeError when FIFO and fallback directory creation fail (e.g. ENOSPC) or when verification fails, preventing migration from reporting false success with missing paths. Migration triggers transactional rollback, restoring original files and failing closed. Retained immutable writers continue operating safely against restored incumbent state without recreating empty state files.",
+    "cycle_6_defect_1_retained_immutable_writer_store_fencing": "scripts/promote_supervisor_runtime.py _migrate_storage_paths establishes non-regular FIFO or directory fences at retired TaskStore sidecar paths (.lock and .head.json) using _create_retired_path_fence while preserving events.jsonl non-existence. Fresh writers running old immutable code fail closed on .lock regular-file assertions, and pre-opened lock holders fail closed on .head.json assertions, preventing old common.write_status invocations from recreating migrated TaskStore authority. Reproducer test test_retained_command_runtime_cannot_recreate_migrated_journal passes with exit code 0.",
+    "cycle_6_defect_2_incumbent_writer_drain_process_identity_and_store_lock": "scripts/promote_supervisor_runtime.py qualify_and_drain_incumbent_writers filters out terminal and completed worker records (status not in conflict_statuses) to avoid signalling recycled PIDs. For active workers, it verifies process identity and start ticks (_worker_process_identity against /proc/<pid>/stat), failing closed if active processes cannot be verified or PID recycling is detected, and only sends SIGTERM to verified active worker processes. Additionally probes and drains active TaskStore lock writers on old_lock before cutover. Reproducer test test_drain_does_not_signal_unqualified_finished_worker_pid passes with exit code 0."
   }
 }

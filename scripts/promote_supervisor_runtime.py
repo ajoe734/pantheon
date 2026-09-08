@@ -300,6 +300,82 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> int | None:
+    """Return Linux's immutable process start-time token for PID reuse checks."""
+    if not pid or pid <= 0:
+        return None
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        raw_stat = (root / str(pid) / "stat").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError:
+        return None
+    closing_paren = raw_stat.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields = raw_stat[closing_paren + 2 :].split()
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except (TypeError, ValueError):
+        return None
+
+
+def _worker_process_identity(
+    worker: Mapping[str, Any],
+    *,
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    """Return a validated immutable worker/process generation binding."""
+    try:
+        import common
+    except ImportError:
+        return None
+
+    task_id = str(worker.get("task_id") or "").strip()
+    worker_run_id = str(worker.get("run_id") or run_id).strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    pid = worker.get("pid")
+    pid_start_ticks = worker.get("pid_start_ticks")
+    if (
+        not task_id
+        or not worker_run_id
+        or not queue_event_id
+        or not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(pid_start_ticks, int)
+        or isinstance(pid_start_ticks, bool)
+        or pid_start_ticks <= 0
+    ):
+        return None
+    try:
+        expected_generation = common.worker_process_generation_id(
+            task_id=task_id,
+            worker_run_id=worker_run_id,
+            queue_event_id=queue_event_id,
+            pid=pid,
+            pid_start_ticks=pid_start_ticks,
+        )
+    except Exception:
+        return None
+    if process_generation != expected_generation:
+        return None
+    return {
+        "schema_version": getattr(common, "WORKER_PROCESS_GENERATION_SCHEMA_VERSION", 1),
+        "task_id": task_id,
+        "worker_run_id": worker_run_id,
+        "queue_event_id": queue_event_id,
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+    }
+
+
 def stop_existing_supervisor(pid_path: Path, *, timeout_seconds: float) -> int | None:
     """Stop the recorded supervisor.  No replacement is attempted on failure."""
 
@@ -1059,20 +1135,36 @@ def qualify_and_drain_incumbent_writers(
             continue
         pid = worker.get("pid")
         status = str(worker.get("status") or "").strip()
+        if status not in conflict_statuses:
+            continue
         if isinstance(pid, int) and pid > 0 and _pid_alive(pid):
+            identity = _worker_process_identity(worker, run_id=run_id)
+            current_ticks = _worker_pid_start_ticks(pid)
+            if identity is None or (
+                current_ticks is not None
+                and current_ticks != identity.get("pid_start_ticks")
+            ):
+                raise RuntimeError(
+                    f"cannot promote runtime: active worker {run_id} has unknown or reused process identity (PID {pid})"
+                )
             try:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
             deadline = time.monotonic() + timeout_seconds
-            while _pid_alive(pid) and time.monotonic() < deadline:
+            expected_ticks = identity.get("pid_start_ticks")
+            while (
+                _pid_alive(pid)
+                and (expected_ticks is None or _worker_pid_start_ticks(pid) == expected_ticks)
+                and time.monotonic() < deadline
+            ):
                 time.sleep(0.05)
-            if _pid_alive(pid):
+            if _pid_alive(pid) and (expected_ticks is None or _worker_pid_start_ticks(pid) == expected_ticks):
                 raise RuntimeError(
                     f"worker process {pid} ({run_id}) did not stop within {timeout_seconds:g}s"
                 )
             workers_drained.append(pid)
-        elif status in conflict_statuses:
+        else:
             raise RuntimeError(
                 f"cannot promote runtime: active worker {run_id} in un-drainable status {status}"
             )
@@ -1091,6 +1183,39 @@ def qualify_and_drain_incumbent_writers(
         raise RuntimeError(
             f"cannot promote runtime: in-flight queue events exist: {in_flight_events}"
         )
+
+    # 4. Check and drain active task-state store lock writers
+    old_store = incumbent.get("task_state_store") if isinstance(incumbent.get("task_state_store"), Mapping) else {}
+    old_log_raw = str(old_store.get("event_log") or "").strip()
+    if old_log_raw:
+        old_log = Path(old_log_raw).expanduser()
+        old_lock = old_log.with_name(f"{old_log.name}.lock")
+        if old_lock.exists() and not _is_retired_path_fence(old_lock):
+            deadline = time.monotonic() + timeout_seconds
+            lock_drained = False
+            while time.monotonic() < deadline:
+                probe_fd = None
+                try:
+                    probe_fd = os.open(old_lock, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+                    fcntl.flock(probe_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_drained = True
+                    break
+                except (BlockingIOError, OSError):
+                    time.sleep(0.05)
+                finally:
+                    if probe_fd is not None:
+                        try:
+                            fcntl.flock(probe_fd, fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                        try:
+                            os.close(probe_fd)
+                        except OSError:
+                            pass
+            if not lock_drained:
+                raise RuntimeError(
+                    f"cannot promote runtime: task-state store lock {old_lock} is held by active writer"
+                )
 
     return {
         "drained": True,
@@ -1163,6 +1288,8 @@ def _migrate_storage_paths(
                     if old_file.exists():
                         os.replace(old_file, new_file)
                         moved_files.append((str(old_file), str(new_file)))
+                        if suffix in (".lock", ".head.json"):
+                            _create_retired_path_fence(old_file)
 
         old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
         new_paths = rendered.get("paths") if isinstance(rendered.get("paths"), Mapping) else {}

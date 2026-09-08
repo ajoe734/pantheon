@@ -106,6 +106,13 @@ When promoting a new supervisor runtime version:
    - `_create_retired_path_fence` fails closed: if neither FIFO nor fallback directory fence can be established (e.g. ENOSPC), it raises an exception, triggering transactional rollback of moved files and restoring original paths instead of reporting false migration success with missing paths.
    - `_rollback_storage_files` provides idempotent reverse rollback: already-restored files (where the original exists as a non-fence and destination is absent) are preserved untouched, ensuring repeated outer rollback never deletes restored state or head files.
    - Retained immutable writers continue operating safely against restored incumbent state after fence-creation failure.
+9. **Process Generation Drain Verification and Retired Store Path Fencing**:
+   - `qualify_and_drain_incumbent_writers` ignores terminal and completed worker records (`status not in conflict_statuses`), ensuring stale worker records do not inadvertently signal recycled PIDs.
+   - For active workers, verifies process identity against `/proc/<pid>/stat` start time ticks (`_worker_process_identity`), failing closed if active worker processes cannot be positively verified or PID recycling is detected.
+   - Only sends SIGTERM to verified active worker processes and drains them within `timeout_seconds`.
+   - Probes and drains active writers holding `task_state_store` locks (`old_lock`) before proceeding with cutover.
+   - `_migrate_storage_paths` establishes non-regular FIFO/directory fences at retired TaskStore paths (`.lock` and `.head.json`) after moving store files. Fresh writers fail closed on `.lock` regular-file assertions, while pre-opened lock holders fail closed on `.head.json` assertions, preventing recreation of retired journals or heads.
+
 
 
 ### Verification Commands
