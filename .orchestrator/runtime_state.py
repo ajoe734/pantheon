@@ -331,6 +331,30 @@ def _assert_canonical_runtime_data_leaf(path: Path, *, source_id: str) -> None:
         )
 
 
+def _resolve_runtime_source_leaf(config: dict[str, Any], key: str) -> Path:
+    p = config_path(config, key).expanduser()
+    if not p.exists():
+        if key == "state_file" and p.name == "state.json":
+            if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
+                legacy = p.parent.parent / "state.json"
+                if legacy.exists():
+                    return legacy
+            elif p.parent.name == ".orchestrator":
+                modern = p.parent / "worker-runtime" / "state.json"
+                if modern.exists():
+                    return modern
+        elif key == "approval_queue" and p.name == "approval-queue.json":
+            if p.parent.name == "worker-runtime" and p.parent.parent.name == ".orchestrator":
+                legacy = p.parent.parent / "approval-queue.json"
+                if legacy.exists():
+                    return legacy
+            elif p.parent.name == ".orchestrator":
+                modern = p.parent / "worker-runtime" / "approval-queue.json"
+                if modern.exists():
+                    return modern
+    return p
+
+
 def _runtime_source_layout(
     config: dict[str, Any],
     *,
@@ -359,6 +383,21 @@ def _runtime_source_layout(
         if not configured.get(key):
             continue
         requested = config_path(config, key).expanduser()
+        if not requested.exists():
+            fallback = _resolve_runtime_source_leaf(config, key)
+            if fallback.exists():
+                requested = fallback
+            elif key == "approval_queue":
+                state_resolved = (
+                    _resolve_runtime_source_leaf(config, "state_file")
+                    if configured.get("state_file")
+                    else None
+                )
+                if state_resolved is not None and state_resolved.exists():
+                    if state_resolved.parent.name == ".orchestrator" and requested.parent.name == "worker-runtime":
+                        requested = state_resolved.parent / "approval-queue.json"
+                    elif state_resolved.parent.name == "worker-runtime" and requested.parent.name == ".orchestrator":
+                        requested = state_resolved.parent / "approval-queue.json"
         if validate_data_leaves:
             _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
         if not requested.parent.exists():
@@ -519,7 +558,7 @@ def runtime_state_lock(
 
 def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     state = normalize_v2_runtime_cache(
-        load_json(config_path(config, "state_file").expanduser(), default=None)
+        load_json(_resolve_runtime_source_leaf(config, "state_file"), default=None)
     )
 
     valid_pending_event_ids = set(
@@ -554,7 +593,7 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
 
 def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) -> None:
     _write_runtime_json_unlocked(
-        config_path(config, "state_file").expanduser(),
+        _resolve_runtime_source_leaf(config, "state_file"),
         normalize_v2_runtime_cache(state),
         source_id="runtime_state",
     )
@@ -588,7 +627,7 @@ def load_runtime_state_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     """
 
     return normalize_v2_runtime_cache(
-        load_json(config_path(config, "state_file").expanduser(), default=None)
+        load_json(_resolve_runtime_source_leaf(config, "state_file"), default=None)
     )
 
 
@@ -767,7 +806,7 @@ def _normalize_approval_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def _load_approval_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     raw = load_json(
-        config_path(config, "approval_queue").expanduser(),
+        _resolve_runtime_source_leaf(config, "approval_queue"),
         default=default_approval_state(),
     )
     state = deepcopy(default_approval_state())
@@ -802,7 +841,7 @@ def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         payload["version"] = 2
         payload["updated_at"] = utc_now()
         _write_runtime_json_unlocked(
-            config_path(config, "approval_queue").expanduser(),
+            _resolve_runtime_source_leaf(config, "approval_queue"),
             payload,
             source_id="approval_queue",
         )

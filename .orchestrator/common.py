@@ -551,14 +551,23 @@ def canonical_status_paths(
     fill_defaults: bool = False,
 ) -> dict[str, str]:
     raw_paths = repo_config.get("paths")
+    legacy_state = (status_root / ".orchestrator" / "state.json").resolve()
+    worker_runtime_state = (status_root / ".orchestrator" / "worker-runtime" / "state.json").resolve()
+    legacy_queue = (status_root / ".orchestrator" / "approval-queue.json").resolve()
+    worker_runtime_queue = (status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").resolve()
+
+    use_legacy = (legacy_state.exists() or legacy_queue.exists()) and not (
+        worker_runtime_state.exists() or worker_runtime_queue.exists()
+    )
+
     if fill_defaults:
         defaults = {
             "status_file": "ai-status.json",
             "activity_log": "ai-activity-log.jsonl",
             "current_work": "current-work.md",
             "dashboard": "docs-site/index.html",
-            "state_file": ".orchestrator/worker-runtime/state.json",
-            "approval_queue": ".orchestrator/worker-runtime/approval-queue.json",
+            "state_file": ".orchestrator/state.json" if use_legacy else ".orchestrator/worker-runtime/state.json",
+            "approval_queue": ".orchestrator/approval-queue.json" if use_legacy else ".orchestrator/worker-runtime/approval-queue.json",
             "provider_capabilities": ".orchestrator/provider_capabilities.json",
             "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         }
@@ -589,6 +598,23 @@ def canonical_status_paths(
                 f"repo config path {key!r} escapes canonical status root: {candidate}"
             ) from exc
         rendered[key] = str(candidate)
+
+    if (
+        rendered.get("state_file") == str(worker_runtime_state)
+        and not worker_runtime_state.exists()
+        and legacy_state.exists()
+    ):
+        rendered["state_file"] = str(legacy_state)
+        if rendered.get("approval_queue") == str(worker_runtime_queue) and not worker_runtime_queue.exists():
+            rendered["approval_queue"] = str(legacy_queue)
+    elif (
+        rendered.get("state_file") == str(legacy_state)
+        and not legacy_state.exists()
+        and worker_runtime_state.exists()
+    ):
+        rendered["state_file"] = str(worker_runtime_state)
+        if rendered.get("approval_queue") == str(legacy_queue) and not legacy_queue.exists():
+            rendered["approval_queue"] = str(worker_runtime_queue)
 
     expected_status_file = status_root / "ai-status.json"
     if Path(rendered.get("status_file", "")) != expected_status_file:
