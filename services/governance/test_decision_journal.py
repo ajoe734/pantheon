@@ -674,6 +674,75 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         )
         self.assertEqual(report.total_conflicts, 1)
 
+    def test_concurrent_legacy_migrations_cannot_reassign_committed_tenant(self) -> None:
+        stores_a = build_decision_journal_stores(self.tmp_dir.name)
+        stores_b = build_decision_journal_stores(self.tmp_dir.name)
+        legacy = {
+            "id": "legacy-shared",
+            "title": "Synthetic legacy",
+            "body": "Synthetic private body",
+            "createdBy": "alice",
+            "userId": "alice",
+            "visibility": "private",
+            "version": 1,
+        }
+        stores_a.entries.put(legacy)
+
+        both_read = threading.Barrier(2)
+        a_done = threading.Event()
+        reports: Dict[str, Any] = {}
+        errors: List[str] = []
+
+        def intercept_first_get(stores, lane: str) -> None:
+            original = stores.entries.get
+
+            def get(key):
+                nonlocal first
+                row = original(key)
+                if first[0]:
+                    first[0] = False
+                    both_read.wait(timeout=5)
+                    if lane == "b" and not a_done.wait(timeout=5):
+                        raise TimeoutError("lane A did not finish")
+                return row
+
+            first = [True]
+            stores.entries.get = get
+
+        intercept_first_get(stores_a, "a")
+        intercept_first_get(stores_b, "b")
+
+        def migrate(stores, lane: str) -> None:
+            try:
+                reports[lane] = JournalMigrationEngine(stores).run_migration(
+                    [legacy], target_tenant_id=f"tenant-{lane}", dry_run=False
+                ).to_dict()
+            except BaseException as exc:  # pragma: no cover - fail loudly via errors list
+                errors.append(repr(exc))
+            finally:
+                if lane == "a":
+                    a_done.set()
+
+        threads = [
+            threading.Thread(target=migrate, args=(stores_a, "a")),
+            threading.Thread(target=migrate, args=(stores_b, "b")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(errors, [])
+        final = build_decision_journal_stores(self.tmp_dir.name)
+        self.assertEqual(reports["a"]["total_migrated"], 1)
+        self.assertEqual(reports["b"]["total_migrated"], 0)
+        self.assertEqual(reports["b"]["total_conflicts"], 1)
+        self.assertEqual(final.entries.get("legacy-shared")["tenant_id"], "tenant-a")
+        self.assertIsNotNone(
+            get_entry(final, "legacy-shared", tenant_id="tenant-a", user_id="alice")
+        )
+
     def test_migration_rejects_source_from_another_tenant(self) -> None:
         source = {
             "id": "source-foreign-tenant",

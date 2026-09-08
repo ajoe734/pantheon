@@ -412,7 +412,43 @@ class JournalMigrationEngine:
                         migrated_row["user_id"] = user_id
                         migrated_row["updatedAt"] = created_at
                         migrated_row["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
-                        self.destination_stores.entries.put(migrated_row)
+
+                        # Atomic legacy claim: the destination row must still match the
+                        # exact snapshot read above. If a concurrent migration already
+                        # claimed and scoped this row to a different tenant/principal
+                        # between the read and this write, the CAS fails and the losing
+                        # migration reports a conflict instead of silently overwriting
+                        # the first committed tenant's data.
+                        claimed, current_row = self.destination_stores.entries.compare_and_set(
+                            existing, migrated_row
+                        )
+                        if not claimed:
+                            winner_tenant = str(
+                                (current_row or {}).get("tenant_id")
+                                or (current_row or {}).get("tenantId")
+                                or ""
+                            ).strip()
+                            report.total_conflicts += 1
+                            report.items.append(
+                                asdict(
+                                    JournalMigrationItem(
+                                        source_id=entry_id,
+                                        entry_id=entry_id,
+                                        checksum=checksum,
+                                        source_tenant=source_tenant,
+                                        target_tenant=target_tenant_id,
+                                        target_actor=actor,
+                                        status="conflict",
+                                        error=(
+                                            "Concurrent legacy claim: destination row was "
+                                            f"already scoped to tenant {winner_tenant!r} by "
+                                            "another migration between read and write"
+                                        ),
+                                        disposed=False,
+                                    )
+                                )
+                            )
+                            continue
 
                         if self.destination_stores.audit is not None:
                             audit_id = f"aud-mig-{uuid.uuid4().hex[:12]}"
