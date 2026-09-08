@@ -65,6 +65,7 @@ def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a", focus:
         "_mgmt_nl_record_matches_tenant",
         "_mgmt_nl_record_tenant_ids",
         "_mgmt_nl_scope_values",
+        "_mgmt_nl_merge_owner_observations",
     }
     nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     namespace = dict(__import__("typing").__dict__)

@@ -6297,11 +6297,18 @@ def _project_operator_runtime_state_row(
         or binding.get("binding_id")
         or binding.get("id")
     )
-    raw_telemetry_summary = (
-        telemetry_summary_record
-        if prefetched
-        else read_store.get_telemetry_summary(runtime_id)
-    )
+    telemetry_observation: Optional[Dict[str, Any]] = None
+    if prefetched:
+        raw_telemetry_summary = telemetry_summary_record
+    else:
+        # Route through the purpose-built owner-observation accessor instead
+        # of a bare store call: it never raises (a failed read is reported
+        # as a typed unavailable observation) and it preserves the owner's
+        # own status/degradation_reason/provenance instead of collapsing an
+        # explicitly degraded telemetry record into a healthy-looking blob.
+        raw_telemetry_summary, telemetry_observation = (
+            _management_ai_context_service.get_context_telemetry_summary(runtime_id)
+        )
     telemetry_summary = _project_runtime_state_telemetry_summary(
         raw_telemetry_summary
     )
@@ -6345,6 +6352,7 @@ def _project_operator_runtime_state_row(
             else None
         ),
         "telemetry_summary": telemetry_summary,
+        "telemetry_observation": telemetry_observation,
         "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
         "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
         "position_count": (telemetry_summary or {}).get("position_count"),
@@ -15068,6 +15076,11 @@ def _mgmt_nl_trading_pulse_snippet(
         for row in runtime_rows
         if isinstance(row.get("telemetry_summary"), dict)
     ]
+    telemetry_observations = [
+        row.get("telemetry_observation")
+        for row in runtime_rows
+        if isinstance(row.get("telemetry_observation"), dict)
+    ]
     pnl_values = [
         value
         for value in (_management_number((row.get("metrics") or {}).get("pnl")) for row in telemetry_rows)
@@ -15104,7 +15117,35 @@ def _mgmt_nl_trading_pulse_snippet(
         {"cardId": "pnl", "card_id": "pnl", "label": "P&L", "value": summary["totalPnl"]},
         {"cardId": "execution-quality", "card_id": "execution-quality", "label": "Execution Quality", "value": summary["averageFillRate"]},
     ]
-    return {"summary": summary, "cards": cards}
+    return {"summary": summary, "cards": cards, "telemetry_observations": telemetry_observations}
+def _mgmt_nl_merge_owner_observations(
+    observations: List[Optional[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Aggregate every contributing owner observation into one surface-level
+    observation instead of reporting only the runtime binding's status: a
+    degraded/unavailable contributor (e.g. telemetry) must not be masked by
+    another contributor's healthy status, and no contributor's provenance is
+    discarded even when it did not determine the worst status."""
+    status_rank = {"ok": 0, "degraded": 1, "unavailable": 2}
+    present = [obs for obs in observations if isinstance(obs, dict)]
+    if not present:
+        return {
+            "status": "unavailable",
+            "owner": "management_ai_context",
+            "source_kind": "unavailable",
+            "degradation_reason": "no contributing owner observation was collected.",
+            "contributing_observations": [],
+        }
+    worst = max(present, key=lambda obs: status_rank.get(str(obs.get("status")), 0))
+    degradation_reasons = [
+        str(obs.get("degradation_reason"))
+        for obs in present
+        if obs.get("degradation_reason")
+    ]
+    merged = dict(worst)
+    merged["degradation_reason"] = "; ".join(dict.fromkeys(degradation_reasons)) or worst.get("degradation_reason")
+    merged["contributing_observations"] = present
+    return merged
 def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """Collect management summary context for the requested focus surface(s).
 
@@ -15163,10 +15204,13 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "human_inbox_summary": {"total": len(inbox_items)},
                 "anomalies_summary": {"total": len(anomalies)},
             }
+            cockpit_owner_observation = _mgmt_nl_merge_owner_observations(
+                [runtime_bindings_obs, *trading_pulse.get("telemetry_observations", [])]
+            )
             surfaces["management_cockpit"] = {
-                "status": runtime_bindings_obs["status"],
+                "status": cockpit_owner_observation["status"],
                 "source": "bff_composed",
-                "owner_observation": runtime_bindings_obs,
+                "owner_observation": cockpit_owner_observation,
             }
         except Exception:
             surfaces["management_cockpit"] = {"status": "unavailable", "source": "error"}
@@ -15182,10 +15226,13 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": pulse_data.get("summary"),
                 "cards": pulse_data.get("cards"),
             }
+            trading_pulse_owner_observation = _mgmt_nl_merge_owner_observations(
+                [runtime_bindings_obs, *pulse_data.get("telemetry_observations", [])]
+            )
             surfaces["management_trading_pulse"] = {
-                "status": runtime_bindings_obs["status"],
+                "status": trading_pulse_owner_observation["status"],
                 "source": "bff_composed",
-                "owner_observation": runtime_bindings_obs,
+                "owner_observation": trading_pulse_owner_observation,
             }
         except Exception:
             surfaces["management_trading_pulse"] = {"status": "unavailable", "source": "error"}
