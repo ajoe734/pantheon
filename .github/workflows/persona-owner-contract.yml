@@ -56,6 +56,7 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip "setuptools>=68"
           python3 -m pip install -r requirements.txt -r services/control-plane/bff/requirements.txt
+          python3 -m pip install "PyYAML>=6,<7"
           python3 scripts/dev/provision_python_distribution.py --mode current --allow-system-interpreter
       - name: Verify real owners, paper scope, renewal and durable receipt reload
         run: |
