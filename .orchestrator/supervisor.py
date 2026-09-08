@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import faulthandler
 import fcntl
 import fnmatch
 import hashlib
@@ -780,6 +781,18 @@ def console_log(message: str, *, quiet: bool = False) -> None:
         return
     timestamp = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {message}", flush=True)
+
+
+def install_stall_trace_handler() -> None:
+    """Allow Human/Ops to capture a live supervisor traceback with SIGUSR2."""
+
+    try:
+        faulthandler.register(signal.SIGUSR2, file=sys.stderr, all_threads=True)
+    except (AttributeError, OSError, RuntimeError) as exc:
+        console_log(
+            f"supervisor stall trace handler unavailable: {type(exc).__name__}: {exc}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
 
 
 def parse_runtime_timestamp(ts: str | None) -> datetime | None:
@@ -16439,6 +16452,7 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    install_stall_trace_handler()
     validate_supervisor_launch_authority(config, supervisor_path=Path(__file__))
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
