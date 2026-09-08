@@ -571,7 +571,7 @@ def integration_candidates(
         # DTG-INT-01: a row already carrying a matching integration_receipt
         # for its current identity has already landed; skip it before any
         # GitHub/ancestry work so the cron stops re-evaluating it forever.
-        if integration_receipt.integration_receipt_consumes_candidate(raw):
+        if integration_receipt.integration_receipt_consumes_candidate(raw, config=config_dict):
             continue
         owner = str(raw.get("owner") or "").strip()
         reviewer = str(raw.get("reviewer") or "").strip()

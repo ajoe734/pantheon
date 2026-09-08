@@ -178,8 +178,81 @@ def test_old_receipt_cannot_consume_conflicting_current_delivery(field, value) -
 
 
 def test_predicate_false_when_repository_id_is_not_default() -> None:
+    # A receipt with pantheon slug cannot consume an execute_plans task
     task = task_row(target_repo="execute_plans", integration_receipt=valid_receipt_payload())
     assert ir.integration_receipt_consumes_candidate(task) is False
+
+
+def test_predicate_true_when_execute_plans_receipt_matches() -> None:
+    task = task_row(
+        target_repo="execute-plans",
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+        integration_receipt=valid_receipt_payload(
+            repository="ajoe734/execute-plans",
+            pr=747,
+            head_sha=HEAD_A,
+            target_branch="dev",
+        ),
+    )
+    assert ir.integration_receipt_consumes_candidate(task) is True
+
+
+@pytest.mark.parametrize(
+    "target_repo",
+    ["execute-plans", "execute_plans", "ajoe734/execute-plans"],
+)
+def test_predicate_true_for_execute_plans_target_repo_variants(target_repo) -> None:
+    task = task_row(
+        target_repo=target_repo,
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+        integration_receipt=valid_receipt_payload(
+            repository="ajoe734/execute-plans",
+            pr=747,
+            head_sha=HEAD_A,
+            target_branch="dev",
+        ),
+    )
+    assert ir.integration_receipt_consumes_candidate(task) is True
+
+
+def test_predicate_false_for_unknown_repository() -> None:
+    task = task_row(
+        target_repo="unknown-repo",
+        integration_receipt=valid_receipt_payload(repository="unknown-repo"),
+    )
+    assert ir.integration_receipt_consumes_candidate(task) is False
+
+
+def test_predicate_false_for_repository_without_slug() -> None:
+    task = task_row(
+        target_repo="runtime_platform",
+        integration_receipt=valid_receipt_payload(repository="lean-platform"),
+    )
+    assert ir.integration_receipt_consumes_candidate(task) is False
+
+
+def test_predicate_respects_config_slug_override() -> None:
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute_plans": {"repo": "custom/execute-plans-fork"}
+            }
+        }
+    }
+    task_custom = task_row(
+        target_repo="execute-plans",
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+        integration_receipt=valid_receipt_payload(
+            repository="custom/execute-plans-fork",
+            pr=747,
+            head_sha=HEAD_A,
+            target_branch="dev",
+        ),
+    )
+    # With override config, matches custom slug
+    assert ir.integration_receipt_consumes_candidate(task_custom, config=config) is True
+    # Without override config, default slug is expected so custom slug is rejected
+    assert ir.integration_receipt_consumes_candidate(task_custom, config={}) is False
 
 
 def test_predicate_false_when_pr_rebound() -> None:
@@ -650,3 +723,193 @@ def test_process_restart_suppression_end_to_end(command_root: Path) -> None:
     # Fresh read, as a brand-new process/cron cycle would do.
     reloaded_task = json.loads(status_file.read_text())["tasks"][0]
     assert ir.integration_receipt_consumes_candidate(reloaded_task) is True
+
+
+def test_record_writes_receipt_and_consumes_candidate_for_execute_plans(
+    command_root: Path,
+) -> None:
+    task = task_row(
+        id="OPS-FE-REVIEW-PROOF-001",
+        target_repo="execute-plans",
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+    )
+    status_file = _setup_status_file(command_root, task)
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    authority = _make_authority(command_root, lock_path=lock_path, lock_pid=os.getpid())
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/execute-plans", target_branch="dev", pr=747, head_sha=HEAD_A
+    )
+    result = ir.record_integration_receipt(
+        config=_config_for(status_file),
+        task_id="OPS-FE-REVIEW-PROOF-001",
+        expected_generation=4,
+        expected_delivery_binding=binding,
+        observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+        merge_commit_sha=MERGE_A,
+        observed_at="2026-09-08T04:45:00Z",
+        status_file=status_file,
+        event_path=None,
+        authority=authority,
+    )
+    assert result.written is True
+    assert result.replay is False
+    on_disk = json.loads(status_file.read_text())
+    receipt = on_disk["tasks"][0]["integration_receipt"]
+    assert receipt["repository"] == "ajoe734/execute-plans"
+    assert receipt["pr"] == 747
+    assert receipt["observation"] == ir.RECEIPT_OBSERVATION_RECONCILED
+    assert receipt["merge_commit_sha"] == MERGE_A
+
+    # Subsequent read correctly consumed by pure predicate
+    reloaded_task = on_disk["tasks"][0]
+    assert ir.integration_receipt_consumes_candidate(reloaded_task) is True
+
+    # Idempotent replay
+    replay_result = ir.record_integration_receipt(
+        config=_config_for(status_file),
+        task_id="OPS-FE-REVIEW-PROOF-001",
+        expected_generation=4,
+        expected_delivery_binding=binding,
+        observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+        merge_commit_sha=MERGE_A,
+        observed_at="2026-09-08T04:45:00Z",
+        status_file=status_file,
+        event_path=None,
+        authority=authority,
+    )
+    assert replay_result.written is False
+    assert replay_result.replay is True
+
+
+def test_record_persists_through_v2_journal_for_execute_plans(
+    command_root: Path,
+) -> None:
+    task = task_row(
+        id="OPS-FE-REVIEW-PROOF-001",
+        target_repo="execute-plans",
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+    )
+    status_file = _setup_status_file(command_root, task)
+    event_path = command_root / "task-state.jsonl"
+    store.append_state_commit(event_path, {"tasks": [task]}, source="test-seed")
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    authority = _make_authority(command_root, lock_path=lock_path, lock_pid=os.getpid())
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/execute-plans", target_branch="dev", pr=747, head_sha=HEAD_A
+    )
+    ir.record_integration_receipt(
+        config=_config_for(status_file),
+        task_id="OPS-FE-REVIEW-PROOF-001",
+        expected_generation=4,
+        expected_delivery_binding=binding,
+        observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+        merge_commit_sha=MERGE_A,
+        observed_at="2026-09-08T04:45:00Z",
+        status_file=status_file,
+        event_path=event_path,
+        authority=authority,
+    )
+    events = store.load_events(event_path)
+    assert len(events) == 2
+    assert events[-1]["source"] == "canonical_auto_integrator"
+    committed_task = events[-1]["state"]["tasks"][0]
+    assert committed_task["integration_receipt"]["repository"] == "ajoe734/execute-plans"
+    assert committed_task["integration_receipt"]["merge_commit_sha"] == MERGE_A
+
+
+def test_record_rejects_mismatched_repository_slug_binding(
+    command_root: Path,
+) -> None:
+    task = task_row(
+        id="OPS-FE-REVIEW-PROOF-001",
+        target_repo="execute-plans",
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+    )
+    status_file = _setup_status_file(command_root, task)
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    authority = _make_authority(command_root, lock_path=lock_path, lock_pid=os.getpid())
+    # Wrong slug (pantheon slug instead of execute-plans slug)
+    wrong_binding = ir.IntegrationBinding(
+        repository="ajoe734/pantheon", target_branch="dev", pr=747, head_sha=HEAD_A
+    )
+    with pytest.raises(ir.IntegrationReceiptBindingError) as exc_info:
+        ir.record_integration_receipt(
+            config=_config_for(status_file),
+            task_id="OPS-FE-REVIEW-PROOF-001",
+            expected_generation=4,
+            expected_delivery_binding=wrong_binding,
+            observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+            merge_commit_sha=MERGE_A,
+            observed_at="2026-09-08T04:45:00Z",
+            status_file=status_file,
+            event_path=None,
+            authority=authority,
+        )
+    assert "delivery binding no longer matches" in str(exc_info.value)
+
+
+def test_record_rejects_unknown_target_repo(command_root: Path) -> None:
+    task = task_row(
+        id="UNKNOWN-001",
+        target_repo="unknown-repo-xyz",
+        review_binding={"pr": 1, "head_sha": HEAD_A, "base": "dev"},
+    )
+    status_file = _setup_status_file(command_root, task)
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    authority = _make_authority(command_root, lock_path=lock_path, lock_pid=os.getpid())
+    binding = ir.IntegrationBinding(
+        repository="unknown-repo-xyz", target_branch="dev", pr=1, head_sha=HEAD_A
+    )
+    with pytest.raises(ir.IntegrationReceiptBindingError):
+        ir.record_integration_receipt(
+            config=_config_for(status_file),
+            task_id="UNKNOWN-001",
+            expected_generation=4,
+            expected_delivery_binding=binding,
+            observation=ir.RECEIPT_OBSERVATION_PERFORMED_MERGE,
+            merge_commit_sha=MERGE_A,
+            observed_at="2026-09-08T04:45:00Z",
+            status_file=status_file,
+            event_path=None,
+            authority=authority,
+        )
+
+
+def test_record_rejects_conflicting_receipt_for_execute_plans(
+    command_root: Path,
+) -> None:
+    task = task_row(
+        id="OPS-FE-REVIEW-PROOF-001",
+        target_repo="execute-plans",
+        review_binding={"pr": 747, "head_sha": HEAD_A, "base": "dev"},
+        integration_receipt=valid_receipt_payload(
+            repository="ajoe734/execute-plans",
+            pr=747,
+            head_sha=HEAD_A,
+            merge_commit_sha="9" * 40,
+        ),
+    )
+    status_file = _setup_status_file(command_root, task)
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    authority = _make_authority(command_root, lock_path=lock_path, lock_pid=os.getpid())
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/execute-plans", target_branch="dev", pr=747, head_sha=HEAD_A
+    )
+    with pytest.raises(ir.IntegrationReceiptConflictError):
+        ir.record_integration_receipt(
+            config=_config_for(status_file),
+            task_id="OPS-FE-REVIEW-PROOF-001",
+            expected_generation=4,
+            expected_delivery_binding=binding,
+            observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+            merge_commit_sha=MERGE_A,
+            observed_at="2026-09-08T04:45:00Z",
+            status_file=status_file,
+            event_path=None,
+            authority=authority,
+        )

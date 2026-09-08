@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from common import canonical_task_state_lock_file, validate_status_command_runtime
+import multi_repo_registry
 
 from rewrite.task_state_store import append_state_commit, snapshot_transaction
 
@@ -231,22 +232,26 @@ def parse_integration_receipt(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def frozen_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
+def frozen_delivery_binding(
+    task: Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Derive the row's own frozen (repository, branch, pr, head) identity.
 
     Pure and read-only: only fields already embedded on the canonical row
-    (``target_repo``, ``review_binding``) are consulted, matching
+    (``target_repo``, ``artifacts``, ``review_binding``) and configured
+    registry repositories are consulted, matching
     ``integration_receipt_consumes_candidate``'s "no filesystem operation"
-    contract (SD.md 6.6). A non-default repository id cannot be resolved to
-    a GitHub slug without reading live config, so it safely returns ``None``
-    (never a false match) rather than guessing.
+    contract (SD.md 6.6). Unrecognized, ambiguous, or misconfigured repository
+    scopes safely return None (fail closed).
     """
 
     if not isinstance(task, Mapping):
         return None
-    repo_id = str(task.get("target_repo") or _DEFAULT_REPOSITORY_ID).strip() or _DEFAULT_REPOSITORY_ID
-    if repo_id.casefold() not in _DEFAULT_REPOSITORY_ALIASES:
+    repo_identity = multi_repo_registry.task_repository_slug_and_default_branch(config, task)
+    if repo_identity is None:
         return None
+    repo_slug, default_branch = repo_identity
     binding = task.get("review_binding")
     if not isinstance(binding, Mapping):
         return None
@@ -256,16 +261,19 @@ def frozen_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
     head_sha = _oid(binding.get("head_sha"))
     if not head_sha:
         return None
-    target_branch = str(binding.get("base") or "").strip() or _DEFAULT_TARGET_BRANCH
+    target_branch = str(binding.get("base") or "").strip() or default_branch
     return {
-        "repository": _DEFAULT_REPOSITORY_SLUG,
+        "repository": repo_slug,
         "target_branch": target_branch,
         "pr": pr,
         "head_sha": head_sha,
     }
 
 
-def integration_receipt_consumes_candidate(task: Mapping[str, Any]) -> bool:
+def integration_receipt_consumes_candidate(
+    task: Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+) -> bool:
     """True only when ``task`` already carries a receipt for its current
     identity -- the auto-integrator must skip it without any GitHub call,
     fetch, filesystem operation, or ancestry query (SD.md 6.6)."""
@@ -287,7 +295,7 @@ def integration_receipt_consumes_candidate(task: Mapping[str, Any]) -> bool:
     # exact-generation CAS. Future-generation receipts remain invalid.
     if current_generation < 1 or receipt["task_generation"] > current_generation:
         return False
-    binding = frozen_delivery_binding(task)
+    binding = frozen_delivery_binding(task, config=config)
     if binding is None:
         return False
     delivery = task.get("delivery_binding")
@@ -425,6 +433,7 @@ def record_integration_receipt(
                     observation=observation,
                     merge_commit_sha=merge_commit_sha,
                     observed_at=observed_at,
+                    config=config,
                 )
                 if result.written:
                     transaction.append_state_commit(state, source=RECEIPT_SOURCE)
@@ -439,6 +448,7 @@ def record_integration_receipt(
             observation=observation,
             merge_commit_sha=merge_commit_sha,
             observed_at=observed_at,
+            config=config,
         )
         if result.written:
             if event_path is not None:  # pragma: no cover - defensive, unreachable
@@ -456,6 +466,7 @@ def _apply_receipt_to_state(
     observation: str,
     merge_commit_sha: str,
     observed_at: str,
+    config: Mapping[str, Any] | None = None,
 ) -> ReceiptWriteResult:
     task = _find_task(state, task_id)
     if task is None:
@@ -479,7 +490,7 @@ def _apply_receipt_to_state(
             "merge-then-review state"
         )
 
-    current_binding = frozen_delivery_binding(task)
+    current_binding = frozen_delivery_binding(task, config=config)
     if current_binding is None or (
         current_binding["repository"] != expected_delivery_binding.repository
         or current_binding["target_branch"] != expected_delivery_binding.target_branch
