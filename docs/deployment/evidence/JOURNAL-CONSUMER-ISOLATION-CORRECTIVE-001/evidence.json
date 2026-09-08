@@ -11,11 +11,11 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Domain creation transactions use domain_creation_idempotency_key ('domain:create:{quoted_tenant}:{quoted_actor}:{quoted_entry}'), fully separated from BFF request identity ('create:{quoted_tenant}:{quoted_user}:{quoted_key}'). Recovery coordinates secondary writes outside locks, then acquires bundle_lock() and _tx_lock, re-reads fresh entry, verifies _creation_outbox is still present, and commits via compare_and_set, preserving any concurrent committed patches without clobbering. Read and replay fail closed while creation remains incomplete. DecisionJournalOwnerAdapter._recover_committed_entry_result and check/await_create_idempotency strictly bind replay to actual committed creation transactions with successful secondary writes and exact tenant/user scope matches, never promoting live provisional rows to succeeded or leaking cross-scope results."
+      "implementation": "services/governance/decision_journal.py: Atomic multi-store transaction with bundle file locking and crash recovery bound strictly to durable transaction identity (_tx_id, scoped idempotency_key, tenant, actor, user, request, and entry). Reservation is registered in idempotency store with status pending. Domain creation transactions use domain_creation_idempotency_key ('domain:create:{quoted_tenant}:{quoted_actor}:{quoted_entry}'), fully separated from BFF request identity ('create:{quoted_tenant}:{quoted_user}:{quoted_key}'). Recovery coordinates secondary writes outside locks, then acquires bundle_lock() and _tx_lock, re-reads fresh entry, verifies _creation_outbox is still present, and commits via compare_and_set, preserving any concurrent committed patches without clobbering. _coordinate_pending_txs and _await_idempotency_resolution reconcile matching failed recovery intents once secondary writes become durable, un-fencing successor mutations and restoring full replay, audit, and outbox parity across process crashes and outages. Read and replay fail closed while creation remains incomplete. DecisionJournalOwnerAdapter._recover_committed_entry_result and check/await_create_idempotency strictly bind replay to actual committed creation transactions with successful secondary writes and exact tenant/user scope matches, never promoting live provisional rows to succeeded or leaking cross-scope results."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, tenant_id, and transaction idempotency key. list_audit_events strictly enforces tenant scope, authorized principal on audit reads, and gates event visibility on committed transaction outcome, never disclosing uncommitted or rolled-back provisional events to preserve append-only externally visible history."
+      "implementation": "services/governance/decision_journal.py: patch_entry computes changedFields, diff changes (before/after) and appends audit record bound to actor_id, user_id, tenant_id, and transaction idempotency key. list_audit_events strictly enforces tenant scope, authorized principal on audit reads, redacts unauthorized before/after snapshots and diff change fields for cross-principal/public-rewrite queries while preserving full author history, and gates event visibility on committed transaction outcome, never disclosing uncommitted or rolled-back provisional events to preserve append-only externally visible history."
     },
     "durable_outbox_streaming": {
       "status": "satisfied",
@@ -83,7 +83,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 55,
+        "tests": 57,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -91,7 +91,7 @@
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 30,
+        "tests": 32,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -100,6 +100,14 @@
         "name": "tests/agora_write_owner/",
         "runner": ".venv-pantheon/bin/python -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-review-287f083f.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 2,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -153,7 +161,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 119
+    "total_tests_passed": 125
   },
   "artifacts": [
     "services/governance/decision_journal.py",

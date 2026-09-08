@@ -39,6 +39,7 @@ from services.governance.decision_journal import (
     list_entries,
     list_outbox_events,
     patch_entry,
+    patch_idempotency_key,
 )
 from services.governance.migrations.journal_migration import (
     JournalMigrationEngine,
@@ -1738,6 +1739,165 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
             self.assertEqual(get_entry(reader, "entry", **scope)["title"], "before")
             self.assertEqual(list_audit_events(reader, entry_id="entry", **scope), [])
             self.assertEqual(observed, {"audit": [], "outbox": []}, "uncommitted events were exposed before rollback")
+
+    def test_public_rewrite_redacts_private_before_body_in_audit_for_unauthorized_reader(self) -> None:
+        """P1: publishing a private entry must redact unauthorized before-image in audit diff for non-author reader."""
+        create_entry(
+            self.stores,
+            entry_id="entry-pub-redact",
+            title="private",
+            body="PRIVATE ORIGINAL",
+            actor_id="alice",
+            user_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        patch_entry(
+            self.stores,
+            "entry-pub-redact",
+            patch={"visibility": "public", "body": "PUBLIC REPLACEMENT"},
+            actor_id="alice",
+            user_id="alice",
+            tenant_id="tenant-a",
+            idempotency_key="publish-key",
+            request_hash="publish-hash",
+            patched_at="2026-09-08T01:00:00Z",
+        )
+        # Bob in tenant-a reads entry
+        bob_entry = get_entry(self.stores, "entry-pub-redact", tenant_id="tenant-a", actor_id="bob")
+        self.assertIsNotNone(bob_entry)
+        self.assertEqual(bob_entry["body"], "PUBLIC REPLACEMENT")
+
+        # Bob lists audit events: must NOT see private before-body
+        bob_audits = list_audit_events(self.stores, entry_id="entry-pub-redact", tenant_id="tenant-a", actor_id="bob")
+        self.assertEqual(len(bob_audits), 1)
+        self.assertNotIn("PRIVATE ORIGINAL", json.dumps(bob_audits), "Bob received private before-image in public rewrite audit")
+        self.assertIsNone(bob_audits[0]["diff"]["before"])
+        self.assertEqual(bob_audits[0]["diff"]["after"]["body"], "PUBLIC REPLACEMENT")
+        for ch in bob_audits[0]["diff"].get("changes") or []:
+            self.assertIsNone(ch.get("before"))
+
+        # Alice (author) lists audit events: preserves full history
+        alice_audits = list_audit_events(self.stores, entry_id="entry-pub-redact", tenant_id="tenant-a", actor_id="alice")
+        self.assertEqual(len(alice_audits), 1)
+        self.assertIn("PRIVATE ORIGINAL", json.dumps(alice_audits))
+        self.assertEqual(alice_audits[0]["diff"]["before"]["body"], "PRIVATE ORIGINAL")
+        self.assertEqual(alice_audits[0]["diff"]["after"]["body"], "PUBLIC REPLACEMENT")
+
+        # Cross-tenant and unscoped readers receive empty list
+        self.assertEqual(list_audit_events(self.stores, entry_id="entry-pub-redact", tenant_id="tenant-b", actor_id="alice"), [])
+        self.assertEqual(list_audit_events(self.stores, entry_id="entry-pub-redact", tenant_id=""), [])
+        self.assertEqual(list_audit_events(self.stores, entry_id="entry-pub-redact", tenant_id=None), [])
+
+        # Tenant reader without actor sees public event with private before-image redacted
+        anon_tenant_audits = list_audit_events(self.stores, entry_id="entry-pub-redact", tenant_id="tenant-a")
+        self.assertEqual(len(anon_tenant_audits), 1)
+        self.assertNotIn("PRIVATE ORIGINAL", json.dumps(anon_tenant_audits))
+        self.assertIsNone(anon_tenant_audits[0]["diff"]["before"])
+
+    def test_failed_replay_recovery_can_recover_after_outbox_returns(self) -> None:
+        """P1: process crashes after CAS before outbox; same-key retry during outage fails,
+        fresh-process recovery after outage coordinates transaction, permits successor, and ensures replay/audit/outbox parity.
+        """
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            create_entry(
+                stores,
+                entry_id="entry-crash",
+                title="private",
+                body="PRIVATE ORIGINAL",
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+
+            code = """
+import os, sys
+from services.governance.decision_journal import build_decision_journal_stores, patch_entry
+s = build_decision_journal_stores(sys.argv[1])
+s.outbox.put = lambda event: os._exit(74)
+patch_entry(
+    s,
+    'entry-crash',
+    patch={'title': 'crashed'},
+    actor_id='alice',
+    user_id='alice',
+    tenant_id='tenant-a',
+    idempotency_key='crashed',
+    request_hash='crashed',
+    patched_at='2026-09-08T01:00:00Z',
+)
+"""
+            child = subprocess.run([sys.executable, "-c", code, path], timeout=10)
+            self.assertEqual(child.returncode, 74)
+
+            # 1. Same-key retry during continued outage fails with failed status
+            fresh = build_decision_journal_stores(path)
+            def unavailable(event: Any) -> None:
+                raise OSError("outbox still down")
+            fresh.outbox.put = unavailable  # type: ignore[assignment]
+            failed = patch_entry(
+                fresh,
+                "entry-crash",
+                patch={"title": "crashed"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="crashed",
+                request_hash="crashed",
+                patched_at="2026-09-08T01:00:00Z",
+            )
+            self.assertIsNotNone(failed)
+            self.assertEqual(failed["status"], "failed")
+
+            # 2. Fresh-process recovery after outage returns
+            recovered = build_decision_journal_stores(path)
+            entry = get_entry(recovered, "entry-crash", tenant_id="tenant-a", actor_id="alice")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["title"], "crashed")
+            key = patch_idempotency_key(tenant_id="tenant-a", actor_id="alice", idempotency_key="crashed")
+            self.assertEqual(recovered.idempotency.get(key)["status"], "succeeded")
+
+            # 3. Successful successor patch succeeds without ConcurrencyError
+            succ = patch_entry(
+                recovered,
+                "entry-crash",
+                patch={"title": "next"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="next",
+                request_hash="next",
+                patched_at="2026-09-08T02:00:00Z",
+            )
+            self.assertIsNotNone(succ)
+            self.assertEqual(succ["status"], "updated")
+            self.assertEqual(succ["entry"]["title"], "next")
+
+            # 4. Replay parity: retrying crashed key returns replayed
+            replayed = patch_entry(
+                recovered,
+                "entry-crash",
+                patch={"title": "crashed"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="crashed",
+                request_hash="crashed",
+                patched_at="2026-09-08T01:00:00Z",
+            )
+            self.assertIsNotNone(replayed)
+            self.assertEqual(replayed["status"], "replayed")
+
+            # 5. Audit and outbox parity: both contain durable event
+            audits = list_audit_events(recovered, entry_id="entry-crash", tenant_id="tenant-a", actor_id="alice")
+            self.assertEqual(len(audits), 2)
+            outbox = [
+                e for e in list_outbox_events(recovered, entry_id="entry-crash", tenant_id="tenant-a")
+                if str(e.get("event_type") or "").endswith("updated")
+            ]
+            self.assertEqual(len(outbox), 2)
 
 
 if __name__ == "__main__":

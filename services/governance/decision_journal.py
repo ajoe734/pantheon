@@ -520,14 +520,23 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
 
             if secondary_ok and idem_key and stores.idempotency is not None:
                 idem_rec = stores.idempotency.get(idem_key)
-                if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
+                if idem_rec is None or idem_rec.get("status") in (_IDEM_STATUS_PENDING, _IDEM_STATUS_FAILED):
                     try:
+                        base_rec = idem_rec if isinstance(idem_rec, dict) else {
+                            "idempotency_key": idem_key,
+                            "raw_idempotency_key": tx.get("raw_idempotency_key"),
+                            "tenant_id": tx.get("tenant_id"),
+                            "actor_id": tx.get("actor_id"),
+                            "user_id": tx.get("user_id"),
+                            "request_hash": tx.get("request_hash"),
+                            "entry_id": clean_id,
+                        }
                         stores.idempotency.put({
-                            **idem_rec,
+                            **base_rec,
                             "status": _IDEM_STATUS_SUCCEEDED,
                             "patch_id": audit_id,
                             "audit": audit,
-                            "entry": tx.get("entry") or idem_rec.get("candidate_entry"),
+                            "entry": tx.get("entry") or base_rec.get("candidate_entry") or base_rec.get("entry") or _project(fresh_entry),
                         })
                     except Exception:
                         pass
@@ -1158,6 +1167,16 @@ def _await_idempotency_resolution(
             if recovered is not None:
                 return recovered
 
+    if (
+        isinstance(record, dict)
+        and record.get("status") == _IDEM_STATUS_FAILED
+        and record.get("reason") == "secondary_writes_failed_during_recovery"
+        and not stores.is_bundle_locked()
+    ):
+        recovered = _attempt_crash_recovery(stores, record)
+        if recovered is not None:
+            return recovered
+
     return record if isinstance(record, dict) else reservation
 
 
@@ -1620,32 +1639,102 @@ def list_audit_events(
                 continue
 
         # Visibility and principal enforcement on audit diff
-        diff_after = (event.get("diff") or {}).get("after") or {}
-        diff_before = (event.get("diff") or {}).get("before") or {}
-        vis = str(
-            diff_after.get("visibility")
-            or diff_before.get("visibility")
-            or event.get("visibility")
-            or "private"
-        ).strip().lower()
+        diff = event.get("diff")
+        if isinstance(diff, dict) and diff:
+            diff_after = diff.get("after")
+            diff_before = diff.get("before")
 
-        if vis == "private":
-            event_actors = {
-                str(event.get("actor_id") or event.get("actorId") or "").strip(),
-                str(event.get("user_id") or event.get("userId") or "").strip(),
-                str(diff_after.get("createdBy") or "").strip(),
-                str(diff_after.get("userId") or "").strip(),
-                str(diff_before.get("createdBy") or "").strip(),
-                str(diff_before.get("userId") or "").strip(),
-            } - {""}
+            has_before = bool(isinstance(diff_before, dict) and diff_before)
+            has_after = bool(isinstance(diff_after, dict) and diff_after)
 
-            if event_actors:
-                if not target_actors or not (event_actors & target_actors):
-                    continue
-            elif not include_unscoped_legacy:
+            before_accessible = (
+                _is_entry_accessible(
+                    diff_before,
+                    clean_tenant=clean_tenant,
+                    target_actors=target_actors,
+                    include_unscoped_legacy=include_unscoped_legacy,
+                )
+                if has_before
+                else False
+            )
+
+            after_accessible = (
+                _is_entry_accessible(
+                    diff_after,
+                    clean_tenant=clean_tenant,
+                    target_actors=target_actors,
+                    include_unscoped_legacy=include_unscoped_legacy,
+                )
+                if has_after
+                else False
+            )
+
+            if not has_before and not has_after:
+                vis = str(event.get("visibility") or "private").strip().lower()
+                if vis == "private":
+                    event_actors = {
+                        str(event.get("actor_id") or event.get("actorId") or "").strip(),
+                        str(event.get("user_id") or event.get("userId") or "").strip(),
+                    } - {""}
+                    if event_actors:
+                        if not target_actors or not (event_actors & target_actors):
+                            continue
+                    elif not include_unscoped_legacy:
+                        continue
+                filtered.append(event)
                 continue
 
-        filtered.append(event)
+            if not before_accessible and not after_accessible:
+                continue
+
+            if (not has_before or before_accessible) and (not has_after or after_accessible):
+                filtered.append(event)
+                continue
+
+            event_copy = dict(event)
+            diff_copy = dict(diff)
+            event_copy["diff"] = diff_copy
+
+            if has_before and not before_accessible:
+                diff_copy["before"] = None
+                if "changes" in diff_copy and isinstance(diff_copy["changes"], list):
+                    redacted_changes = []
+                    for ch in diff_copy["changes"]:
+                        if isinstance(ch, dict):
+                            ch_copy = dict(ch)
+                            ch_copy["before"] = None
+                            redacted_changes.append(ch_copy)
+                        else:
+                            redacted_changes.append(ch)
+                    diff_copy["changes"] = redacted_changes
+
+            if has_after and not after_accessible:
+                diff_copy["after"] = None
+                if "changes" in diff_copy and isinstance(diff_copy["changes"], list):
+                    redacted_changes = []
+                    for ch in diff_copy["changes"]:
+                        if isinstance(ch, dict):
+                            ch_copy = dict(ch)
+                            ch_copy["after"] = None
+                            redacted_changes.append(ch_copy)
+                        else:
+                            redacted_changes.append(ch)
+                    diff_copy["changes"] = redacted_changes
+
+            filtered.append(event_copy)
+        else:
+            vis = str(event.get("visibility") or "private").strip().lower()
+            if vis == "private":
+                event_actors = {
+                    str(event.get("actor_id") or event.get("actorId") or "").strip(),
+                    str(event.get("user_id") or event.get("userId") or "").strip(),
+                } - {""}
+                if event_actors:
+                    if not target_actors or not (event_actors & target_actors):
+                        continue
+                elif not include_unscoped_legacy:
+                    continue
+            filtered.append(event)
 
     filtered.sort(key=lambda event: str(event.get("recordedAt") or ""), reverse=True)
     return filtered

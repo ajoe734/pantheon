@@ -9,6 +9,7 @@ owner adapter is missing.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -40,6 +41,10 @@ from services.governance.decision_journal import (
     build_decision_journal_stores,
     create_entry,
     domain_creation_idempotency_key,
+    get_entry,
+    list_audit_events,
+    list_outbox_events,
+    patch_idempotency_key,
 )
 
 
@@ -1101,6 +1106,127 @@ sys.exit(0)
             )
             self.assertIsNotNone(get_res)
             self.assertEqual(get_res["id"], "entry-rec")
+
+    def test_owner_adapter_failed_replay_recovery_can_recover_after_outbox_returns(self) -> None:
+        """P1 adapter: crash recovery after outbox failure reconciles failed idempotency intent and allows successor."""
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            create_entry(
+                stores,
+                entry_id="entry-adapt-crash",
+                title="private",
+                body="PRIVATE ORIGINAL",
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+
+            code = """
+import os, sys
+from services.governance.decision_journal import build_decision_journal_stores, patch_entry
+s = build_decision_journal_stores(sys.argv[1])
+s.outbox.put = lambda event: os._exit(74)
+patch_entry(
+    s,
+    'entry-adapt-crash',
+    patch={'title': 'crashed'},
+    actor_id='alice',
+    user_id='alice',
+    tenant_id='tenant-a',
+    idempotency_key='crashed',
+    request_hash='crashed',
+    patched_at='2026-09-08T01:00:00Z',
+)
+"""
+            child = subprocess.run([sys.executable, "-c", code, path], timeout=10)
+            self.assertEqual(child.returncode, 74)
+
+            # 1. Retry during outbox failure
+            fresh = build_decision_journal_stores(path)
+            def unavailable(event: Any) -> None:
+                raise OSError("outbox still down")
+            fresh.outbox.put = unavailable  # type: ignore[assignment]
+            owner_fresh = DecisionJournalOwnerAdapter(stores=fresh)
+            failed = owner_fresh.patch_decision_journal_entry(
+                "entry-adapt-crash",
+                patch={"title": "crashed"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="crashed",
+                request_hash="crashed",
+                patched_at="2026-09-08T01:00:00Z",
+            )
+            self.assertEqual(failed["status"], "failed")
+
+            # 2. Fresh recovery after outage
+            recovered = build_decision_journal_stores(path)
+            owner_rec = DecisionJournalOwnerAdapter(stores=recovered)
+            get_entry(recovered, "entry-adapt-crash", tenant_id="tenant-a", actor_id="alice")
+            key = patch_idempotency_key(tenant_id="tenant-a", actor_id="alice", idempotency_key="crashed")
+            self.assertEqual(recovered.idempotency.get(key)["status"], "succeeded")
+
+            # 3. Successor patch succeeds
+            succ = owner_rec.patch_decision_journal_entry(
+                "entry-adapt-crash",
+                patch={"title": "next"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="next",
+                request_hash="next",
+                patched_at="2026-09-08T02:00:00Z",
+            )
+            self.assertEqual(succ["status"], "updated")
+
+            # 4. Replay parity
+            replayed = owner_rec.patch_decision_journal_entry(
+                "entry-adapt-crash",
+                patch={"title": "crashed"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="crashed",
+                request_hash="crashed",
+                patched_at="2026-09-08T01:00:00Z",
+            )
+            self.assertEqual(replayed["status"], "replayed")
+
+    def test_owner_adapter_public_rewrite_redacts_private_before_body_in_audit(self) -> None:
+        """P1 adapter: public rewrite redacts private before-image in audit for non-author reader."""
+        with tempfile.TemporaryDirectory() as path:
+            stores = build_decision_journal_stores(path)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            owner.create_decision_journal_entry(
+                entry_id="entry-pub-redact-adapter",
+                title="private",
+                body="PRIVATE ORIGINAL",
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+                visibility="private",
+            )
+            owner.patch_decision_journal_entry(
+                "entry-pub-redact-adapter",
+                patch={"visibility": "public", "body": "PUBLIC REPLACEMENT"},
+                actor_id="alice",
+                user_id="alice",
+                tenant_id="tenant-a",
+                idempotency_key="publish",
+                request_hash="publish",
+                patched_at="2026-09-08T01:00:00Z",
+            )
+            bob_entry = owner.get_decision_journal_entry("entry-pub-redact-adapter", tenant_id="tenant-a", actor_id="bob")
+            self.assertIsNotNone(bob_entry)
+            self.assertEqual(bob_entry["body"], "PUBLIC REPLACEMENT")
+
+            events = list_audit_events(stores, entry_id="entry-pub-redact-adapter", tenant_id="tenant-a", actor_id="bob")
+            self.assertEqual(len(events), 1)
+            self.assertNotIn("PRIVATE ORIGINAL", json.dumps(events), "Bob received private before-image in public rewrite audit")
+            self.assertIsNone(events[0]["diff"]["before"])
+            self.assertEqual(events[0]["diff"]["after"]["body"], "PUBLIC REPLACEMENT")
 
 
 if __name__ == "__main__":
