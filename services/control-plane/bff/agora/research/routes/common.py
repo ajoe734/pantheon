@@ -1920,16 +1920,18 @@ class AgoraResearchRouteContext:
 
                 candidates.append(public_candidate)
                 cand_metrics: Dict[str, Any] = {}
-                if run and run.get("metrics"):
-                    cand_metrics.update(_normalize_metrics_to_dict(run["metrics"]))
-                if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
-                    client_art_metrics = body.metrics_by_artifact[public_candidate["artifact_id"]]
-                    if isinstance(client_art_metrics, dict):
-                        for k, v in client_art_metrics.items():
-                            cand_metrics.setdefault(k, v)
-                elif candidate.get("_metrics") and isinstance(candidate.get("_metrics"), dict):
-                    for k, v in candidate["_metrics"].items():
-                        cand_metrics.setdefault(k, v)
+                if run:
+                    # Resolve scoring/evidence inputs only from authoritative owner data;
+                    # do not fill absent owner fields from metrics_by_artifact or candidate._metrics.
+                    if run.get("metrics"):
+                        cand_metrics.update(_normalize_metrics_to_dict(run["metrics"]))
+                elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
+                    if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
+                        client_art_metrics = body.metrics_by_artifact[public_candidate["artifact_id"]]
+                        if isinstance(client_art_metrics, dict):
+                            cand_metrics.update(client_art_metrics)
+                    elif candidate.get("_metrics") and isinstance(candidate.get("_metrics"), dict):
+                        cand_metrics.update(candidate["_metrics"])
                 metrics_by_artifact[public_candidate["artifact_id"]] = cand_metrics
         elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
             try:

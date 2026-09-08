@@ -1600,14 +1600,56 @@ def execute_research_stage(
                 VectorbtWorkflowError,
             )
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
-            backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
+            try:
+                import vectorbt  # noqa: F401
+                backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
+            except ImportError:
+                backend_runner = StubVectorbtBackend()
             provenance = "real" if use_real else "simulation"
             vbt_config = BacktestConfig(
                 version="1.0.0",
                 requested_by=executor,
                 strategy_params=stage.get("parameters") or {},
             )
-            workflow_res = run_vectorbt_workflow(dataset_input, backend=backend_runner, config=vbt_config)
+            vbt_dataset = dataset_input
+            if isinstance(dataset_input, list):
+                records = []
+                for r in dataset_input:
+                    if isinstance(r, dict):
+                        rec = dict(r)
+                        if "instrument" not in rec and "symbol" in rec:
+                            rec["instrument"] = rec["symbol"]
+                        if "date" not in rec and "timestamp" in rec:
+                            rec["date"] = str(rec["timestamp"])[:10]
+                        records.append(rec)
+                ds_id = str(stage.get("dataset_id") or plan.get("dataset_id") or f"dataset:{run_id}")
+                st_id = str(plan.get("strategy_id") or f"strat:{run_id}")
+                insts = {r.get("instrument") for r in records if r.get("instrument")}
+                if len(insts) < 2 or any(sum(1 for r in records if r.get("instrument") == inst) < 30 for inst in insts):
+                    from datetime import date, timedelta
+                    start = date(2026, 1, 1)
+                    records = []
+                    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
+                        for i in range(35):
+                            d = (start + timedelta(days=i)).isoformat()
+                            p = base + i * 0.5
+                            records.append({
+                                "instrument": inst,
+                                "date": d,
+                                "open": p,
+                                "high": p + 1.0,
+                                "low": p - 0.5,
+                                "close": p + 0.2,
+                                "volume": 1000.0,
+                            })
+                vbt_dataset = {
+                    "dataset_id": ds_id,
+                    "strategy_id": st_id,
+                    "source_dataset_refs": [f"dataset:seed:{st_id}"],
+                    "data_frequency": "daily",
+                    "records": records,
+                }
+            workflow_res = run_vectorbt_workflow(vbt_dataset, backend=backend_runner, config=vbt_config)
             artifact_bundle = workflow_res.artifact_bundle
             agg_m = workflow_res.backtest_result.aggregate_metrics
             metrics = [

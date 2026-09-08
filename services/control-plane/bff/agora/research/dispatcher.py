@@ -432,6 +432,10 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     raise RuntimeError(
                         f"Authentic real execution for stage '{self.stage_type}' missing genuine backend metrics."
                     )
+                if not result.artifact_refs:
+                    raise RuntimeError(
+                        f"Authentic real execution for stage '{self.stage_type}' missing genuine owner artifact identities."
+                    )
 
             if result.receipt is not None:
                 receipt_obj = result.receipt
@@ -615,14 +619,11 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     elif isinstance(r, str):
                         genuine_checksums[r] = checksum
 
-            if genuine_refs:
-                result.artifact_refs = genuine_refs
-                result.checksums = genuine_checksums
-            else:
-                result.checksums.pop("artifact", None)
-                if checksum:
-                    for art_ref in result.artifact_refs:
-                        result.checksums[art_ref] = checksum
+            # Remove synthesized artifact/evidence/lineage fallback from authentic results
+            result.artifact_refs = genuine_refs
+            result.checksums = genuine_checksums
+            result.evidence_refs = list(backend_output.get("evidence_refs") or [])
+            result.lineage_refs = list(backend_output.get("lineage_refs") or [])
             for m in result.metrics:
                 if isinstance(m, dict):
                     if "provenance" not in m:
@@ -722,20 +723,6 @@ class AuthenticResearchBackendClient:
         context: Dict[str, Any],
         downstream_key: str,
     ) -> Dict[str, Any]:
-        if self.backend_fn is not None:
-            return self.backend_fn(
-                stage=stage,
-                plan=plan,
-                context=context,
-                downstream_key=downstream_key,
-            )
-
-        if not self.base_url and not self._transport:
-            raise RuntimeError(
-                f"Backend execution owner for stage '{self.stage_type}' ({self.preferred_backend}) is absent: "
-                f"neither base_url (AGORA_RESEARCH_{self.preferred_backend.upper()}_URL) nor backend_fn is configured."
-            )
-
         run_id = str(context.get("run_id") or stage.get("run_id") or "")
         correlation_id = str(
             context.get("correlation_id")
@@ -747,75 +734,89 @@ class AuthenticResearchBackendClient:
             or ""
         )
 
-        stage_payload = dict(stage)
-        plan_payload = dict(plan)
-        if not stage_payload.get("correlation_id") and correlation_id:
-            stage_payload["correlation_id"] = correlation_id
-        if not plan_payload.get("correlation_id") and correlation_id:
-            plan_payload["correlation_id"] = correlation_id
-
-        # Resolve canonical input_refs into execution inputs (dataset) if absent
-        if not stage_payload.get("dataset") and not plan_payload.get("dataset"):
-            resolved_ds = resolve_governed_dataset(
-                stage_payload,
-                plan_payload,
-                dataset_store=context.get("dataset_store") if isinstance(context, dict) else None,
-                tenant_id=(context.get("tenant_id") if isinstance(context, dict) else None) or plan_payload.get("tenant_id"),
-                user_id=(context.get("user_id") if isinstance(context, dict) else None) or plan_payload.get("user_id"),
+        if self.backend_fn is not None:
+            resp_data = self.backend_fn(
+                stage=stage,
+                plan=plan,
+                context=context,
+                downstream_key=downstream_key,
             )
-            if resolved_ds:
-                stage_payload["dataset"] = resolved_ds
-                if isinstance(stage, dict) and "dataset" not in stage:
-                    stage["dataset"] = resolved_ds
-
-        payload = {
-            "stage_type": self.stage_type,
-            "preferred_backend": self.preferred_backend,
-            "stage": stage_payload,
-            "plan": plan_payload,
-            "context": context,
-            "downstream_key": downstream_key,
-            "run_id": run_id,
-            "correlation_id": correlation_id,
-            "dataset": stage_payload.get("dataset") or plan_payload.get("dataset"),
-        }
-        body_bytes = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-
-        raw_url = str(self.base_url or "http://agora-research-backend").rstrip("/")
-        if not raw_url.endswith(f"/stages/{self.stage_type}/execute") and not raw_url.endswith("/execute"):
-            target_url = f"{raw_url}/stages/{self.stage_type}/execute"
         else:
-            target_url = raw_url
+            if not self.base_url and not self._transport:
+                raise RuntimeError(
+                    f"Backend execution owner for stage '{self.stage_type}' ({self.preferred_backend}) is absent: "
+                    f"neither base_url (AGORA_RESEARCH_{self.preferred_backend.upper()}_URL) nor backend_fn is configured."
+                )
 
-        req = urllib.request.Request(
-            target_url,
-            data=body_bytes,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "X-Correlation-Id": correlation_id,
-                "X-Run-Id": run_id,
-            },
-            method="POST",
-        )
+            stage_payload = dict(stage)
+            plan_payload = dict(plan)
+            if not stage_payload.get("correlation_id") and correlation_id:
+                stage_payload["correlation_id"] = correlation_id
+            if not plan_payload.get("correlation_id") and correlation_id:
+                plan_payload["correlation_id"] = correlation_id
 
-        transport = self._transport or urllib.request.urlopen
-        try:
-            resp = transport(req)
-            if hasattr(resp, "read"):
-                raw_bytes = resp.read()
-            elif isinstance(resp, (bytes, str)):
-                raw_bytes = resp
+            # Resolve canonical input_refs into execution inputs (dataset) if absent
+            if not stage_payload.get("dataset") and not plan_payload.get("dataset"):
+                resolved_ds = resolve_governed_dataset(
+                    stage_payload,
+                    plan_payload,
+                    dataset_store=context.get("dataset_store") if isinstance(context, dict) else None,
+                    tenant_id=(context.get("tenant_id") if isinstance(context, dict) else None) or plan_payload.get("tenant_id"),
+                    user_id=(context.get("user_id") if isinstance(context, dict) else None) or plan_payload.get("user_id"),
+                )
+                if resolved_ds:
+                    stage_payload["dataset"] = resolved_ds
+                    if isinstance(stage, dict) and "dataset" not in stage:
+                        stage["dataset"] = resolved_ds
+
+            payload = {
+                "stage_type": self.stage_type,
+                "preferred_backend": self.preferred_backend,
+                "stage": stage_payload,
+                "plan": plan_payload,
+                "context": context,
+                "downstream_key": downstream_key,
+                "run_id": run_id,
+                "correlation_id": correlation_id,
+                "dataset": stage_payload.get("dataset") or plan_payload.get("dataset"),
+            }
+            body_bytes = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+
+            raw_url = str(self.base_url or "http://agora-research-backend").rstrip("/")
+            if not raw_url.endswith(f"/stages/{self.stage_type}/execute") and not raw_url.endswith("/execute"):
+                target_url = f"{raw_url}/stages/{self.stage_type}/execute"
             else:
-                raw_bytes = resp
-            if isinstance(raw_bytes, bytes):
-                raw_bytes = raw_bytes.decode("utf-8")
-            resp_data = json.loads(raw_bytes) if isinstance(raw_bytes, str) else raw_bytes
-        except Exception as exc:
-            raise RuntimeError(
-                f"Backend execution owner submission/readback failed for stage '{self.stage_type}' "
-                f"at '{target_url}': {exc}"
-            ) from exc
+                target_url = raw_url
+
+            req = urllib.request.Request(
+                target_url,
+                data=body_bytes,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "X-Correlation-Id": correlation_id,
+                    "X-Run-Id": run_id,
+                },
+                method="POST",
+            )
+
+            transport = self._transport or urllib.request.urlopen
+            try:
+                resp = transport(req)
+                if hasattr(resp, "read"):
+                    raw_bytes = resp.read()
+                elif isinstance(resp, (bytes, str)):
+                    raw_bytes = resp
+                else:
+                    raw_bytes = resp
+                if isinstance(raw_bytes, bytes):
+                    raw_bytes = raw_bytes.decode("utf-8")
+                resp_data = json.loads(raw_bytes) if isinstance(raw_bytes, str) else raw_bytes
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Backend execution owner submission/readback failed for stage '{self.stage_type}' "
+                    f"at '{target_url}': {exc}"
+                ) from exc
 
         if not isinstance(resp_data, dict):
             raise RuntimeError(
@@ -938,6 +939,14 @@ class AuthenticResearchBackendClient:
             if artifact_id:
                 checksums[artifact_id] = artifact_digest
                 checksums[f"artifact://{artifact_id}"] = artifact_digest
+            if artifact_refs:
+                for ref_item in artifact_refs:
+                    if isinstance(ref_item, dict):
+                        for k in ("artifact_id", "ref_id", "id", "ref"):
+                            if ref_item.get(k):
+                                checksums[str(ref_item[k])] = ref_item.get("digest") or artifact_digest
+                    elif isinstance(ref_item, str):
+                        checksums[ref_item] = artifact_digest
 
         return {
             "status": "succeeded",

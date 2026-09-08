@@ -1212,3 +1212,319 @@ def test_public_natural_chain_preserves_owner_artifact(monkeypatch: pytest.Monke
     run = bff_main.research_store.get_run(artifact["run_id"])
     ids, digests = _extract_run_artifact_identities(run)
     assert artifact["artifact_id"] in ids, dict(owner_artifact=artifact["artifact_id"], projected_ids=sorted(ids))
+
+
+def test_real_candidate_cannot_acquire_client_only_scoring_metrics() -> None:
+    from agora.research.routes.common import (
+        AgoraResearchRouteContext,
+        CandidatePoolCreateRequest,
+        _load_default_scoring_recipe,
+        _score_candidate,
+    )
+    from agora.research.store import MemoryResearchPlanStore
+
+    store = MemoryResearchPlanStore()
+    artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}
+    store.create_run(dict(
+        run_id="run-review",
+        plan_id="plan-review",
+        tenant_id="tenant",
+        user_id="user",
+        execution_status="succeeded",
+        executor="vectorbt_executor",
+        correlation_id="corr-review",
+        provenance="real",
+        artifact_refs=[artifact],
+        metrics=[{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
+    ))
+    store.record_execution_receipt(dict(
+        receipt_id="receipt-review",
+        run_id="run-review",
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id="corr-review",
+        artifact_digest="sha256:actual",
+        spec_version="1.0",
+        completed_at="2026-09-08T07:00:00Z",
+    ))
+    ctx = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        require_write_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    recipe = _load_default_scoring_recipe()
+    invented = {c["component_id"]: 1.0 for c in recipe["positive_components"]}
+    invented.update({c["component_id"]: 0.0 for c in recipe["penalty_components"]})
+    invented_payload = {"components": invented, "evidence_confidence": 1.0}
+
+    pool = ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="user",
+            profile="production",
+            candidates=[dict(artifact_id="actual-artifact", run_id="run-review", lifecycle_state="candidate")],
+            metrics_by_artifact={"actual-artifact": invented_payload},
+        ),
+        SimpleNamespace(tenant_id="tenant", user_id="user", auth_stub=False),
+        "2026-09-08T07:00:00Z",
+    )
+    candidate = pool["candidates"][0]
+    metrics = ctx.store.get_candidate_metrics(pool["pool_id"], "actual-artifact")
+    score = _score_candidate(
+        pool_id=pool["pool_id"],
+        candidate=candidate,
+        metrics=metrics,
+        recipe=recipe,
+        data_cutoff="2026-09-08",
+        scored_at="2026-09-08",
+    )
+    assert candidate["has_real_receipt"] is True
+    assert "components" not in metrics, {"stored_metrics": metrics, "score": score["effective_score"], "band": score["band"]}
+    assert "evidence_confidence" not in metrics
+    assert score["band"] != "priority_review"
+
+
+def test_negative_controls_for_absent_owner_keys_and_nested_components() -> None:
+    """Absent owner keys, nested components, and evidence_refs must not be filled by client inputs."""
+    from agora.research.routes.common import (
+        AgoraResearchRouteContext,
+        CandidatePoolCreateRequest,
+        _load_default_scoring_recipe,
+        _score_candidate,
+    )
+    from agora.research.store import MemoryResearchPlanStore
+
+    store = MemoryResearchPlanStore()
+    artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}
+    store.create_run(dict(
+        run_id="run-review-neg",
+        plan_id="plan-review-neg",
+        tenant_id="tenant",
+        user_id="user",
+        execution_status="succeeded",
+        executor="vectorbt_executor",
+        correlation_id="corr-review-neg",
+        provenance="real",
+        artifact_refs=[artifact],
+        metrics=[{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
+    ))
+    store.record_execution_receipt(dict(
+        receipt_id="receipt-review-neg",
+        run_id="run-review-neg",
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id="corr-review-neg",
+        artifact_digest="sha256:actual",
+        spec_version="1.0",
+        completed_at="2026-09-08T07:00:00Z",
+    ))
+    ctx = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        require_write_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    recipe = _load_default_scoring_recipe()
+
+    # Client passes absent keys and nested structures in both candidate._metrics and metrics_by_artifact
+    client_metrics = {
+        "absent_metric_key": 999.0,
+        "components": {
+            "branch_historical_profitability": 1.0,
+            "branch_identity_confidence": 1.0,
+        },
+        "evidence_refs": {
+            "branch_historical_profitability": ["mock://forged-evidence"],
+        },
+        "evidence_confidence": 0.99,
+    }
+    candidate_input = {
+        "artifact_id": "actual-artifact",
+        "run_id": "run-review-neg",
+        "lifecycle_state": "candidate",
+        "_metrics": client_metrics,
+    }
+    pool = ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="user",
+            profile="production",
+            candidates=[candidate_input],
+            metrics_by_artifact={"actual-artifact": client_metrics},
+        ),
+        SimpleNamespace(tenant_id="tenant", user_id="user", auth_stub=False),
+        "2026-09-08T07:00:00Z",
+    )
+    cand = pool["candidates"][0]
+    assert cand["has_real_receipt"] is True
+    metrics = ctx.store.get_candidate_metrics(pool["pool_id"], "actual-artifact")
+
+    # Authoritative resolution: absent owner fields remain absent
+    assert "absent_metric_key" not in metrics
+    assert "components" not in metrics
+    assert "evidence_refs" not in metrics
+    assert "evidence_confidence" not in metrics
+    assert metrics == {"mean_sharpe_ratio": 0.1}
+
+    score = _score_candidate(
+        pool_id=pool["pool_id"],
+        candidate=cand,
+        metrics=metrics,
+        recipe=recipe,
+        data_cutoff="2026-09-08",
+        scored_at="2026-09-08",
+    )
+    # Without forged components, score does not inflate
+    assert score["effective_score"] < 50.0
+    assert score["band"] != "priority_review"
+
+
+def test_missing_identities_fail_closed_through_backend_client() -> None:
+    """AuthenticResearchBackendClient must not synthesize fallback artifact refs when backend omits artifact identities."""
+    response = {
+        "status": "succeeded",
+        "provenance": "real",
+        "backend_reference": "owner://run-review",
+        "artifact_digest": "sha256:actual",
+        "metrics": [{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
+        "receipt": {
+            "receipt_id": "receipt-review",
+            "run_id": "run-review",
+            "executor": "vectorbt_executor",
+            "correlation_id": "corr-review",
+            "completed_at": "2026-09-08T07:00:00Z",
+            "mode": "real",
+            "spec_version": "1.0",
+            "artifact_digest": "sha256:actual",
+        },
+    }
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        backend_fn=lambda **kwargs: response,
+    )
+    result = client.execute(
+        stage={"stage_id": "review-stage"},
+        plan={"strategy_id": "review-strategy", "correlation_id": "corr-review"},
+        context={"run_id": "run-review", "correlation_id": "corr-review"},
+        downstream_key="review-key",
+    )
+    assert result.get("artifact_refs") == []
+    assert result.get("checksums") == {}
+
+
+def test_missing_identities_fail_closed_through_adapter_and_removes_synthesized_fallback() -> None:
+    """AuthenticStageAdapter must remove synthesized artifact/evidence fallback from authentic results in real and sim modes."""
+    # Real mode missing artifact identities must remove synthesized fallbacks (empty refs, empty checksums)
+    response_real = {
+        "status": "succeeded",
+        "provenance": "real",
+        "backend_reference": "owner://run-review",
+        "artifact_digest": "sha256:actual",
+        "metrics": [{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
+        "receipt": {
+            "receipt_id": "receipt-review",
+            "run_id": "run-review",
+            "executor": "vectorbt_executor",
+            "correlation_id": "corr-review",
+            "completed_at": "2026-09-08T07:00:00Z",
+            "mode": "real",
+            "spec_version": "1.0",
+            "artifact_digest": "sha256:actual",
+        },
+    }
+    adapter_real = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda **kwargs: response_real,
+    )
+    result_real = adapter_real.execute(
+        stage={"stage_id": "review-stage"},
+        plan={"strategy_id": "review-strategy", "correlation_id": "corr-review"},
+        context={"run_id": "run-review", "correlation_id": "corr-review"},
+        downstream_key="review-key",
+    )
+    assert result_real.artifact_refs == []
+    assert result_real.checksums == {}
+    assert result_real.evidence_refs == []
+    assert result_real.lineage_refs == []
+
+    # Simulation mode with authentic backend result lacking artifact identities must NOT synthesize fallback refs
+    response_sim = {
+        "status": "succeeded",
+        "provenance": "simulation",
+        "backend_reference": "owner://run-review",
+        "metrics": [{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "simulation"}],
+    }
+    adapter_sim = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="simulation",
+        execute_fn=lambda **kwargs: response_sim,
+    )
+    result_sim = adapter_sim.execute(
+        stage={"stage_id": "review-stage"},
+        plan={"strategy_id": "review-strategy", "correlation_id": "corr-review"},
+        context={"run_id": "run-review", "correlation_id": "corr-review"},
+        downstream_key="review-key",
+    )
+    assert result_sim.artifact_refs == []
+    assert result_sim.checksums == {}
+    assert result_sim.evidence_refs == []
+    assert result_sim.lineage_refs == []
+
+
+
+
+def test_missing_identities_fail_closed_through_candidate_admission() -> None:
+    """AgoraResearchRouteContext.build_candidate_pool must fail closed when run lacks owner artifact identities."""
+    from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
+    from agora.research.store import MemoryResearchPlanStore
+
+    store = MemoryResearchPlanStore()
+    store.create_run(dict(
+        run_id="run-no-art",
+        plan_id="plan-no-art",
+        tenant_id="tenant",
+        user_id="user",
+        execution_status="succeeded",
+        executor="vectorbt_executor",
+        correlation_id="corr-no-art",
+        provenance="real",
+        artifact_refs=[],
+        metrics=[{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
+    ))
+    store.record_execution_receipt(dict(
+        receipt_id="receipt-no-art",
+        run_id="run-no-art",
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id="corr-no-art",
+        artifact_digest="sha256:actual",
+        spec_version="1.0",
+        completed_at="2026-09-08T07:00:00Z",
+    ))
+    ctx = AgoraResearchRouteContext(
+        store=store,
+        extract_identity=lambda *a, **k: None,
+        require_read_role=lambda *a, **k: None,
+        require_write_role=lambda *a, **k: None,
+        bff_error=lambda *a, **k: RuntimeError(str(a)),
+        utc_now=lambda: "2026-09-08T07:00:00Z",
+    )
+    pool = ctx.build_candidate_pool(
+        CandidatePoolCreateRequest(
+            operator_id="user",
+            profile="production",
+            candidates=[dict(artifact_id="some-synthetic-artifact", run_id="run-no-art", lifecycle_state="candidate")],
+        ),
+        SimpleNamespace(tenant_id="tenant", user_id="user", auth_stub=False),
+        "2026-09-08T07:00:00Z",
+    )
+    cand = pool["candidates"][0]
+    assert cand["provenance"] == "unavailable"
+    assert cand["has_real_receipt"] is False
