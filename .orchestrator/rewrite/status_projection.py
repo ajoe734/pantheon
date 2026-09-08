@@ -674,11 +674,11 @@ def mismatch_resolution_hint(item: dict[str, Any]) -> str:
             "先把 task 的 source_ref/review binding 對齊實際 reviewed/merged exact head；"
             "舊 head_sha 留在 active board 會讓 dashboard 和 supervisor 誤判。"
         )
-    if mismatch_type == "github_review_gate_missing":
+    if mismatch_type == "review_decision_evidence_missing":
         return (
             "以 assigned reviewer 對 exact PR head 重新執行 governed approve；"
-            "GitHub review 或 branch-policy-required canonical status 成功寫入前，"
-            "不得把 internal review_approved 當成 PR completion。"
+            "canonical TaskStore evidence 必須和 reviewer、intent 與 exact head 一致；"
+            "不得把缺少該證據的 review_approved 當成 PR completion。"
         )
     if mismatch_type == "worker_without_task":
         return "先檢查 dispatch/request snapshot 是否漏掉 task_id；如果是舊 worker，應重派成帶 task_id 的新 run。"
@@ -739,7 +739,7 @@ def merged_delivery_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
         "source_ref",
         "github",
         ai_status.APPROVAL_BINDING_KEY,
-        ai_status.GITHUB_REVIEW_BRIDGE_KEY,
+        ai_status.REVIEW_DECISION_EVIDENCE_KEY,
         ai_status.OPERATOR_ACCEPTANCE_KEY,
     ):
         payload = task.get(key)
@@ -784,7 +784,7 @@ def delivery_binding_stale_evidence(task: Mapping[str, Any]) -> dict[str, Any] |
     candidates: list[tuple[str, str]] = []
     for key in (
         ai_status.APPROVAL_BINDING_KEY,
-        ai_status.GITHUB_REVIEW_BRIDGE_KEY,
+        ai_status.REVIEW_DECISION_EVIDENCE_KEY,
         ai_status.OPERATOR_ACCEPTANCE_KEY,
         "github",
     ):
@@ -981,10 +981,10 @@ def detect_truth_mismatches(
         ):
             push(
                 {
-                    "id": f"github-review-gate-missing:{task['id']}",
-                    "type": "github_review_gate_missing",
+                    "id": f"review-decision-evidence-missing:{task['id']}",
+                    "type": "review_decision_evidence_missing",
                     "severity": "high",
-                    "title": "Internal acceptance 尚未綁定 GitHub review gate",
+                    "title": "Internal acceptance 尚未綁定 canonical review evidence",
                     "summary": (
                         f"{task['id']} 有 exact-head review binding 且狀態為 "
                         "review_approved，但沒有對應的 reviewer 或 Human/Ops "
@@ -1194,7 +1194,7 @@ def build_dashboard_bundle(
                 "task_status": task.get("status"),
                 "owner": task.get("owner"),
                 "reviewer": task.get("reviewer"),
-                "github_review_bridge": task.get(ai_status.GITHUB_REVIEW_BRIDGE_KEY),
+                "review_decision_evidence": task.get(ai_status.REVIEW_DECISION_EVIDENCE_KEY),
                 "expected_actor": expected_task_actor(task) if task else None,
                 "source_plane": task.get("source_plane"),
                 "source_ref": normalized_source_ref(task),
@@ -1365,36 +1365,23 @@ def sync_docs_site(state: dict[str, Any]) -> None:
     _mirror_log_tail(ai_status.LOG_FILE, ai_status.DOCS_SITE_DIR / ai_status.LOG_FILE.name, ai_status.DASHBOARD_LOG_TAIL_LINES)
 
 
-def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
-    """Return whether task evidence recognizes its exact approved PR head."""
+def review_decision_evidence_matches(task: Mapping[str, Any]) -> bool:
+    """Return whether canonical reviewer evidence binds the exact approved head."""
     ai_status = _ai_status_module()
 
     binding = task.get(ai_status.APPROVAL_BINDING_KEY)
-    evidence = task.get(ai_status.GITHUB_REVIEW_BRIDGE_KEY)
+    evidence = task.get(ai_status.REVIEW_DECISION_EVIDENCE_KEY)
     if not isinstance(binding, Mapping) or not isinstance(evidence, Mapping):
         return False
-    if str(evidence.get("decision") or "").lower() != "approve":
-        return False
-    if str(evidence.get("mode") or "") not in ai_status.GITHUB_REVIEW_MODES:
-        return False
     try:
-        if int(evidence.get("pr") or 0) != int(binding.get("pr") or 0):
-            return False
-    except (TypeError, ValueError):
+        ai_status.validate_canonical_review_evidence(
+            evidence,
+            task_id=str(task.get("id") or ""),
+            actor=str(task.get("reviewer") or ""),
+            decision="approve",
+            binding=binding,
+            intent_nonce=None,
+        )
+    except RuntimeError:
         return False
-    for key in ("head_sha", "head_branch", "base"):
-        if str(evidence.get(key) or "").strip() != str(binding.get(key) or "").strip():
-            return False
-
-    mode = str(evidence.get("mode") or "")
-    review_recorded = bool(evidence.get("github_review_id"))
-    required_status_recorded = bool(
-        evidence.get("status_id")
-        and evidence.get("status_context") == ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT
-        and str(evidence.get("status_state") or "").lower() == "success"
-    )
-    if mode == "pull_request_review":
-        return review_recorded
-    if mode == "required_commit_status":
-        return required_status_recorded
-    return review_recorded and required_status_recorded
+    return True

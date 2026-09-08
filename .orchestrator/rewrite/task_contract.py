@@ -84,7 +84,7 @@ def validate_reassignment_against_acceptance(
 # are reached through a lazy (function-body) import -- the same established
 # pattern already used for DTG-CLEAN-M1 (rewrite/status_projection.py) and
 # DTG-CLEAN-M2 (development_bridge/dev_bridge_materialize.py).
-# ``github_review_bridge_evidence_matches`` moved to rewrite/status_projection.py
+# ``review_decision_evidence_matches`` moved to rewrite/status_projection.py
 # in DTG-CLEAN-M1 (it was, at the time, only called by a dashboard-only
 # function); it is imported directly from there now that
 # exact_head_acceptance_evidence_matches also needs it, since that is a
@@ -106,7 +106,7 @@ from multi_repo_registry import (
     validate_task_repository_scope,
 )
 from rewrite import task_machine
-from rewrite.status_projection import github_review_bridge_evidence_matches
+from rewrite.status_projection import review_decision_evidence_matches
 
 
 def _ai_status_module():
@@ -164,7 +164,7 @@ def validate_handoff_pr_delivery_binding(
     *,
     review_file: str | None = None,
 ) -> dict[str, Any]:
-    """Return the one complete review-admission binding, or fail closed."""
+    """Freeze one exact PR binding for the canonical TaskStore reviewer."""
     ai_status = _ai_status_module()
 
     task_id = str(task.get("id") or "").strip()
@@ -182,6 +182,10 @@ def validate_handoff_pr_delivery_binding(
             "PR handoff requires one delivery repository with a configured "
             f"GitHub slug for {task_id or '?'}"
         )
+    # GitHub is an evidence source for the immutable PR/manifest identity at
+    # handoff, never the reviewer authority. The reviewer decision itself is
+    # later recorded in the canonical TaskStore.
+    ai_status.review_authority(config)
     github_review_bridge = ai_status._github_review_bridge_module()
     manifest_path = (
         str(review_file).strip()
@@ -208,7 +212,7 @@ def validate_handoff_pr_delivery_binding(
         )
     except github_review_bridge.GitHubReviewBridgeError as exc:
         raise SystemExit(
-            f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
+            f"Cannot freeze the proposed delivery binding for {task_id or '?'}: {exc}"
         ) from exc
     return dict(validated.as_dict())
 
@@ -648,7 +652,7 @@ def pull_request_delivery_reason(task: Mapping[str, Any]) -> str:
         return "required_artifacts"
     for key in (
         ai_status.APPROVAL_BINDING_KEY,
-        ai_status.GITHUB_REVIEW_BRIDGE_KEY,
+        ai_status.REVIEW_DECISION_EVIDENCE_KEY,
         ai_status.OPERATOR_ACCEPTANCE_KEY,
     ):
         value = task.get(key)
@@ -673,7 +677,7 @@ def _legacy_delivery_branch_pair(task: Mapping[str, Any]) -> tuple[str, str]:
     for key in (
         ai_status.DELIVERY_BINDING_KEY,
         ai_status.APPROVAL_BINDING_KEY,
-        ai_status.GITHUB_REVIEW_BRIDGE_KEY,
+        ai_status.REVIEW_DECISION_EVIDENCE_KEY,
         ai_status.OPERATOR_ACCEPTANCE_KEY,
         "github",
         "source_ref",
@@ -751,7 +755,7 @@ def review_gate_delivery_kind(
                 key
                 for key in (
                     ai_status.APPROVAL_BINDING_KEY,
-                    ai_status.GITHUB_REVIEW_BRIDGE_KEY,
+                    ai_status.REVIEW_DECISION_EVIDENCE_KEY,
                     ai_status.OPERATOR_ACCEPTANCE_KEY,
                 )
                 if isinstance(task.get(key), Mapping)
@@ -893,7 +897,7 @@ def resolve_operator_accept_delivery_binding(
         for key in (
             ai_status.DELIVERY_BINDING_KEY,
             ai_status.APPROVAL_BINDING_KEY,
-            ai_status.GITHUB_REVIEW_BRIDGE_KEY,
+            ai_status.REVIEW_DECISION_EVIDENCE_KEY,
             ai_status.OPERATOR_ACCEPTANCE_KEY,
             "github",
             "source_ref",
@@ -1046,6 +1050,6 @@ def exact_head_acceptance_evidence_matches(task: Mapping[str, Any]) -> bool:
     """Accept either independent review or the explicit operator path."""
 
     return (
-        github_review_bridge_evidence_matches(task)
+        review_decision_evidence_matches(task)
         or operator_acceptance_evidence_matches(task)
     )

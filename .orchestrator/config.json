@@ -253,6 +253,7 @@
     }
   },
   "approvals": {
+    "review_authority": "canonical_taskstore",
     "stale_pending_seconds": 1800
   },
   "schema": {
@@ -822,8 +823,7 @@
       "required_status_checks": [
         "Commit trailers",
         "Runtime mirror guard",
-        "Smoke acceptance",
-        "Pantheon canonical review gate"
+        "Smoke acceptance"
       ],
       "max_open_hours": 24
     },

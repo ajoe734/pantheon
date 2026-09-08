@@ -812,6 +812,13 @@ def is_canonical_review_gate_green(rollup: Any) -> bool:
     return False
 
 
+def canonical_taskstore_review_authority(config: Mapping[str, Any]) -> bool:
+    """Whether development review is fully owned by canonical TaskStore."""
+
+    approvals = config.get("approvals") if isinstance(config, Mapping) else None
+    return str((approvals or {}).get("review_authority") or "") == "canonical_taskstore"
+
+
 def make_integrator_tag_lookup(
     json_runner: GitHubJsonCommandRunner,
 ) -> canonical_review_gate_ci.TagLookup:
@@ -2690,7 +2697,18 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    checks = summarize_status_rollup(pr.get("statusCheckRollup"))
+    review_is_canonical = canonical_taskstore_review_authority(config)
+    rollup = pr.get("statusCheckRollup")
+    checks = summarize_status_rollup(
+        [
+            item
+            for item in rollup
+            if not review_is_canonical
+            or check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT
+        ]
+        if isinstance(rollup, list)
+        else rollup
+    )
     other_failing = [
         c for c in checks.failing if c != github_review_bridge.CANONICAL_REVIEW_CONTEXT
     ]
@@ -2720,7 +2738,7 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    if not is_canonical_review_gate_green(pr.get("statusCheckRollup")):
+    if not review_is_canonical and not is_canonical_review_gate_green(rollup):
         repo_slug = (
             github_review_bridge.repository_from_pull_request_url(url)
             or candidate.repository_slug

@@ -1,9 +1,14 @@
 # Canonical Review Publication and Exact-Version GitHub Gate Recovery
 
-Status: active operating rule
+Status: historical — superseded for development reviewer decisions by
+[`canonical-taskstore-review-authority.md`](canonical-taskstore-review-authority.md).
 Task: OPS-REVIEW-PROOF-001
 Plan source: `sha256:07b330d425946fb363e8b94a0e707595bb0e3c7af6be0d161ad9ab88705471f0`
 (`/tmp/pantheon-tooling-root-repair-20260907/REVIEW_PROOF_PLAN.md`)
+
+> This records the former GitHub review-publication design. GitHub remains a
+> delivery transport and handoff evidence source, but its review/status proof
+> is no longer a development review authority or an integration prerequisite.
 
 ## The Contradictions and Defects This Closes
 
