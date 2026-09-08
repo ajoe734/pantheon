@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dispatch_policy
 from rewrite import integration_receipt
+from scripts.git import auto_integrator
 from dispatch_policy import (
     ALLOWLISTED_EXECUTION_RESOURCES,
     DEFAULT_ACTIVE_WORKER_STATUSES,
@@ -882,3 +883,226 @@ def test_consumer_and_dispatch_agree_on_same_canonical_receipt() -> None:
         == integration_receipt.integration_receipt_consumes_candidate(t_no_receipt, config=config)
         is False
     )
+
+
+def test_end_to_end_parity_changed_registry_slug() -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "integration_receipt": {
+            "version": 1,
+            "result": "landed",
+            "observation": "reconciled_existing_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T05:00:00Z",
+            "source": "canonical_auto_integrator",
+        },
+    }
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute_plans": {
+                    "repo": "example/changed-frontend",
+                    "default_branch": "dev",
+                }
+            }
+        }
+    }
+    # 1. Stale slug in receipt: scheduler suppresses finalization, auto-integrator selects candidate
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
+    candidates = auto_integrator.integration_candidates({"tasks": [task]}, config=config)
+    assert [c.task_id for c in candidates] == [task["id"]]
+
+    # 2. Reconciled slug in receipt: scheduler permits finalization, auto-integrator consumes candidate
+    reconciled_task = deepcopy(task)
+    reconciled_task["integration_receipt"]["repository"] = "example/changed-frontend"
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, reconciled_task) is False
+    assert auto_integrator.integration_candidates({"tasks": [reconciled_task]}, config=config) == []
+
+
+def test_end_to_end_parity_custom_repository() -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
+    task = {
+        "id": "CUSTOM-REPO-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "target_repo": "custom_frontend",
+        "generation": 1,
+        "review_binding": {
+            "pr": 12,
+            "head_sha": head_sha,
+            "head_branch": "task/CUSTOM-REPO-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 12,
+            "head_sha": head_sha,
+            "head_branch": "task/CUSTOM-REPO-001",
+            "base": "dev",
+        },
+    }
+    config = {
+        "coordination": {
+            "repositories": {
+                "custom_frontend": {
+                    "repo": "example/custom-frontend",
+                    "default_branch": "dev",
+                    "local_path": "/tmp/example-custom-frontend",
+                }
+            }
+        }
+    }
+    # 1. Unreceipted: scheduler suppresses finalization, auto-integrator selects candidate
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
+    candidates = auto_integrator.integration_candidates({"tasks": [task]}, config=config)
+    assert [c.task_id for c in candidates] == [task["id"]]
+
+    # 2. Valid current receipt: scheduler permits finalization, auto-integrator consumes candidate
+    receipted_task = deepcopy(task)
+    receipted_task["integration_receipt"] = {
+        "version": 1,
+        "result": "landed",
+        "observation": "performed_merge",
+        "task_generation": 1,
+        "repository": "example/custom-frontend",
+        "target_branch": "dev",
+        "pr": 12,
+        "head_sha": head_sha,
+        "merge_commit_sha": merge_sha,
+        "observed_at": "2026-09-08T05:00:00Z",
+        "source": "canonical_auto_integrator",
+    }
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, receipted_task) is False
+    assert auto_integrator.integration_candidates({"tasks": [receipted_task]}, config=config) == []
+
+
+@pytest.mark.parametrize(
+    "repositories",
+    [
+        [],
+        ["bad-entry"],
+        {"execute_plans": 42},
+        {"execute_plans": {"repo": None}},
+        {"execute_plans": {"default_branch": None}},
+    ],
+)
+def test_end_to_end_parity_malformed_config(repositories: Any) -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    merge_sha = "fda58bb05052c90e0e18310666ad174b5ab3ff51"
+    task = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "integration_receipt": {
+            "version": 1,
+            "result": "landed",
+            "observation": "reconciled_existing_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T05:00:00Z",
+            "source": "canonical_auto_integrator",
+        },
+    }
+    config = {"coordination": {"repositories": repositories}}
+    # Fails closed on malformed config: scheduler suppresses finalization without crashing
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task) is True
+    # Auto-integrator does not crash and selects candidate
+    candidates = auto_integrator.integration_candidates({"tasks": [task]}, config=config)
+    assert [c.task_id for c in candidates] == [task["id"]]
+
+
+def test_end_to_end_parity_compose_with_receipt_repair_task() -> None:
+    head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+    task_fe = {
+        "id": "OPS-FE-REVIEW-PROOF-001",
+        "status": "review_approved",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "target_repo": "execute-plans",
+        "generation": 1,
+        "review_binding": {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+        "delivery_binding": {
+            "kind": "pull_request",
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+            "base": "dev",
+        },
+    }
+    task_repair = {
+        "id": "OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001",
+        "status": "in_progress",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "target_repo": "pantheon",
+        "generation": 1,
+    }
+    config = {
+        "coordination": {
+            "repositories": {
+                "execute_plans": {
+                    "repo": "ajoe734/execute-plans",
+                    "default_branch": "dev",
+                }
+            }
+        }
+    }
+
+    # Scheduler suppresses finalization for unreceipted execute-plans task
+    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_fe) is True
+
+    # Integrator sees the unreceipted candidate for receipt repair
+    candidates = auto_integrator.integration_candidates({"tasks": [task_fe, task_repair]}, config=config)
+    assert [c.task_id for c in candidates] == [task_fe["id"]]
