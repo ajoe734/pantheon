@@ -41,6 +41,7 @@ Acceptance criteria covered (pkt-pantheon-structural-closure-functional-v2-20260
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -317,3 +318,101 @@ def test_portfolio_exposes_unavailable_owner_regardless_of_row_order(unavailable
     surface = context["surfaces"]["portfolio_book"]
     assert surface["status"] != "ok", surface
     assert "owner-2 offline" in repr(surface), surface
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_every_unavailable_owner_retains_identifiable_provenance(reverse: bool) -> None:
+    # aggregate("worst" via max()) used to collapse two same-subject
+    # unavailable owners into a single winning record, silently dropping the
+    # loser's owner/source_version/correlation_id/observed_at -- and which
+    # owner survived depended on row order (MGMT-READ-001 fifth review).
+    rows = [
+        dict(
+            runtime_id=f"r{i}",
+            owner=f"owner-{i}",
+            status="unavailable",
+            source_kind="unavailable",
+            source_version=f"version-{i}",
+            correlation_id=f"correlation-{i}",
+            observed_at="2026-09-07T18:00:00Z",
+            degradation_reason="provider offline",
+        )
+        for i in (1, 2)
+    ]
+    if reverse:
+        rows.reverse()
+    rows_result, obs = ManagementService(
+        read_store=SimpleNamespace(list_runtime_bindings=lambda: rows), utc_now=lambda: NOW
+    ).get_context_runtime_bindings()
+    assert rows_result == rows
+    assert obs["status"] == "unavailable"
+    contributing = obs["contributing_observations"]
+    assert len(contributing) == 2
+    for row in rows:
+        assert any(
+            candidate["owner"] == row["owner"]
+            and candidate["source_version"] == row["source_version"]
+            and candidate["correlation_id"] == row["correlation_id"]
+            and candidate["observed_at"] == row["observed_at"]
+            for candidate in contributing
+        ), (row, contributing)
+
+
+def test_mixed_degraded_and_unavailable_owners_retain_both_provenances() -> None:
+    degraded = dict(
+        runtime_id="r1",
+        owner="owner-degraded",
+        status="degraded",
+        source_kind="replayed",
+        source_version="v-degraded",
+        correlation_id="c-degraded",
+        observed_at="2026-09-07T17:00:00Z",
+        degradation_reason="replay lag",
+    )
+    unavailable = dict(
+        runtime_id="r2",
+        owner="owner-unavailable",
+        status="unavailable",
+        source_kind="unavailable",
+        source_version="v-unavailable",
+        correlation_id="c-unavailable",
+        observed_at="2026-09-07T18:00:00Z",
+        degradation_reason="provider offline",
+    )
+    _rows, obs = ManagementService(
+        read_store=SimpleNamespace(list_runtime_bindings=lambda: [degraded, unavailable]), utc_now=lambda: NOW
+    ).get_context_runtime_bindings()
+    assert obs["status"] == "unavailable"
+    contributing = {candidate["owner"]: candidate for candidate in obs["contributing_observations"]}
+    assert contributing["owner-degraded"]["status"] == "degraded"
+    assert contributing["owner-degraded"]["source_version"] == "v-degraded"
+    assert contributing["owner-degraded"]["correlation_id"] == "c-degraded"
+    assert contributing["owner-unavailable"]["status"] == "unavailable"
+    assert contributing["owner-unavailable"]["source_version"] == "v-unavailable"
+    assert contributing["owner-unavailable"]["correlation_id"] == "c-unavailable"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_portfolio_surface_threads_every_owner_identity_through_json(reverse: bool) -> None:
+    rows = [
+        dict(
+            runtime_id=f"r{i}",
+            owner=f"owner-{i}",
+            status="unavailable",
+            source_kind="unavailable",
+            source_version=f"version-{i}",
+            correlation_id=f"correlation-{i}",
+            observed_at="2026-09-07T18:00:00Z",
+            degradation_reason="provider offline",
+        )
+        for i in (1, 2)
+    ]
+    if reverse:
+        rows.reverse()
+    context = _collect_context(SimpleNamespace(list_runtime_bindings=lambda: rows, list_capital_pools=lambda: []))
+    surface = context["surfaces"]["portfolio_book"]
+    assert surface["status"] == "unavailable"
+    encoded = json.dumps(context, default=list)
+    for row in rows:
+        for field in ("owner", "source_version", "correlation_id"):
+            assert row[field] in encoded, (field, row[field], surface)

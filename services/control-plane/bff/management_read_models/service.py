@@ -2075,6 +2075,7 @@ class ManagementService:
         freshness_seconds: Optional[float] = None,
         degradation_reason: Optional[str] = None,
         correlation_id: Optional[str] = None,
+        contributing_observations: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         if observed_at is not None and freshness_seconds is None:
             observed_at, freshness_seconds = self._observed_at_freshness(observed_at)
@@ -2089,6 +2090,7 @@ class ManagementService:
             freshness_seconds=freshness_seconds,
             degradation_reason=degradation_reason,
             correlation_id=correlation_id,
+            contributing_observations=contributing_observations or [],
         ).model_dump()
 
     _STATUS_RANK: Dict[str, int] = {"ok": 0, "degraded": 1, "unavailable": 2}
@@ -2101,6 +2103,16 @@ class ManagementService:
         # (and the reverse when reversed), so availability depended on
         # record order instead of the worst actual observation.
         return [item for item in items if isinstance(item, dict) and "source_kind" in item]
+
+    _RECORD_ID_KEYS = ("runtime_id", "binding_id", "pool_id", "decision_id", "incident_id", "id")
+
+    @classmethod
+    def _record_subject_id(cls, record: Dict[str, Any], subject_type: str) -> str:
+        for key in cls._RECORD_ID_KEYS:
+            value = record.get(key)
+            if value:
+                return str(value)
+        return subject_type
 
     def _typed_context_list(
         self,
@@ -2179,6 +2191,27 @@ class ManagementService:
                 if record.get("degradation_reason")
                 and str(record.get("status") or status) != "ok"
             ]
+            # The aggregate above reports only the single worst-status
+            # winner, which silently drops a second same-tenant owner's
+            # identity/version/correlation/observed_at when more than one
+            # record contributes (e.g. two distinct unavailable owners).
+            # Carry an identifiable typed observation for every
+            # provenance-bearing record so no contributing owner is
+            # discarded regardless of row order or mixed statuses.
+            contributing_observations = [
+                self._context_observation(
+                    subject_type=subject_type,
+                    subject_id=self._record_subject_id(record, subject_type),
+                    status=str(record.get("status") or status),
+                    owner=str(record.get("owner") or owner),
+                    source_kind=str(record.get("source_kind") or "live"),
+                    source_version=record.get("source_version"),
+                    observed_at=record.get("observed_at"),
+                    degradation_reason=record.get("degradation_reason"),
+                    correlation_id=record.get("correlation_id"),
+                )
+                for record in provenance_records
+            ]
             return items, self._context_observation(
                 subject_type=subject_type,
                 status=worst_status,
@@ -2188,6 +2221,7 @@ class ManagementService:
                 observed_at=worst.get("observed_at"),
                 degradation_reason="; ".join(degradation_reasons) or worst.get("degradation_reason"),
                 correlation_id=worst.get("correlation_id"),
+                contributing_observations=contributing_observations,
             )
         if status == "ok":
             return items, self._context_observation(

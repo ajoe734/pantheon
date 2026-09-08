@@ -42,6 +42,12 @@ class ManagementObservation(BaseModel):
     freshness_seconds: Optional[float] = None
     degradation_reason: Optional[str] = None
     correlation_id: Optional[str] = None
+    # Every provenance-bearing record that contributed to this aggregate
+    # observation, so a second same-tenant owner's identity/version/
+    # correlation/observed_at is never discarded when the aggregate above
+    # only reports the single worst-status winner (SD sec7.1 amendment,
+    # MGMT-READ-001 fifth review).
+    contributing_observations: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # Formula jobs models
