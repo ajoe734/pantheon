@@ -399,98 +399,141 @@ class TwelveLoopTruthProjector:
         terminal_receipts = [r for r in receipts if r.receipt_type == "terminal"]
         next_receipts = [r for r in receipts if r.receipt_type == "next_consumer"]
 
-        # Select stimulus:
-        # Prefer higher provenance, then latest observed_at, then receipt_id
-        chosen_stimulus: Optional[CanonicalLoopReceipt] = None
-        if stimulus_receipts:
-            chosen_stimulus = max(
-                stimulus_receipts,
-                key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
-            )
+        # Form deterministic candidate chains:
+        # Each candidate chain is a tuple (stimulus, terminal, next_consumer)
+        candidates: List[Tuple[Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt]]] = []
+        matched_stimulus_ids: Set[str] = set()
 
-        # Select terminal:
-        # 1. Backfill cannot replace newer live truth. If stimulus is live or key has live receipts,
-        #    terminal must not be backfill.
-        # 2. Terminal must be causally and temporally compatible with stimulus.
-        #    Causation continuity: if stimulus exists and terminal has causation_id,
-        #    terminal.causation_id must match stimulus.receipt_id or stimulus.causation_id.
-        valid_terminals: List[CanonicalLoopReceipt] = []
-        for r in terminal_receipts:
-            if chosen_stimulus is not None:
-                min_prov = provenance_rank.get(chosen_stimulus.provenance, 0)
-                if provenance_rank.get(r.provenance, 0) < min_prov:
+        # 1. Chains anchored on terminal executions
+        for t in terminal_receipts:
+            t_prov = provenance_rank.get(t.provenance, 0)
+            # Find matching stimulus for terminal t:
+            # - stimulus provenance cannot be higher than terminal (or <= t_prov)
+            # - stimulus must not be observed in the distant future relative to terminal
+            # - causation continuity: if terminal specifies causation_id, it must match stimulus
+            matching_s: List[CanonicalLoopReceipt] = []
+            for s in stimulus_receipts:
+                s_prov = provenance_rank.get(s.provenance, 0)
+                if s_prov > t_prov:
                     continue
-                if r.observed_at < (chosen_stimulus.observed_at - timedelta(seconds=self.max_future_skew_seconds)):
+                if s.observed_at > t.observed_at + timedelta(seconds=self.max_future_skew_seconds):
                     continue
-                if r.causation_id:
-                    allowed_causes = {chosen_stimulus.receipt_id}
-                    if chosen_stimulus.causation_id:
-                        allowed_causes.add(chosen_stimulus.causation_id)
-                    if r.causation_id not in allowed_causes:
+                if t.causation_id:
+                    allowed_s_causes = {s.receipt_id}
+                    if s.causation_id:
+                        allowed_s_causes.add(s.causation_id)
+                    if t.causation_id not in allowed_s_causes:
                         continue
+                matching_s.append(s)
+
+            s_for_t: Optional[CanonicalLoopReceipt] = None
+            if matching_s:
+                s_for_t = max(
+                    matching_s,
+                    key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
+                )
+                matched_stimulus_ids.add(s_for_t.receipt_id)
+
+            # Find matching next_consumer for terminal t:
+            matching_n: List[CanonicalLoopReceipt] = []
+            for n in next_receipts:
+                n_prov = provenance_rank.get(n.provenance, 0)
+                if n_prov < t_prov:
+                    continue
+                if n.observed_at < t.observed_at - timedelta(seconds=self.max_future_skew_seconds):
+                    continue
+                if n.causation_id:
+                    allowed_n_causes = {t.receipt_id}
+                    if t.causation_id:
+                        allowed_n_causes.add(t.causation_id)
+                    if s_for_t:
+                        allowed_n_causes.add(s_for_t.receipt_id)
+                        if s_for_t.causation_id:
+                            allowed_n_causes.add(s_for_t.causation_id)
+                    if n.causation_id not in allowed_n_causes:
+                        continue
+                matching_n.append(n)
+
+            n_for_t: Optional[CanonicalLoopReceipt] = None
+            if matching_n:
+                n_for_t = max(
+                    matching_n,
+                    key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
+                )
+
+            candidates.append((s_for_t, t, n_for_t))
+
+        # 2. Chains anchored on unmatched stimuli (e.g. open/in-progress triggers)
+        for s in stimulus_receipts:
+            if s.receipt_id in matched_stimulus_ids:
+                continue
+
+            s_prov = provenance_rank.get(s.provenance, 0)
+            # Find matching next_consumer for stimulus s (orphan next linking directly to stimulus):
+            matching_n_s: List[CanonicalLoopReceipt] = []
+            for n in next_receipts:
+                n_prov = provenance_rank.get(n.provenance, 0)
+                if n_prov < s_prov:
+                    continue
+                if n.observed_at < s.observed_at - timedelta(seconds=self.max_future_skew_seconds):
+                    continue
+                if n.causation_id:
+                    allowed_n_causes = {s.receipt_id}
+                    if s.causation_id:
+                        allowed_n_causes.add(s.causation_id)
+                    if n.causation_id not in allowed_n_causes:
+                        continue
+                matching_n_s.append(n)
+
+            n_for_s: Optional[CanonicalLoopReceipt] = None
+            if matching_n_s:
+                n_for_s = max(
+                    matching_n_s,
+                    key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
+                )
+
+            candidates.append((s, None, n_for_s))
+
+        # 3. Chains anchored on orphan next_consumer receipts (if no candidates yet)
+        if not candidates:
+            for n in next_receipts:
+                candidates.append((None, None, n))
+
+        def candidate_key(
+            cand: Tuple[Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt]]
+        ) -> Tuple[Any, ...]:
+            s_cand, t_cand, n_cand = cand
+            accepted = [r for r in (s_cand, t_cand, n_cand) if r is not None]
+            c_prov = max(provenance_rank.get(r.provenance, 0) for r in accepted) if accepted else 0
+
+            # Execution reference time:
+            # A terminal represents the execution milestone.
+            # A standalone stimulus represents the start of a pending/open execution.
+            if t_cand is not None:
+                c_time = t_cand.observed_at
+                is_term = 1
+                is_fail = 1 if (t_cand.status or "").lower() in _TERMINAL_FAILURE_STATUSES else 0
+                cid = t_cand.receipt_id
+            elif s_cand is not None:
+                c_time = s_cand.observed_at
+                is_term = 0
+                is_fail = 0
+                cid = s_cand.receipt_id
+            elif n_cand is not None:
+                c_time = n_cand.observed_at
+                is_term = 0
+                is_fail = 1 if (n_cand.status or "").lower() in _CONSUMER_FAILURE_STATUSES else 0
+                cid = n_cand.receipt_id
             else:
-                if has_live_receipt and r.provenance == "backfill":
-                    continue
-            valid_terminals.append(r)
+                c_time = datetime.min.replace(tzinfo=timezone.utc)
+                is_term = 0
+                is_fail = 0
+                cid = ""
 
-        chosen_terminal: Optional[CanonicalLoopReceipt] = None
-        if valid_terminals:
-            chosen_terminal = max(
-                valid_terminals,
-                key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
-            )
+            return (c_prov, c_time, is_term, is_fail, cid)
 
-        # Select next_consumer:
-        # 1. Provenance: cannot be lower rank than chosen_stimulus or chosen_terminal.
-        # 2. Temporal: cannot precede chosen_terminal (or chosen_stimulus) by more than max_future_skew_seconds.
-        # 3. Causation continuity:
-        #    If chosen_terminal exists and next_consumer has causation_id:
-        #      next_consumer.causation_id must match chosen_terminal.receipt_id (or chosen_terminal.causation_id,
-        #      or chosen_stimulus.receipt_id).
-        #    If chosen_terminal does not exist but chosen_stimulus exists and next_consumer has causation_id:
-        #      next_consumer.causation_id must match chosen_stimulus.receipt_id (or chosen_stimulus.causation_id).
-        valid_nexts: List[CanonicalLoopReceipt] = []
-        for r in next_receipts:
-            if chosen_stimulus is not None:
-                min_prov = provenance_rank.get(chosen_stimulus.provenance, 0)
-                if provenance_rank.get(r.provenance, 0) < min_prov:
-                    continue
-            if chosen_terminal is not None:
-                min_prov = provenance_rank.get(chosen_terminal.provenance, 0)
-                if provenance_rank.get(r.provenance, 0) < min_prov:
-                    continue
-                if r.observed_at < (chosen_terminal.observed_at - timedelta(seconds=self.max_future_skew_seconds)):
-                    continue
-                if r.causation_id:
-                    allowed_consumer_causes = {chosen_terminal.receipt_id}
-                    if chosen_terminal.causation_id:
-                        allowed_consumer_causes.add(chosen_terminal.causation_id)
-                    if chosen_stimulus:
-                        allowed_consumer_causes.add(chosen_stimulus.receipt_id)
-                        if chosen_stimulus.causation_id:
-                            allowed_consumer_causes.add(chosen_stimulus.causation_id)
-                    if r.causation_id not in allowed_consumer_causes:
-                        continue
-            elif chosen_stimulus is not None:
-                if r.observed_at < (chosen_stimulus.observed_at - timedelta(seconds=self.max_future_skew_seconds)):
-                    continue
-                if r.causation_id:
-                    allowed_consumer_causes = {chosen_stimulus.receipt_id}
-                    if chosen_stimulus.causation_id:
-                        allowed_consumer_causes.add(chosen_stimulus.causation_id)
-                    if r.causation_id not in allowed_consumer_causes:
-                        continue
-            else:
-                if has_live_receipt and r.provenance == "backfill":
-                    continue
-            valid_nexts.append(r)
-
-        chosen_next: Optional[CanonicalLoopReceipt] = None
-        if valid_nexts:
-            chosen_next = max(
-                valid_nexts,
-                key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
-            )
+        chosen_candidate = max(candidates, key=candidate_key)
+        chosen_stimulus, chosen_terminal, chosen_next = chosen_candidate
 
         # Determine owner
         loop_tuple = CANONICAL_TWELVE_LOOPS.get(loop_id)
@@ -631,12 +674,16 @@ class TwelveLoopTruthProjector:
         self._observations.clear()
         for key, receipts_dict in self._receipts_by_key.items():
             obs = self._reduce_key(key, receipts_dict, now=now)
-            self._observations[key] = obs
             if self.store is not None:
                 try:
                     self.store.upsert_observation(obs)
+                    durable_obs = self.store.get_observation(obs.release_id, obs.correlation_id, obs.loop_id)
+                    if durable_obs is not None:
+                        obs = durable_obs
+                        self._recompute_freshness(obs, now=now)
                 except Exception as exc:
                     logger.warning("Failed to upsert observation to store during rebuild: %s", exc)
+            self._observations[key] = obs
         return list(self._observations.values())
 
     def get_observation(

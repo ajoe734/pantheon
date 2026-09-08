@@ -34,7 +34,9 @@
       "Fresh projector instances wired to Postgres reload full truth and rebuild identical observations",
       "Receipt-set ordering CAS fences stale reduction writers in Memory and PostgreSQL stores, preventing interleaved equal-timestamp writes from overwriting failed observations with stale complete status",
       "Late stimulus arrival properly invalidates old reduction chain, and store receipt-set containment ensures incremental reduction equals rebuild",
-      "Atomic resolution of persisted receipt identity after insert rejects conflicting key/type and prevents projection of unpersisted duplicate content"
+      "Atomic resolution of persisted receipt identity after insert rejects conflicting key/type and prevents projection of unpersisted duplicate content",
+      "Deterministic candidate chain and provenance selection ensures ignored lower-provenance stimulus (replay/backfill) cannot invalidate or replace live terminal chains, preserving incremental equals rebuild and store durability",
+      "MemoryTwelveLoopStore and PostgresTwelveLoopStore enforce receipt_ids containment CAS before provenance fencing, guaranteeing persistence safety across concurrent and out-of-order writes"
     ],
     "mandatory_deletions": {
       "static_or_incident_derived_success_substitution": "Static or incident-derived success substitution excised; unobserved or failed loops remain explicit without synthetic fallback."
@@ -45,21 +47,27 @@
     "commands": [
       {
         "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
-        "result": "30 passed (including equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection in memory store)",
-        "executed": 30,
-        "collected": 30
+        "result": "33 passed (including late lower-provenance stimulus preservation, equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection in memory store)",
+        "executed": 33,
+        "collected": 33
       },
       {
         "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. python3 -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
-        "result": "10 passed (including real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
-        "executed": 10,
-        "collected": 10
+        "result": "13 passed (including postgres late lower-provenance stimulus preservation, postgres receipt-set containment and provenance fencing, real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
+        "executed": 13,
+        "collected": 13
       },
       {
         "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
-        "result": "43 passed, 137 warnings",
+        "result": "43 passed, 138 warnings",
         "executed": 43,
         "collected": 43
+      },
+      {
+        "command": "timeout 120 env PYTHONPATH=. /tmp/bff-package-001-venv/bin/python -m pytest /tmp/test_loop_truth_5094dc7_review.py -q --tb=short",
+        "result": "4 passed (independent review reproduction suite for replay and backfill on memory and postgres stores)",
+        "executed": 4,
+        "collected": 4
       },
       {
         "command": "git diff --check",

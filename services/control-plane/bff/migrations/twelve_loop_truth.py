@@ -114,17 +114,17 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
         key = (obs.release_id, obs.correlation_id, obs.loop_id)
         existing = self._observations.get(key)
         if existing is not None:
+            # 1. Receipt-set ordering: new observation must contain all receipts of existing observation
+            existing_receipts = set(existing.receipt_ids or [])
+            new_receipts = set(obs.receipt_ids or [])
+            if not existing_receipts.issubset(new_receipts):
+                return
+            # 2. Provenance fencing: new observation cannot have lower provenance than existing observation
             prov_rank = {"backfill": 0, "replay": 1, "live": 2}
             new_prov = prov_rank.get(obs.provenance, 0)
             cur_prov = prov_rank.get(existing.provenance, 0)
             if new_prov < cur_prov:
                 return
-            if new_prov == cur_prov:
-                # Receipt-set ordering: new observation must contain all receipts of existing observation
-                existing_receipts = set(existing.receipt_ids or [])
-                new_receipts = set(obs.receipt_ids or [])
-                if not existing_receipts.issubset(new_receipts):
-                    return
         import copy
         self._observations[key] = copy.copy(obs)
 
@@ -407,13 +407,10 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 causation_id = EXCLUDED.causation_id,
                 receipt_ids = EXCLUDED.receipt_ids,
                 updated_at = clock_timestamp()
-            WHERE (
-                CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END >
+            WHERE EXCLUDED.receipt_ids @> COALESCE({self.schema}.twelve_loop_observations.receipt_ids, '[]'::jsonb)
+            AND (
+                CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END >=
                 CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
-            ) OR (
-                CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END =
-                CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
-                AND EXCLUDED.receipt_ids @> COALESCE({self.schema}.twelve_loop_observations.receipt_ids, '[]'::jsonb)
             );
         """
         with self._connect() as conn:
@@ -476,13 +473,10 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                         causation_id = EXCLUDED.causation_id,
                         receipt_ids = EXCLUDED.receipt_ids,
                         updated_at = clock_timestamp()
-                    WHERE (
-                        CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END >
+                    WHERE EXCLUDED.receipt_ids @> COALESCE({self.schema}.twelve_loop_observations.receipt_ids, '[]'::jsonb)
+                    AND (
+                        CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END >=
                         CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
-                    ) OR (
-                        CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END =
-                        CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
-                        AND EXCLUDED.receipt_ids @> COALESCE({self.schema}.twelve_loop_observations.receipt_ids, '[]'::jsonb)
                     );
                 """
                 await conn.execute(

@@ -467,3 +467,98 @@ def test_postgres_duplicate_race_cannot_project_unpersisted_cross_key_receipt() 
     store.record_receipt = interleave
     with pytest.raises(ValueError, match="Conflicting receipt identity"):
         p.ingest_receipt(make("t", "terminal", "completed"))
+
+
+@pytest.mark.parametrize("provenance", ["replay", "backfill"])
+def test_postgres_late_lower_provenance_stimulus_keeps_incremental_rebuild_equal(provenance: str) -> None:
+    """P1 regression: late lower-provenance stimulus cannot invalidate live terminal chain in PostgreSQL store."""
+    from uuid import uuid4
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    prefix = "pg-late-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+
+    def receipt(name: str, kind: str, status: str = "", r_prov: str = "live", offset: int = 0, cause: Optional[str] = None) -> CanonicalLoopReceipt:
+        return CanonicalLoopReceipt(
+            receipt_id=prefix + name,
+            receipt_type=kind,
+            loop_id=1,
+            correlation_id=prefix,
+            release_id=prefix,
+            owner="review",
+            provenance=r_prov,
+            status=status,
+            observed_at=now + timedelta(seconds=offset),
+            causation_id=prefix + cause if cause else None,
+        )
+
+    projector = TwelveLoopTruthProjector(store, auto_load=False)
+    projector.ingest_receipts([
+        receipt("t", "terminal", "completed", offset=-20, cause="original-stimulus"),
+        receipt("n", "next_consumer", "accepted", offset=-10, cause="t"),
+    ])
+    assert projector.get_observation(prefix, prefix, 1).status == "complete"
+    incremental = projector.ingest_receipt(receipt("late-stimulus", "stimulus", r_prov=provenance, offset=-30))
+    rebuilt = projector.rebuild()[0]
+    durable = store.get_observation(prefix, prefix, 1)
+    assert incremental.to_dict() == rebuilt.to_dict() == durable.to_dict()
+    assert incremental.status == "complete"
+    assert incremental.provenance == "live"
+    assert incremental.terminal_id == prefix + "t"
+    assert incremental.next_consumer_receipt_id == prefix + "n"
+    assert set(incremental.receipt_ids) == {prefix + "t", prefix + "n", prefix + "late-stimulus"}
+
+
+def test_postgres_receipt_set_containment_and_provenance_fencing() -> None:
+    """P1 regression: PostgresTwelveLoopStore enforces receipt_ids containment and provenance fencing in SQL."""
+    from uuid import uuid4
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    prefix = "pg-fence-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+    obs_base = LoopObservation(
+        release_id=prefix,
+        correlation_id=prefix,
+        loop_id=1,
+        owner="review",
+        status="complete",
+        freshness_status="fresh",
+        provenance="live",
+        observed_at=now,
+        receipt_ids=[f"{prefix}-1", f"{prefix}-2"],
+    )
+    store.upsert_observation(obs_base)
+    assert store.get_observation(prefix, prefix, 1).status == "complete"
+
+    # 1. Non-superset update with live provenance rejected by @>
+    obs_stale = LoopObservation(
+        release_id=prefix,
+        correlation_id=prefix,
+        loop_id=1,
+        owner="review",
+        status="failed",
+        freshness_status="fresh",
+        provenance="live",
+        observed_at=now + timedelta(seconds=10),
+        receipt_ids=[f"{prefix}-3"],
+    )
+    store.upsert_observation(obs_stale)
+    assert store.get_observation(prefix, prefix, 1).status == "complete"
+
+    # 2. Superset update with lower provenance rejected by >= provenance
+    obs_backfill = LoopObservation(
+        release_id=prefix,
+        correlation_id=prefix,
+        loop_id=1,
+        owner="review",
+        status="failed",
+        freshness_status="fresh",
+        provenance="backfill",
+        observed_at=now + timedelta(seconds=10),
+        receipt_ids=[f"{prefix}-1", f"{prefix}-2", f"{prefix}-3"],
+    )
+    store.upsert_observation(obs_backfill)
+    assert store.get_observation(prefix, prefix, 1).provenance == "live"
+    assert store.get_observation(prefix, prefix, 1).status == "complete"
