@@ -737,3 +737,264 @@ def test_build_canonical_research_backend_clients_rejects_missing_endpoints(monk
     # With allow_missing_endpoints=True, it constructs clients without error
     clients = build_canonical_research_backend_clients(mode="real", allow_missing_endpoints=True)
     assert len(clients) == len(ALLOWLISTED_STAGE_BACKENDS)
+
+
+def test_receipt_mode_mismatch_with_backend_provenance_raises() -> None:
+    """When receipt mode contradicts observed backend provenance, AuthenticStageAdapter must raise RuntimeError."""
+    run_id = "run-mode-mismatch-001"
+    corr_id = "corr-mode-mismatch-001"
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "outcome": "succeeded",
+            "provenance": "simulation",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:" + "b" * 64,
+            "metrics": [{"name": "sharpe", "value": 1.5, "provenance": "simulation"}],
+            "receipt": {
+                "receipt_id": "rcpt-mismatch-01",
+                "run_id": run_id,
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": corr_id,
+                "completed_at": "2026-09-08T00:00:00Z",
+                "backend_reference": "vectorbt://runs/1",
+                "artifact_digest": "sha256:" + "b" * 64,
+                "spec_version": "1.0",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="contradicts observed stage provenance"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id=run_id, correlation_id=corr_id),
+            downstream_key="key-mismatch-1",
+        )
+
+
+def test_receipt_missing_completed_at_raises() -> None:
+    """AuthenticStageAdapter must reject receipt with missing completed_at."""
+    run_id = "run-missing-ts-001"
+    corr_id = "corr-missing-ts-001"
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:" + "c" * 64,
+            "metrics": [{"name": "sharpe", "value": 1.5}],
+            "receipt": {
+                "receipt_id": "rcpt-no-ts",
+                "run_id": run_id,
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": corr_id,
+                "completed_at": None,
+                "spec_version": "1.0",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="missing completed_at timestamp"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id=run_id, correlation_id=corr_id),
+            downstream_key="key-no-ts",
+        )
+
+
+def test_receipt_invalid_completed_at_raises() -> None:
+    """AuthenticStageAdapter must reject receipt with invalid completed_at timestamp format."""
+    run_id = "run-bad-ts-001"
+    corr_id = "corr-bad-ts-001"
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:" + "d" * 64,
+            "metrics": [{"name": "sharpe", "value": 1.5}],
+            "receipt": {
+                "receipt_id": "rcpt-bad-ts",
+                "run_id": run_id,
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": corr_id,
+                "completed_at": "not-an-iso-timestamp",
+                "spec_version": "1.0",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="invalid completed_at timestamp"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id=run_id, correlation_id=corr_id),
+            downstream_key="key-bad-ts",
+        )
+
+
+def test_metric_provenance_mismatch_raises() -> None:
+    """AuthenticStageAdapter must reject backend output if any metric provenance contradicts observed provenance."""
+    run_id = "run-metric-prov-001"
+    corr_id = "corr-metric-prov-001"
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "provenance": "real",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:" + "e" * 64,
+            "metrics": [{"name": "sharpe", "value": 1.5, "provenance": "simulation"}],
+            "receipt": {
+                "receipt_id": "rcpt-metric-mismatch",
+                "run_id": run_id,
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": corr_id,
+                "completed_at": "2026-09-08T00:00:00Z",
+                "spec_version": "1.0",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="contradicts observed stage provenance"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id=run_id, correlation_id=corr_id),
+            downstream_key="key-metric-mismatch",
+        )
+
+
+def test_resolve_run_provenance_mismatched_mode_or_bad_completed_at_fails_closed() -> None:
+    """resolve_run_provenance must fail closed (unavailable, None) if run provenance contradicts receipt mode or completed_at is invalid/missing."""
+    store = MemoryResearchPlanStore()
+    run_id = "run-prov-resolve-001"
+    corr_id = "corr-prov-resolve-001"
+    executor = "vectorbt_executor"
+
+    # 1. Contradictory run provenance vs receipt mode (run claims simulation, receipt claims real)
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}-1",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": corr_id,
+        "completed_at": "2026-09-08T00:00:00Z",
+        "spec_version": "1.0",
+    })
+    prov, rcpt = resolve_run_provenance(
+        store,
+        {
+            "run_id": run_id,
+            "execution_status": "succeeded",
+            "provenance": "simulation",
+            "executor": executor,
+            "correlation_id": corr_id,
+        },
+        expected_correlation_id=corr_id,
+        expected_owner=executor,
+    )
+    assert prov == "unavailable"
+    assert rcpt is None
+
+    # 2. Invalid completed_at in receipt
+    store.record_execution_receipt({
+        "receipt_id": f"rcpt-{run_id}-2",
+        "run_id": run_id,
+        "executor": executor,
+        "mode": "real",
+        "correlation_id": corr_id,
+        "completed_at": "invalid-datetime-format",
+        "spec_version": "1.0",
+    })
+    prov2, rcpt2 = resolve_run_provenance(
+        store,
+        {
+            "run_id": run_id,
+            "execution_status": "succeeded",
+            "provenance": "real",
+            "executor": executor,
+            "correlation_id": corr_id,
+        },
+        expected_correlation_id=corr_id,
+        expected_owner=executor,
+    )
+    assert prov2 == "unavailable"
+    assert rcpt2 is None
+
+
+def test_authentic_research_backend_client_receipt_mode_mismatch_raises() -> None:
+    """AuthenticResearchBackendClient must reject receipt mode contradicting observed backend provenance."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: {
+            "status": "succeeded",
+            "outcome": "succeeded",
+            "provenance": "simulation",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:" + "f" * 64,
+            "metrics": [{"name": "sharpe", "value": 1.0, "provenance": "simulation"}],
+            "receipt": {
+                "receipt_id": "rcpt-client-mismatch",
+                "run_id": "run-cm-1",
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": "corr-cm-1",
+                "completed_at": "2026-09-08T00:00:00Z",
+                "spec_version": "1.0",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="contradicts observed backend provenance"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id="run-cm-1", correlation_id="corr-cm-1"),
+            downstream_key="key-cm-1",
+        )
+
+
+def test_authentic_research_backend_client_missing_completed_at_raises() -> None:
+    """AuthenticResearchBackendClient must reject receipt missing completed_at."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: {
+            "status": "succeeded",
+            "outcome": "succeeded",
+            "provenance": "real",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:" + "f" * 64,
+            "metrics": [{"name": "sharpe", "value": 1.0, "provenance": "real"}],
+            "receipt": {
+                "receipt_id": "rcpt-client-no-ts",
+                "run_id": "run-cm-2",
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "correlation_id": "corr-cm-2",
+                "completed_at": None,
+                "spec_version": "1.0",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="missing completed_at timestamp"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id="run-cm-2", correlation_id="corr-cm-2"),
+            downstream_key="key-cm-2",
+        )

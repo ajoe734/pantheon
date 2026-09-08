@@ -27,6 +27,7 @@ def _load_service_module(
             "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
             "PANTHEON_OFFLINE_GATE_ENABLED": offline_gate,
             "RESEARCH_WORKER_GATEWAY_URL": "http://research-worker-gateway-svc:8103",
+            "REGISTRY_STORE_BACKEND": "memory",
         },
     ):
         sys.modules.pop("store", None)
@@ -179,7 +180,8 @@ def test_research_orchestrator_lifecycle_handoff_is_idempotent() -> None:
     assert payload["proposal_refs"] == [{"proposal_id": proposal["proposal_id"], "proposal_type": "registry_candidate"}]
 
 
-def test_research_orchestrator_writeback_registers_completed_run_artifact() -> None:
+def test_research_orchestrator_writeback_registers_completed_run_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
     reset_store()
     module = _load_service_module()
     client = TestClient(module.app)
@@ -551,3 +553,158 @@ def test_research_orchestrator_dormant_dispatch_stays_fail_closed_when_legacy_en
     assert payload["status"] == "rejected"
     assert payload["rejection"]["reason"] == "production_adapter_disabled"
     assert payload["production_activation"] == "disabled"
+
+
+def test_execute_research_stage_missing_inputs_fail_closed() -> None:
+    """POST /stages/{stage_type}/execute must fail closed with 400 when required fields are missing."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    # 1. Empty body
+    res1 = client.post("/stages/prototype_backtest/execute", json={})
+    assert res1.status_code == 400
+    assert "Missing required execution request body" in res1.json()["detail"]
+
+    # 2. Missing plan
+    res2 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={"stage": {"stage_id": "s1", "stage_type": "prototype_backtest"}},
+    )
+    assert res2.status_code == 400
+    assert "Missing or invalid required execution field: 'plan'" in res2.json()["detail"]
+
+    # 3. Missing run_id
+    res3 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1"},
+        },
+    )
+    assert res3.status_code == 400
+    assert "Missing required execution field: 'run_id'" in res3.json()["detail"]
+
+    # 4. Missing correlation_id
+    res4 = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1"},
+            "run_id": "run-test-1",
+        },
+    )
+    assert res4.status_code == 400
+    assert "Missing required execution field: 'correlation_id'" in res4.json()["detail"]
+
+    # 5. Non-allowlisted stage type
+    res5 = client.post(
+        "/stages/unauthorized_stage/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "unauthorized_stage"},
+            "plan": {"plan_id": "p1"},
+            "run_id": "run-test-1",
+            "correlation_id": "corr-test-1",
+        },
+    )
+    assert res5.status_code == 400
+    assert "Unknown or non-allowlisted research stage" in res5.json()["detail"]
+
+
+def test_execute_research_stage_backend_unavailable_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /stages/{stage_type}/execute must fail closed with 503 when backend execution owner is marked unavailable."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    monkeypatch.setenv("AGORA_RESEARCH_PROTOTYPE_BACKTEST_UNAVAILABLE", "1")
+    res = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-1"},
+            "run_id": "run-test-unavail",
+            "correlation_id": "corr-test-unavail",
+        },
+    )
+    assert res.status_code == 503
+    assert "currently unavailable" in res.json()["detail"]
+
+
+def test_execute_research_stage_real_execution_and_persisted_artifact() -> None:
+    """POST /stages/{stage_type}/execute runs real engine, persists artifact, and returns genuine metrics & receipt."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+    run_id = "run-vbt-exec-001"
+    corr_id = "corr-vbt-exec-001"
+
+    res = client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+            "plan": {"plan_id": "p1", "strategy_id": "strat-vbt-01"},
+            "run_id": run_id,
+            "correlation_id": corr_id,
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["status"] == "succeeded"
+    assert data["outcome"] == "succeeded"
+    assert data["provenance"] == "real"
+    assert data["backend_reference"] == f"research-orchestrator://stages/prototype_backtest/{run_id}"
+
+    # Verify genuine metrics from vectorbt
+    metric_names = {m["metric"] for m in data["metrics"]}
+    assert "mean_total_return" in metric_names
+    assert "mean_sharpe_ratio" in metric_names
+    assert "mean_max_drawdown" in metric_names
+    assert "total_trades" in metric_names
+    assert not any("score" in m["metric"] for m in data["metrics"])
+    for m in data["metrics"]:
+        assert m["provenance"] == "real"
+
+    # Verify receipt integrity
+    receipt = data["receipt"]
+    assert receipt["run_id"] == run_id
+    assert receipt["correlation_id"] == corr_id
+    assert receipt["mode"] == "real"
+    assert receipt["spec_version"] == "1.0"
+    assert receipt["artifact_digest"] == data["artifact_digest"]
+    assert receipt["completed_at"] is not None
+
+    # Verify artifact is durably persisted in the store
+    artifacts = module.store.list_artifacts()
+    matching = [a for a in artifacts if a.get("checksum") == data["artifact_digest"]]
+    assert len(matching) == 1
+    art = matching[0]
+    assert art["run_id"] == run_id
+    assert art["stage_type"] == "prototype_backtest"
+    assert art["provenance"] == "real"
+    assert art["checksum"] == data["artifact_digest"]
+
+
+def test_execute_research_stage_durable_idempotency_replay() -> None:
+    """POST /stages/{stage_type}/execute returns cached result on replay with same idempotency key."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+    run_id = "run-idemp-001"
+    corr_id = "corr-idemp-001"
+    body = {
+        "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+        "plan": {"plan_id": "p1", "strategy_id": "strat-idemp"},
+        "run_id": run_id,
+        "correlation_id": corr_id,
+        "downstream_key": "idemp-key-unique-42",
+    }
+
+    res1 = client.post("/stages/prototype_backtest/execute", json=body)
+    assert res1.status_code == 200
+    data1 = res1.json()
+
+    # Replay with identical body/key
+    res2 = client.post("/stages/prototype_backtest/execute", json=body)
+    assert res2.status_code == 200
+    data2 = res2.json()
+
+    assert data1["receipt"]["receipt_id"] == data2["receipt"]["receipt_id"]
+    assert data1["artifact_digest"] == data2["artifact_digest"]
+    assert data1["receipt"]["completed_at"] == data2["receipt"]["completed_at"]

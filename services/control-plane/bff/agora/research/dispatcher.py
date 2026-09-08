@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tupl
 import urllib.error
 import urllib.request
 
-from .receipt import ResearchExecutionReceipt, resolve_run_provenance, VALID_MODES
+from .receipt import ResearchExecutionReceipt, resolve_run_provenance, VALID_MODES, VALID_PROVENANCE_VALUES
 
 logger = logging.getLogger(__name__)
 
@@ -331,10 +331,20 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     receipt_obj = ResearchExecutionReceipt.from_dict(receipt_obj)
                 if not getattr(receipt_obj, "receipt_id", None):
                     raise RuntimeError("Owner-emitted receipt missing receipt_id")
+                if not getattr(receipt_obj, "completed_at", None):
+                    raise RuntimeError("Owner-emitted receipt missing completed_at timestamp")
+                try:
+                    datetime.fromisoformat(str(receipt_obj.completed_at).replace("Z", "+00:00"))
+                except Exception as exc:
+                    raise RuntimeError(f"Owner-emitted receipt has invalid completed_at timestamp: {receipt_obj.completed_at}") from exc
                 if run_id and str(receipt_obj.run_id) != str(run_id):
                     raise RuntimeError(f"Owner-emitted receipt run_id mismatch: expected {run_id}, got {receipt_obj.run_id}")
                 if str(receipt_obj.mode).lower() not in VALID_MODES:
                     raise RuntimeError(f"Owner-emitted receipt has invalid mode: {receipt_obj.mode}")
+                if str(receipt_obj.mode).lower() != observed_prov:
+                    raise RuntimeError(
+                        f"Owner-emitted receipt mode '{receipt_obj.mode}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
+                    )
                 if str(getattr(receipt_obj, "spec_version", "1.0")) != "1.0":
                     raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt_obj.spec_version}")
                 result.receipt = receipt_obj
@@ -367,8 +377,13 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     )
 
             for m in result.metrics:
-                if isinstance(m, dict) and "provenance" not in m:
-                    m["provenance"] = observed_prov
+                if isinstance(m, dict):
+                    if "provenance" not in m:
+                        m["provenance"] = observed_prov
+                    elif str(m["provenance"]).lower() != observed_prov:
+                        raise RuntimeError(
+                            f"Backend metric provenance '{m['provenance']}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
+                        )
             for ev in result.evidence_refs:
                 if isinstance(ev, dict) and "provenance" not in ev:
                     ev["provenance"] = observed_prov
@@ -436,10 +451,20 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                     receipt = receipt_val
                 if not getattr(receipt, "receipt_id", None):
                     raise RuntimeError("Owner-emitted receipt missing receipt_id")
+                if not getattr(receipt, "completed_at", None):
+                    raise RuntimeError("Owner-emitted receipt missing completed_at timestamp")
+                try:
+                    datetime.fromisoformat(str(receipt.completed_at).replace("Z", "+00:00"))
+                except Exception as exc:
+                    raise RuntimeError(f"Owner-emitted receipt has invalid completed_at timestamp: {receipt.completed_at}") from exc
                 if run_id and str(receipt.run_id) != str(run_id):
                     raise RuntimeError(f"Owner-emitted receipt run_id mismatch: expected {run_id}, got {receipt.run_id}")
                 if str(receipt.mode).lower() not in VALID_MODES:
                     raise RuntimeError(f"Owner-emitted receipt has invalid mode: {receipt.mode}")
+                if str(receipt.mode).lower() != observed_prov:
+                    raise RuntimeError(
+                        f"Owner-emitted receipt mode '{receipt.mode}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
+                    )
                 if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
                     raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt.spec_version}")
             elif run_id:
@@ -466,8 +491,13 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
             if checksum:
                 result.checksums["artifact"] = checksum
             for m in result.metrics:
-                if isinstance(m, dict) and "provenance" not in m:
-                    m["provenance"] = observed_prov
+                if isinstance(m, dict):
+                    if "provenance" not in m:
+                        m["provenance"] = observed_prov
+                    elif str(m["provenance"]).lower() != observed_prov:
+                        raise RuntimeError(
+                            f"Backend metric provenance '{m['provenance']}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
+                        )
             for ev in result.evidence_refs:
                 if isinstance(ev, dict) and "provenance" not in ev:
                     ev["provenance"] = observed_prov
@@ -704,6 +734,12 @@ class AuthenticResearchBackendClient:
         elif observed_prov not in VALID_PROVENANCE_VALUES:
             observed_prov = "unavailable"
 
+        for m in metrics:
+            if isinstance(m, dict) and m.get("provenance") and str(m["provenance"]).lower() != observed_prov:
+                raise RuntimeError(
+                    f"Backend metric provenance '{m['provenance']}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
+                )
+
         receipt_raw = resp_data.get("receipt")
         receipt: Optional[ResearchExecutionReceipt] = None
         if receipt_raw is not None:
@@ -713,10 +749,20 @@ class AuthenticResearchBackendClient:
                 receipt = receipt_raw
             if not getattr(receipt, "receipt_id", None):
                 raise RuntimeError("Backend receipt missing receipt_id")
+            if not getattr(receipt, "completed_at", None):
+                raise RuntimeError("Backend receipt missing completed_at timestamp")
+            try:
+                datetime.fromisoformat(str(receipt.completed_at).replace("Z", "+00:00"))
+            except Exception as exc:
+                raise RuntimeError(f"Backend receipt has invalid completed_at timestamp: {receipt.completed_at}") from exc
             if run_id and str(receipt.run_id) != str(run_id):
                 raise RuntimeError(f"Backend receipt run_id mismatch: expected {run_id}, got {receipt.run_id}")
             if str(receipt.mode).lower() not in VALID_MODES:
                 raise RuntimeError(f"Backend receipt has invalid mode: {receipt.mode}")
+            if str(receipt.mode).lower() != observed_prov:
+                raise RuntimeError(
+                    f"Backend receipt mode '{receipt.mode}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
+                )
             if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
                 raise RuntimeError(f"Backend receipt has invalid spec_version: {receipt.spec_version}")
         else:
@@ -1081,6 +1127,11 @@ class ResearchDispatcher:
         if getattr(result, "receipt", None) is not None:
             receipt_obj = result.receipt
             receipt_dict = receipt_obj.to_dict() if hasattr(receipt_obj, "to_dict") else dict(receipt_obj)
+            receipt_mode = str(receipt_dict.get("mode") or "").lower()
+            if receipt_mode and receipt_mode != result.provenance:
+                raise RuntimeError(
+                    f"Receipt mode '{receipt_mode}' contradicts result provenance '{result.provenance}' before persistence."
+                )
             if hasattr(self.store, "record_execution_receipt"):
                 self.store.record_execution_receipt(receipt_dict)
 

@@ -313,7 +313,13 @@ def test_route_get_research_run_provenance_validation(
     assert res8.json()["provenance"] == "unavailable"
 
     # 9. Authentic valid receipt on terminal run -> resolves to 'real'
-    store.update_run(run_id, {"execution_status": "succeeded"})
+    store.update_run(run_id, {"execution_status": "succeeded", "provenance": "real"})
     res9 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
     assert res9.status_code == 200
     assert res9.json()["provenance"] == "real"
+
+    # 10. Mismatched run provenance vs receipt mode (run claims simulation, receipt claims real) -> unavailable
+    store.update_run(run_id, {"provenance": "simulation"})
+    res10 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
+    assert res10.status_code == 200
+    assert res10.json()["provenance"] == "unavailable"

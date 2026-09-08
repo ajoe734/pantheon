@@ -46,10 +46,11 @@
       "services/incidents/test_agora_performance_routes.py",
       "services/incidents/test_main_routes.py",
       "services/research/main.py",
+      "services/research/tests/test_research_orchestrator_http_service.py",
       "tests/agora_product_journey/test_full_product_journey.py"
     ],
-    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, and correlation validation in receipt.py and routes/common.py. Unreceipted runs never return 'real' (resolving to 'fixture' or 'simulation'). Non-terminal runs, absent receipts, missing receipt_id/completed_at, spec_version != '1.0', wrong owner, or wrong correlation return 'unavailable'. AuthenticStageAdapter in real mode strictly validates backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrites observed simulation/fixture provenance into real mode. Negative controls suite (test_agora_authentic_adapter_negative_controls.py) proves fail-closed behavior across missing backend outputs, non-terminal status, failed execution outcomes, mode forgery/mismatch, invalid receipt schemas, missing artifact digests, and missing backend references.",
-    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in 'real' mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. AgoraInteractionWorker launcher (scripts/run_agora_interaction_worker.py) and docker-compose.yml wire AGORA_RESEARCH_STORE_BACKEND/DSN/SCHEMA, AGORA_RESEARCH_BACKEND_URL, depends_on research-orchestrator-svc (healthy), build_authentic_adapter_registry(), and fail fast on unconstructable stores or missing backend URLs. Proven via real HTTP end-to-end integration test (test_e2e_worker_real_http_backend_execution) without mock transport.",
+    "receipt_and_provenance_architecture": "Fail-closed schema, version, terminal status, owner, correlation, and provenance consistency validation in receipt.py, dispatcher.py, and routes/common.py. Unreceipted runs never return 'real'. Non-terminal runs, absent receipts, missing receipt_id, absent/invalid completed_at (never synthesized), spec_version != '1.0', wrong owner, wrong correlation, or provenance contradicting receipt mode return 'unavailable'. AuthenticStageAdapter and AuthenticResearchBackendClient in real mode strictly validate backend terminal outputs, rejecting missing, non-terminal, or failed outputs, and never rewrite observed simulation/fixture provenance into real mode. Provenance consistency between observed backend output, receipt mode, and metrics is strictly enforced across both dict and ResearchStageResult paths before persistence.",
+    "execution_owner_and_receipt_recording": "Authentic execution owner (AuthenticStageAdapter in dispatcher.py) accepts an execution_owner or execute_fn and fails closed when absent in 'real' mode. It invokes the real backend via POST /stages/{stage_type}/execute or /api/research-orchestrator/stages/{stage_type}/execute in services/research/main.py, reads back execution receipt/metrics, and enforces that metric/evidence provenance matches execution mode. Research orchestrator HTTP service (/stages/{stage_type}/execute) executes actual allowlisted engines (vectorbt, statsmodels, quantlib), derives genuine non-synthetic metrics, durably persists artifacts in research store, enforces durable idempotency caching, and fails closed with 400 on missing required input and 503 when the execution owner is unavailable. AgoraInteractionWorker launcher (scripts/run_agora_interaction_worker.py) and docker-compose.yml wire AGORA_RESEARCH_STORE_BACKEND/DSN/SCHEMA, AGORA_RESEARCH_BACKEND_URL, depends_on research-orchestrator-svc (healthy), build_authentic_adapter_registry(), and fail fast on unconstructable stores or missing backend URLs.",
     "correlation_chain": "Single continuous correlation chain (trace_id / correlation_id) wired across Workshop messages/events, ResearchExecutionReceipt, candidate pool members admitted via CandidatePoolCreateRequest, Trading Room decisions (TraderDecisionRequest), Outbox handoffs (GovernedIntentHandoffRequest), and telemetry-triggered AdjustmentSuggestions via canonical ThresholdTelemetryIncidentConsumer.",
     "performance_suggestion_consumer": "Attached EvaluationTelemetryConsumer to canonical ThresholdTelemetryIncidentConsumer without adding any new background scheduler. Wired CanonicalPerformanceEventTransport with acknowledged delivery: unacknowledged events when no subscribers are active fail closed (RuntimeError) and surface HTTP 503 retryable; outage failures propagate without marking published and successfully recover on replay; retry-safe durable identity prevents duplicate events. In incidents service, suggestions are durably stored in isolated incident-data volume (/data/incidents/agora_performance.sqlite3) and queried by BFF over HTTP (PANTHEON_INCIDENTS_API_URL), eliminating shared/injected SQLite across containers.",
     "mandatory_deletions": {
@@ -63,21 +64,27 @@
     "commands": [
       {
         "command": "python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 13.49s",
+        "result": "33 passed in 11.47s",
         "executed": 33,
         "collected": 33
       },
       {
         "command": "python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/agora/performance/ services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_research_store_backend.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py -q",
-        "result": "95 passed, 2 skipped in 69.08s",
-        "executed": 95,
-        "collected": 97
+        "result": "102 passed, 2 skipped in 55.69s",
+        "executed": 102,
+        "collected": 104
       },
       {
         "command": "python3 -m pytest scripts/test_run_agora_interaction_worker.py services/incidents/test_main_routes.py services/incidents/test_agora_performance_routes.py -q",
-        "result": "72 passed in 38.34s",
+        "result": "72 passed in 34.01s",
         "executed": 72,
         "collected": 72
+      },
+      {
+        "command": "python3 -m pytest services/research/tests/ -q",
+        "result": "21 passed in 8.68s",
+        "executed": 21,
+        "collected": 21
       },
       {
         "command": "git diff --check",
@@ -106,7 +113,10 @@
     "p1_incidents_isolated_suggestion_store_and_bff_http_query_path": true,
     "p1_authentic_backend_status_outcome_validation_and_provenance_preservation": true,
     "p1_unacknowledged_performance_publish_fail_closed_and_retry_durability": true,
-    "p1_authentic_research_backend_endpoints_and_compose_wiring": true
+    "p1_authentic_research_backend_endpoints_and_compose_wiring": true,
+    "p1_execute_research_stage_real_engine_artifacts_and_durable_idempotency": true,
+    "p1_backend_receipt_provenance_consistency_enforced": true,
+    "p1_receipt_completed_at_preserved_and_fail_closed_validation": true
   },
   "review": {
     "reviewer": "Codex",

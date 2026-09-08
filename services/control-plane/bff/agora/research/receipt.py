@@ -34,7 +34,7 @@ class ResearchExecutionReceipt:
     executor: str
     mode: Literal["real", "simulation"]
     correlation_id: str
-    completed_at: str
+    completed_at: Optional[str] = None
     backend_reference: Optional[str] = None
     artifact_digest: Optional[str] = None
     spec_version: str = "1.0"
@@ -45,12 +45,12 @@ class ResearchExecutionReceipt:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ResearchExecutionReceipt":
         return cls(
-            receipt_id=str(data["receipt_id"]),
-            run_id=str(data["run_id"]),
-            executor=str(data["executor"]),
+            receipt_id=str(data["receipt_id"]) if data.get("receipt_id") is not None else "",
+            run_id=str(data["run_id"]) if data.get("run_id") is not None else "",
+            executor=str(data["executor"]) if data.get("executor") is not None else "",
             mode=str(data.get("mode") or ""),
             correlation_id=str(data.get("correlation_id") or ""),
-            completed_at=str(data.get("completed_at") or datetime.now(timezone.utc).isoformat()),
+            completed_at=str(data["completed_at"]) if data.get("completed_at") is not None else None,
             backend_reference=data.get("backend_reference"),
             artifact_digest=data.get("artifact_digest"),
             spec_version=str(data.get("spec_version", "1.0")),
@@ -108,6 +108,10 @@ def resolve_run_provenance(
     completed_at = str(receipt_dict.get("completed_at") or "").strip()
     if not completed_at:
         return "unavailable", None
+    try:
+        datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    except Exception:
+        return "unavailable", None
 
     executor = str(receipt_dict.get("executor") or "").strip()
     if not executor:
@@ -126,6 +130,10 @@ def resolve_run_provenance(
 
     receipt_mode = str(receipt_dict.get("mode") or "").lower().strip()
     if receipt_mode not in VALID_MODES:
+        return "unavailable", None
+
+    run_prov = str(run.get("provenance") or "").lower().strip()
+    if run_prov and run_prov in VALID_PROVENANCE_VALUES and run_prov != receipt_mode:
         return "unavailable", None
 
     if expected_correlation_id is not None:
