@@ -6,14 +6,14 @@
   "reviewer": "Codex",
   "target_repo": "pantheon",
   "task_class": "development_tooling",
-  "timestamp": "2026-09-08T06:35:00Z",
+  "timestamp": "2026-09-08T06:38:00Z",
   "reviewer_rejection_addressed": {
     "rejected_head": "7bc18a52f1b10ef7db81a0a5a4d2f29063b10285",
     "rejection_reason": "Independent review rejected PR #5671 head 7bc18a52f1b10ef7db81a0a5a4d2f29063b10285. P1: config-aware receipt parity is incomplete: scripts/git/auto_integrator.py:574 still calls integration_receipt_consumes_candidate(raw) without config_dict while dispatch_policy.py:210 passes config.",
     "fixes": [
       "Passed validated config_dict into integration_receipt.integration_receipt_consumes_candidate(raw, config=config_dict) at scripts/git/auto_integrator.py:574 so auto-integrator candidate selection respects registry configuration identically to scheduler dispatch admission.",
       "Added end-to-end candidate/admission parity tests in .orchestrator/test_dispatch_policy.py covering changed registry slug, custom repository with unreceipted and receipted states, and malformed configuration (lists, non-mapping overrides, explicit null values).",
-      "Verified composition with OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001 so unreceipted cross-repo deliveries do not starve in-progress repair work while remaining visible to the sole auto-integrator without duplicating writer authority."
+      "Composed cleanly with merged PR #5670 (OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001) so unreceipted cross-repo deliveries do not starve in-progress repair work while remaining visible to the sole auto-integrator without duplicating writer authority."
     ]
   },
   "scope": {
@@ -43,10 +43,10 @@
     ".orchestrator/dispatch_policy.py": "41404b2df9ed4be0b967183d7d8483d438c6a775c0adba04e38089e10c6c48d2",
     ".orchestrator/multi_repo_registry.py": "5245f187a4cafe8a680c5362a7959881045334395592959c8c61f14c45f311cf",
     ".orchestrator/supervisor.py": "ead5147667f354751a89c2c69885fdf232a91077919bdb94ad59df13b6a18ec0",
-    ".orchestrator/rewrite/integration_receipt.py": "5065a51f00317489eb7bfe3ced8515734f7784f3ae35a4bfa5dddb0d8a0fc8a8",
+    ".orchestrator/rewrite/integration_receipt.py": "ac7d2b5ea433f68be8f298f3e8f811e7d8ef73fb73fe0806dd7377be726feefc",
     ".orchestrator/test_dispatch_policy.py": "f9628d7ac2dff5558af2221e1320c83ba41eb584e9613098c4ff499d435cd179",
     ".orchestrator/test_supervisor.py": "2c44d5fc2c9d5e67c0030f61fc277a66b8cc94fbee44fd7d22b20ab0b9122d9d",
-    "scripts/git/auto_integrator.py": "bb83abcfd6f0231fae2d00e3521282d6a9923068ffc3677743b45f681e148cda"
+    "scripts/git/auto_integrator.py": "99ab2eaa3056af98fcd95c93a5f8794b106e0c127ebaa9c3453f85db4ffa0b26"
   },
   "acceptance_verification": {
     "criterion_1": {
@@ -90,8 +90,8 @@
       "7 passed in reviewer fixtures /tmp/test_codex_finalize_registry_review.py and /tmp/test_codex_finalize_config_parity_7bc18.py",
       "61 passed in test_dispatch_policy.py",
       "96 passed, 264 deselected in SharedPlannerContractTests and focused supervisor/dispatch tests",
-      "80 passed in test_multi_repo_registry.py and test_integration_receipt.py",
-      "38 passed, 89 deselected in focused auto-integrator candidate and receipt tests",
+      "112 passed in test_multi_repo_registry.py and test_integration_receipt.py",
+      "44 passed, 89 deselected in focused auto-integrator candidate and receipt tests",
       "all modified runtime modules compiled cleanly with zero syntax or lint errors",
       "git diff --check reported clean diff with no whitespace errors"
     ]
