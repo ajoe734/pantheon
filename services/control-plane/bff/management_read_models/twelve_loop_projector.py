@@ -267,10 +267,34 @@ class TwelveLoopTruthProjector:
         """Ingest a single receipt incrementally and update projection."""
         key = (receipt.release_id, receipt.correlation_id, receipt.loop_id)
 
-        # Idempotency check: receipt already ingested and durable
-        if receipt.receipt_id in self._receipts:
-            obs = self._observations.get(key)
-            if obs is not None:
+        # 0. Check for existing receipt identity in-memory or store
+        existing_receipt: Optional[CanonicalLoopReceipt] = self._receipts.get(receipt.receipt_id)
+        if existing_receipt is None and self.store is not None:
+            try:
+                existing_receipt = self.store.get_receipt(receipt.receipt_id)
+            except Exception as exc:
+                logger.debug("Failed checking store for existing receipt %s: %s", receipt.receipt_id, exc)
+
+        if existing_receipt is not None:
+            # Reject conflicting identities across keys or types
+            if (
+                existing_receipt.release_id != receipt.release_id
+                or existing_receipt.correlation_id != receipt.correlation_id
+                or existing_receipt.loop_id != receipt.loop_id
+                or existing_receipt.receipt_type != receipt.receipt_type
+            ):
+                raise ValueError(
+                    f"Conflicting receipt identity: receipt_id '{receipt.receipt_id}' already registered with key "
+                    f"(release_id={existing_receipt.release_id}, correlation_id={existing_receipt.correlation_id}, loop_id={existing_receipt.loop_id}, type={existing_receipt.receipt_type}), "
+                    f"cannot re-ingest under conflicting key "
+                    f"(release_id={receipt.release_id}, correlation_id={receipt.correlation_id}, loop_id={receipt.loop_id}, type={receipt.receipt_type})"
+                )
+            # Never reduce unpersisted conflicting content: bind to the persisted receipt
+            receipt = existing_receipt
+
+            # Idempotency check: if exact receipt is already in-memory and observation is durable, return cached observation
+            if receipt.receipt_id in self._receipts and key in self._observations:
+                obs = self._observations[key]
                 self._recompute_freshness(obs, now=datetime.now(timezone.utc))
                 return obs
 
@@ -279,18 +303,34 @@ class TwelveLoopTruthProjector:
         if self.store is not None:
             self.store.record_receipt(receipt)
 
-        # 2. Compute projection with this candidate receipt included
-        temp_receipts = dict(self._receipts_by_key.get(key, {}))
-        temp_receipts[receipt.receipt_id] = receipt
-        obs = self._reduce_key(key, temp_receipts)
+        # 2. Serialize reduction against canonical stored receipts
+        if self.store is not None:
+            stored_receipts = self.store.list_receipts(
+                release_id=receipt.release_id,
+                correlation_id=receipt.correlation_id,
+                loop_id=receipt.loop_id,
+            )
+            key_receipts = {r.receipt_id: r for r in stored_receipts}
+            key_receipts[receipt.receipt_id] = receipt
+        else:
+            key_receipts = dict(self._receipts_by_key.get(key, {}))
+            key_receipts[receipt.receipt_id] = receipt
 
-        # 3. Persist observation to store if store is present
+        obs = self._reduce_key(key, key_receipts)
+
+        # 3. Persist observation to store if store is present (fenced against stale writers)
         if self.store is not None:
             self.store.upsert_observation(obs)
+            durable_obs = self.store.get_observation(receipt.release_id, receipt.correlation_id, receipt.loop_id)
+            if durable_obs is not None:
+                obs = durable_obs
+                self._recompute_freshness(obs, now=datetime.now(timezone.utc))
 
         # 4. Durable persistence succeeded: commit to in-memory caches
         self._receipts[receipt.receipt_id] = receipt
-        self._receipts_by_key.setdefault(key, {})[receipt.receipt_id] = receipt
+        for r in key_receipts.values():
+            self._receipts[r.receipt_id] = r
+        self._receipts_by_key[key] = key_receipts
         self._observations[key] = obs
 
         return obs

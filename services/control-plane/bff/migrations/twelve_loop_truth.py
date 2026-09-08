@@ -47,6 +47,9 @@ class TwelveLoopStore:
     def record_receipt(self, receipt: CanonicalLoopReceipt) -> None:
         raise NotImplementedError
 
+    def get_receipt(self, receipt_id: str) -> Optional[CanonicalLoopReceipt]:
+        raise NotImplementedError
+
     def list_receipts(
         self,
         *,
@@ -88,6 +91,9 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
         if receipt.receipt_id not in self._receipts:
             self._receipts[receipt.receipt_id] = receipt
 
+    def get_receipt(self, receipt_id: str) -> Optional[CanonicalLoopReceipt]:
+        return self._receipts.get(receipt_id)
+
     def list_receipts(
         self,
         *,
@@ -106,6 +112,15 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
 
     def upsert_observation(self, obs: LoopObservation) -> None:
         key = (obs.release_id, obs.correlation_id, obs.loop_id)
+        existing = self._observations.get(key)
+        if existing is not None:
+            prov_rank = {"backfill": 0, "replay": 1, "live": 2}
+            new_prov = prov_rank.get(obs.provenance, 0)
+            cur_prov = prov_rank.get(existing.provenance, 0)
+            if new_prov < cur_prov:
+                return
+            if new_prov == cur_prov and obs.observed_at < existing.observed_at:
+                return
         self._observations[key] = obs
 
     def get_observation(
@@ -140,16 +155,11 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         self.dsn = dsn
         self.schema = schema
 
-    def _is_unused_dsn(self) -> bool:
-        return "unused" in self.dsn or "dummy" in self.dsn
-
     def _connect(self) -> Any:
         import psycopg
         return psycopg.connect(self.dsn)
 
     def apply_migration_sync(self) -> None:
-        if self._is_unused_dsn():
-            return
         sql = MIGRATION_SQL_PATH.read_text(encoding="utf-8")
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -157,8 +167,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             conn.commit()
 
     async def apply_migration(self) -> None:
-        if self._is_unused_dsn():
-            return
         try:
             import asyncpg
             conn = await asyncpg.connect(self.dsn)
@@ -171,8 +179,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             self.apply_migration_sync()
 
     def record_receipt(self, receipt: CanonicalLoopReceipt) -> None:
-        if self._is_unused_dsn():
-            return
         query = f"""
             INSERT INTO {self.schema}.loop_receipts (
                 receipt_id, receipt_type, loop_id, correlation_id, release_id,
@@ -203,8 +209,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             conn.commit()
 
     async def record_receipt_async(self, receipt: CanonicalLoopReceipt) -> None:
-        if self._is_unused_dsn():
-            return
         try:
             import asyncpg
             conn = await asyncpg.connect(self.dsn)
@@ -237,6 +241,81 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         except Exception:
             self.record_receipt(receipt)
 
+    def get_receipt(self, receipt_id: str) -> Optional[CanonicalLoopReceipt]:
+        query = f"""
+            SELECT receipt_id, receipt_type, loop_id, correlation_id, release_id,
+                   owner, provenance, status, observed_at, degradation_reason,
+                   causation_id, payload
+            FROM {self.schema}.loop_receipts
+            WHERE receipt_id = %s;
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (receipt_id,))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                payload = row[11]
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                return CanonicalLoopReceipt(
+                    receipt_id=row[0],
+                    receipt_type=row[1],
+                    loop_id=row[2],
+                    correlation_id=row[3],
+                    release_id=row[4],
+                    owner=row[5],
+                    provenance=row[6],
+                    status=row[7],
+                    observed_at=row[8],
+                    degradation_reason=row[9],
+                    causation_id=row[10],
+                    payload=payload if isinstance(payload, dict) else {},
+                )
+
+    async def get_receipt_async(self, receipt_id: str) -> Optional[CanonicalLoopReceipt]:
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                query = f"""
+                    SELECT receipt_id, receipt_type, loop_id, correlation_id, release_id,
+                           owner, provenance, status, observed_at, degradation_reason,
+                           causation_id, payload
+                    FROM {self.schema}.loop_receipts
+                    WHERE receipt_id = $1;
+                """
+                row = await conn.fetchrow(query, receipt_id)
+                if not row:
+                    return None
+                payload = row["payload"]
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                return CanonicalLoopReceipt(
+                    receipt_id=row["receipt_id"],
+                    receipt_type=row["receipt_type"],
+                    loop_id=row["loop_id"],
+                    correlation_id=row["correlation_id"],
+                    release_id=row["release_id"],
+                    owner=row["owner"],
+                    provenance=row["provenance"],
+                    status=row["status"],
+                    observed_at=row["observed_at"],
+                    degradation_reason=row["degradation_reason"],
+                    causation_id=row["causation_id"],
+                    payload=payload if isinstance(payload, dict) else {},
+                )
+            finally:
+                await conn.close()
+        except Exception:
+            return self.get_receipt(receipt_id)
+
     def list_receipts(
         self,
         *,
@@ -244,8 +323,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
     ) -> List[CanonicalLoopReceipt]:
-        if self._is_unused_dsn():
-            return []
         clauses = []
         params = []
         if release_id:
@@ -297,8 +374,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         return results
 
     def upsert_observation(self, obs: LoopObservation) -> None:
-        if self._is_unused_dsn():
-            return
         query = f"""
             INSERT INTO {self.schema}.twelve_loop_observations (
                 release_id, correlation_id, loop_id, owner,
@@ -326,7 +401,15 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                 degradation_reason = EXCLUDED.degradation_reason,
                 causation_id = EXCLUDED.causation_id,
                 receipt_ids = EXCLUDED.receipt_ids,
-                updated_at = clock_timestamp();
+                updated_at = clock_timestamp()
+            WHERE (
+                CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END >
+                CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
+            ) OR (
+                CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END =
+                CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
+                AND EXCLUDED.observed_at >= {self.schema}.twelve_loop_observations.observed_at
+            );
         """
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -356,8 +439,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             conn.commit()
 
     async def upsert_observation_async(self, obs: LoopObservation) -> None:
-        if self._is_unused_dsn():
-            return
         try:
             import asyncpg
             conn = await asyncpg.connect(self.dsn)
@@ -389,7 +470,15 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                         degradation_reason = EXCLUDED.degradation_reason,
                         causation_id = EXCLUDED.causation_id,
                         receipt_ids = EXCLUDED.receipt_ids,
-                        updated_at = clock_timestamp();
+                        updated_at = clock_timestamp()
+                    WHERE (
+                        CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END >
+                        CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
+                    ) OR (
+                        CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END =
+                        CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
+                        AND EXCLUDED.observed_at >= {self.schema}.twelve_loop_observations.observed_at
+                    );
                 """
                 await conn.execute(
                     query,
@@ -420,8 +509,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
     def get_observation(
         self, release_id: str, correlation_id: str, loop_id: int
     ) -> Optional[LoopObservation]:
-        if self._is_unused_dsn():
-            return None
         query = f"""
             SELECT release_id, correlation_id, loop_id, owner,
                    stimulus_id, stimulus_observed_at,
@@ -472,8 +559,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         correlation_id: Optional[str] = None,
         loop_id: Optional[int] = None,
     ) -> List[LoopObservation]:
-        if self._is_unused_dsn():
-            return []
         clauses = []
         params = []
         if release_id:
@@ -534,8 +619,6 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
         return results
 
     def clear_observations(self) -> None:
-        if self._is_unused_dsn():
-            return
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(f"DELETE FROM {self.schema}.twelve_loop_observations;")

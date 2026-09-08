@@ -676,3 +676,172 @@ class TestTwelveLoopProjectorReviewRegressions:
         assert obs2 is not None
         reason = obs2.degradation_reason or ""
         assert reason.count("exceeds freshness window") == 1
+
+    def test_cross_key_duplicate_receipt_id_rejected(self) -> None:
+        """P1: Reject known receipt ID under a conflicting correlation or key."""
+        store = MemoryTwelveLoopStore()
+        p = TwelveLoopTruthProjector(store=store)
+
+        term_c1 = CanonicalLoopReceipt(
+            receipt_id="term-shared-01",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="c1",
+            release_id="rel-1",
+            owner="source-ingest connector",
+            provenance="live",
+            status="failed",
+            observed_at=_utc(-10),
+        )
+        term_c2 = CanonicalLoopReceipt(
+            receipt_id="term-shared-01",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="c2",
+            release_id="rel-1",
+            owner="source-ingest connector",
+            provenance="live",
+            status="completed",
+            observed_at=_utc(-5),
+        )
+
+        p.ingest_receipt(term_c1)
+        assert p.get_observation("rel-1", "c1", 1).status == "failed"
+
+        # Conflicting identity under c2 must be rejected
+        with pytest.raises(ValueError, match="Conflicting receipt identity"):
+            p.ingest_receipt(term_c2)
+
+    def test_same_key_unpersisted_conflicting_content_binds_to_persisted_receipt(self) -> None:
+        """P1: When re-ingesting known receipt ID under same key, bind to persisted receipt, never incoming unpersisted content."""
+        store = MemoryTwelveLoopStore()
+        persisted = CanonicalLoopReceipt(
+            receipt_id="rcpt-bind-01",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="c-bind",
+            release_id="rel-bind",
+            owner="source-ingest connector",
+            provenance="live",
+            status="failed",
+            observed_at=_utc(-10),
+        )
+        store.record_receipt(persisted)
+
+        # Incoming content claims status="completed"
+        incoming = CanonicalLoopReceipt(
+            receipt_id="rcpt-bind-01",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="c-bind",
+            release_id="rel-bind",
+            owner="source-ingest connector",
+            provenance="live",
+            status="completed",
+            observed_at=_utc(-5),
+        )
+
+        p = TwelveLoopTruthProjector(store=store)
+        obs = p.ingest_receipt(incoming)
+        # Must reduce the persisted failed terminal, not the incoming completed terminal
+        assert obs.status == "failed"
+        assert obs.terminal_status == "failed"
+
+    def test_partial_write_retry_succeeds_in_memory_store(self) -> None:
+        """P1: Retry after receipt recorded but observation not written completes successfully."""
+        store = MemoryTwelveLoopStore()
+        stimulus = CanonicalLoopReceipt(
+            receipt_id="rcpt-retry-01",
+            receipt_type="stimulus",
+            loop_id=1,
+            correlation_id="c-retry",
+            release_id="rel-retry",
+            owner="source-ingest connector",
+            provenance="live",
+            observed_at=_utc(-5),
+        )
+        # Partially written: receipt recorded in store
+        store.record_receipt(stimulus)
+        assert store.get_observation("rel-retry", "c-retry", 1) is None
+
+        p = TwelveLoopTruthProjector(store=store)
+        obs = p.ingest_receipt(stimulus)
+        assert obs.status == "open"
+        assert obs.stimulus_id == "rcpt-retry-01"
+        assert store.get_observation("rel-retry", "c-retry", 1) is not None
+
+    def test_two_projectors_shared_store_stale_backfill_reduction(self) -> None:
+        """P1: Two projectors on one store: Projector 1 ingests live truth,
+
+        Projector 2 ingests older backfill terminal.
+        Reduction serializes against canonical stored receipts and fences stale writers.
+        """
+        store = MemoryTwelveLoopStore()
+        now = _utc(-10)
+        stimulus = CanonicalLoopReceipt(
+            receipt_id="rcpt-s-1",
+            receipt_type="stimulus",
+            loop_id=1,
+            correlation_id="c-shared",
+            release_id="rel-shared",
+            owner="source-ingest connector",
+            provenance="live",
+            observed_at=now,
+        )
+        terminal = CanonicalLoopReceipt(
+            receipt_id="rcpt-t-1",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="c-shared",
+            release_id="rel-shared",
+            owner="source-ingest connector",
+            provenance="live",
+            status="completed",
+            observed_at=now,
+        )
+        next_consumer = CanonicalLoopReceipt(
+            receipt_id="rcpt-n-1",
+            receipt_type="next_consumer",
+            loop_id=1,
+            correlation_id="c-shared",
+            release_id="rel-shared",
+            owner="distillation connector",
+            provenance="live",
+            status="accepted",
+            observed_at=now,
+        )
+
+        p1 = TwelveLoopTruthProjector(store=store)
+        p1.ingest_receipts([stimulus, terminal, next_consumer])
+        assert p1.get_observation("rel-shared", "c-shared", 1).status == "complete"
+
+        # Projector 2 is an independent instance without p1's local cache
+        p2 = TwelveLoopTruthProjector(store=store, auto_load=False)
+        backfill_fail = CanonicalLoopReceipt(
+            receipt_id="rcpt-backfill-old",
+            receipt_type="terminal",
+            loop_id=1,
+            correlation_id="c-shared",
+            release_id="rel-shared",
+            owner="source-ingest connector",
+            provenance="backfill",
+            status="failed",
+            observed_at=now - timedelta(seconds=120),
+        )
+        obs2 = p2.ingest_receipt(backfill_fail)
+        assert obs2.status == "complete"
+        assert obs2.provenance == "live"
+
+        # Durable store observation remains complete/live
+        obs_store = store.get_observation("rel-shared", "c-shared", 1)
+        assert obs_store is not None
+        assert obs_store.status == "complete"
+        assert obs_store.provenance == "live"
+
+        # Fresh rebuild produces complete/live
+        p3 = TwelveLoopTruthProjector(store=store)
+        p3.rebuild()
+        obs3 = p3.get_observation("rel-shared", "c-shared", 1)
+        assert obs3 is not None
+        assert obs3.status == "complete"
+        assert obs3.provenance == "live"

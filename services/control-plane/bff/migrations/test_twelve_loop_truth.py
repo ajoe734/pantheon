@@ -7,7 +7,7 @@ PostgreSQL under task LOOP-TRUTH-001.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import pytest
 
@@ -77,11 +77,27 @@ async def test_postgres_migration_and_store_operations() -> None:
     await store.upsert_observation_async(obs)
 
 
+from unittest.mock import MagicMock, patch
+
+
 def test_postgres_store_supports_receipt_reload_interface_check() -> None:
-    """Verify PostgresTwelveLoopStore implements list_receipts interface without NotImplementedError."""
-    store = PostgresTwelveLoopStore("postgresql://unused-for-this-interface-check")
-    receipts = store.list_receipts(release_id="review-release")
-    assert receipts == []
+    """Verify PostgresTwelveLoopStore implements list_receipts interface without NotImplementedError using mocked connection."""
+    store = PostgresTwelveLoopStore("postgresql://mock-host:5432/mock_db")
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+    mock_conn = MagicMock()
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    with patch.object(store, "_connect", return_value=mock_conn):
+        receipts = store.list_receipts(release_id="review-release")
+        assert receipts == []
+
+
+def test_postgres_store_unreachable_dsn_raises() -> None:
+    """P1: Configured unreachable PostgreSQL DSN must raise rather than silently no-oping."""
+    store = PostgresTwelveLoopStore("postgresql://invalid:invalid@127.0.0.1:59999/dummy_receipts")
+    with pytest.raises(Exception):
+        store.list_receipts(release_id="review-release")
 
 
 def test_postgres_store_persistence_and_fresh_projector_reload() -> None:
@@ -157,3 +173,185 @@ def test_postgres_store_persistence_and_fresh_projector_reload() -> None:
     obs_rebuilt = p2.get_observation(release_id, correlation_id, 1)
     assert obs_rebuilt is not None
     assert obs_rebuilt.to_dict() == obs1.to_dict()
+
+
+def test_postgres_interleaving_projectors_fence_stale_backfill() -> None:
+    """P1: Two projectors on one PostgreSQL store: Projector A ingests live truth,
+
+    Projector B ingests 120-second-older backfill failed terminal.
+    Durable observation remains complete/live; fresh rebuild returns complete/live.
+    """
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    unique_suffix = f"interleave_{int(datetime.now(timezone.utc).timestamp())}_{os.getpid()}"
+    release_id = f"rel-pg-interleave-{unique_suffix}"
+    correlation_id = f"corr-pg-interleave-{unique_suffix}"
+
+    now = datetime.now(timezone.utc)
+    stimulus = CanonicalLoopReceipt(
+        receipt_id=f"rcpt-stim-{unique_suffix}",
+        receipt_type="stimulus",
+        loop_id=1,
+        correlation_id=correlation_id,
+        release_id=release_id,
+        owner="source-ingest connector",
+        provenance="live",
+        observed_at=now,
+    )
+    terminal = CanonicalLoopReceipt(
+        receipt_id=f"rcpt-term-{unique_suffix}",
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id=correlation_id,
+        release_id=release_id,
+        owner="source-ingest connector",
+        provenance="live",
+        status="completed",
+        observed_at=now,
+    )
+    next_consumer = CanonicalLoopReceipt(
+        receipt_id=f"rcpt-next-{unique_suffix}",
+        receipt_type="next_consumer",
+        loop_id=1,
+        correlation_id=correlation_id,
+        release_id=release_id,
+        owner="distillation connector",
+        provenance="live",
+        status="completed",
+        observed_at=now,
+    )
+
+    # Projector A ingests live stimulus, completed terminal, accepted consumer
+    p_a = TwelveLoopTruthProjector(store=store)
+    p_a.ingest_receipts([stimulus, terminal, next_consumer])
+
+    obs_a = p_a.get_observation(release_id, correlation_id, 1)
+    assert obs_a is not None
+    assert obs_a.status == "complete"
+    assert obs_a.provenance == "live"
+
+    # Projector B is a separate instance on the same store.
+    # B ingests 120-second-older backfill failed terminal
+    p_b = TwelveLoopTruthProjector(store=store, auto_load=False)
+    older_backfill = CanonicalLoopReceipt(
+        receipt_id=f"rcpt-backfill-term-{unique_suffix}",
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id=correlation_id,
+        release_id=release_id,
+        owner="source-ingest connector",
+        provenance="backfill",
+        status="failed",
+        observed_at=now - timedelta(seconds=120),
+    )
+    obs_b = p_b.ingest_receipt(older_backfill)
+
+    # Ingestion through B must NOT overwrite durable live truth with backfill failed
+    assert obs_b.status == "complete"
+    assert obs_b.provenance == "live"
+
+    # Durable truth in PostgreSQL remains complete/live
+    obs_db = store.get_observation(release_id, correlation_id, 1)
+    assert obs_db is not None
+    assert obs_db.status == "complete"
+    assert obs_db.provenance == "live"
+
+    # Fresh rebuild produces complete/live
+    p_c = TwelveLoopTruthProjector(store=store)
+    p_c.rebuild()
+    obs_c = p_c.get_observation(release_id, correlation_id, 1)
+    assert obs_c is not None
+    assert obs_c.status == "complete"
+    assert obs_c.provenance == "live"
+
+
+def test_postgres_rejects_cross_key_duplicate_receipt_id() -> None:
+    """P1: Same terminal ID first failed under c1 then completed under c2.
+
+    Must reject conflicting identity and prevent fresh reload divergence.
+    """
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    unique_suffix = f"crosskey_{int(datetime.now(timezone.utc).timestamp())}_{os.getpid()}"
+    release_id = f"rel-pg-crosskey-{unique_suffix}"
+    shared_term_id = f"rcpt-term-dup-{unique_suffix}"
+
+    now = datetime.now(timezone.utc)
+    term_c1 = CanonicalLoopReceipt(
+        receipt_id=shared_term_id,
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id="c1",
+        release_id=release_id,
+        owner="source-ingest connector",
+        provenance="live",
+        status="failed",
+        observed_at=now,
+    )
+    term_c2 = CanonicalLoopReceipt(
+        receipt_id=shared_term_id,
+        receipt_type="terminal",
+        loop_id=1,
+        correlation_id="c2",
+        release_id=release_id,
+        owner="source-ingest connector",
+        provenance="live",
+        status="completed",
+        observed_at=now,
+    )
+
+    p1 = TwelveLoopTruthProjector(store=store)
+    p1.ingest_receipt(term_c1)
+    assert p1.get_observation(release_id, "c1", 1).status == "failed"
+
+    # Ingesting the same receipt ID under c2 must be rejected
+    with pytest.raises(ValueError, match="Conflicting receipt identity"):
+        p1.ingest_receipt(term_c2)
+
+    # Even a fresh projector instance querying Postgres rejects the conflicting identity
+    p2 = TwelveLoopTruthProjector(store=store, auto_load=False)
+    with pytest.raises(ValueError, match="Conflicting receipt identity"):
+        p2.ingest_receipt(term_c2)
+
+
+def test_postgres_partial_write_retry() -> None:
+    """P1: Partial-write retry: receipt was recorded in store but observation was not written;
+
+    subsequent ingest_receipt completes the write successfully.
+    """
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    unique_suffix = f"partial_{int(datetime.now(timezone.utc).timestamp())}_{os.getpid()}"
+    release_id = f"rel-pg-partial-{unique_suffix}"
+    correlation_id = f"corr-pg-partial-{unique_suffix}"
+
+    now = datetime.now(timezone.utc)
+    stimulus = CanonicalLoopReceipt(
+        receipt_id=f"rcpt-stim-partial-{unique_suffix}",
+        receipt_type="stimulus",
+        loop_id=1,
+        correlation_id=correlation_id,
+        release_id=release_id,
+        owner="source-ingest connector",
+        provenance="live",
+        observed_at=now,
+    )
+
+    # Simulate partial write: record receipt directly in Postgres store without upserting observation
+    store.record_receipt(stimulus)
+    assert store.get_observation(release_id, correlation_id, 1) is None
+
+    # Now ingest through projector: retry should detect recorded receipt, compute observation, and upsert
+    p = TwelveLoopTruthProjector(store=store)
+    obs = p.ingest_receipt(stimulus)
+    assert obs.status == "open"
+    assert obs.stimulus_id == stimulus.receipt_id
+
+    # Observation is now durable in Postgres
+    obs_db = store.get_observation(release_id, correlation_id, 1)
+    assert obs_db is not None
+    assert obs_db.status == "open"
+    assert obs_db.stimulus_id == stimulus.receipt_id

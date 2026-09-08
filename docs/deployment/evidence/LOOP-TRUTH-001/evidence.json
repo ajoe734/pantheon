@@ -22,6 +22,9 @@
       "Downstream next-consumer rejection or failure prevents false completion and marks loop failed",
       "Incremental output strictly equals rebuild output via deterministic reduction (_reduce_key)",
       "Causation continuity binds stimulus, terminal, and next-consumer receipts; mismatched or cross-chain causation prevents false completion",
+      "Conflicting receipt identities across correlations or keys are rejected; duplicate receipts bind strictly to persisted content",
+      "Reduction is serialized against canonical stored receipts; stale projection writers are fenced in both Memory and PostgreSQL stores",
+      "PostgreSQL store removes production sentinel bypass; configured or unreachable database failures raise explicitly",
       "Persistence failure on store write is explicit and retryable without polluting in-memory idempotency cache",
       "Freshness and provenance are derived strictly from accepted evidence receipts; ignored backfill cannot refresh live observation",
       "Backfill never overwrites a newer live observation and cannot complete a live stimulus",
@@ -39,15 +42,15 @@
     "commands": [
       {
         "command": "PYTHONPATH=. /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
-        "result": "23 passed",
-        "executed": 23,
-        "collected": 23
+        "result": "27 passed",
+        "executed": 27,
+        "collected": 27
       },
       {
         "command": "PYTHONPATH=. /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
-        "result": "3 passed (including real PostgreSQL reload and interface check)",
-        "executed": 3,
-        "collected": 3
+        "result": "7 passed (including real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, and mocked interface check)",
+        "executed": 7,
+        "collected": 7
       },
       {
         "command": "PYTHONPATH=services/control-plane/bff /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
