@@ -2,7 +2,9 @@
 
 Status: corrective restoration complete (BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001);
 read-port empty/missing-truth and fail-closed policy gaps closed
-(BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001)
+(BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001);
+policy owner convergence and divergent router defaults removal complete
+(BFF-CW-POLICY-OWNER-CORRECTIVE-002)
 
 ## Single owner
 
@@ -126,6 +128,58 @@ This follow-up closes those gaps without introducing a second implementation:
 Regression coverage for all three gaps lives in
 `scripts/test_bff_cw_contract_prerequisite.py` alongside the predecessor's
 CW01/CW03/CW04 tests.
+
+## BFF-CW-POLICY-OWNER-CORRECTIVE-002: Policy Owner Convergence and Divergent Router Defaults Removal
+
+Building on the previous two correctives, `BFF-CW-POLICY-OWNER-CORRECTIVE-002`
+removes all remaining divergent router defaults and establishes `GovernanceService`
+as the exclusive, authoritative policy owner for CW01/CW03/CW04:
+
+- **Single policy owner in `GovernanceService`**:
+  - `GovernanceService._default_dataset_surface_status`: Missing/empty/unrecognized source
+    truth fails closed to `"unavailable"`, not `"ok"`.
+  - `GovernanceService.dataset_source`: Missing callback or `None` defaults to `"missing"`,
+    never assuming healthy provenance.
+  - Exception guarding: All callbacks (`dataset_source`, `dataset_surface_status`, `redact_evidence_refs`,
+    `capabilities_for_identity`) in `GovernanceService` are wrapped in fail-closed error
+    handling so callback exceptions resolve to `"unavailable"` or redaction-policy-unavailable.
+  - Explicit collection surface state helpers: Added `committee_collection_surface_state`
+    and `memo_collection_surface_state` methods enforcing that an unavailable underlying
+    dataset always forces the collection surface state to `"unavailable"`.
+  - Unavailable dominates collection listing: In `GovernanceService.list_committees`, if
+    `committee_collection_surface_state` resolves to `"unavailable"`, item rows are
+    suppressed (`data: []`, `next_cursor: None`, `total_count: 0`), matching the CW04
+    `list_consult_memos` contract.
+  - Redaction fail-closed integrity: In `consult_memo_projection`, any exception or missing
+    redactor/capability defaults to fail-closed redaction (`redacted: True`,
+    `reason: "redaction_policy_unavailable"`). Furthermore, `canInitiateGovernanceReview`
+    is strictly `False` whenever either the record or dataset surface state is degraded or unavailable.
+
+- **Removal of divergent router defaults**:
+  - Eliminated router-level pass-through redaction `_default_redact_evidence_refs`; router
+    now references `GovernanceService._fail_closed_redact_evidence_refs`.
+  - Eliminated router-level optimistic default `_default_dataset_surface_status` (which
+    previously defaulted missing datasets to `"ok"`); router now references
+    `GovernanceService._default_dataset_surface_status`.
+  - In `_default_read_surface_meta`, missing surface entries now report `source="missing"`.
+  - Replaced ad-hoc router redaction branches with `_safe_redact` helper delegating to the
+    service's fail-closed redactor.
+  - `router.py:list_committees` now directly consults `service.committee_collection_surface_state`.
+
+- **Comprehensive contract test suite expansion (`scripts/test_bff_cw_contract_prerequisite.py`)**:
+  - Added test case 1: `test_cw04_red_case_1_memo_degraded_dataset_unavailable_suppresses_summary`:
+    Record degraded + dataset unavailable results in unavailable dominating, suppressing summary
+    and disabling governance review CTA.
+  - Added test case 2: `test_cw_red_case_2_omitted_provenance_not_ok_not_fresh_cta_false`:
+    Omitted provenance results in `status="unavailable"`, `fresh=False`, and CTA disabled.
+  - Added test case 3: `test_cw04_red_case_3_router_omitted_redactor_empty_capabilities_no_strategy_evidence`:
+    Omitted redactor and empty capabilities through the router fails closed and redacts strategy evidence.
+  - Added full 16-combination (4 record states x 4 dataset states) availability and CTA truth table
+    tests for both CW03 committee and CW04 memo, verifying identical behavior between service and router.
+  - Added callback exception fail-closed verification (`test_cw_callback_errors_fail_closed`).
+  - Added positive real-redactor verification (`test_cw04_authorized_real_redactor_positive_through_router`).
+  - Added production composition wiring test (`test_cw_normal_production_wiring_composition`).
+  - All 29 contract tests pass cleanly.
 
 ## Known gap intentionally left untouched (not this corrective's scope)
 

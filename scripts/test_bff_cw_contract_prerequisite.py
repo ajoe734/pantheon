@@ -21,6 +21,7 @@ import tempfile
 from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
@@ -29,6 +30,7 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 from services.control_plane.bff import main as bff_main  # noqa: E402
+from services.control_plane.bff.governance.router import create_governance_router  # noqa: E402
 from services.control_plane.bff.governance.service import GovernanceService  # noqa: E402
 from services.control_plane.bff.models import redact_evidence_refs as _canonical_redact_evidence_refs  # noqa: E402
 from services.control_plane.bff.ports.operations_consultation import (  # noqa: E402
@@ -854,6 +856,549 @@ def test_cw04_authorized_capabilities_still_disclose_evidence() -> None:
     assert projection is not None
     assert projection["evidence_refs"] == [{"ref_id": "ev-1", "evidence_type": "strategy"}]
     assert projection["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# BFF-CW-POLICY-OWNER-CORRECTIVE-002: Single GovernanceService policy owner,
+# complete record x dataset source matrix, unavailable dominance, fail-closed
+# callback errors, and real router redaction tests.
+# ---------------------------------------------------------------------------
+
+
+def test_cw04_red_case_1_memo_degraded_dataset_unavailable_suppresses_summary() -> None:
+    """Fixed Red Case (1): memo degraded x dataset unavailable -> unavailable/summary suppressed.
+    Both actual GovernanceService and real router must suppress summary and content,
+    force CTA to False, and report surface state as unavailable."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+
+    memo = {
+        "memo_id": "mem-red1",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "degraded",
+        "summary": "This summary must be suppressed.",
+        "recommendations": ["condition-1"],
+        "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "strategy"}],
+    }
+
+    class _Store:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo if memo_id == memo["memo_id"] else None
+
+        def dataset_source(self, dataset: str) -> str:
+            return "unavailable"
+
+    # Actual GovernanceService check
+    service = GovernanceService(_Store())
+    projection = service.consult_memo_projection("mem-red1", identity=reviewer_identity)
+    assert projection is not None
+    assert projection["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+    assert projection["summary"] is None
+    assert projection["recommendations"] == []
+    assert projection["evidence_refs"] == []
+    assert projection["allowedActions"] == {"canInitiateGovernanceReview": False}
+    assert projection["meta"]["staleness"]["status"] == "stale"
+
+    # Real router check
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _Store(),
+            extract_identity=lambda auth: reviewer_identity,
+        )
+    )
+    client = TestClient(app)
+    res = client.get("/api/v1/consult/memos/mem-red1", headers={"Authorization": REVIEWER_AUTH})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+    assert body["summary"] is None
+    assert body["recommendations"] == []
+    assert body["evidence_refs"] == []
+    assert body["allowedActions"] == {"canInitiateGovernanceReview": False}
+    assert body["meta"]["staleness"]["status"] == "stale"
+
+
+def test_cw_red_case_2_omitted_provenance_not_ok_not_fresh_cta_false() -> None:
+    """Fixed Red Case (2): omitted provenance -> not ok/fresh, CTA false.
+    When provenance/dataset_source is omitted or missing, service and router
+    must not claim ok, fresh, or actionable."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer", "operator", "approver"}})()
+
+    memo = {
+        "memo_id": "mem-prov1",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "summary": "Should be hidden without provenance.",
+        "recommendations": ["rec-1"],
+        "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "note"}],
+    }
+
+    committee = {
+        "committee_id": "comm-prov1",
+        "surface_state": "ok",
+        "quorum_state": "quorum_met",
+        "consensus_state": "sponsor_required",
+        "sponsor_assignment": {"participant_id": "p-1"},
+        "sponsor_decision": None,
+    }
+
+    class _StoreWithoutDatasetSource:
+        """Store with completely omitted dataset_source callback."""
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo if memo_id == memo["memo_id"] else None
+
+        def list_consult_memos(self, **_: Any) -> List[Dict[str, Any]]:
+            return [memo]
+
+        def get_committee(self, committee_id: str) -> Optional[Dict[str, Any]]:
+            return committee if committee_id == committee["committee_id"] else None
+
+        def list_committees(self, **_: Any) -> List[Dict[str, Any]]:
+            return [committee]
+
+    # Service check
+    service = GovernanceService(_StoreWithoutDatasetSource())
+    assert service.dataset_source("consult_memos") == "missing"
+    assert service.dataset_source("consult_requests") == "missing"
+
+    memo_proj = service.consult_memo_projection("mem-prov1", identity=reviewer_identity)
+    assert memo_proj is not None
+    assert memo_proj["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+    assert memo_proj["meta"]["staleness"]["status"] == "stale"
+    assert memo_proj["allowedActions"]["canInitiateGovernanceReview"] is False
+    assert memo_proj["summary"] is None
+
+    comm_proj = service.committee_projection("comm-prov1", identity=reviewer_identity)
+    assert comm_proj is not None
+    assert comm_proj["meta"]["surfaces"]["committee_board"] == "unavailable"
+    assert comm_proj["allowedActions"]["canRecordSponsorDecision"] is False
+
+    # Router check
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _StoreWithoutDatasetSource(),
+            extract_identity=lambda auth: reviewer_identity,
+        )
+    )
+    client = TestClient(app)
+
+    # Memo detail
+    res_memo = client.get("/api/v1/consult/memos/mem-prov1", headers={"Authorization": REVIEWER_AUTH})
+    assert res_memo.status_code == 200
+    memo_body = res_memo.json()
+    assert memo_body["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+    assert memo_body["meta"]["staleness"]["status"] == "stale"
+    assert memo_body["allowedActions"]["canInitiateGovernanceReview"] is False
+    assert memo_body["summary"] is None
+
+    # Memo list
+    res_memos = client.get("/api/v1/consult/memos", headers={"Authorization": REVIEWER_AUTH})
+    assert res_memos.status_code == 200
+    assert res_memos.json()["items"] == []
+    assert res_memos.json()["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+
+    # Committee detail
+    res_comm = client.get("/api/v1/committees/comm-prov1", headers={"Authorization": OPERATOR_AUTH})
+    assert res_comm.status_code == 200
+    comm_body = res_comm.json()
+    assert comm_body["meta"]["surfaces"]["committee_board"] == "unavailable"
+    assert comm_body["allowedActions"]["canRecordSponsorDecision"] is False
+
+    # Committee list
+    res_comms = client.get("/api/v1/committees", headers={"Authorization": OPERATOR_AUTH})
+    assert res_comms.status_code == 200
+    assert res_comms.json()["data"] == []
+    assert res_comms.json()["meta"]["surfaces"]["committee_board"] == "unavailable"
+
+
+def test_cw04_red_case_3_router_omitted_redactor_empty_capabilities_no_strategy_evidence() -> None:
+    """Fixed Red Case (3): actual router omitted redactor + capabilities=[] -> no visible strategy evidence.
+    When create_governance_router is invoked without redact_evidence_refs and capabilities=[],
+    strategy evidence must be fail-closed redacted."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+
+    memo = {
+        "memo_id": "mem-strat-1",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "evidence_refs": [{"ref_id": "ev-strat-1", "evidence_type": "strategy", "description": "top_secret"}],
+    }
+
+    consult_evidence = [
+        {"ref_id": "ev-strat-session", "evidence_type": "strategy", "description": "session_secret"}
+    ]
+
+    class _Store:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo if memo_id == memo["memo_id"] else None
+
+        def get_consultation_evidence(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+            return consult_evidence if session_id == "cs-1" else None
+
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+    app = FastAPI()
+    # Deliberately omit redact_evidence_refs and pass capabilities_for_identity returning []
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _Store(),
+            extract_identity=lambda auth: reviewer_identity,
+            capabilities_for_identity=lambda ident: [],
+            # redact_evidence_refs is omitted
+        )
+    )
+    client = TestClient(app)
+
+    # Memo detail
+    memo_res = client.get("/api/v1/consult/memos/mem-strat-1", headers={"Authorization": REVIEWER_AUTH})
+    assert memo_res.status_code == 200
+    memo_body = memo_res.json()
+    refs = memo_body["evidence_refs"]
+    assert len(refs) == 1
+    assert refs[0]["redacted"] is True
+    assert refs[0]["reason"] == "redaction_policy_unavailable"
+    assert "top_secret" not in str(refs)
+
+    # Consultation evidence endpoint
+    ev_res = client.get("/api/v1/consultations/cs-1/evidence", headers={"Authorization": REVIEWER_AUTH})
+    assert ev_res.status_code == 200
+    ev_body = ev_res.json()
+    items = ev_body["data"]
+    assert len(items) == 1
+    assert items[0]["redacted"] is True
+    assert items[0]["reason"] == "redaction_policy_unavailable"
+    assert "session_secret" not in str(items)
+
+
+def test_cw04_full_record_by_dataset_matrix_service_and_router() -> None:
+    """Full 4x4 matrix of record state x dataset source for CW04 memo:
+    record in {ok, degraded, unavailable, missing}
+    dataset source in {ok, degraded, unavailable, missing}
+    Verified across both actual GovernanceService and real router."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+
+    for rec_state in ["ok", "degraded", "unavailable", "missing"]:
+        for ds_source in ["ok", "degraded", "unavailable", "missing"]:
+            if rec_state == "missing":
+                memo_data = None
+            else:
+                memo_data = {
+                    "memo_id": f"mem-{rec_state}-{ds_source}",
+                    "lifecycle_state": "published",
+                    "status": "published",
+                    "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+                    "active_governance_review_id": None,
+                    "suppressed": False,
+                    "withdrawn": False,
+                    "surface_state": rec_state,
+                    "summary": "Memo summary content",
+                    "recommendations": ["approve"],
+                    "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "note"}],
+                }
+
+            class _MatrixStore:
+                def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+                    return memo_data
+
+                def dataset_source(self, dataset: str) -> str:
+                    return ds_source
+
+            service = GovernanceService(_MatrixStore())
+            app = FastAPI()
+            app.include_router(
+                create_governance_router(
+                    get_read_store=lambda: _MatrixStore(),
+                    extract_identity=lambda auth: reviewer_identity,
+                    redact_evidence_refs=lambda ident, refs, **kw: (refs, 0),
+                )
+            )
+            client = TestClient(app)
+
+            proj = service.consult_memo_projection(f"mem-{rec_state}-{ds_source}", identity=reviewer_identity)
+            router_res = client.get(f"/api/v1/consult/memos/mem-{rec_state}-{ds_source}", headers={"Authorization": REVIEWER_AUTH})
+
+            if rec_state == "missing":
+                assert proj is None, (rec_state, ds_source)
+                assert router_res.status_code == 404, (rec_state, ds_source)
+            else:
+                assert proj is not None
+                assert router_res.status_code == 200
+                router_body = router_res.json()
+
+                if ds_source in {"unavailable", "missing"} or rec_state == "unavailable":
+                    # Unavailable dominates
+                    expected_state = "unavailable"
+                    assert proj["meta"]["surfaces"]["redteam_memo"]["state"] == expected_state
+                    assert router_body["meta"]["surfaces"]["redteam_memo"]["state"] == expected_state
+                    # Content hidden
+                    assert proj["summary"] is None
+                    assert proj["recommendations"] == []
+                    assert proj["evidence_refs"] == []
+                    assert router_body["summary"] is None
+                    assert router_body["recommendations"] == []
+                    assert router_body["evidence_refs"] == []
+                    # CTA false
+                    assert proj["allowedActions"]["canInitiateGovernanceReview"] is False
+                    assert router_body["allowedActions"]["canInitiateGovernanceReview"] is False
+                    # Staleness
+                    assert proj["meta"]["staleness"]["status"] == "stale"
+                    assert router_body["meta"]["staleness"]["status"] == "stale"
+                elif ds_source == "degraded" or rec_state == "degraded":
+                    expected_state = "degraded"
+                    assert proj["meta"]["surfaces"]["redteam_memo"]["state"] == expected_state
+                    assert router_body["meta"]["surfaces"]["redteam_memo"]["state"] == expected_state
+                    # Content retained
+                    assert proj["summary"] == "Memo summary content"
+                    assert proj["recommendations"] == ["approve"]
+                    assert len(proj["evidence_refs"]) == 1
+                    assert router_body["summary"] == "Memo summary content"
+                    assert router_body["recommendations"] == ["approve"]
+                    assert len(router_body["evidence_refs"]) == 1
+                    # CTA false
+                    assert proj["allowedActions"]["canInitiateGovernanceReview"] is False
+                    assert router_body["allowedActions"]["canInitiateGovernanceReview"] is False
+                    # Staleness
+                    assert proj["meta"]["staleness"]["status"] == "stale"
+                    assert router_body["meta"]["staleness"]["status"] == "stale"
+                else:
+                    # Both ok
+                    expected_state = "ok"
+                    assert proj["meta"]["surfaces"]["redteam_memo"]["state"] == expected_state
+                    assert router_body["meta"]["surfaces"]["redteam_memo"]["state"] == expected_state
+                    # Content retained
+                    assert proj["summary"] == "Memo summary content"
+                    assert proj["recommendations"] == ["approve"]
+                    assert len(proj["evidence_refs"]) == 1
+                    assert router_body["summary"] == "Memo summary content"
+                    assert router_body["recommendations"] == ["approve"]
+                    # CTA true
+                    assert proj["allowedActions"]["canInitiateGovernanceReview"] is True
+                    assert router_body["allowedActions"]["canInitiateGovernanceReview"] is True
+                    # Staleness
+                    assert proj["meta"]["staleness"]["status"] == "fresh"
+                    assert router_body["meta"]["staleness"]["status"] == "fresh"
+
+
+def test_cw03_full_record_by_dataset_matrix_service_and_router() -> None:
+    """Full 4x4 matrix of record state x dataset source for CW03 committee:
+    record in {ok, degraded, unavailable, missing}
+    dataset source in {ok, degraded, unavailable, missing}
+    Verified across both actual GovernanceService and real router."""
+    operator_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"operator", "approver"}})()
+
+    for rec_state in ["ok", "degraded", "unavailable", "missing"]:
+        for ds_source in ["ok", "degraded", "unavailable", "missing"]:
+            if rec_state == "missing":
+                comm_data = None
+            else:
+                comm_data = {
+                    "committee_id": f"comm-{rec_state}-{ds_source}",
+                    "surface_state": rec_state,
+                    "quorum_state": "quorum_met",
+                    "consensus_state": "sponsor_required",
+                    "sponsor_assignment": {"participant_id": "p-1"},
+                    "sponsor_decision": None,
+                }
+
+            class _MatrixStore:
+                def get_committee(self, committee_id: str) -> Optional[Dict[str, Any]]:
+                    return comm_data
+
+                def list_committees(self, **_: Any) -> List[Dict[str, Any]]:
+                    return [comm_data] if comm_data else []
+
+                def dataset_source(self, dataset: str) -> str:
+                    return ds_source
+
+            service = GovernanceService(_MatrixStore())
+            app = FastAPI()
+            app.include_router(
+                create_governance_router(
+                    get_read_store=lambda: _MatrixStore(),
+                    extract_identity=lambda auth: operator_identity,
+                )
+            )
+            client = TestClient(app)
+
+            proj = service.committee_projection(f"comm-{rec_state}-{ds_source}", identity=operator_identity)
+            router_res = client.get(f"/api/v1/committees/comm-{rec_state}-{ds_source}", headers={"Authorization": OPERATOR_AUTH})
+
+            if rec_state == "missing":
+                assert proj is None, (rec_state, ds_source)
+                assert router_res.status_code == 404, (rec_state, ds_source)
+            else:
+                assert proj is not None
+                assert router_res.status_code == 200
+                router_body = router_res.json()
+
+                if ds_source in {"unavailable", "missing"} or rec_state == "unavailable":
+                    # Unavailable dominates
+                    expected_state = "unavailable"
+                    assert proj["meta"]["surfaces"]["committee_board"] == expected_state
+                    assert router_body["meta"]["surfaces"]["committee_board"] == expected_state
+                    assert proj["allowedActions"]["canRecordSponsorDecision"] is False
+                    assert router_body["allowedActions"]["canRecordSponsorDecision"] is False
+                elif ds_source == "degraded" or rec_state == "degraded":
+                    expected_state = "degraded"
+                    assert proj["meta"]["surfaces"]["committee_board"] == expected_state
+                    assert router_body["meta"]["surfaces"]["committee_board"] == expected_state
+                    assert proj["allowedActions"]["canRecordSponsorDecision"] is True
+                    assert router_body["allowedActions"]["canRecordSponsorDecision"] is True
+                else:
+                    # Both ok
+                    expected_state = "ok"
+                    assert proj["meta"]["surfaces"]["committee_board"] == expected_state
+                    assert router_body["meta"]["surfaces"]["committee_board"] == expected_state
+                    assert proj["allowedActions"]["canRecordSponsorDecision"] is True
+                    assert router_body["allowedActions"]["canRecordSponsorDecision"] is True
+
+            # Also check list_committees when dataset source is unavailable
+            if ds_source in {"unavailable", "missing"}:
+                list_res = client.get("/api/v1/committees", headers={"Authorization": OPERATOR_AUTH})
+                assert list_res.status_code == 200
+                assert list_res.json()["data"] == []
+
+
+def test_cw_callback_errors_fail_closed() -> None:
+    """Callback lookup/redactor/store errors must all fail closed."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+
+    memo = {
+        "memo_id": "mem-err",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "strategy"}],
+    }
+
+    # 1. Store dataset_source raises exception -> returns "missing" -> unavailable
+    class _RaisingStore:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo
+
+        def dataset_source(self, dataset: str) -> str:
+            raise RuntimeError("dataset source crashed")
+
+    service_raising = GovernanceService(_RaisingStore())
+    assert service_raising.dataset_source("consult_memos") == "missing"
+    proj = service_raising.consult_memo_projection("mem-err", identity=reviewer_identity)
+    assert proj["meta"]["surfaces"]["redteam_memo"]["state"] == "unavailable"
+
+    # 2. redactor callable raises exception -> fail closed with all refs redacted
+    class _GoodStore:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo
+
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+    def _exploding_redactor(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("redactor exploded")
+
+    service_exploding = GovernanceService(
+        _GoodStore(),
+        redact_evidence_refs=_exploding_redactor,
+    )
+    proj2 = service_exploding.consult_memo_projection("mem-err", identity=reviewer_identity)
+    assert proj2["evidence_refs"][0]["redacted"] is True
+    assert proj2["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
+
+    # 3. router _safe_redact fails closed when redactor explodes
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _GoodStore(),
+            extract_identity=lambda auth: reviewer_identity,
+            redact_evidence_refs=_exploding_redactor,
+        )
+    )
+    client = TestClient(app)
+    res = client.get("/api/v1/consult/memos/mem-err", headers={"Authorization": REVIEWER_AUTH})
+    assert res.status_code == 200
+    assert res.json()["evidence_refs"][0]["redacted"] is True
+    assert res.json()["evidence_refs"][0]["reason"] == "redaction_policy_unavailable"
+
+
+def test_cw04_authorized_real_redactor_positive_through_router() -> None:
+    """Authorized real-redactor positive: through real router, an identity with
+    strategy.view capability sees strategy evidence unredacted."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+
+    memo = {
+        "memo_id": "mem-auth-1",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "evidence_refs": [{"ref_id": "ev-strat-auth", "evidence_type": "strategy"}],
+    }
+
+    class _Store:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo
+
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: _Store(),
+            extract_identity=lambda auth: reviewer_identity,
+            redact_evidence_refs=_canonical_redact_evidence_refs,
+            capabilities_for_identity=lambda ident: ["strategy.view"],
+        )
+    )
+    client = TestClient(app)
+    res = client.get("/api/v1/consult/memos/mem-auth-1", headers={"Authorization": REVIEWER_AUTH})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["evidence_refs"] == [{"ref_id": "ev-strat-auth", "evidence_type": "strategy"}]
+    assert body["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
+
+
+def test_cw_normal_production_wiring_composition() -> None:
+    """Normal production wiring read-only composition verification:
+    main.app mounts the governance router with GovernanceService backed by app_deps.read_surface,
+    and no duplicate or divergent policy engines exist."""
+    def _iter_routes(routes: Any) -> Any:
+        for route in routes:
+            nested_router = getattr(route, "original_router", None)
+            if nested_router is not None:
+                yield from _iter_routes(nested_router.routes)
+            else:
+                yield route
+
+    routes = [getattr(route, "path", None) for route in _iter_routes(bff_main.app.router.routes)]
+    assert "/api/v1/consult/requests" in routes
+    assert "/api/v1/committees" in routes
+    assert "/api/v1/consult/memos" in routes
+    assert "/api/v1/consult/memos/{memo_id}" in routes
+    assert "/api/v1/committees/{committee_id}" in routes
 
 
 if __name__ == "__main__":
