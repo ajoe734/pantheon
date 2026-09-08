@@ -10,8 +10,10 @@ import json
 import logging
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import jwt
@@ -19,6 +21,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from .models import AuthenticationError, VerifiedOperator
+from .secure_io import UnsafeCredentialFileError, read_private_file_strict
 
 logger = logging.getLogger("execution_grant_issuer.token_verifier")
 
@@ -28,9 +31,12 @@ GOOGLE_SECURETOKEN_CERTS_URL = (
 GOOGLE_ACCOUNT_LOOKUP_URL = (
     "https://identitytoolkit.googleapis.com/v1/projects/{project_id}/accounts:lookup"
 )
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+IDENTITY_TOOLKIT_OAUTH_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 SUPPORTED_SECOND_FACTORS = frozenset({"phone", "totp", "sms", "email", "security_key"})
 DEFAULT_MAX_AUTH_AGE_SECONDS = 3600
 CLOCK_SKEW_TOLERANCE_SECONDS = 10
+ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 60
 
 
 class IdentityPlatformTokenVerifier:
@@ -48,6 +54,8 @@ class IdentityPlatformTokenVerifier:
         certs_url: str = GOOGLE_SECURETOKEN_CERTS_URL,
         account_lookup_url: str | None = None,
         check_revocation: bool = False,
+        service_account_credentials_file: str | Path | None = None,
+        oauth_token_url: str = GOOGLE_OAUTH_TOKEN_URL,
     ) -> None:
         if not project_id or not project_id.strip():
             raise ValueError("project_id must be non-empty")
@@ -78,8 +86,44 @@ class IdentityPlatformTokenVerifier:
             else GOOGLE_ACCOUNT_LOOKUP_URL.format(project_id=self.project_id)
         )
         self.check_revocation = check_revocation
+        self.oauth_token_url = oauth_token_url
         self._certs_cache: dict[str, RSAPublicKey] = {}
         self._certs_cache_expires_at: float = 0.0
+        self._access_token: str | None = None
+        self._access_token_expires_at: float = 0.0
+
+        self._service_account_email: str | None = None
+        self._service_account_private_key: str | None = None
+        if self.check_revocation:
+            if not service_account_credentials_file:
+                raise ValueError(
+                    "check_revocation is enabled but no service_account_credentials_file was "
+                    "provided; an unauthenticated account lookup call cannot be trusted to "
+                    "actually detect a disabled or revoked operator, so this fails closed at "
+                    "construction time rather than issuing an unauthorized request"
+                )
+            try:
+                sa_bytes = read_private_file_strict(
+                    service_account_credentials_file,
+                    description="Service account credentials file",
+                )
+            except UnsafeCredentialFileError as exc:
+                raise ValueError(str(exc)) from exc
+            try:
+                sa_info = json.loads(sa_bytes.decode("utf-8"))
+            except Exception as exc:
+                raise ValueError(
+                    f"Service account credentials file is not valid JSON: {service_account_credentials_file}"
+                ) from exc
+            email = str(sa_info.get("client_email") or "").strip()
+            private_key = str(sa_info.get("private_key") or "").strip()
+            if not email or not private_key:
+                raise ValueError(
+                    "Service account credentials file must contain 'client_email' and "
+                    "'private_key' fields"
+                )
+            self._service_account_email = email
+            self._service_account_private_key = private_key
 
     @staticmethod
     def _load_public_key_from_pem(pem_data: str) -> RSAPublicKey:
@@ -138,18 +182,82 @@ class IdentityPlatformTokenVerifier:
             return google_keys[kid]
         raise AuthenticationError(f"Token key ID {kid!r} not found in trusted certificates")
 
+    def _mint_service_account_access_token(self) -> str:
+        """Mint (or reuse a cached) OAuth 2.0 access token for the configured
+        service account using the RFC 7523 JWT-bearer grant, so the account
+        lookup call below is an authorized Identity Toolkit request rather
+        than an anonymous one that Google will simply reject or ignore.
+        """
+        now = time.time()
+        if self._access_token and now < self._access_token_expires_at - ACCESS_TOKEN_REFRESH_MARGIN_SECONDS:
+            return self._access_token
+
+        if not self._service_account_email or not self._service_account_private_key:
+            raise AuthenticationError(
+                "Account revocation check requires service account credentials, but none are configured"
+            )
+
+        iat = int(now)
+        exp = iat + 3600
+        assertion_claims = {
+            "iss": self._service_account_email,
+            "scope": IDENTITY_TOOLKIT_OAUTH_SCOPE,
+            "aud": self.oauth_token_url,
+            "iat": iat,
+            "exp": exp,
+        }
+        try:
+            assertion = jwt.encode(assertion_claims, self._service_account_private_key, algorithm="RS256")
+        except Exception as exc:
+            raise AuthenticationError(f"Failed to sign service account OAuth assertion: {exc}") from exc
+
+        body = urllib.parse.urlencode(
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": assertion,
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            self.oauth_token_url,
+            data=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "pantheon-execution-grant-issuer/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                token_response = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            raise AuthenticationError(f"Failed to obtain OAuth access token for account lookup: {exc}") from exc
+
+        access_token = str(token_response.get("access_token") or "").strip()
+        if not access_token:
+            raise AuthenticationError("OAuth token endpoint did not return an access_token")
+
+        self._access_token = access_token
+        self._access_token_expires_at = iat + int(token_response.get("expires_in", 3600))
+        return access_token
+
     def _check_account_revocation(self, uid: str, auth_time_int: int) -> None:
         """Check user revocation/disabled status against Identity Platform account lookup.
-        
+
         Fails closed on any network error, missing user, disabled account, or revocation.
+        The lookup is authorized with a service-account OAuth access token; per Google's
+        published API contract, accounts:lookup requires the
+        'https://www.googleapis.com/auth/cloud-platform' (or 'identitytoolkit') OAuth scope,
+        so an unauthenticated call cannot be relied on to actually enforce revocation.
         """
         try:
+            access_token = self._mint_service_account_access_token()
             req_data = json.dumps({"localId": [uid]}).encode("utf-8")
             req = urllib.request.Request(
                 self.account_lookup_url,
                 data=req_data,
                 headers={
                     "Content-Type": "application/json",
+                    "Authorization": f"Bearer {access_token}",
                     "User-Agent": "pantheon-execution-grant-issuer/1.0",
                 },
                 method="POST",
@@ -159,22 +267,20 @@ class IdentityPlatformTokenVerifier:
                 lookup_data = json.loads(content)
                 users = lookup_data.get("users", [])
                 if not users:
-                    raise AuthenticationError(f"Account lookup returned no user record for UID {uid!r}")
+                    raise ValueError(f"Account lookup returned no user record for UID {uid!r}")
                 user = users[0]
                 if user.get("disabled") is True:
-                    raise AuthenticationError(f"Operator account {uid!r} is disabled")
+                    raise ValueError(f"Operator account {uid!r} is disabled")
                 valid_since = user.get("validSince") or user.get("tokensValidAfterTime")
                 if valid_since is not None:
                     try:
                         valid_since_epoch = int(valid_since)
-                        if auth_time_int < valid_since_epoch:
-                            raise AuthenticationError(
-                                f"Operator ID token for UID {uid!r} has been revoked (valid since {valid_since_epoch})"
-                            )
-                    except ValueError:
-                        pass
-        except AuthenticationError:
-            raise
+                    except (TypeError, ValueError):
+                        valid_since_epoch = None
+                    if valid_since_epoch is not None and auth_time_int < valid_since_epoch:
+                        raise ValueError(
+                            f"Operator ID token for UID {uid!r} has been revoked (valid since {valid_since_epoch})"
+                        )
         except Exception as exc:
             raise AuthenticationError(
                 f"Account revocation check failed for UID {uid!r}: {exc}"

@@ -37,6 +37,8 @@ try:
 except ImportError:
     ea = None  # Handled gracefully if executed in foreign environment
 
+from execution_grant_issuer.secure_io import UnsafeCredentialFileError, read_private_file_strict
+
 DEFAULT_ALLOWED_TASK = "DEV502-TRACE-001"
 DEFAULT_ALLOWED_ENV = "pantheon-dev"
 DEFAULT_ISSUER_URL = "http://127.0.0.1:8090"
@@ -153,10 +155,12 @@ def load_token(token_file: str | None, token_stdin: bool) -> str:
     if token_stdin:
         token = sys.stdin.read().strip()
     elif token_file:
-        token_path = Path(token_file).expanduser().resolve()
-        if not token_path.is_file():
-            raise FileNotFoundError(f"Token file not found: {token_path}")
-        token = token_path.read_text(encoding="utf-8").strip()
+        token_path = Path(token_file).expanduser()
+        try:
+            token_bytes = read_private_file_strict(token_path, description="Operator ID token file")
+        except UnsafeCredentialFileError as exc:
+            raise ValueError(str(exc)) from exc
+        token = token_bytes.decode("utf-8").strip()
     else:
         env_token = os.environ.get("OPERATOR_ID_TOKEN", "").strip()
         if env_token:
@@ -216,15 +220,20 @@ def post_json(url: str, payload: dict[str, Any], auth_token: str) -> dict[str, A
             content = resp.read().decode("utf-8")
             return json.loads(content)
     except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode("utf-8")
+        # Never echo the remote response body verbatim: it is attacker/issuer
+        # controlled content (which may reflect the submitted bearer token or
+        # arbitrary text) and must not reach the operator's terminal or logs.
+        # Only a small allowlisted set of known, non-sensitive issuer error
+        # fields is surfaced; anything else collapses to a fixed generic
+        # message that still carries the HTTP status code for diagnosis.
+        err_msg = f"issuer returned HTTP {exc.code}"
         try:
-            err_json = json.loads(err_body)
-            err_msg = err_json.get("error") or err_body
+            exc.read()  # drain the body without ever inspecting/echoing it
         except Exception:
-            err_msg = err_body
-        raise RuntimeError(f"HTTP {exc.code} from issuer ({url}): {err_msg}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"Connection failed to issuer ({url}): {exc}") from exc
+            pass
+        raise RuntimeError(f"HTTP {exc.code} from issuer ({url}): {err_msg}") from None
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Connection failed to issuer ({url}): {exc.reason}") from exc
 
 
 def write_private_exclusive_json(path_str: str | Path, data: Any) -> Path:

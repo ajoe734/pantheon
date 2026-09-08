@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import os
 import sys
+import tempfile
 import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -28,6 +30,11 @@ from unittest.mock import MagicMock, patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+)
 
 # Ensure .orchestrator is in sys.path
 _orchestrator_dir = Path(__file__).resolve().parents[1]
@@ -156,6 +163,37 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             algorithm="RS256",
             headers={"kid": effective_kid},
         )
+
+    def _write_service_account_credentials_file(self) -> str:
+        """Write a synthetic (non-Google) service account JSON file with 0600
+        perms for constructing a verifier with check_revocation=True."""
+        private_pem = self.other_rsa_key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        ).decode("utf-8")
+        fd, path = tempfile.mkstemp(prefix="test-sa-creds-", suffix=".json")
+        os.close(fd)
+        os.chmod(path, 0o600)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "client_email": "test-issuer-sa@example-project.iam.gserviceaccount.com",
+                    "private_key": private_pem,
+                },
+                f,
+            )
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        return path
+
+    @staticmethod
+    def _mock_oauth_token_response() -> MagicMock:
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(
+            {"access_token": "synthetic-test-access-token", "expires_in": 3600}
+        ).encode("utf-8")
+        resp.__enter__.return_value = resp
+        return resp
 
     # -------------------------------------------------------------------------
     # 1. Token Verification & Cryptographic Rejection Tests
@@ -693,18 +731,78 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             v.verify_token(token, now=self.now)
         self.assertIn("allowlist is empty", str(cm.exception).lower())
 
+    def test_revocation_check_requires_service_account_credentials(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            IdentityPlatformTokenVerifier(
+                project_id=self.project_id,
+                allowed_operator_uids=[self.operator_uid],
+                trusted_public_keys={self.key_id: self.rsa_public_key},
+                check_revocation=True,
+            )
+        self.assertIn("service_account_credentials_file", str(cm.exception))
+
     def test_revocation_check_fails_closed_on_lookup_error(self) -> None:
         v = IdentityPlatformTokenVerifier(
             project_id=self.project_id,
             allowed_operator_uids=[self.operator_uid],
             trusted_public_keys={self.key_id: self.rsa_public_key},
             check_revocation=True,
+            service_account_credentials_file=self._write_service_account_credentials_file(),
         )
         token = self._mint_id_token()
-        with patch("urllib.request.urlopen", side_effect=RuntimeError("synthetic account lookup outage")):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[self._mock_oauth_token_response(), RuntimeError("synthetic account lookup outage")],
+        ):
             with self.assertRaises(AuthenticationError) as cm:
                 v.verify_token(token, now=self.now)
             self.assertIn("revocation check failed", str(cm.exception).lower())
+
+    def test_revocation_check_fails_closed_when_oauth_mint_fails(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+            check_revocation=True,
+            service_account_credentials_file=self._write_service_account_credentials_file(),
+        )
+        token = self._mint_id_token()
+        with patch("urllib.request.urlopen", side_effect=RuntimeError("synthetic oauth token outage")):
+            with self.assertRaises(AuthenticationError) as cm:
+                v.verify_token(token, now=self.now)
+            self.assertIn("revocation check failed", str(cm.exception).lower())
+
+    def test_revocation_check_authorizes_lookup_with_bearer_token(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+            check_revocation=True,
+            service_account_credentials_file=self._write_service_account_credentials_file(),
+        )
+        token = self._mint_id_token()
+        lookup_resp = MagicMock()
+        lookup_resp.read.return_value = json.dumps({
+            "users": [{"localId": self.operator_uid, "disabled": False}]
+        }).encode("utf-8")
+        lookup_resp.__enter__.return_value = lookup_resp
+
+        captured_requests: list[Any] = []
+
+        def _fake_urlopen(req, timeout=10):
+            captured_requests.append(req)
+            if len(captured_requests) == 1:
+                return self._mock_oauth_token_response()
+            return lookup_resp
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            op = v.verify_token(token, now=self.now)
+        self.assertEqual(op.uid, self.operator_uid)
+        self.assertEqual(len(captured_requests), 2)
+        lookup_req = captured_requests[1]
+        self.assertEqual(
+            lookup_req.get_header("Authorization"), "Bearer synthetic-test-access-token"
+        )
 
     def test_revocation_check_fails_closed_on_disabled_account(self) -> None:
         v = IdentityPlatformTokenVerifier(
@@ -712,6 +810,7 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             allowed_operator_uids=[self.operator_uid],
             trusted_public_keys={self.key_id: self.rsa_public_key},
             check_revocation=True,
+            service_account_credentials_file=self._write_service_account_credentials_file(),
         )
         token = self._mint_id_token()
         mock_resp = MagicMock()
@@ -720,7 +819,10 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         }).encode("utf-8")
         mock_resp.__enter__.return_value = mock_resp
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[self._mock_oauth_token_response(), mock_resp],
+        ):
             with self.assertRaises(AuthenticationError) as cm:
                 v.verify_token(token, now=self.now)
             self.assertIn("disabled", str(cm.exception).lower())
@@ -731,6 +833,7 @@ class TestExecutionGrantIssuer(unittest.TestCase):
             allowed_operator_uids=[self.operator_uid],
             trusted_public_keys={self.key_id: self.rsa_public_key},
             check_revocation=True,
+            service_account_credentials_file=self._write_service_account_credentials_file(),
         )
         token = self._mint_id_token()
         auth_ts = int(self.now.timestamp())
@@ -740,7 +843,10 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         }).encode("utf-8")
         mock_resp.__enter__.return_value = mock_resp
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[self._mock_oauth_token_response(), mock_resp],
+        ):
             with self.assertRaises(AuthenticationError) as cm:
                 v.verify_token(token, now=self.now)
             self.assertIn("revoked", str(cm.exception).lower())

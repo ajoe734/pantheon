@@ -261,20 +261,68 @@ class ExecutionGrantIssuerService:
             "grant": signed_grant,
         }
 
-    def get_health(self) -> dict[str, Any]:
-        """Return health and readiness status."""
+    def get_liveness(self) -> dict[str, Any]:
+        """Return trivial liveness status: the process is up and serving requests.
+
+        Liveness intentionally does not exercise any dependency (certificate
+        fetch, signer, allowlist); that is the job of get_readiness().
+        """
+        return {"status": "ok", "service": "execution-grant-issuer"}
+
+    def get_readiness(self) -> dict[str, Any]:
+        """Return readiness status by actually exercising each required
+        dependency: Identity Platform certificate availability, a non-empty
+        operator allowlist, a loadable signer, and a configured task policy.
+
+        Returns status "ok" only when every check succeeds; otherwise
+        "unavailable" with per-check detail so the caller can return a
+        non-200 status rather than reporting false health.
+        """
+        checks: dict[str, str] = {}
+        healthy = True
+
+        try:
+            self.verifier._get_google_public_keys()
+            checks["identity_platform_certs"] = "ok"
+        except Exception as exc:
+            checks["identity_platform_certs"] = f"unavailable: {exc}"
+            healthy = False
+
+        if not self.verifier.allowed_operator_uids:
+            checks["operator_allowlist"] = "unavailable: allowlist is empty"
+            healthy = False
+        else:
+            checks["operator_allowlist"] = "ok"
+
+        try:
+            fingerprint = self.signer.public_key_fingerprint
+            if not fingerprint:
+                raise ValueError("signer fingerprint is empty")
+            checks["signer"] = "ok"
+        except Exception as exc:
+            checks["signer"] = f"unavailable: {exc}"
+            healthy = False
+
+        if self.allowed_tasks is not None and not self.allowed_tasks:
+            checks["task_policy"] = "unavailable: allowed_tasks is empty"
+            healthy = False
+        elif self.allowed_environments is not None and not self.allowed_environments:
+            checks["task_policy"] = "unavailable: allowed_environments is empty"
+            healthy = False
+        else:
+            checks["task_policy"] = "ok"
+
         return {
-            "status": "ok",
+            "status": "ok" if healthy else "unavailable",
             "service": "execution-grant-issuer",
             "version": "1.0.0",
             "identity_project": self.verifier.project_id,
             "signer_key_id": self.signer.key_id,
-            "signer_public_key": self.signer.public_key_base64url,
-            "signer_fingerprint": self.signer.public_key_fingerprint,
             "allowed_tasks": sorted(self.allowed_tasks) if self.allowed_tasks is not None else None,
             "allowed_environments": (
                 sorted(self.allowed_environments) if self.allowed_environments is not None else None
             ),
+            "checks": checks,
         }
 
 
@@ -342,8 +390,14 @@ class RedactedIssuerHTTPRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Tooling UI file not found"})
             return
 
-        if clean_path in ("/healthz", "/livez", "/health"):
-            self._send_json(HTTPStatus.OK, self.service.get_health())
+        if clean_path == "/livez":
+            self._send_json(HTTPStatus.OK, self.service.get_liveness())
+            return
+
+        if clean_path in ("/healthz", "/health", "/readyz"):
+            result = self.service.get_readiness()
+            status = HTTPStatus.OK if result.get("status") == "ok" else HTTPStatus.SERVICE_UNAVAILABLE
+            self._send_json(status, result)
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not Found"})

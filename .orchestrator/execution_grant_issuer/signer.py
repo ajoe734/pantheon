@@ -63,6 +63,13 @@ class Ed25519GrantSigner:
 
         if isinstance(private_key, Ed25519PrivateKey):
             self._private_key = private_key
+        elif isinstance(private_key, bytes) and private_key.strip().startswith(b"-----BEGIN"):
+            # Raw PEM bytes read by a caller that already performed strict
+            # file-safety checks (see secure_io.read_private_file_strict).
+            loaded = load_pem_private_key(private_key, password=None)
+            if not isinstance(loaded, Ed25519PrivateKey):
+                raise ValueError("Provided PEM does not contain an Ed25519 private key")
+            self._private_key = loaded
         elif isinstance(private_key, Path) or (
             isinstance(private_key, str) and (Path(private_key).is_file() or "\n" in private_key)
         ):

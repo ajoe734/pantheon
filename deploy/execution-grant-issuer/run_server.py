@@ -40,6 +40,7 @@ for d in (REPO_ROOT, ORCHESTRATOR_DIR):
         sys.path.insert(0, str(d))
 
 from execution_grant_issuer.challenge_store import ChallengeStore
+from execution_grant_issuer.secure_io import UnsafeCredentialFileError, read_private_file_strict
 from execution_grant_issuer.service import ExecutionGrantIssuerService, create_issuer_server
 from execution_grant_issuer.signer import Ed25519GrantSigner
 from execution_grant_issuer.token_verifier import IdentityPlatformTokenVerifier
@@ -136,12 +137,16 @@ def run_service(config: dict[str, Any]) -> None:
     allowed_uids = id_cfg.get("allowed_operator_uids", [])
     max_auth_age = int(id_cfg.get("max_auth_age_seconds", 3600))
     allowed_factors = id_cfg.get("allowed_second_factors")
+    check_revocation = bool(id_cfg.get("check_revocation", True))
+    service_account_credentials_file = id_cfg.get("service_account_credentials_file")
 
     verifier = IdentityPlatformTokenVerifier(
         project_id=project_id,
         allowed_operator_uids=allowed_uids,
         max_auth_age_seconds=max_auth_age,
         allowed_second_factors=allowed_factors,
+        check_revocation=check_revocation,
+        service_account_credentials_file=service_account_credentials_file,
     )
 
     # Initialize Signer
@@ -149,11 +154,14 @@ def run_service(config: dict[str, Any]) -> None:
     priv_file = sign_cfg.get("private_key_file")
     if not priv_file:
         raise ValueError("signing.private_key_file must be specified in config")
-    priv_path = Path(priv_file).resolve()
-    if not priv_path.is_file():
-        raise FileNotFoundError(f"Signer private key file not found: {priv_path}")
+    try:
+        priv_bytes = read_private_file_strict(
+            Path(priv_file).expanduser(), description="Signer private key file"
+        )
+    except UnsafeCredentialFileError as exc:
+        raise ValueError(str(exc)) from exc
 
-    signer = Ed25519GrantSigner(priv_path, key_id=key_id)
+    signer = Ed25519GrantSigner(priv_bytes, key_id=key_id)
 
     # Initialize Challenge Store
     challenge_ttl = int(pol_cfg.get("challenge_ttl_seconds", 180))
