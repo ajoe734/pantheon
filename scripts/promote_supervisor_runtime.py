@@ -33,6 +33,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 import auto_integrator  # noqa: E402  (shared stable integration lock)
+import runtime_state  # noqa: E402  (canonical runtime-admission lock)
 import supervisor  # noqa: E402  (existing reserved-phase recovery authority)
 
 from provision_live_supervisor_config import (
@@ -1175,6 +1176,7 @@ def qualify_and_drain_incumbent_writers(
     # 2. Check and drain workers
     workers = raw_state.get("workers") if isinstance(raw_state.get("workers"), Mapping) else {}
     workers_drained: list[int] = []
+    drained_run_ids: set[str] = set()
     conflict_statuses = {
         "queued",
         "started",
@@ -1219,6 +1221,7 @@ def qualify_and_drain_incumbent_writers(
                     f"worker process {pid} ({run_id}) did not stop within {timeout_seconds:g}s"
                 )
             workers_drained.append(pid)
+            drained_run_ids.add(str(run_id))
         else:
             raise RuntimeError(
                 f"cannot promote runtime: active worker {run_id} in un-drainable status {status}"
@@ -1232,7 +1235,9 @@ def qualify_and_drain_incumbent_writers(
     )
     in_flight_events = [
         str(eid) for eid, ev in queue_events.items()
-        if isinstance(ev, Mapping) and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
+        if isinstance(ev, Mapping)
+        and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
+        and str(ev.get("run_id") or "") not in drained_run_ids
     ]
     if in_flight_events:
         raise RuntimeError(
@@ -1275,6 +1280,7 @@ def qualify_and_drain_incumbent_writers(
     return {
         "drained": True,
         "workers_drained": workers_drained,
+        "drained_run_ids": sorted(drained_run_ids),
         "reservations": recovered_reservations,
     }
 
@@ -1494,15 +1500,15 @@ def _replace_supervisor_locked(
         "launched_pid": None,
         "outcome": "failed",
     }
-    admission_lock_path = status_root / ".orchestrator" / "runtime-admission.lock"
-    admission_lock_path.parent.mkdir(parents=True, exist_ok=True)
-    admission_fd = os.open(
-        admission_lock_path,
-        os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0),
-        0o600,
-    )
+    # Runtime promotion and supervisor reservation recovery share one
+    # canonical, re-entrant lock implementation.  A raw flock here would
+    # acquire the same sidecar inode without registering in stable_sidecar_lock,
+    # then deadlock when recovery re-enters through runtime_state_lock.
+    admission_lock = runtime_state.runtime_state_lock(rendered)
+    admission_lock_entered = False
     try:
-        fcntl.flock(admission_fd, fcntl.LOCK_EX)
+        admission_lock.__enter__()
+        admission_lock_entered = True
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
@@ -1700,11 +1706,8 @@ def _replace_supervisor_locked(
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["exit_code"] = 1
     finally:
-        try:
-            fcntl.flock(admission_fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        os.close(admission_fd)
+        if admission_lock_entered:
+            admission_lock.__exit__(None, None, None)
     _write_evidence(evidence_path, result)
     return result
 

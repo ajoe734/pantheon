@@ -7,6 +7,7 @@ import signal
 import stat
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -513,6 +514,68 @@ def test_replace_quiesces_incumbent_before_draining_its_writers(
 
     assert result["outcome"] == "launched"
     assert events == ["stop", "drain", "launch"]
+
+
+def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Promotion must use the lock API that supervisor recovery can re-enter."""
+
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+    live_config.parent.mkdir(parents=True)
+    live_config.write_text(json.dumps(incumbent), encoding="utf-8")
+    lock_events: list[str] = []
+
+    @contextmanager
+    def runtime_admission_lock(_config: dict[str, object]):
+        lock_events.append("entered")
+        try:
+            yield None
+        finally:
+            lock_events.append("exited")
+
+    def recover(
+        _config: dict[str, object],
+        _phase: str,
+        *,
+        runtime_admission_locked: bool = False,
+    ) -> bool:
+        assert lock_events == ["entered"]
+        assert runtime_admission_locked is True
+        return True
+
+    def drain(*_args: object, **kwargs: object) -> dict[str, object]:
+        assert kwargs["recover_stopped_reservations"] is True
+        promotion._recover_stopped_runtime_phase_reservations(
+            incumbent, ["poll_workers_before_plan"]
+        )
+        return {"drained": True}
+
+    monkeypatch.setattr(promotion.runtime_state, "runtime_state_lock", runtime_admission_lock)
+    monkeypatch.setattr(
+        promotion,
+        "qualify_incumbent_identity",
+        lambda *_args, **_kwargs: {"root": str(candidate), "head": "incumbent"},
+    )
+    monkeypatch.setattr(
+        promotion, "stop_existing_supervisor", lambda *_args, **_kwargs: 41
+    )
+    monkeypatch.setattr(promotion, "qualify_and_drain_incumbent_writers", drain)
+    monkeypatch.setattr(promotion.supervisor, "_recover_runtime_phase_reservation", recover)
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *_args, **_kwargs: 42)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "launched"
+    assert lock_events == ["entered", "exited"]
 
 
 def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
@@ -2427,6 +2490,19 @@ def test_drain_signals_and_drains_verified_active_worker(tmp_path: Path) -> None
         result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
     assert sent == [(77777, signal.SIGTERM)]
     assert result["workers_drained"] == [77777]
+
+
+def test_drain_allows_only_inflight_queue_event_owned_by_drained_worker(tmp_path: Path) -> None:
+    import common
+    state = tmp_path / "state.json"
+    generation = common.worker_process_generation_id(
+        task_id="TASK-1", worker_run_id="run-1", queue_event_id="Q-1", pid=77777, pid_start_ticks=33333
+    )
+    state.write_text(json.dumps({"workers": {"run-1": {"status": "running", "pid": 77777, "pid_start_ticks": 33333, "process_generation": generation, "task_id": "TASK-1", "queue_event_id": "Q-1"}}, "queue": {"events": {"Q-1": {"status": "started", "run_id": "run-1"}}}}))
+    alive = [True, True, False]
+    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda _pid: alive.pop(0) if alive else False), mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=33333), mock.patch.object(promotion.os, "kill"):
+        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+    assert result["drained_run_ids"] == ["run-1"]
 
 
 def test_drain_waits_for_active_task_state_store_lock_writer(tmp_path: Path) -> None:

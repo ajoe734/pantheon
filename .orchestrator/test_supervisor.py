@@ -72,6 +72,29 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_archive_result_does_not_refresh_derived_views_on_supervisor_cycle(self) -> None:
+        config = config_fixture()
+        action = {"token": "archive-1", "scheduled_at": "2026-09-08T00:00:00Z"}
+        result = {"finished_at": "2026-09-08T00:01:00Z", "opened_pr": False}
+        state = {
+            "auto_commit_archive": {
+                "pending_token": action["token"],
+                "pending_since": action["scheduled_at"],
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", return_value=nullcontext()),
+            mock.patch.object(supervisor, "load_runtime_state", return_value=state),
+            mock.patch.object(supervisor, "save_runtime_state") as save_state,
+            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts") as refresh,
+        ):
+            applied = supervisor.apply_auto_commit_archive_result(config, action, result)
+
+        self.assertFalse(applied)
+        save_state.assert_called_once_with(config, state)
+        refresh.assert_not_called()
+
     def test_stall_trace_handler_registers_sigusr2(self) -> None:
         with mock.patch.object(supervisor.faulthandler, "register") as register:
             supervisor.install_stall_trace_handler()
