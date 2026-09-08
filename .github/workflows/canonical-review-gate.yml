@@ -25,13 +25,12 @@ name: Canonical Review Gate
 # make the required check pass. GitHub pins this named required context to
 # whichever identity has historically posted it -- here, this workflow's own
 # GITHUB_TOKEN-authenticated run (a status or check-run from this Action's
-# job satisfies it; a plain `gh api` status posted from a personal-token host
-# process, e.g. github_review_bridge.py's own best-effort status post, does
-# not, verified empirically against a live PR). The tag by itself is
-# necessary but not sufficient: this workflow also has to actually RUN again
-# after the tag exists, so its own, correctly-attributed status is what
-# lands. None of `opened`/`synchronize`/`reopened`/`ready_for_review` fire
-# from a bare tag push, so github_review_bridge.py explicitly re-dispatches
+# job satisfies it; github_review_bridge.py's legacy PAT status posting has
+# been retired so only this workflow's correctly-attributed run lands). The
+# tag by itself is necessary but not sufficient: this workflow also has to
+# actually RUN again after the tag exists, so its own, correctly-attributed
+# status is what lands. None of `opened`/`synchronize`/`reopened`/`ready_for_review`
+# fire from a bare tag push, so github_review_bridge.py explicitly re-dispatches
 # this workflow (workflow_dispatch, below) right after a tag lands.
 #
 # This generic github-actions status is a separate lifecycle check; it cannot
