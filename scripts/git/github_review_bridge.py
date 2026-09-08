@@ -1052,6 +1052,68 @@ def operator_acceptance_proof_tag_name(*, head_sha: str) -> str:
     return review_proof_tag_name(decision=OPERATOR_ACCEPT, head_sha=head_sha)
 
 
+def _delete_ref(runner: JsonRunner, *, repository: str, ref: str) -> None:
+    prefix = "refs/tags/"
+    if not ref.startswith(prefix):
+        return
+    tag_name = ref[len(prefix):]
+    encoded_tag_name = quote(tag_name, safe="")
+    try:
+        runner.run_json(
+            ["gh", "api", "--method", "DELETE", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
+        )
+    except GitHubReviewBridgeError as exc:
+        detail = str(exc).casefold()
+        if "not found" in detail or "404" in detail:
+            return
+        raise
+
+
+def _resolve_ref_target_commit(
+    runner: JsonRunner,
+    *,
+    repository: str,
+    ref_payload: Mapping[str, Any],
+    max_peel_depth: int = 5,
+) -> str | None:
+    obj = ref_payload.get("object")
+    if not isinstance(obj, Mapping):
+        return None
+    obj_type = str(obj.get("type") or "").strip().lower()
+    obj_sha = str(obj.get("sha") or "").strip().lower()
+    if not OID_RE.fullmatch(obj_sha):
+        return None
+    if obj_type == "commit":
+        return obj_sha
+    if obj_type != "tag":
+        return None
+
+    current_sha = obj_sha
+    for _ in range(max(1, max_peel_depth)):
+        try:
+            tag_obj = runner.run_json(
+                ["gh", "api", f"repos/{repository}/git/tags/{current_sha}"]
+            )
+        except GitHubReviewBridgeError:
+            return None
+        if not isinstance(tag_obj, Mapping):
+            return None
+        target = tag_obj.get("object")
+        if not isinstance(target, Mapping):
+            return None
+        target_type = str(target.get("type") or "").strip().lower()
+        target_sha = str(target.get("sha") or "").strip().lower()
+        if not OID_RE.fullmatch(target_sha):
+            return None
+        if target_type == "commit":
+            return target_sha
+        if target_type == "tag":
+            current_sha = target_sha
+            continue
+        return None
+    return None
+
+
 def _push_review_proof_tag(
     runner: JsonRunner,
     *,
@@ -1061,13 +1123,37 @@ def _push_review_proof_tag(
     actor: str,
     decision: str,
     message: str,
+    intent_nonce: str = "",
 ) -> dict[str, Any]:
     """Push a git tag at the exact reviewed head recording the decision.
 
-    Idempotent: if the tag ref already exists (a retried approve/reopen on
-    the same head), it is returned as-is rather than recreated, matching
-    `_submit_required_status`'s existing-first pattern.
+    Idempotent: if the tag ref already exists and resolves to the exact head,
+    it is returned as-is rather than recreated. An opposing decision tag (e.g.
+    reopen when approving, or approve when reopening) is invalidated/deleted.
     """
+    if decision == APPROVE:
+        _delete_ref(
+            runner,
+            repository=repository,
+            ref=f"refs/tags/{review_proof_tag_name(decision=REOPEN, head_sha=binding.head_sha)}",
+        )
+    elif decision == REOPEN:
+        _delete_ref(
+            runner,
+            repository=repository,
+            ref=f"refs/tags/{review_proof_tag_name(decision=APPROVE, head_sha=binding.head_sha)}",
+        )
+        _delete_ref(
+            runner,
+            repository=repository,
+            ref=f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=binding.head_sha)}",
+        )
+    elif decision == OPERATOR_ACCEPT:
+        _delete_ref(
+            runner,
+            repository=repository,
+            ref=f"refs/tags/{review_proof_tag_name(decision=REOPEN, head_sha=binding.head_sha)}",
+        )
 
     tag_name = review_proof_tag_name(decision=decision, head_sha=binding.head_sha)
     ref = f"refs/tags/{tag_name}"
@@ -1086,22 +1172,26 @@ def _push_review_proof_tag(
         # first time this exact head is approved/reopened -- not a failure.
         existing = None
     if isinstance(existing, Mapping) and existing.get("ref") == ref:
-        return {**dict(existing), "created": False}
+        target_commit = _resolve_ref_target_commit(
+            runner, repository=repository, ref_payload=existing
+        )
+        if target_commit == binding.head_sha.lower():
+            return {**dict(existing), "created": False}
+        _delete_ref(runner, repository=repository, ref=ref)
 
-    tag_message = json.dumps(
-        {
-            "task_id": task_id,
-            "decision": decision,
-            "actor": actor,
-            "pr": binding.pr,
-            "head_sha": binding.head_sha,
-            "head_branch": binding.head_branch,
-            "base": binding.base,
-            "message": message,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    tag_payload = {
+        "task_id": task_id,
+        "decision": decision,
+        "actor": actor,
+        "pr": binding.pr,
+        "head_sha": binding.head_sha,
+        "head_branch": binding.head_branch,
+        "base": binding.base,
+        "message": message,
+    }
+    if intent_nonce:
+        tag_payload["intent_nonce"] = intent_nonce
+    tag_message = json.dumps(tag_payload, ensure_ascii=False, sort_keys=True)
     created_tag = runner.run_json(
         ["gh", "api", "--method", "POST", f"repos/{repository}/git/tags", "--input", "-"],
         payload={
@@ -1182,7 +1272,7 @@ def _dispatch_canonical_review_gate_workflow(
     *,
     repository: str,
     binding: ReviewBinding,
-    required: bool = False,
+    required: bool = True,
 ) -> None:
     """Best-effort: wake the Canonical Review Gate workflow so it re-reads
     the tag just pushed and posts its own, correctly-attributed status.
@@ -1491,58 +1581,13 @@ def bridge_review_decision(
     except GitHubReviewBridgeError as exc:
         review_error = str(exc)[:600]
 
-    required_contexts: set[str] = set()
-    context_error = ""
-    try:
-        required_contexts = _required_status_contexts(
-            runner,
-            repository=repository,
-            base=normalized_binding.base,
-        )
-    except GitHubReviewBridgeError as exc:
-        context_error = str(exc)[:600]
-
-    status: dict[str, Any] | None = None
-    context_required = CANONICAL_REVIEW_CONTEXT in required_contexts
-    if context_required:
-        status = _submit_required_status(
-            runner,
-            repository=repository,
-            binding=normalized_binding,
-            task_id=task_id,
-            actor=actor,
-            decision=decision,
-            target_url=(
-                f"{pr_url}#pantheon-review-intent-{intent_nonce}"
-                if intent_nonce
-                else pr_url
-            ),
-        )
-
-    # Deliberately unchanged from the pre-tag contract: this still requires
-    # a GitHub review or the required commit status, exactly as before the
-    # proof tag existed. Loosening this to accept the tag alone would touch
-    # scripts/ai_status.py's GITHUB_REVIEW_MODES / evidence-matching
-    # validation, a separately audited integrity surface -- not worth
-    # widening for a case ("no required context configured" + "self-review
-    # blocked") that stops applying once the tag-based check is back in
-    # dev's required contexts.
-    if review is None and status is None:
-        details = [item for item in (review_error, context_error) if item]
-        if CANONICAL_REVIEW_CONTEXT not in required_contexts:
-            details.append(
-                f"base branch {normalized_binding.base!r} does not require "
-                f"{CANONICAL_REVIEW_CONTEXT!r}"
-            )
+    if review is None:
         raise GitHubReviewBridgeError(
-            "Governed task decision was not recorded as a GitHub review or "
-            "a branch-policy-recognized status"
-            + (f": {'; '.join(details)}" if details else "")
+            "Governed task decision was not recorded as a GitHub review"
+            + (f": {review_error}" if review_error else "")
         )
 
-    # Only push the git-native proof tag once at least one legacy path has
-    # confirmed the decision is real -- a call that was going to raise above
-    # should not leave a dangling "approved" tag behind on GitHub.
+    # Push the git-native proof tag.
     proof_ref = _push_review_proof_tag(
         runner,
         repository=repository,
@@ -1551,22 +1596,19 @@ def bridge_review_decision(
         actor=actor,
         decision=decision,
         message=message,
+        intent_nonce=intent_nonce,
     )
     review_proof_ref = str(proof_ref.get("ref") or "") or None
 
-    if decision == APPROVE:
+    if decision in (APPROVE, REOPEN):
         _dispatch_canonical_review_gate_workflow(
             runner,
             repository=repository,
             binding=normalized_binding,
+            required=True,
         )
 
-    if review is not None and status is not None:
-        mode = "pull_request_review_and_required_status"
-    elif review is not None:
-        mode = "pull_request_review"
-    else:
-        mode = "required_commit_status"
+    mode = "pull_request_review"
 
     result = BridgeResult(
         repository=repository,
@@ -1578,14 +1620,14 @@ def bridge_review_decision(
         actor=actor,
         mode=mode,
         github_review_id=int(review.get("id")) if review and review.get("id") else None,
-        status_id=int(status.get("id")) if status and status.get("id") else None,
-        status_context=CANONICAL_REVIEW_CONTEXT if status is not None else None,
-        status_state=STATUS_STATES[decision] if status is not None else None,
+        status_id=None,
+        status_context=None,
+        status_state=None,
         review_proof_ref=review_proof_ref,
         pr_url=pr_url,
         recorded_at=_utc_now(),
         intent_nonce=intent_nonce,
-        review_error=review_error if review is None else "",
+        review_error="",
     )
     validate_result_evidence(
         result.as_dict(),

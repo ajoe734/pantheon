@@ -48,8 +48,52 @@ class ReviewProofTagExistsTests(unittest.TestCase):
 
     def test_true_when_the_exact_ref_is_returned(self) -> None:
         ref = f"refs/tags/pantheon-review/approve/{HEAD}"
-        lookup = _lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": "x"}}})
+        lookup = _lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": HEAD, "type": "commit"}}})
         self.assertTrue(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
+        )
+
+    def test_peeled_annotated_tag_succeeds(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        tag_sha = "1" * 40
+        lookup = _lookup(
+            {
+                (REPOSITORY, ref): {"ref": ref, "object": {"sha": tag_sha, "type": "tag"}},
+                (REPOSITORY, tag_sha): {"sha": tag_sha, "object": {"sha": HEAD, "type": "commit"}},
+            }
+        )
+        self.assertTrue(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
+        )
+
+    def test_tag_pointing_to_different_commit_fails(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        other_sha = "c" * 40
+        lookup = _lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": other_sha, "type": "commit"}}})
+        self.assertFalse(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
+        )
+
+    def test_peeling_depth_exceeded_fails(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        chain = {}
+        prev = ref
+        for i in range(1, 8):
+            sha = f"{i:040x}"
+            next_sha = f"{i+1:040x}"
+            if prev == ref:
+                chain[(REPOSITORY, ref)] = {"ref": ref, "object": {"sha": sha, "type": "tag"}}
+            chain[(REPOSITORY, sha)] = {"sha": sha, "object": {"sha": next_sha, "type": "tag"}}
+            prev = sha
+        lookup = _lookup(chain)
+        self.assertFalse(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
+        )
+
+    def test_malformed_object_payload_fails(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        lookup = _lookup({(REPOSITORY, ref): {"ref": ref, "object": "not-a-dict"}})
+        self.assertFalse(
             gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
         )
 
@@ -64,7 +108,7 @@ class ReviewProofTagExistsTests(unittest.TestCase):
         # returning some other ref's payload.
         ref = f"refs/tags/pantheon-review/approve/{HEAD}"
         other_ref = f"refs/tags/pantheon-review/approve/{'c' * 40}"
-        lookup = _lookup({(REPOSITORY, ref): {"ref": other_ref, "object": {"sha": "x"}}})
+        lookup = _lookup({(REPOSITORY, ref): {"ref": other_ref, "object": {"sha": HEAD, "type": "commit"}}})
         self.assertFalse(
             gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
         )
@@ -119,7 +163,7 @@ class BuildStatusPayloadTests(unittest.TestCase):
             head_ref="task/SUP-X",
             repository=REPOSITORY,
             head_sha=HEAD,
-            lookup=_lookup({(REPOSITORY, ref): {"ref": ref}}),
+            lookup=_lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": HEAD, "type": "commit"}}}),
         )
         self.assertEqual(payload["state"], "success")
         self.assertIn("SUP-X", payload["description"])
@@ -130,10 +174,38 @@ class BuildStatusPayloadTests(unittest.TestCase):
             head_ref="task/SUP-X",
             repository=REPOSITORY,
             head_sha=HEAD,
-            lookup=_lookup({(REPOSITORY, ref): {"ref": ref}}),
+            lookup=_lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": HEAD, "type": "commit"}}}),
         )
         self.assertEqual(payload["state"], "success")
         self.assertIn("Human/Ops", payload["description"])
+
+    def test_task_branch_with_reopen_tag_fails_closed(self) -> None:
+        reopen_ref = f"refs/tags/pantheon-review/reopen/{HEAD}"
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup({(REPOSITORY, reopen_ref): {"ref": reopen_ref, "object": {"sha": HEAD, "type": "commit"}}}),
+        )
+        self.assertEqual(payload["state"], "failure")
+        self.assertIn("reopened for head", payload["description"])
+
+    def test_conflicting_approve_and_reopen_tags_fails_closed(self) -> None:
+        approve_ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        reopen_ref = f"refs/tags/pantheon-review/reopen/{HEAD}"
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup(
+                {
+                    (REPOSITORY, approve_ref): {"ref": approve_ref, "object": {"sha": HEAD, "type": "commit"}},
+                    (REPOSITORY, reopen_ref): {"ref": reopen_ref, "object": {"sha": HEAD, "type": "commit"}},
+                }
+            ),
+        )
+        self.assertEqual(payload["state"], "failure")
+        self.assertIn("conflicting review-proof tags", payload["description"])
 
     def test_proof_tag_at_a_different_head_does_not_count(self) -> None:
         """This is the exact-head-binding property: a new commit after
@@ -146,7 +218,7 @@ class BuildStatusPayloadTests(unittest.TestCase):
             head_ref="task/SUP-X",
             repository=REPOSITORY,
             head_sha=HEAD,
-            lookup=_lookup({(REPOSITORY, ref): {"ref": ref}}),
+            lookup=_lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": old_head, "type": "commit"}}}),
         )
         self.assertEqual(payload["state"], "failure")
 
@@ -185,14 +257,17 @@ class MainDryRunTests(unittest.TestCase):
 
     def test_dry_run_checks_the_tag_but_never_posts(self) -> None:
         ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        table = {(REPOSITORY, ref): {"ref": ref, "object": {"sha": HEAD, "type": "commit"}}}
         with (
-            mock.patch.object(gate_ci, "default_tag_lookup", return_value={"ref": ref}) as lookup,
+            mock.patch.object(
+                gate_ci, "default_tag_lookup", side_effect=lambda r, target: table.get((r, target))
+            ) as lookup,
             mock.patch.object(gate_ci, "_post_status") as post_status,
         ):
             exit_code = gate_ci.main(
                 ["--repo", REPOSITORY, "--head-ref", "task/SUP-X", "--head-sha", HEAD, "--dry-run"]
             )
-        lookup.assert_called_once()
+        self.assertGreaterEqual(lookup.call_count, 1)
         post_status.assert_not_called()
         self.assertEqual(exit_code, 0)
 

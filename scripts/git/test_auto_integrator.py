@@ -83,6 +83,9 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.requiredness_query_fails = requiredness_query_fails
         self.api_payloads: list[dict[str, Any]] = []
         self.tag_refs: set[str] = set()
+        self.tag_payloads: dict[str, dict[str, Any]] = {}
+        self.tag_objects: dict[str, dict[str, Any]] = {}
+        self.dispatches: list[dict[str, Any]] = []
         self._next_tag_sha = 200
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
@@ -183,17 +186,50 @@ class FakeRunner(auto_integrator.CommandRunner):
         ):
             tag_name = command[-1].rsplit("git/refs/tags/", 1)[-1].replace("%2F", "/")
             ref = f"refs/tags/{tag_name}"
+            if ref in self.tag_payloads:
+                return completed(command, stdout=auto_integrator.json.dumps(self.tag_payloads[ref]))
             if ref in self.tag_refs:
-                return completed(command, stdout=auto_integrator.json.dumps({"ref": ref}))
+                return completed(command, stdout=auto_integrator.json.dumps({"ref": ref, "object": {"sha": self.git_head, "type": "commit"}}))
+            return completed(command, stdout="{}")
+        if (
+            command[:2] == ["gh", "api"]
+            and "git/tags/" in command[-1]
+            and "--method" not in command
+        ):
+            tag_sha = command[-1].rsplit("git/tags/", 1)[-1]
+            if tag_sha in self.tag_objects:
+                return completed(command, stdout=auto_integrator.json.dumps(self.tag_objects[tag_sha]))
             return completed(command, stdout="{}")
         if command[:2] == ["gh", "api"] and "/git/tags" in joined and "POST" in command:
             self._next_tag_sha += 1
-            return completed(command, stdout=auto_integrator.json.dumps({"sha": f"tagobj{self._next_tag_sha}"}))
+            tag_sha = f"{self._next_tag_sha:040x}"
+            tag_obj = {
+                "sha": tag_sha,
+                "tag": api_payload.get("tag") if api_payload else "",
+                "object": {"sha": api_payload.get("object") or self.git_head, "type": "commit"} if api_payload else {"sha": self.git_head, "type": "commit"},
+            }
+            self.tag_objects[tag_sha] = tag_obj
+            return completed(command, stdout=auto_integrator.json.dumps({"sha": tag_sha}))
         if command[:2] == ["gh", "api"] and "/git/refs" in joined and "POST" in command:
             assert api_payload is not None
-            self.tag_refs.add(api_payload["ref"])
-            return completed(command, stdout=auto_integrator.json.dumps({"ref": api_payload["ref"]}))
+            ref = api_payload["ref"]
+            self.tag_refs.add(ref)
+            self.tag_payloads[ref] = {"ref": ref, "object": {"sha": api_payload["sha"], "type": "tag"}}
+            return completed(command, stdout=auto_integrator.json.dumps(self.tag_payloads[ref]))
+        if (
+            command[:2] == ["gh", "api"]
+            and "--method" in command
+            and "DELETE" in command
+            and "git/refs/tags/" in command[-1]
+        ):
+            tag_name = command[-1].rsplit("git/refs/tags/", 1)[-1].replace("%2F", "/")
+            ref = f"refs/tags/{tag_name}"
+            self.tag_refs.discard(ref)
+            self.tag_payloads.pop(ref, None)
+            return completed(command, stdout="{}")
         if command[:2] == ["gh", "api"] and "/actions/workflows/" in joined and "POST" in command:
+            if api_payload is not None:
+                self.dispatches.append(dict(api_payload))
             return completed(command)
         if command[:3] == ["git", "fetch", "origin"]:
             return completed(command)
@@ -3834,6 +3870,201 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
 
         self.assertEqual(result.action, "merged")
         self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
+
+    def test_canonical_review_gate_red_with_proof_tag_re_dispatches_and_waits(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"] = [
+            {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+        ]
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "waiting")
+        self.assertIn("re-dispatched workflow for verified proof tag", result.detail)
+        self.assertIsNone(result.unblock_task_id)
+        self.assertEqual(len(runner.dispatches), 1)
+        self.assertEqual(runner.dispatches[0]["inputs"]["head_sha"], APPROVED_HEAD)
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_canonical_review_gate_absent_with_proof_tag_re_dispatches_and_waits(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"] = [{"name": "tests", "conclusion": "SUCCESS"}]
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "waiting")
+        self.assertIn("re-dispatched workflow for verified proof tag", result.detail)
+        self.assertEqual(len(runner.dispatches), 1)
+        self.assertIsNone(result.unblock_task_id)
+
+    def test_substantive_check_failure_opens_ci_red_without_redispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"},
+                {"name": "test-suite", "conclusion": "FAILURE"},
+            ]
+            runner = FakeRunner(pr=pr)
+            tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+            runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(len(runner.dispatches), 0)
+            self.assertIsNotNone(result.unblock_task_id)
+
+    def test_canonical_review_gate_red_without_proof_tag_opens_ci_red(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+            ]
+            runner = FakeRunner(pr=pr)
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(len(runner.dispatches), 0)
+            self.assertIsNotNone(result.unblock_task_id)
+
+    def test_canonical_review_gate_red_with_opposing_reopen_tag_opens_ci_red(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+            ]
+            runner = FakeRunner(pr=pr)
+            approve_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+            reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
+            runner.tag_payloads[approve_ref] = {"ref": approve_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+            runner.tag_payloads[reopen_ref] = {"ref": reopen_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(len(runner.dispatches), 0)
+            self.assertIsNotNone(result.unblock_task_id)
+
+    def test_review_gate_dispatch_error_does_not_block_candidate(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"] = [
+            {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+        ]
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+
+        with mock.patch.object(
+            auto_integrator.github_review_bridge,
+            "_dispatch_canonical_review_gate_workflow",
+            side_effect=auto_integrator.github_review_bridge.GitHubReviewBridgeError("API down"),
+        ):
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(),
+                runner,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+        self.assertEqual(result.action, "waiting")
 
 
 if __name__ == "__main__":

@@ -41,11 +41,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Mapping, Sequence
+from urllib.parse import quote
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".orchestrator"))
 
+import canonical_review_gate_ci  # noqa: E402  (local helper module)
 import task_review_merge_gate as review_gate  # noqa: E402  (local helper module)
 import github_review_bridge  # noqa: E402  (local helper module)
 import multi_repo_registry  # noqa: E402  (orchestrator module)
@@ -773,6 +775,50 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
     if pending:
         return CheckSummary("pending", len(rollup), (), tuple(pending), tuple(ignored_diagnostic))
     return CheckSummary("green", len(rollup), (), (), tuple(ignored_diagnostic))
+
+
+def is_canonical_review_gate_green(rollup: Any) -> bool:
+    if not isinstance(rollup, list) or not rollup:
+        return False
+    for item in rollup:
+        if not isinstance(item, Mapping):
+            continue
+        name = check_name(item)
+        if name != github_review_bridge.CANONICAL_REVIEW_CONTEXT:
+            continue
+        values = [
+            normalize_state(item.get("conclusion")),
+            normalize_state(item.get("state")),
+            normalize_state(item.get("status")),
+        ]
+        values = [value for value in values if value]
+        if any(value in FAILURE_VALUES for value in values):
+            return False
+        if any(value in SUCCESS_VALUES for value in values):
+            return True
+    return False
+
+
+def make_integrator_tag_lookup(
+    json_runner: GitHubJsonCommandRunner,
+) -> canonical_review_gate_ci.TagLookup:
+    def _lookup(repository: str, ref_or_sha: str) -> Mapping[str, Any] | None:
+        prefix = "refs/tags/"
+        if ref_or_sha.startswith(prefix):
+            tag_name = ref_or_sha[len(prefix):]
+            encoded = quote(tag_name, safe="")
+            endpoint = f"repos/{repository}/git/refs/tags/{encoded}"
+        else:
+            endpoint = f"repos/{repository}/git/tags/{ref_or_sha}"
+        try:
+            data = json_runner.run_json(["gh", "api", endpoint])
+        except Exception:
+            return None
+        if isinstance(data, Mapping):
+            return data
+        return None
+
+    return _lookup
 
 
 def ignored_diagnostic_note(checks: CheckSummary) -> str:
@@ -2593,6 +2639,86 @@ def integrate_candidate(
         )
 
     checks = summarize_status_rollup(pr.get("statusCheckRollup"))
+    other_failing = [
+        c for c in checks.failing if c != github_review_bridge.CANONICAL_REVIEW_CONTEXT
+    ]
+    if other_failing:
+        detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "ci-red",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
+
+    if not is_canonical_review_gate_green(pr.get("statusCheckRollup")):
+        repo_slug = (
+            github_review_bridge.repository_from_pull_request_url(url)
+            or candidate.repository_slug
+            or "ajoe734/pantheon"
+        )
+        json_runner = GitHubJsonCommandRunner(runner, root=target_root)
+        tag_lookup = make_integrator_tag_lookup(json_runner)
+        has_review = canonical_review_gate_ci.review_proof_tag_exists(
+            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        )
+        has_operator = canonical_review_gate_ci.operator_acceptance_proof_tag_exists(
+            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        )
+        has_reopen = canonical_review_gate_ci.reopen_proof_tag_exists(
+            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        )
+        if (has_review or has_operator) and not has_reopen:
+            head_branch = candidate.branch or str(pr.get("headRefName") or "")
+            base = candidate.target_branch or str(pr.get("baseRefName") or "dev")
+            binding = github_review_bridge.ReviewBinding(
+                pr=number,
+                head_sha=decision.head_oid,
+                head_branch=head_branch,
+                base=base,
+            )
+            if execute:
+                try:
+                    github_review_bridge._dispatch_canonical_review_gate_workflow(
+                        json_runner,
+                        repository=repo_slug,
+                        binding=binding,
+                        required=False,
+                    )
+                except Exception:
+                    pass
+            detail = (
+                f"PR #{number} canonical review gate check is not green; "
+                f"{'re-dispatched' if execute else 'would re-dispatch'} workflow "
+                f"for verified proof tag at {decision.head_oid[:12]} and waiting for check to complete."
+            )
+            return IntegrationResult(
+                candidate.task_id,
+                "waiting",
+                detail,
+                number,
+                url,
+                dry_run=not execute,
+                commands=runner.commands[:],
+            )
+
     if checks.state == "red":
         detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
         unblock = (

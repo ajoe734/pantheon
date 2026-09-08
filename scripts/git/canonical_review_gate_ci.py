@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -50,15 +51,19 @@ sys.path.insert(0, str(ROOT / "scripts" / "git"))
 
 from github_review_bridge import (  # noqa: E402
     CANONICAL_REVIEW_CONTEXT,
+    REOPEN,
     operator_acceptance_proof_tag_name,
     review_proof_tag_name,
 )
 
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
 APPROVE_DECISION = "approve"
+REOPEN_DECISION = REOPEN
 PRODUCT_DELIVERY_CLASS = "product"
 TOOLING_DELIVERY_CLASS = "tooling"
 _DELIVERY_CLASSES = frozenset({PRODUCT_DELIVERY_CLASS, TOOLING_DELIVERY_CLASS})
+MAX_TAG_PEEL_DEPTH = 5
+OID_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 # GitHub's commit-status `description` field is truncated server-side at 140
 # characters; truncate ourselves so the stored payload and the API's stored
@@ -89,34 +94,99 @@ def _run_gh_json(args: list[str]) -> Any:
         return None
 
 
-def default_tag_lookup(repository: str, ref: str) -> Mapping[str, Any] | None:
-    # `ref` is a full ref path ("refs/tags/pantheon-review/approve/<sha>").
-    # GitHub's git-refs lookup route wants `git/refs/tags/<name>` with
-    # `refs/tags/` literal and only the tag's own internal slashes encoded --
-    # encoding the whole ref (as the first version of this script did) 404s
-    # even for a tag that exists; verified against the live API.
+def default_tag_lookup(repository: str, ref_or_sha: str) -> Mapping[str, Any] | None:
     prefix = "refs/tags/"
-    assert ref.startswith(prefix), f"expected a refs/tags/ ref, got {ref!r}"
-    tag_name = ref[len(prefix):]
-    encoded_tag_name = quote(tag_name, safe="")
-    result = _run_gh_json(["api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"])
+    if ref_or_sha.startswith(prefix):
+        tag_name = ref_or_sha[len(prefix):]
+        encoded_tag_name = quote(tag_name, safe="")
+        result = _run_gh_json(["api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"])
+        return result if isinstance(result, Mapping) else None
+    result = _run_gh_json(["api", f"repos/{repository}/git/tags/{ref_or_sha}"])
     return result if isinstance(result, Mapping) else None
+
+
+def resolve_proof_tag_target(
+    *,
+    repository: str,
+    ref: str,
+    lookup: TagLookup = default_tag_lookup,
+    max_peel_depth: int = MAX_TAG_PEEL_DEPTH,
+) -> str | None:
+    """Resolve the exact commit object targeted by a git ref, peeling tags as needed.
+
+    Returns the 40-hex lowercase commit SHA if the ref resolves to a commit
+    object within bounded peel depth, or None if the ref is missing, malformed,
+    points to a non-commit object, or lookup fails.
+    """
+    found = lookup(repository, ref)
+    if not isinstance(found, Mapping):
+        return None
+    if str(found.get("ref") or "").strip() != ref:
+        return None
+    obj = found.get("object")
+    if not isinstance(obj, Mapping):
+        return None
+    obj_type = str(obj.get("type") or "").strip().lower()
+    obj_sha = str(obj.get("sha") or "").strip().lower()
+    if not OID_RE.fullmatch(obj_sha):
+        return None
+    if obj_type == "commit":
+        return obj_sha
+    if obj_type != "tag":
+        return None
+
+    current_sha = obj_sha
+    for _ in range(max(1, max_peel_depth)):
+        tag_obj = lookup(repository, current_sha)
+        if not isinstance(tag_obj, Mapping):
+            return None
+        target = tag_obj.get("object")
+        if not isinstance(target, Mapping):
+            return None
+        target_type = str(target.get("type") or "").strip().lower()
+        target_sha = str(target.get("sha") or "").strip().lower()
+        if not OID_RE.fullmatch(target_sha):
+            return None
+        if target_type == "commit":
+            return target_sha
+        if target_type == "tag":
+            current_sha = target_sha
+            continue
+        return None
+    return None
 
 
 def review_proof_tag_exists(
     *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
 ) -> bool:
-    ref = f"refs/tags/{review_proof_tag_name(decision=APPROVE_DECISION, head_sha=head_sha)}"
-    found = lookup(repository, ref)
-    return isinstance(found, Mapping) and found.get("ref") == ref
+    normalized_head = str(head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(normalized_head):
+        return False
+    ref = f"refs/tags/{review_proof_tag_name(decision=APPROVE_DECISION, head_sha=normalized_head)}"
+    resolved = resolve_proof_tag_target(repository=repository, ref=ref, lookup=lookup)
+    return resolved == normalized_head
 
 
 def operator_acceptance_proof_tag_exists(
     *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
 ) -> bool:
-    ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=head_sha)}"
-    found = lookup(repository, ref)
-    return isinstance(found, Mapping) and found.get("ref") == ref
+    normalized_head = str(head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(normalized_head):
+        return False
+    ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=normalized_head)}"
+    resolved = resolve_proof_tag_target(repository=repository, ref=ref, lookup=lookup)
+    return resolved == normalized_head
+
+
+def reopen_proof_tag_exists(
+    *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
+) -> bool:
+    normalized_head = str(head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(normalized_head):
+        return False
+    ref = f"refs/tags/{review_proof_tag_name(decision=REOPEN_DECISION, head_sha=normalized_head)}"
+    resolved = resolve_proof_tag_target(repository=repository, ref=ref, lookup=lookup)
+    return resolved == normalized_head
 
 
 def build_status_payload(
@@ -168,7 +238,37 @@ def build_status_payload(
     # patching the module-level `default_tag_lookup` -- e.g. in tests --
     # is actually observed by callers, like main(), that don't pass one.
     active_lookup = lookup if lookup is not None else default_tag_lookup
-    if review_proof_tag_exists(repository=repository, head_sha=head_sha, lookup=active_lookup):
+    has_reopen = reopen_proof_tag_exists(
+        repository=repository, head_sha=head_sha, lookup=active_lookup
+    )
+    has_review = review_proof_tag_exists(
+        repository=repository, head_sha=head_sha, lookup=active_lookup
+    )
+    has_operator = operator_acceptance_proof_tag_exists(
+        repository=repository, head_sha=head_sha, lookup=active_lookup
+    )
+
+    if has_reopen:
+        if has_review or has_operator:
+            return {
+                "state": "failure",
+                "context": CANONICAL_REVIEW_CONTEXT,
+                "description": (
+                    f"{task_id}: conflicting review-proof tags at {head_sha[:12]} -- "
+                    "reopen tag invalidates approval"
+                )[:_DESCRIPTION_LIMIT],
+                "target_url": target_url,
+            }
+        return {
+            "state": "failure",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": (
+                f"{task_id}: review changes requested / reopened for head {head_sha[:12]} -- not approved"
+            )[:_DESCRIPTION_LIMIT],
+            "target_url": target_url,
+        }
+
+    if has_review:
         return {
             "state": "success",
             "context": CANONICAL_REVIEW_CONTEXT,
@@ -178,9 +278,7 @@ def build_status_payload(
             "target_url": target_url,
         }
 
-    if operator_acceptance_proof_tag_exists(
-        repository=repository, head_sha=head_sha, lookup=active_lookup
-    ):
+    if has_operator:
         return {
             "state": "success",
             "context": CANONICAL_REVIEW_CONTEXT,
