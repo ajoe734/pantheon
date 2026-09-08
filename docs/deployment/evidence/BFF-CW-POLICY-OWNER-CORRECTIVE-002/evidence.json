@@ -1,0 +1,72 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-CW-POLICY-OWNER-CORRECTIVE-002",
+  "base_ref": "dev@ac9da4ce022696fcfdbad63dc61207e1bd57acc6",
+  "depends_on": "BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001 (done, satisfied=true), OVERLAY-RETIRE-001 (done, satisfied=true)",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section A",
+  "results": {
+    "governance_service_sole_policy_owner": {
+      "file": "services/control-plane/bff/governance/service.py",
+      "details": "GovernanceService is the single authoritative owner for CW01/CW03/CW04 availability, surface state, projection, and redaction policies. Default dataset surface status fails closed to \"unavailable\" when source is missing or unknown. dataset_source defaults to \"missing\" when callback is absent or returns None. Explicit collection surface state helpers (committee_collection_surface_state and memo_collection_surface_state) enforce provenance precedence, ensuring raw unavailable/missing/unknown provenance fails closed to \"unavailable\" regardless of injected callback status while preserving valid stale/degraded semantics. Callback exceptions in _safe_dataset_surface_status fail closed to \"unavailable\". Exception fallback is strictly limited to intended policy/provenance callbacks (dataset_source, dataset_surface_status, redact_evidence_refs, capabilities_for_identity); store read operations (_call) never swallow read errors into empty results, preventing read failures from being mislabeled healthy-empty."
+    },
+    "unavailable_dominates_and_fail_closed_integrity": {
+      "file": "services/control-plane/bff/governance/service.py",
+      "details": "Explicit collection surface state helpers enforce that an unavailable underlying dataset dominates and renders the collection \"unavailable\". In list_consult_memos, records are projected to the published safe summary contract (RedTeamMemoSummary), preventing exposure of summary, recommendations list, or evidence_refs in listings, and individual unavailable memo records suppress recommendation_count to 0. An unavailable memo or committee collection suppresses item rows (empty list and total 0). consult_memo_projection strictly disables canInitiateGovernanceReview (False) whenever record or collection surface state is degraded or unavailable. Redaction failures fail closed to \"redaction_policy_unavailable\"."
+    },
+    "router_divergent_defaults_removed": {
+      "file": "services/control-plane/bff/governance/router.py",
+      "details": "Removed router-level pass-through redaction _default_redact_evidence_refs and optimistic _default_dataset_surface_status; router now delegates both to GovernanceService. Missing surface in _default_read_surface_meta defaults to source=\"missing\". Router list_committees and list_consult_memos delegate surface state resolution, pagination, and projection directly to GovernanceService."
+    },
+    "contract_test_matrix_and_red_cases": {
+      "file": "scripts/test_bff_cw_contract_prerequisite.py",
+      "details": "Extended prerequisite test suite to 34 tests (21 predecessor + 13 new), covering: 3 fixed red cases ((1) memo degraded x dataset unavailable suppresses summary & forces CTA False; (2) omitted provenance is not ok/fresh & CTA False; (3) router omitted redactor + capabilities=[] reveals no strategy evidence); the full 16-combination (4 record x 4 dataset states) availability and CTA truth table for both CW03 committees and CW04 memos across BOTH list and detail for service and router; production callback precedence verification (test_production_callback_cannot_override_unavailable_source); safe list summary contract and omitted-redactor verification (test_list_cannot_bypass_unavailable_content_and_omitted_redactor); full callback error fail-closed handling (surface status, unknown provenance, redactor, capabilities); store read failures failing closed rather than returning healthy-empty items; healthy genuine-empty positives returning state=ok; positive authorized real-redactor disclosure; and production composition wiring live request execution."
+    },
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false,
+    "new_dispatcher_or_cron_added": false
+  },
+  "verification": [
+    {
+      "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_bff_cw_contract_prerequisite.py",
+      "result": "34 passed (21 predecessor + 13 new)",
+      "executed": 34,
+      "collected": 34
+    },
+    {
+      "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q /tmp/test_cw_002_read_error_review.py",
+      "result": "3 passed (reviewer probe exact acceptance)",
+      "executed": 3,
+      "collected": 3
+    },
+    {
+      "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m compileall -q services/control-plane/bff/governance/service.py services/control-plane/bff/governance/router.py scripts/test_bff_cw_contract_prerequisite.py services/control-plane/bff/main.py",
+      "result": "pass"
+    },
+    {
+      "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python services/control-plane/bff/smoke_test.py",
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
+      "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_bff_cw_contract_prerequisite.py services/control-plane/bff/tests/test_read_surface_port_cutover.py services/control-plane/bff/tests/test_operations_consultation_ports.py",
+      "result": "71 passed (34 + 37)",
+      "executed": 71,
+      "collected": 71
+    },
+    {
+      "command": "RANKING_STORE_BOOTSTRAP=0 RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -c \"from services.control_plane.bff import main; print(f\\\"pass, {len(main.app.routes)} top-level routes\\\")\"",
+      "result": "pass, 62 top-level routes"
+    }
+  ],
+  "coordination_note": "Production composition wiring in main.py mounts the governance router with GovernanceService backed by app_deps.read_surface and canonical redaction policy without modification. In accordance with Section A, all divergent router defaults (pass-through redaction, optimistic ok status) have been removed, making GovernanceService the sole policy owner. Characterization test migration and \"import main\" loader reconciliation remain in BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 scope. Command persistence remains in DOMAIN-WRITERS-001 scope.",
+  "known_gap_deferred": "RecordSponsorDecision command execution (persisting the sponsor decision) still calls read_store.record_sponsor_decision(...), which no port in the current composition implements. Deferred to DOMAIN-WRITERS-001 per the signed predecessor SA/SD; unchanged by this task.",
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  },
+  "remaining_owned_elsewhere": [
+    "RecordSponsorDecision write persistence: DOMAIN-WRITERS-001",
+    "BFF characterization test migration: BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
+  ]
+}

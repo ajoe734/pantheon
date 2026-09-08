@@ -999,6 +999,52 @@ def archived_task_owner_reviewer_with_receipt_proof(
     )
 
 
+def canonical_task_with_archive_proof(
+    config: dict[str, Any],
+    task: Mapping[str, Any] | None,
+    *,
+    state: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any] | None:
+    """Resolve a thin terminal row for lease validation, never for resurrection.
+
+    Keep lifecycle authority in the caller's canonical snapshot. Rich evidence
+    comes only from the archive bound to that snapshot's receipt and fact; a
+    dispatch snapshot is not a substitute. Every caller, including final CAS
+    revalidation, uses this same resolver and still checks the exact event.
+    """
+    if not isinstance(task, Mapping) or task.get("status") != "done" or task.get("owner"):
+        return task
+    if state is None:
+        state = _safe_load_canonical_status(config)
+    if not isinstance(state, Mapping):
+        return task
+    task_id = str(task.get("id") or "")
+    fact = (state.get("terminal_facts") or {}).get(task_id)
+    if not isinstance(fact, Mapping) or any(
+        task.get(key) != fact.get(key)
+        for key in ("status", "terminal_outcome", "generation")
+    ):
+        return task
+    try:
+        status_root = config_path(config, "status_file").parent.resolve()
+        archive_file = archive_task_path_in_dir(task_id, archive_tasks_dir_for_status_root(status_root))
+        snapshot = json.loads(read_task_archive_file_safe(archive_file))
+        archived_task = task_from_archive_snapshot(snapshot)
+        if not isinstance(archived_task, Mapping):
+            return task
+        owner, _reviewer = archived_task_owner_reviewer_with_receipt_proof(
+            config, task_id, snapshot, archived_task,
+            expected_archive_root=str(status_root / "ai-task-archive"), state=state,
+        )
+        if not owner or str(archived_task.get("id") or "") != task_id:
+            return task
+        # Return a detached evidence view, never insert into the active table.
+        return {**archived_task, **task,
+                "owner": archived_task.get("owner"), "reviewer": archived_task.get("reviewer")}
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return task
+
+
 def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
     """Locate the local development-bridge package, never product BFF code."""
 
@@ -2154,6 +2200,8 @@ def _validate_auto_integrator_unblock_request(
         raise ValueError("unblock request command runtime is stale or unpromoted")
     source_task_id = str(request.get("source_task_id") or "")
     reason = unblock_contract.validate_reason(request.get("reason"))
+    if not unblock_contract.requires_repair_task(reason):
+        raise ValueError("authority/evidence blocker must be resolved on its source task")
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
         raise ValueError("unblock request task namespace mismatch")
     source = next(
@@ -2203,7 +2251,7 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
     receipt_root = status_root / AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
     archive_root = status_root / AUTO_INTEGRATOR_UNBLOCK_ARCHIVE
 
-    def finalize(path: Path, outcome: str, detail: str, task_id: str = "") -> None:
+    def finalize(path: Path, outcome: str, detail: str, task_id: str = "", *, coalesced_identity=None) -> None:
         destination_dir = archive_root / outcome
         receipt_dir = receipt_root / outcome
         destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -2216,6 +2264,8 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
             "task_id": task_id,
             "processed_at": utc_now(),
         }
+        if coalesced_identity is not None:
+            receipt["coalesced_identity"] = coalesced_identity
         write_json(receipt_dir / f"{path.stem}.json", receipt)
         os.replace(path, destination_dir / path.name)
 
@@ -2243,6 +2293,21 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                     config, request, path.name, status
                 )
                 task_id = valid["unblock_task_id"]
+                # Coalesce retry generations and changing symptoms for the same
+                # source delivery under the canonical lock. Preserve the first
+                # task/provenance and bind this request's receipt to that scope.
+                identity = unblock_contract.repair_identity(valid)
+                same_scope = [item for item in status.get("tasks", [])
+                              if isinstance(item.get("unblock_request"), Mapping)
+                              and unblock_contract.repair_identity(item["unblock_request"]) == identity]
+                if len(same_scope) > 1:
+                    raise ValueError("multiple existing repair tasks for the same delivery require consolidation")
+                if same_scope and same_scope[0].get("id") != task_id:
+                    finalize(path, "processed", "coalesced with existing delivery repair",
+                             str(same_scope[0]["id"]), coalesced_identity=identity)
+                    continue
+                if task_id in (status.get("terminal_facts") or {}):
+                    raise ValueError("unblock task is already terminal; cannot resurrect")
                 existing = next(
                     (item for item in status.get("tasks", []) if item.get("id") == task_id),
                     None,
@@ -7395,7 +7460,9 @@ def _safe_load_canonical_task(
 ) -> Mapping[str, Any] | None:
     try:
         st = load_status(dict(config))
-        return task_index_from_status(dict(config), st).get(task_id)
+        return canonical_task_with_archive_proof(
+            dict(config), task_index_from_status(dict(config), st).get(task_id), state=st,
+        )
     except KeyError:
         if not (config.get("paths") and isinstance(config["paths"], Mapping) and config["paths"].get("status_file")):
             return task_map.get(task_id)
@@ -7496,6 +7563,7 @@ def _run_reserved_runtime_phase(
 
     committed = False
     launch_recovery_pending = False
+    rejection_reason = "runtime_digest_or_reservation_changed"
     with _measured_runtime_state_lock(config):
         current = load_runtime_state(config)
         current_reservation = (
@@ -7509,6 +7577,7 @@ def _run_reserved_runtime_phase(
             == str(phase_context.get("expected_digest") or "")
         )
         if phase_error is None and cas_matches:
+            rejection_reason = "canonical_transition_revalidation_failed"
             status_file = (
                 config.get("paths", {}).get("status_file")
                 if isinstance(config.get("paths"), Mapping)
@@ -7724,9 +7793,9 @@ def _run_reserved_runtime_phase(
             {
                 "type": "runtime_phase_cas_conflict",
                 "phase": phase_name,
+                "reason_code": rejection_reason,
                 "message": (
-                    f"Discarded reserved runtime phase {phase_name}: runtime "
-                    "state changed before its exact CAS commit."
+                    f"Discarded reserved runtime phase {phase_name}: {rejection_reason}."
                 ),
             },
         )
@@ -7942,6 +8011,7 @@ def canonical_worker_terminal_status(
     *,
     activity_events: list[dict[str, Any]] | None,
     required_role: str | None = None,
+    state: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Return a terminal task status proven by this worker's exact event.
 
@@ -7959,6 +8029,7 @@ def canonical_worker_terminal_status(
     generic lost-lease fencing.
     """
 
+    task = canonical_task_with_archive_proof(config, task, state=state)
     if not isinstance(task, Mapping):
         return None
     if task.get("review_decision_intent") not in (None, {}, []):
@@ -8437,6 +8508,7 @@ def active_worker_governance_lease_decision(
     stripped (see ``archived_task_owner_reviewer_with_receipt_proof``).
     """
 
+    task = canonical_task_with_archive_proof(config, task, state=state)
     if isinstance(task, Mapping) and task.get("review_decision_intent") not in (None, {}, []):
         intent = task.get("review_decision_intent") or {}
         return {
@@ -8566,56 +8638,6 @@ def active_worker_governance_lease_decision(
                         task_owner = canonical_agent_name(config, str(req_task.get("owner") or "")).casefold()
                         task_reviewer = canonical_agent_name(config, str(req_task.get("reviewer") or "")).casefold()
 
-            if not task_owner and not task_reviewer and str(task.get("id") or ""):
-                archived_snapshot = None
-                status_root_val = (config.get("paths") or {}).get("status_root")
-                if not status_root_val and (config.get("paths") or {}).get("status_file"):
-                    status_root_val = Path(config["paths"]["status_file"]).parent
-                if status_root_val:
-                    expected_archive_root = str(
-                        Path(status_root_val).expanduser().resolve() / "ai-task-archive"
-                    )
-                else:
-                    expected_archive_root = str(task_archive.ARCHIVE_DIR.expanduser().resolve())
-                if status_root_val:
-                    arch_dir = archive_tasks_dir_for_status_root(status_root_val)
-                    arch_file = archive_task_path_in_dir(str(task.get("id") or ""), arch_dir)
-                    if arch_file.is_file():
-                        try:
-                            archived_snapshot = json.loads(read_task_archive_file_safe(arch_file))
-                        except Exception:
-                            pass
-                if archived_snapshot is None and not status_root_val:
-                    try:
-                        archived_snapshot = load_archived_snapshot(str(task.get("id") or ""))
-                    except Exception:
-                        pass
-                if archived_snapshot:
-                    arch_task = task_from_archive_snapshot(archived_snapshot) or {}
-                    arch_gen = arch_task.get("generation")
-                    if arch_gen is None:
-                        arch_gen = arch_task.get("task_generation")
-                    gen_matches = True
-                    if task_gen is not None and arch_gen is not None and str(arch_gen) != str(task_gen):
-                        gen_matches = False
-                    if worker_gen is not None and arch_gen is not None and str(arch_gen) != str(worker_gen):
-                        gen_matches = False
-                    if gen_matches and str(arch_task.get("id") or "") == str(task.get("id") or ""):
-                        # A physical archive file alone is not canonical authority for
-                        # terminal cancellation: require a matching canonical
-                        # archive_receipts digest and terminal_facts generation/role
-                        # lineage proof before trusting its owner/reviewer. Missing or
-                        # conflicting proof fails closed (task_owner/task_reviewer stay
-                        # unset), which routes this decision to the "preserve" branch
-                        # below instead of an unproven "terminate".
-                        task_owner, task_reviewer = archived_task_owner_reviewer_with_receipt_proof(
-                            config,
-                            str(task.get("id") or ""),
-                            archived_snapshot,
-                            arch_task,
-                            expected_archive_root=expected_archive_root,
-                            state=state,
-                        )
 
 
             event_actor_canon = canonical_agent_name(config, event_actor).casefold()
@@ -12542,8 +12564,24 @@ def recover_lost_worker_lease(
 
     status = status if isinstance(status, dict) else load_status(config)
     task_id = str(worker.get("task_id") or "")
-    task = task_index_from_status(config, status).get(task_id)
+    task = canonical_task_with_archive_proof(
+        config, task_index_from_status(config, status).get(task_id), state=status,
+    )
     if task is None or not worker_matches_current_task_generation(worker, task):
+        worker["status"] = "superseded"
+        worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
+        return True
+    if str(task.get("status") or "") == "done":
+        # Normal done has already been offered to the exact-worker classifier.
+        # A Human/Ops supersede instead uses the existing governance authority
+        # contract. It must release dead attempts too, not only live PIDs.
+        decision = active_worker_governance_lease_decision(
+            config, worker, task, state=status,
+            activity_events=recent_governance_activity_events(config),
+        )
+        if decision.get("action") != "terminate":
+            return False
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12558,7 +12596,11 @@ def recover_lost_worker_lease(
         config, str(worker.get("agent_id") or worker.get("provider") or "")
     )
     expected_actor = str(task.get(role) or "")
-    if actor != expected_actor:
+    if not expected_actor:
+        # Missing evidence is not a proven reassignment. Preserve this worker
+        # without poisoning unrelated validated cleanup in the same CAS batch.
+        return False
+    if canonical_agent_name(config, actor).casefold() != canonical_agent_name(config, expected_actor).casefold():
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
