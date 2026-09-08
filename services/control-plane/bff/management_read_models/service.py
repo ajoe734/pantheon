@@ -2169,6 +2169,24 @@ class ManagementService:
             status = "unavailable"
         else:
             status = "degraded"
+        return items, self._observation_from_items(
+            items,
+            subject_type=subject_type,
+            owner=owner,
+            status=status,
+            not_ok_degradation_reason=(domain_status or {}).get("message")
+            or f"{subject_type} read returned no records despite a healthy status probe.",
+        )
+
+    def _observation_from_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        subject_type: str,
+        owner: str,
+        status: str,
+        not_ok_degradation_reason: str,
+    ) -> Dict[str, Any]:
         provenance_records = self._record_provenance(items)
         if provenance_records:
             # An owner-reported status/degradation_reason on the records
@@ -2212,7 +2230,7 @@ class ManagementService:
                 )
                 for record in provenance_records
             ]
-            return items, self._context_observation(
+            return self._context_observation(
                 subject_type=subject_type,
                 status=worst_status,
                 owner=str(worst.get("owner") or owner),
@@ -2224,7 +2242,7 @@ class ManagementService:
                 contributing_observations=contributing_observations,
             )
         if status == "ok":
-            return items, self._context_observation(
+            return self._context_observation(
                 subject_type=subject_type,
                 status=status,
                 owner=owner,
@@ -2235,13 +2253,33 @@ class ManagementService:
         # returned nothing on the real read): report the degradation
         # explicitly instead of a bare "live"/None pairing that reads as
         # healthy.
-        return items, self._context_observation(
+        return self._context_observation(
             subject_type=subject_type,
             status=status,
             owner=owner,
             source_kind="unavailable",
-            degradation_reason=(domain_status or {}).get("message")
-            or f"{subject_type} read returned no records despite a healthy status probe.",
+            degradation_reason=not_ok_degradation_reason,
+        )
+
+    def observation_from_records(
+        self,
+        records: List[Dict[str, Any]],
+        *,
+        subject_type: str,
+        owner: str = "management_ai_context",
+    ) -> Dict[str, Any]:
+        """Derive an owner observation from a record list that was already
+        fetched by the caller (e.g. a merged/combined read), instead of
+        issuing another store read. An owner-reported status/degradation on
+        any record is preserved verbatim; an empty list without provenance
+        reports degraded instead of a bare "ok"/None pairing."""
+        status = "ok" if records else "degraded"
+        return self._observation_from_items(
+            records,
+            subject_type=subject_type,
+            owner=owner,
+            status=status,
+            not_ok_degradation_reason=f"{subject_type} read returned no records.",
         )
 
     def get_context_runtime_bindings(
@@ -2410,6 +2448,10 @@ class ManagementService:
                 degradation_reason="rollback read surface is unavailable or unconfigured.",
             )
         try:
+            # A non-raising empty rollback list cannot be told apart from a
+            # genuinely unavailable owner; the real ReadSurfacePorts.get_rollbacks
+            # now raises when the underlying owner read reports unavailable
+            # instead of returning a false-healthy empty list.
             rollbacks = list(store.get_rollbacks(runtime_id) or [])
         except Exception as exc:
             return [], self._context_observation(

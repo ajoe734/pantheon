@@ -53,7 +53,14 @@ class DeploymentReadSurfaceAdapter:
         return self._read_surface.list_runtime_bindings()
 
     def get_rollbacks(self, runtime_id: Optional[str]) -> Sequence[Dict[str, Any]]:
-        return self._read_surface.get_rollbacks(runtime_id)
+        # An unavailable/unconfigured rollback owner now raises instead of
+        # returning a false-healthy empty list; the deployment-review surface
+        # is not owner-observation aware, so it keeps its prior best-effort
+        # empty-list behavior instead of turning a missing owner into a 500.
+        try:
+            return self._read_surface.get_rollbacks(runtime_id)
+        except Exception:
+            return []
 
     def get_latest_run(self, plan_id: str) -> Optional[Dict[str, Any]]:
         return self._read_surface.get_latest_run(plan_id)

@@ -15354,6 +15354,14 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     if use_all or focus == "persona_fleet":
         try:
             personas = _mgmt_nl_filter_tenant_records(_list_persona_records(tenant_id), tenant_id)
+            # A persona owner that itself reports unavailable/degraded
+            # provenance (e.g. the merged persona record carries an explicit
+            # status/degradation_reason) is real observation truth and must
+            # surface in owner_observations instead of being silently dropped
+            # just because runtime/incidents/evolution all read ok.
+            personas_obs = _management_ai_context_service.observation_from_records(
+                personas, subject_type="personas", owner="persona_fleet"
+            )
             runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
                 record_filter=_tenant_record_filter
             )
@@ -15391,10 +15399,34 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": fleet_summary,
                 "items": fleet_items,
             }
+            # Persona reads and per-runtime telemetry reads are contributing
+            # owners too: a healthy runtime/incidents/evolution aggregate must
+            # not mask a persona or telemetry owner that itself reported
+            # unavailable/degraded, or that owner silently disappears from
+            # both the status and owner_observations. Telemetry is read
+            # through the owner-observation query for every tenant-scoped
+            # runtime binding (same pattern as the portfolio_book surface),
+            # not only the runtimes a persona happens to match.
+            telemetry_observations = []
+            for runtime_binding in runtime_bindings:
+                fleet_runtime_id = str(
+                    runtime_binding.get("runtime_id")
+                    or runtime_binding.get("id")
+                    or runtime_binding.get("binding_id")
+                    or ""
+                )
+                if not fleet_runtime_id:
+                    continue
+                _summary, observation = _management_ai_context_service.get_context_telemetry_summary(
+                    fleet_runtime_id
+                )
+                telemetry_observations.append(observation)
             fleet_contributing_statuses = [
+                personas_obs.get("status"),
                 runtime_bindings_obs.get("status"),
                 incidents_obs.get("status"),
                 evolution_decisions_obs.get("status"),
+                *[observation.get("status") for observation in telemetry_observations],
             ]
             if not personas:
                 fleet_status = "unavailable"
@@ -15407,7 +15439,13 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             surfaces["persona_fleet"] = {
                 "status": fleet_status,
                 "source": "bff_composed",
-                "owner_observations": [runtime_bindings_obs, incidents_obs, evolution_decisions_obs],
+                "owner_observations": [
+                    personas_obs,
+                    runtime_bindings_obs,
+                    incidents_obs,
+                    evolution_decisions_obs,
+                    *telemetry_observations,
+                ],
             }
         except Exception:
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}

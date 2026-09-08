@@ -49,7 +49,7 @@ from types import SimpleNamespace
 import pytest
 
 from services.control_plane.bff.management_read_models.service import ManagementService
-from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_read_surface_ports
 from services.control_plane.bff.ports.persona_capital_runtime import RuntimePort
 
 NOW = "2026-09-08T18:00:00Z"
@@ -417,3 +417,76 @@ def test_portfolio_surface_threads_every_owner_identity_through_json(reverse: bo
     for row in rows:
         for field in ("owner", "source_version", "correlation_id"):
             assert row[field] in encoded, (field, row[field], surface)
+
+
+# ---------------------------------------------------------------------------
+# Ninth-review regressions (2026-09-08): rollback availability and persona
+# reads must be bound to the real owner read outcome, not a non-raising
+# empty result.
+# ---------------------------------------------------------------------------
+
+
+def test_real_rollback_port_unconfigured_owner_is_unavailable_not_ok() -> None:
+    """The actual real create_read_surface_ports().lifecycle_telemetry_governance
+    .list_loop_runs() returns (False, []) when the owner is unconfigured. Before
+    this fix, ReadSurfacePorts.get_rollbacks() discarded that availability flag
+    and get_context_rollbacks() reported a false healthy "ok" with no reason.
+    """
+    rows, obs = ManagementService(
+        read_store=create_read_surface_ports(), utc_now=lambda: NOW
+    ).get_context_rollbacks("runtime-1")
+    assert rows == []
+    assert obs["status"] == "unavailable", obs
+    assert obs["source_kind"] == "unavailable"
+    assert obs["degradation_reason"]
+
+
+def test_real_rollback_port_authoritative_empty_result_is_ok() -> None:
+    """A configured owner that authoritatively has zero rollbacks for this
+    runtime is a real healthy empty result, not "unavailable"."""
+    store = create_in_memory_read_surface_ports(lifecycle_telemetry_governance_kwargs={"loop_runs": {}})
+    rows, obs = ManagementService(read_store=store, utc_now=lambda: NOW).get_context_rollbacks("runtime-1")
+    assert rows == []
+    assert obs["status"] == "ok", obs
+    assert obs["source_kind"] == "live"
+
+
+def test_rollback_store_without_availability_probe_keeps_legacy_behavior() -> None:
+    """A store double that only implements get_rollbacks (no availability
+    accessor) keeps reporting a bare successful empty read as ok, preserving
+    backward compatibility for existing test doubles/adapters."""
+    store = SimpleNamespace(get_rollbacks=lambda runtime_id: [])
+    rows, obs = ManagementService(read_store=store, utc_now=lambda: NOW).get_context_rollbacks("runtime-1")
+    assert rows == []
+    assert obs["status"] == "ok", obs
+
+
+def test_observation_from_records_empty_list_is_not_healthy_live() -> None:
+    obs = ManagementService(utc_now=lambda: NOW).observation_from_records(
+        [], subject_type="personas", owner="persona_fleet"
+    )
+    assert obs["status"] != "ok"
+    assert obs["degradation_reason"]
+
+
+def test_observation_from_records_preserves_owner_reported_unavailable() -> None:
+    record = dict(
+        id="persona-1",
+        owner="persona-owner",
+        status="unavailable",
+        source_kind="unavailable",
+        degradation_reason="owner offline",
+    )
+    obs = ManagementService(utc_now=lambda: NOW).observation_from_records(
+        [record], subject_type="personas", owner="persona_fleet"
+    )
+    assert obs["status"] == "unavailable"
+    assert obs["degradation_reason"] == "owner offline"
+
+
+def test_observation_from_records_healthy_non_empty_is_ok() -> None:
+    obs = ManagementService(utc_now=lambda: NOW).observation_from_records(
+        [{"id": "persona-1"}], subject_type="personas", owner="persona_fleet"
+    )
+    assert obs["status"] == "ok"
+    assert obs["source_kind"] == "live"
