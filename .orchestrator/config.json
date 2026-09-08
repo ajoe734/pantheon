@@ -4,8 +4,8 @@
     "activity_log": "ai-activity-log.jsonl",
     "current_work": "current-work.md",
     "dashboard": "docs-site/index.html",
-    "state_file": ".orchestrator/state.json",
-    "approval_queue": ".orchestrator/approval-queue.json",
+    "state_file": ".orchestrator/worker-runtime/state.json",
+    "approval_queue": ".orchestrator/worker-runtime/approval-queue.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -15,6 +15,9 @@
   },
   "execution_authorization": {
     "mfa_issuer_public_keys": {}
+  },
+  "review_gate": {
+    "github_review_bridge_required": false
   },
   "permission_broker": {
     "allowed_workspace_roots": [

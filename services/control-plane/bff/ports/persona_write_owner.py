@@ -247,12 +247,20 @@ class PersonaRegistryHttpWritePort:
         )
         if traits:
             owner_metadata["traits"] = dict(traits)
+        # Provisioning progress belongs to the BFF's durable coordinator, not
+        # the Persona owner's governed lifecycle. A new owner record starts
+        # in draft; subsequent transitions still use the lifecycle endpoint.
+        owner_lifecycle = (
+            "draft"
+            if lifecycle_state in {"provisioning", "provisioning_failed", "paper_running"}
+            else lifecycle_state
+        )
         body = {
             "actor_id": self._service_actor_id,
             "persona_id": persona_id,
             "name": name,
             "mandate": mandate or archetype,
-            "lifecycle_state": lifecycle_state,
+            "lifecycle_state": owner_lifecycle,
             "strategy_family": strategy_family or archetype,
             "owner": actor_id,
             "required_data_sources": list(required_data_sources or []),

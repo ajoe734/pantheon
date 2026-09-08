@@ -27,7 +27,11 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..loop_inventory import get_loop_health_entry, list_loop_health_entries
+try:
+    from ..loop_inventory import get_loop_health_entry, list_loop_health_entries
+except (ImportError, ValueError):
+    from loop_inventory import get_loop_health_entry, list_loop_health_entries
+
 
 log = logging.getLogger(__name__)
 

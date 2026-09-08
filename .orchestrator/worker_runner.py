@@ -212,9 +212,15 @@ def validate_coordination_root(
         raise RuntimeError(f"ai-status.json cannot be a symlink: {status_file}")
 
     # Enforce supervisor marker paths exist
+    state_marker = root / ".orchestrator" / "worker-runtime" / "state.json"
+    if not state_marker.exists():
+        state_marker = root / ".orchestrator" / "state.json"
+    approval_marker = root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    if not approval_marker.exists():
+        approval_marker = root / ".orchestrator" / "approval-queue.json"
     for marker_path in (
-        root / ".orchestrator" / "state.json",
-        root / ".orchestrator" / "approval-queue.json",
+        state_marker,
+        approval_marker,
         root / ".orchestrator" / "config.json",
     ):
         if not marker_path.exists() or not marker_path.is_file():
@@ -397,7 +403,14 @@ def _append_leased_git_metadata_mounts(
     bwrap_cmd.extend(["--bind", str(git_dir), str(git_dir)])
 
 
-def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
+def _append_task_store_mounts(
+    bwrap_cmd: list[str],
+    raw_event_log: str,
+    *,
+    workspace_path: Path | None = None,
+    coordination_root: Path | None = None,
+    read_only_worktree: bool = False,
+) -> None:
     """Expose the atomic TaskStore surface without exposing sibling runtime data."""
 
     expanded_event_path = Path(os.path.expanduser(raw_event_log))
@@ -413,6 +426,12 @@ def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
     if not parent.is_dir() or not event_path.is_file():
         raise RuntimeError(f"task-state store is unavailable: {event_path}")
 
+    # Reject unqualified legacy/mixed layouts: event log must live in a dedicated task-state directory
+    if parent.name != "task-state":
+        raise RuntimeError(
+            f"unqualified task-state layout: event log must reside in a dedicated 'task-state' directory: {parent}"
+        )
+
     allowed_names = {
         event_path.name,
         f"{event_path.name}.head.json",
@@ -427,17 +446,66 @@ def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
         if required.is_symlink() or not required.is_file():
             raise RuntimeError(f"task-state governed file is unavailable: {required}")
 
-    # The V2 store replaces its head through a same-directory temporary file,
-    # so binding individual files is insufficient.  Bind the parent writable,
-    # then remount every non-TaskStore sibling read-only.  Existing protected
-    # mountpoints cannot be replaced or unlinked from inside the namespace.
-    bwrap_cmd.extend(["--bind", str(parent), str(parent)])
-    for sibling in sorted(parent.iterdir(), key=lambda item: item.name):
-        if sibling.name in allowed_names:
+    # Enforce that the dedicated task-state directory contains ONLY allowed task-state files
+    # and atomic publication temporary files. Any unrelated sibling file (e.g. live-supervisor.json)
+    # renders the layout unqualified and must be rejected.
+    import stat
+    for child in parent.iterdir():
+        if child.name in allowed_names:
+            if child.is_symlink():
+                raise RuntimeError(f"task-state governed file cannot be a symlink: {child}")
             continue
-        if sibling.is_symlink():
-            raise RuntimeError(f"runtime sibling cannot be a symlink: {sibling}")
-        bwrap_cmd.extend(["--ro-bind", str(sibling), str(sibling)])
+        if (
+            child.name.startswith(f"{event_path.name}.")
+            and (".tmp" in child.name or child.name.endswith(".tmp"))
+        ):
+            try:
+                st = child.lstat()
+            except FileNotFoundError:
+                # Disappeared during scan (e.g. published atomically via os.replace)
+                continue
+            if stat.S_ISREG(st.st_mode) and not stat.S_ISLNK(st.st_mode):
+                continue
+            raise RuntimeError(
+                f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
+            )
+        raise RuntimeError(
+            f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
+        )
+
+    # The dedicated task-state directory houses only task-state store files and
+    # their atomic replacement temporary files. Keep the outer runtime (config,
+    # keys, interpreter and unrelated entries) read-only at directory level,
+    # and bind only the dedicated data directory writable without enumerating
+    # transient publication temporary files.
+    outer_runtime = parent.parent
+    outer_symlink = _first_symlink_component(outer_runtime)
+    if outer_symlink is not None or outer_runtime.is_symlink():
+        raise RuntimeError(
+            f"task-state store outer runtime cannot contain a symlink: {outer_symlink or outer_runtime}"
+        )
+    if not outer_runtime.is_dir() or outer_runtime in (Path("/"), parent):
+        raise RuntimeError(f"task-state store outer runtime is invalid: {outer_runtime}")
+
+    # Directory-level protection for configured runtime siblings:
+    # Outer runtime is mounted read-only at directory level.
+    bwrap_cmd.extend(["--ro-bind-try", str(outer_runtime), str(outer_runtime)])
+
+    # If workspace_path is inside outer_runtime (overlapping outer-root case), re-assert
+    # read-only or writable mount according to read_only_worktree because bubblewrap
+    # applies later mounts on top of earlier mounts.
+    if workspace_path is not None:
+        try:
+            workspace_path.resolve().relative_to(outer_runtime.resolve())
+            bwrap_cmd.extend([
+                "--ro-bind" if read_only_worktree else "--bind",
+                str(workspace_path.resolve()),
+                str(workspace_path.resolve()),
+            ])
+        except ValueError:
+            pass
+
+    bwrap_cmd.extend(["--bind", str(parent), str(parent)])
 
 
 def _append_coordination_state_mounts(
@@ -596,20 +664,26 @@ def bind_worker_sandbox(
     # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
         _append_coordination_state_mounts(bwrap_cmd, coord_resolved)
+        worker_runtime_dir = coord_resolved / ".orchestrator" / "worker-runtime"
+        worker_runtime_dir.mkdir(parents=True, exist_ok=True)
         governed_candidates = [
-            coord_resolved / ".orchestrator" / "state.json",
-            coord_resolved / ".orchestrator" / "approval-queue.json",
             coord_resolved / ".orchestrator" / "runtime-admission.lock",
             coord_resolved / ".orchestrator" / "task-state.lock",
             coord_resolved / ".orchestrator" / "activity-audit.lock",
             coord_resolved / ".orchestrator" / "status-derived-views.lock",
-            coord_resolved / ".orchestrator" / "worker-runtime",
+            worker_runtime_dir,
             coord_resolved / "archive" / "logs",
             coord_resolved / ".orchestrator" / "logs",
         ]
         event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
         if event_log and event_log.strip():
-            _append_task_store_mounts(bwrap_cmd, event_log.strip())
+            _append_task_store_mounts(
+                bwrap_cmd,
+                event_log.strip(),
+                workspace_path=ws_resolved,
+                coordination_root=coord_resolved,
+                read_only_worktree=read_only_worktree,
+            )
 
         for p in governed_candidates:
             if p.exists():
@@ -755,8 +829,15 @@ def _own_process_start_ticks() -> int:
 
 
 def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, Any] | None:
+    runtime_state = coordination_root / ".orchestrator" / "worker-runtime" / "state.json"
+    # The V2 supervisor owns its receipt in worker-runtime.  Retain the
+    # retired path only for isolated legacy fixtures that have no V2 file; a
+    # worker must never fail entry binding merely because the canonical state
+    # moved into its runtime directory.
+    if not runtime_state.exists():
+        runtime_state = coordination_root / ".orchestrator" / "state.json"
     state = json.loads(read_regular_file_bytes(
-        coordination_root / ".orchestrator" / "state.json", source="worker launch receipt"
+        runtime_state, source="worker launch receipt"
     ))
     if not isinstance(state, dict):
         raise RuntimeError("worker_runner: runtime launch state is malformed")

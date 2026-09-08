@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import faulthandler
 import fcntl
 import fnmatch
 import hashlib
@@ -37,6 +38,7 @@ from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
 from adapters.base import DeliveryRequest
 from common import (
+    LockContentionError,
     agent_config_for,
     bound_commit_subject,
     canonical_task_state_lock_file,
@@ -515,7 +517,8 @@ _UNSET = object()
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.pid"
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor.pid"
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:
@@ -778,6 +781,18 @@ def console_log(message: str, *, quiet: bool = False) -> None:
         return
     timestamp = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {message}", flush=True)
+
+
+def install_stall_trace_handler() -> None:
+    """Allow Human/Ops to capture a live supervisor traceback with SIGUSR2."""
+
+    try:
+        faulthandler.register(signal.SIGUSR2, file=sys.stderr, all_threads=True)
+    except (AttributeError, OSError, RuntimeError) as exc:
+        console_log(
+            f"supervisor stall trace handler unavailable: {type(exc).__name__}: {exc}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
 
 
 def parse_runtime_timestamp(ts: str | None) -> datetime | None:
@@ -7190,11 +7205,23 @@ def _clear_stale_runtime_phase_launch_intent(
     reservation_token: str,
     intent: Mapping[str, Any],
     marker_count: int,
+    runtime_admission_locked: bool = False,
 ) -> bool:
-    """Clear an unchanged stale intent after a conclusive zero-process scan."""
+    """Clear an unchanged stale intent after a conclusive zero-process scan.
+
+    Callers that already own the canonical runtime-admission lock may set
+    ``runtime_admission_locked``.  This is needed by runtime promotion, which
+    owns that lock across its stop/drain/migrate transaction and therefore
+    cannot acquire the non-reentrant file lock a second time.
+    """
 
     cleared = False
-    with _measured_runtime_state_lock(config):
+    lock = (
+        nullcontext()
+        if runtime_admission_locked
+        else _measured_runtime_state_lock(config)
+    )
+    with lock:
         current = load_runtime_state(config)
         reservation = _runtime_phase_reservation_record(
             current,
@@ -7239,6 +7266,8 @@ def _clear_stale_runtime_phase_launch_intent(
 def _recover_runtime_phase_reservation(
     config: dict[str, Any],
     phase_name: str,
+    *,
+    runtime_admission_locked: bool = False,
 ) -> bool | None:
     """Adopt a launched worker before allowing a reserved phase to repeat.
 
@@ -7247,8 +7276,13 @@ def _recover_runtime_phase_reservation(
     closed. ``True`` means the exact worker/queue lease was adopted.
     """
 
+    lock = (
+        nullcontext()
+        if runtime_admission_locked
+        else _measured_runtime_state_lock(config)
+    )
     cleared_legacy = False
-    with _measured_runtime_state_lock(config):
+    with lock:
         current = load_runtime_state(config)
         reservations = current.setdefault("supervisor", {}).setdefault(
             "runtime_phase_reservations",
@@ -7321,6 +7355,7 @@ def _recover_runtime_phase_reservation(
                 reservation_token=reservation_token,
                 intent=intent,
                 marker_count=len(marker_candidates),
+                runtime_admission_locked=runtime_admission_locked,
             ):
                 return False
             return None
@@ -7346,7 +7381,12 @@ def _recover_runtime_phase_reservation(
 
     reservation_token = str(reservation_snapshot.get("token") or "")
     adopted = False
-    with _measured_runtime_state_lock(config):
+    lock = (
+        nullcontext()
+        if runtime_admission_locked
+        else _measured_runtime_state_lock(config)
+    )
+    with lock:
         current = load_runtime_state(config)
         current_reservation = _runtime_phase_reservation_record(
             current,
@@ -12041,7 +12081,12 @@ def apply_auto_commit_archive_result(
             if key in result:
                 bucket[key] = result[key]
         save_runtime_state(config, state)
-    refresh_dashboard_runtime_artifacts(config)
+    # Archive telemetry is operational state, but the dashboard and docs are
+    # derived views.  Refreshing those views here runs after the short state
+    # commit yet still on the supervisor's only cycle thread.  A slow derived
+    # view must not prevent that thread from recording a successful loop or
+    # observing worker progress.  The regular status projection refreshes the
+    # views from this durable state on its next run.
     return bool(result.get("opened_pr"))
 
 
@@ -12702,10 +12747,27 @@ def review_decision_intent_lease_is_lost(
     created_at = _parse_iso_utc(str(intent.get("created_at") or ""))
     if created_at is None:
         return False
-    lease_seconds = max(
-        60, int(worker_runtime_settings(config).get("worker_lease_seconds", 1800))
-    )
-    if now_dt - created_at < timedelta(seconds=lease_seconds):
+    runtime_settings = worker_runtime_settings(config)
+    review_gate = config.get("review_gate")
+    bridge_required = not isinstance(review_gate, Mapping) or review_gate.get(
+        "github_review_bridge_required", True
+    ) is not False
+    if bridge_required:
+        recovery_delay_seconds = max(
+            60, int(runtime_settings.get("worker_lease_seconds", 1800))
+        )
+    else:
+        # Canonical task review mode has no GitHub write that could be
+        # partially committed after a process disappears. Retain a bounded
+        # heartbeat grace so a just-reserved intent cannot race its worker,
+        # but do not strand a known-gone reviewer for the full execution
+        # lease window.
+        recovery_delay_seconds = max(
+            60,
+            int(runtime_settings.get("heartbeat_stale_seconds", 300))
+            + int(runtime_settings.get("heartbeat_grace_seconds", 60)),
+        )
+    if now_dt - created_at < timedelta(seconds=recovery_delay_seconds):
         return False
     live_statuses = {"started", "waiting_approval"} | normalized_status_set(
         ready_dispatch_settings(config).get("active_worker_statuses"), []
@@ -15904,12 +15966,6 @@ def run_once(
             config,
             quiet=quiet,
         )
-        _safe_phase(
-            "refresh_dashboard_runtime_artifacts",
-            refresh_dashboard_runtime_artifacts,
-            config,
-            quiet=quiet,
-        )
         if isinstance(postlock_state, dict):
             _safe_phase(
                 "log_runtime_summary",
@@ -16374,30 +16430,43 @@ def run_deadline_scheduler(
 def publish_scheduler_cadence_completion(
     config: dict[str, Any],
     sample: Mapping[str, Any],
-) -> None:
-    """Persist one scalar scheduler completion sample in a short transaction."""
+) -> bool:
+    """Persist cadence telemetry without delaying the next scheduler cycle."""
 
-    with runtime_state_lock(config, shared=False, nonblocking=False):
-        state = load_runtime_state(config)
-        supervisor_state = state.setdefault("supervisor", {})
-        elapsed = round(max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3)
-        supervisor_state["scheduler_cycle_elapsed_seconds"] = elapsed
-        supervisor_state["scheduler_cycle_elapsed_peak_seconds"] = round(
-            max(
-                elapsed,
-                float(supervisor_state.get("scheduler_cycle_elapsed_peak_seconds", 0.0)),
-            ),
-            3,
-        )
-        supervisor_state["cadence_skipped_deadlines"] = max(
-            0,
-            int(sample.get("skipped_deadlines_after_cycle", 0)),
-        )
-        supervisor_state["cadence_next_deadline_monotonic"] = round(
-            float(sample.get("next_deadline", 0.0)),
-            6,
-        )
-        save_runtime_state(config, state)
+    try:
+        # ``runtime_state_update`` owns one read-modify-write lock.  Do not
+        # call load_runtime_state/save_runtime_state inside a separately held
+        # runtime lock: both acquire that same sidecar and can self-deadlock.
+        with runtime_state_update(config, nonblocking=True) as state:
+            supervisor_state = state.setdefault("supervisor", {})
+            elapsed = round(
+                max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3
+            )
+            supervisor_state["scheduler_cycle_elapsed_seconds"] = elapsed
+            supervisor_state["scheduler_cycle_elapsed_peak_seconds"] = round(
+                max(
+                    elapsed,
+                    float(
+                        supervisor_state.get(
+                            "scheduler_cycle_elapsed_peak_seconds", 0.0
+                        )
+                    ),
+                ),
+                3,
+            )
+            supervisor_state["cadence_skipped_deadlines"] = max(
+                0,
+                int(sample.get("skipped_deadlines_after_cycle", 0)),
+            )
+            supervisor_state["cadence_next_deadline_monotonic"] = round(
+                float(sample.get("next_deadline", 0.0)),
+                6,
+            )
+    except LockContentionError:
+        # Completion samples are observability only. The next scheduler cycle
+        # must never wait behind an unrelated runtime writer to publish them.
+        return False
+    return True
 
 
 def main() -> int:
@@ -16405,6 +16474,7 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    install_stall_trace_handler()
     validate_supervisor_launch_authority(config, supervisor_path=Path(__file__))
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)

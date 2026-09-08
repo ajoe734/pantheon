@@ -29,7 +29,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -72,6 +72,39 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_archive_result_does_not_refresh_derived_views_on_supervisor_cycle(self) -> None:
+        config = config_fixture()
+        action = {"token": "archive-1", "scheduled_at": "2026-09-08T00:00:00Z"}
+        result = {"finished_at": "2026-09-08T00:01:00Z", "opened_pr": False}
+        state = {
+            "auto_commit_archive": {
+                "pending_token": action["token"],
+                "pending_since": action["scheduled_at"],
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", return_value=nullcontext()),
+            mock.patch.object(supervisor, "load_runtime_state", return_value=state),
+            mock.patch.object(supervisor, "save_runtime_state") as save_state,
+            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts") as refresh,
+        ):
+            applied = supervisor.apply_auto_commit_archive_result(config, action, result)
+
+        self.assertFalse(applied)
+        save_state.assert_called_once_with(config, state)
+        refresh.assert_not_called()
+
+    def test_stall_trace_handler_registers_sigusr2(self) -> None:
+        with mock.patch.object(supervisor.faulthandler, "register") as register:
+            supervisor.install_stall_trace_handler()
+
+        register.assert_called_once_with(
+            signal.SIGUSR2,
+            file=sys.stderr,
+            all_threads=True,
+        )
+
     def test_dashboard_refresh_uses_scoped_canonical_task_state_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -3832,9 +3865,12 @@ class ExecutionAuthorizationProcessTests(unittest.TestCase):
         status_root = root / "status"
         (status_root / ".orchestrator").mkdir(parents=True)
         self.config = config_fixture(status_root)
-        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(root / "runtime" / "tasks.jsonl")}
+        event_log = root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(event_log)}
         self.task = _synthetic_privileged_task()
-        supervisor.write_status(self.config, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        from rewrite.task_state_store import append_state_commit
+        append_state_commit(event_log, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        supervisor.write_json(supervisor.config_path(self.config, "status_file"), {"tasks": [self.task]})
         self.ctx = multiprocessing.get_context("fork")
         self.marker = root / "effect"
 
@@ -12404,6 +12440,48 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
             )
         )
 
+    def test_canonical_task_review_mode_uses_heartbeat_grace_for_a_gone_worker(self) -> None:
+        self.config["worker_runtime"] = {
+            "worker_lease_seconds": 7200,
+            "heartbeat_stale_seconds": 300,
+            "heartbeat_grace_seconds": 60,
+        }
+        self.config["review_gate"] = {"github_review_bridge_required": False}
+        created = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+        self.assertFalse(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state(),
+                self.task,
+                now=created + timedelta(minutes=5),
+            )
+        )
+        self.assertTrue(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state(),
+                self.task,
+                now=created + timedelta(minutes=6),
+            )
+        )
+
+        live_worker = {
+            "task_id": "TASK-1",
+            "status": "waiting_approval",
+            "lease_expires_at": supervisor._isoformat_utc(
+                created + timedelta(hours=3)
+            ),
+        }
+        self.assertFalse(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state({"w1": live_worker}),
+                self.task,
+                now=created + timedelta(minutes=6),
+            )
+        )
+
     def test_reconcile_mints_a_receipt_and_unblocks_only_the_original_actor(self) -> None:
         state = self._state()
 
@@ -13698,8 +13776,9 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             cmd_root = temp_path / "cmd_root"
             worktree = temp_path / "worktree"
             runtime_dir = temp_path / "runtime"
-            runtime_dir.mkdir(parents=True)
-            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+            task_state_dir = runtime_dir / "task-state"
+            task_state_dir.mkdir(parents=True)
+            task_state_event_log = task_state_dir / "task-state-events.jsonl"
 
             for d in (central, cmd_root, worktree):
                 d.mkdir(parents=True, exist_ok=True)
@@ -14404,7 +14483,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 },
             }
             (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
-            supervisor.write_status(config, init_state, source="test-init")
+            rewrite_task_state_store.append_state_commit(task_state_event_log, init_state, source="init")
 
             child_env = os.environ.copy()
             for k in list(child_env.keys()):
@@ -14657,7 +14736,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 },
             }
             (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
-            supervisor.write_status(config, init_state, source="test-init")
+            rewrite_task_state_store.append_state_commit(task_state_event_log, init_state, source="init")
 
             child_env = os.environ.copy()
             for k in list(child_env.keys()):
@@ -16715,6 +16794,82 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         if proc.poll() is None:
                             proc.kill()
                             proc.wait(timeout=2)
+
+
+class RuntimeAdmissionReentryTests(unittest.TestCase):
+    def test_recovery_reuses_an_already_held_runtime_admission_lock(self) -> None:
+        state: dict[str, Any] = {
+            "supervisor": {
+                "runtime_phase_reservations": {
+                    "poll_workers_before_plan": {"token": "legacy-token"}
+                }
+            }
+        }
+        saved: list[dict[str, Any]] = []
+
+        @contextmanager
+        def unexpected_lock(_config: dict[str, Any]):
+            raise AssertionError("recovery attempted to re-enter runtime-admission lock")
+            yield
+
+        with (
+            mock.patch.object(
+                supervisor, "_measured_runtime_state_lock", unexpected_lock
+            ),
+            mock.patch.object(supervisor, "load_runtime_state", return_value=state),
+            mock.patch.object(
+                supervisor,
+                "save_runtime_state",
+                side_effect=lambda _c, s: saved.append(copy.deepcopy(s)),
+            ),
+        ):
+            result = supervisor._recover_runtime_phase_reservation(
+                {},
+                "poll_workers_before_plan",
+                runtime_admission_locked=True,
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(saved), 1)
+        self.assertNotIn("runtime_phase_reservations", saved[0]["supervisor"])
+
+
+class SchedulerCadenceTelemetryTests(unittest.TestCase):
+    _SAMPLE = {
+        "cycle_elapsed_seconds": 1.0,
+        "skipped_deadlines_after_cycle": 0,
+        "next_deadline": 2.0,
+    }
+
+    def test_completion_skips_runtime_lock_contention(self) -> None:
+        @contextmanager
+        def contended_update(*_args: Any, **kwargs: Any):
+            self.assertTrue(kwargs["nonblocking"])
+            raise common.LockContentionError(11, "contended", "runtime-admission.lock")
+            yield
+
+        with mock.patch.object(supervisor, "runtime_state_update", contended_update):
+            self.assertFalse(
+                supervisor.publish_scheduler_cadence_completion(
+                    {},
+                    self._SAMPLE,
+                )
+            )
+
+    def test_completion_persists_when_runtime_lock_is_available(self) -> None:
+        state: dict[str, Any] = {"supervisor": {"scheduler_cycle_elapsed_peak_seconds": 2.0}}
+
+        @contextmanager
+        def available_update(*_args: Any, **kwargs: Any):
+            self.assertTrue(kwargs["nonblocking"])
+            yield state
+
+        with mock.patch.object(supervisor, "runtime_state_update", available_update):
+            self.assertTrue(supervisor.publish_scheduler_cadence_completion({}, self._SAMPLE))
+
+        self.assertEqual(state["supervisor"]["scheduler_cycle_elapsed_seconds"], 1.0)
+        self.assertEqual(state["supervisor"]["scheduler_cycle_elapsed_peak_seconds"], 2.0)
+        self.assertEqual(state["supervisor"]["cadence_next_deadline_monotonic"], 2.0)
 
 
 if __name__ == "__main__":

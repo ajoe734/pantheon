@@ -5,6 +5,7 @@ import gzip
 import base64
 import binascii
 import fcntl
+import fnmatch
 import hashlib
 import json
 import os
@@ -101,6 +102,7 @@ from multi_repo_registry import (
     validate_task_repository_scope,
 )
 from runtime_state import (
+    _resolve_runtime_source_leaf,
     activity_audit_lock_file,
     canonical_task_state_lock_file,
     load_runtime_state_snapshot,
@@ -195,6 +197,7 @@ from common import (
     canonical_task_state_lock_path,
     durable_write_bytes,
     first_symlink_component,
+    github_review_bridge_required,
     git_toplevel,
     normalize_github_repo_slug,
     prepare_activity_audit_unlocked,
@@ -284,6 +287,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "assign",
         "milestone",
         "dependency-track",
+        "dependency-contract",
         "execution-resource",
         "artifact-contract",
         "reopen",
@@ -306,11 +310,39 @@ LEGACY_OPERATOR_ASSERTION_KEYS = (
     "consumed_operator_assertions",
     "consumed_canonical_mutation_assertions",
 )
+def resolve_orchestrator_state_file(status_root: Path) -> Path:
+    worker_runtime_path = status_root / ".orchestrator" / "worker-runtime" / "state.json"
+    legacy_path = status_root / ".orchestrator" / "state.json"
+    worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
+    if worker_runtime_path.exists():
+        return worker_runtime_path
+    if legacy_path.exists():
+        return legacy_path
+    if legacy_queue.exists() and not worker_runtime_queue.exists():
+        return legacy_path
+    return worker_runtime_path
+
+
+def resolve_approval_queue_file(status_root: Path) -> Path:
+    worker_runtime_state = status_root / ".orchestrator" / "worker-runtime" / "state.json"
+    legacy_state = status_root / ".orchestrator" / "state.json"
+    worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
+    legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
+    if worker_runtime_queue.exists():
+        return worker_runtime_queue
+    if legacy_queue.exists():
+        return legacy_queue
+    if legacy_state.exists() and not worker_runtime_state.exists():
+        return legacy_queue
+    return worker_runtime_queue
+
+
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
-APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+ORCHESTRATOR_STATE_FILE = resolve_orchestrator_state_file(STATUS_ROOT)
+APPROVAL_QUEUE_FILE = resolve_approval_queue_file(STATUS_ROOT)
 DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 
 
@@ -328,8 +360,8 @@ def configure_status_root_paths(status_root: str | Path) -> Path:
     LOG_FILE = root / "ai-activity-log.jsonl"
     CURRENT_WORK_FILE = root / "current-work.md"
     DOCS_SITE_DIR = root / "docs-site"
-    ORCHESTRATOR_STATE_FILE = root / ".orchestrator" / "state.json"
-    APPROVAL_QUEUE_FILE = root / ".orchestrator" / "approval-queue.json"
+    ORCHESTRATOR_STATE_FILE = resolve_orchestrator_state_file(root)
+    APPROVAL_QUEUE_FILE = resolve_approval_queue_file(root)
     DASHBOARD_BUNDLE_FILE = root / "dashboard-bundle.json"
 
     task_archive_module.STATUS_ROOT = root
@@ -1722,14 +1754,24 @@ def load_config() -> dict[str, Any]:
         return {}
     paths = payload.setdefault("paths", {})
     if isinstance(paths, dict):
+        state_file = ORCHESTRATOR_STATE_FILE
+        try:
+            state_file.relative_to(STATUS_ROOT)
+        except ValueError:
+            state_file = resolve_orchestrator_state_file(STATUS_ROOT)
+        approval_queue = APPROVAL_QUEUE_FILE
+        try:
+            approval_queue.relative_to(STATUS_ROOT)
+        except ValueError:
+            approval_queue = resolve_approval_queue_file(STATUS_ROOT)
         paths.update(
             {
                 "status_file": str(STATUS_FILE),
                 "activity_log": str(LOG_FILE),
                 "current_work": str(CURRENT_WORK_FILE),
                 "dashboard": str(DOCS_SITE_DIR / "index.html"),
-                "state_file": str(ORCHESTRATOR_STATE_FILE),
-                "approval_queue": str(APPROVAL_QUEUE_FILE),
+                "state_file": str(state_file),
+                "approval_queue": str(approval_queue),
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
@@ -4212,6 +4254,8 @@ def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, 
     if not isinstance(raw_artifacts, list):
         return []
     target_repo = str(task.get("target_repo") or "").strip() or "pantheon"
+    target_repo = {"execute_plans": "execute-plans", "frontend-checkout": "execute-plans",
+                   "ajoe734/execute-plans": "execute-plans", "ajoe734/pantheon": "pantheon"}.get(target_repo, target_repo)
     normalized: list[tuple[str, str]] = []
     for raw in raw_artifacts:
         if not isinstance(raw, str) or not raw.strip():
@@ -4220,6 +4264,8 @@ def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, 
         prefix, separator, suffix = value.partition(":")
         if separator and prefix in {"execute-plans", "frontend-checkout"}:
             normalized.append(("execute-plans", suffix.lstrip("/")))
+        elif separator and prefix == "pantheon":
+            normalized.append(("pantheon", suffix.lstrip("/")))
         elif value.startswith("execute-plans/"):
             normalized.append(
                 ("execute-plans", value.removeprefix("execute-plans/"))
@@ -4236,8 +4282,24 @@ def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, 
 def _artifact_paths_overlap(left: str, right: str) -> bool:
     left_parts = PurePosixPath(left.rstrip("/")).parts
     right_parts = PurePosixPath(right.rstrip("/")).parts
-    shorter = min(len(left_parts), len(right_parts))
-    return left_parts[:shorter] == right_parts[:shorter]
+    for left_part, right_part in zip(left_parts, right_parts):
+        if "**" in (left_part, right_part):
+            return True
+        left_glob = any(char in left_part for char in "*?[")
+        right_glob = any(char in right_part for char in "*?[")
+        if left_glob and right_glob:
+            # Unknown pattern intersections are conservatively overlapping.
+            continue
+        if left_glob:
+            if not fnmatch.fnmatchcase(right_part, left_part):
+                return False
+        elif right_glob:
+            if not fnmatch.fnmatchcase(left_part, right_part):
+                return False
+        elif left_part != right_part:
+            return False
+    # A directory grant includes its descendants.
+    return True
 
 
 def _validated_artifact_conflict_guard(
@@ -4911,6 +4973,305 @@ def command_milestone(state: dict[str, Any], args: list[str]) -> None:
             **local_human_ops_audit_fields(),
         }
     )
+
+
+def load_dependency_contract_batch(path: str) -> dict[str, Any]:
+    """Read bounded command input, never a replacement task or watched inbox."""
+    candidate = Path(path)
+    if not candidate.is_absolute() or not candidate.is_file():
+        raise SystemExit("dependency-contract requires an absolute regular JSON file")
+    with candidate.open("rb") as stream:
+        raw = stream.read(1_048_577)
+    if len(raw) > 1_048_576:
+        raise SystemExit("dependency-contract request exceeds 1 MiB")
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        batch = json.loads(raw, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeError) as exc:
+        raise SystemExit(f"Invalid dependency-contract JSON: {exc}") from exc
+    if not isinstance(batch, dict) or set(batch) != {"reason", "tasks"}:
+        raise SystemExit("dependency-contract fields must be exactly reason and tasks")
+    reason = batch["reason"]
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 4096:
+        raise SystemExit("dependency-contract reason must be nonempty, at most 4096 characters")
+    rows = batch["tasks"]
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
+        raise SystemExit("dependency-contract requires 1..32 task rows")
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"task_id", "expected_sha256", "depends_on"}:
+            raise SystemExit("dependency-contract row fields must be task_id, expected_sha256, depends_on")
+        task_id = row["task_id"]
+        if not isinstance(task_id, str) or not task_id or task_id != task_id.strip() or task_id in seen:
+            raise SystemExit("dependency-contract task IDs must be nonempty and distinct")
+        seen.add(task_id)
+        if not isinstance(row["expected_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", row["expected_sha256"]):
+            raise SystemExit("dependency-contract expected_sha256 must bind the complete task row")
+        deps = row["depends_on"]
+        if not isinstance(deps, list) or len(deps) > 256 or any(
+            not isinstance(dep, str) or not dep or dep != dep.strip() or dep == task_id
+            for dep in deps
+        ) or len(set(deps)) != len(deps):
+            raise SystemExit("dependency-contract dependencies must be distinct nonempty non-self IDs (at most 256)")
+    return batch
+
+
+class DependencyContractBusy(RuntimeError):
+    """Existing dispatch/review authority must settle before a revision."""
+
+
+def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set[str]) -> None:
+    settled = {"done", "completed", "failed", "cancelled", "canceled", "superseded", "skipped", "expired"}
+
+    def records(value, label):
+        if not isinstance(value, Mapping):
+            raise DependencyContractBusy(f"runtime {label} is unavailable or malformed")
+        for item in value.values():
+            if not isinstance(item, Mapping):
+                raise DependencyContractBusy(f"runtime {label} record is malformed")
+            yield item
+
+    for worker in records(runtime.get("workers"), "workers"):
+        if worker.get("status") not in settled and not worker.get("task_id"):
+            raise DependencyContractBusy("unattributable active worker")
+        if worker.get("task_id") in task_ids and worker.get("status") not in settled:
+            raise DependencyContractBusy(f"active worker for {worker.get('task_id')}")
+    queue = runtime.get("queue")
+    if not isinstance(queue, Mapping):
+        raise DependencyContractBusy("runtime queue is malformed")
+    for event in records(queue.get("events"), "queue.events"):
+        intent = event.get("intent")
+        if not isinstance(intent, Mapping):
+            raise DependencyContractBusy("runtime queue intent is malformed")
+        if event.get("status") not in settled and not intent.get("task_id"):
+            raise DependencyContractBusy("unattributable queued intent")
+        if (intent.get("task_id") in task_ids or event.get("task_id") in task_ids) and event.get("status") not in settled:
+            raise DependencyContractBusy("affected task has a queued launch intent")
+    worktrees = runtime.get("worker_worktrees", {})
+    if not isinstance(worktrees, Mapping):
+        raise DependencyContractBusy("runtime worktree leases are malformed")
+    for lease in records(worktrees.get("leases", {}), "worktree leases"):
+        if lease.get("task_id") in task_ids:
+            raise DependencyContractBusy("affected task has a worktree lease")
+    supervisor = runtime.get("supervisor", {})
+    if not isinstance(supervisor, Mapping):
+        raise DependencyContractBusy("runtime supervisor is malformed")
+    for reservation in records(supervisor.get("runtime_phase_reservations", {}), "phase reservations"):
+        bound_ids = set()
+        if reservation.get("task_id"):
+            bound_ids.add(reservation["task_id"])
+        for key in ("launch_intent", "launch_receipt"):
+            launch = reservation.get(key)
+            if launch is not None:
+                if not isinstance(launch, Mapping) or not launch.get("task_id"):
+                    raise DependencyContractBusy("unattributable off-lock launch reservation")
+                bound_ids.add(launch["task_id"])
+        # A phase can plan its next task after the current receipt. Its token
+        # alone does not constrain the rest of the detached operation's scope.
+        if not bound_ids or bound_ids & task_ids:
+            raise DependencyContractBusy("affected or unattributable off-lock phase reservation")
+        raise DependencyContractBusy("off-lock phase may still plan an affected task")
+
+
+def _dependency_contract_reachability(tasks: Mapping[str, Mapping[str, Any]], *, terminal_only: bool) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    visiting: set[str] = set()
+
+    def visit(task_id):
+        if task_id in visiting:
+            raise SystemExit(f"dependency-contract prospective graph cycle includes {task_id}")
+        if task_id in result:
+            return result[task_id]
+        visiting.add(task_id)
+        ancestors = set()
+        task = tasks[task_id]
+        for dep in task.get("depends_on") or []:
+            if terminal_only and (task.get("dependency_tracks") or {}).get(dep) not in (None, "terminal"):
+                continue
+            ancestors.add(dep)
+            if dep in tasks:
+                ancestors.update(visit(dep))
+        visiting.remove(task_id)
+        result[task_id] = ancestors
+        return ancestors
+
+    for task_id in tasks:
+        visit(task_id)
+    return result
+
+
+def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate detached prospective rows before one canonical/outbox commit."""
+    if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
+        str(os.environ.get(key) or "").strip() for key in AUTO_WORKER_ENV_MARKERS
+    ):
+        raise SystemExit("dependency-contract requires explicit local Human/Ops, never a worker")
+    tasks = {task["id"]: task for task in state["tasks"]}
+    digest = task_mutation_cas_digest(batch)
+    rows = batch["tasks"]
+    ids = {row["task_id"] for row in rows}
+    # An exact retry observes the last committed revision, even if dispatch
+    # subsequently started. It cannot write, clear a fence, or advance an epoch.
+    if all(
+        task_id in tasks
+        and (tasks[task_id].get("contract_revision") or {}).get("request_sha256") == digest
+        and tasks[task_id].get("depends_on") == row["depends_on"]
+        for row in rows for task_id in [row["task_id"]]
+    ):
+        return {"status": "replayed", "task_ids": sorted(ids), "request_sha256": digest}
+    _dependency_contract_runtime_fence(runtime, ids)
+    prospective = deepcopy(tasks)
+    terminal_facts = state.get(TERMINAL_FACTS_KEY) or {}
+    timestamp = iso_now()
+    changes = []
+    for row in rows:
+        task_id = row["task_id"]
+        task = tasks.get(task_id)
+        if task is None or task_id in terminal_facts or is_terminal_task(task):
+            raise SystemExit(f"dependency-contract requires admitted nonterminal task: {task_id}")
+        if task_mutation_cas_digest(task) != row["expected_sha256"]:
+            raise SystemExit(f"dependency-contract expected-state CAS failed: {task_id}")
+        if task.get("status") not in {"todo", "blocked"}:
+            raise DependencyContractBusy(f"{task_id} is not pre-dispatch todo/blocked")
+        for field in ("review_decision_intent", "review_decision_intent_recovery", "review_decision_resume", "review_requeue_intent", "worker_recovery", "finalize_intent"):
+            value = task.get(field)
+            if value not in (None, {}, []):
+                if field == "worker_recovery" and isinstance(value, Mapping) and value.get("status") in {"materialized", "resolved"}:
+                    continue
+                raise DependencyContractBusy(f"{task_id} has pending {field}")
+        if execution_authorization.task_privileged_by_source(task) or any(
+            task.get(field) not in (None, {}, [], "") for field in (
+                "artifact_conflict_guard", "catalog_task_contract_sha256", "proof_ownership",
+                "execution_authorization", "execution_authorization_policy",
+            )
+        ):
+            raise SystemExit(f"dependency-contract does not revise privileged/catalog authority: {task_id}")
+        old_deps = task.get("depends_on")
+        tracks = task.get("dependency_tracks", {})
+        if not isinstance(old_deps, list) or not isinstance(tracks, dict) or any(
+            key not in old_deps or value not in {"functional", "hosted", "terminal"}
+            for key, value in tracks.items()
+        ):
+            raise SystemExit(f"invalid existing dependency contract: {task_id}")
+        if old_deps == row["depends_on"]:
+            raise SystemExit(f"dependency-contract row has no edge change: {task_id}")
+        missing = [dep for dep in row["depends_on"] if dep not in tasks and dep not in terminal_facts]
+        if missing:
+            raise SystemExit(f"unresolved canonical dependencies for {task_id}: {missing}")
+        revised = prospective[task_id]
+        revised["depends_on"] = list(row["depends_on"])
+        revised["dependency_tracks"] = {dep: track for dep, track in tracks.items() if dep in row["depends_on"]}
+        revised["generation"] = task_assignment_generation(task) + 1
+        change = {
+            "task_id": task_id, "expected_sha256": row["expected_sha256"],
+            "previous": {"depends_on": old_deps, "dependency_tracks": tracks, "generation": task_assignment_generation(task)},
+            "current": {key: deepcopy(revised[key]) for key in ("depends_on", "dependency_tracks", "generation")},
+        }
+        revised["contract_revision"] = {
+            "kind": "dependency_contract", "request_sha256": digest,
+            "reason": batch["reason"], "updated_at": timestamp, "updated_by": "Human/Ops",
+            **deepcopy(change),
+        }
+        revised["last_update"] = timestamp
+        # Preserve next/status/waiting_for and all real hold messages verbatim.
+        changes.append(change)
+    _dependency_contract_reachability(prospective, terminal_only=False)
+    before = _dependency_contract_reachability(tasks, terminal_only=True)
+    after = _dependency_contract_reachability(prospective, terminal_only=True)
+    active = [task_id for task_id, task in tasks.items() if not is_terminal_task(task)]
+    scopes = {task_id: _normalized_task_artifact_scope(tasks[task_id]) for task_id in active}
+    historical_unordered = []
+    for index, left in enumerate(active):
+        for right in active[index + 1:]:
+            old_order = (right in before[left], left in before[right])
+            new_order = (right in after[left], left in after[right])
+            if any(old_order) and old_order == new_order:
+                continue
+            if not any(lrepo == rrepo and _artifact_paths_overlap(lpath, rpath)
+                       for lrepo, lpath in scopes[left] for rrepo, rpath in scopes[right]):
+                continue
+            if not any(old_order):
+                historical_unordered.append([left, right])
+                continue
+            if not any(new_order):
+                raise SystemExit(f"dependency-contract would unserialize overlapping writers: {left}, {right}")
+            if not {left, right} <= ids:
+                raise SystemExit(f"dependency-contract writer reversal requires both rows: {left}, {right}")
+    historical_missing = {
+        task_id: [dep for dep in task.get("depends_on") or [] if dep not in tasks and dep not in terminal_facts]
+        for task_id, task in tasks.items() if task_id not in ids
+    }
+    historical_missing = {key: value for key, value in historical_missing.items() if value}
+    for task in state["tasks"]:
+        if task["id"] in ids:
+            task.update(prospective[task["id"]])
+    append_log({
+        "ts": timestamp, "agent": "Human/Ops", "type": "dependency_contract_revised",
+        "task_ids": sorted(ids), "request_sha256": digest, "changes": changes,
+        "message": batch["reason"], "command_runtime_sha": os.environ.get(STATUS_COMMAND_SHA_ENV),
+        **local_human_ops_audit_fields(),
+    })
+    return {"status": "committed", "task_ids": sorted(ids), "request_sha256": digest,
+            "historical_missing_dependencies": historical_missing,
+            "historical_unordered_writers": historical_unordered}
+
+
+def run_dependency_contract_batch(args: list[str]) -> int:
+    if len(args) != 1:
+        raise SystemExit("Usage: dependency-contract <absolute-request-path>")
+    if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
+        str(os.environ.get(key) or "").strip() for key in AUTO_WORKER_ENV_MARKERS
+    ):
+        raise SystemExit("dependency-contract requires explicit local Human/Ops, never a worker")
+    if os.environ.get(TASK_STATE_STORE_MODE_ENV) != "authoritative":
+        raise SystemExit("dependency-contract requires authoritative TaskStore mode")
+    batch = load_dependency_contract_batch(args[0])
+    config = load_config()
+    committed = None
+    try:
+        with runtime_state_lock(config, shared=True):
+            # Read the existing canonical runtime source under its admission
+            # lock. Projection normalization/pruning may hide malformed leases
+            # or orphaned approval workers; neither proves absence of a launch.
+            try:
+                runtime = json.loads(read_regular_file_bytes(
+                    _resolve_runtime_source_leaf(config, "state_file"),
+                    source="dependency-contract runtime admission",
+                ))
+            except (OSError, ValueError) as exc:
+                raise DependencyContractBusy(f"runtime admission snapshot unavailable: {exc}") from exc
+            if not isinstance(runtime, Mapping) or runtime.get("version") != 2:
+                raise DependencyContractBusy("runtime is not a V2 admission snapshot")
+            with canonical_task_state_lock(shared=False):
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    validate_active_status_command_lease("dependency-contract", args)
+                    pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+                    with buffer_activity_events() as events:
+                        if pending not in (None, {}, []):
+                            events.extend(deepcopy(_validate_status_activity_outbox(pending)["events"]))
+                        result = revise_dependency_contracts(state, batch, runtime)
+                        if result["status"] == "committed":
+                            sync_all(state, refresh_views=False, defer_activity_recovery=True)
+                            committed = deepcopy(state)
+                    snapshot = _TASK_STATE_TRANSACTION_LOCAL.transaction.load_snapshot()
+                    result["checkpoint"] = {key: snapshot.get(key) for key in ("event_count", "last_event_id", "state_sha256")}
+                    result["tasks"] = [deepcopy(get_task(snapshot["state"], task_id)) for task_id in result["task_ids"]]
+    except DependencyContractBusy as exc:
+        print(json.dumps({"status": "busy", "reason": str(exc)}))
+        return 75
+    if committed is not None:
+        refresh_derived_status_views_if_current(committed)
+    print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+    return 0
 
 
 def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
@@ -6727,9 +7088,10 @@ def _assert_no_active_execution(
             f"cannot reconcile stale resurrected task with active command lease: {task_id}"
         )
 
-    if ORCHESTRATOR_STATE_FILE.exists():
+    state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else (STATUS_ROOT / ".orchestrator" / "state.json")
+    if state_file.exists():
         try:
-            orc_state = json.loads(ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+            orc_state = json.loads(state_file.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RuntimeError(
                 f"orchestrator runtime state is unavailable or malformed: {exc}"
@@ -7957,29 +8319,6 @@ def _github_review_bridge_module():
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 _PULL_REQUEST_URL_RE = re.compile(r"https?://[^\s]+/pull/\d+(?:\b|/)", re.IGNORECASE)
 _LEGACY_PULL_REQUEST_FIELDS = frozenset(
     {
@@ -8817,7 +9156,7 @@ def reserve_review_decision_intent(
 
 
 def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
-    """Perform idempotent GitHub I/O for one durable intent, lock-free."""
+    """Perform external admission and, when enabled, GitHub decision I/O."""
 
     intent = pending_review_decision_intent(task)
     if intent is None:
@@ -8845,7 +9184,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
     binding = deepcopy(dict(intent["binding"]))
     command = str(intent["command"])
     admission = None
-    if command == "approve":
+    if command in {"approve", "reopen"}:
         github_review_bridge = _github_review_bridge_module()
         try:
             admission = github_review_bridge.revalidate_review_admission(
@@ -8858,7 +9197,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
                 task_id=task_id,
                 nonce=str(intent["nonce"]),
                 detail=(
-                    f"Cannot approve task {task_id}: the reserved exact delivery is "
+                    f"Cannot {command} task {task_id}: the reserved exact delivery is "
                     f"no longer an open, current review admission: {exc}"
                 ),
             ) from exc
@@ -8903,6 +9242,8 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
                 f"GitHub rejected operator acceptance for {task_id}: {exc}"
             ) from exc
         result[OPERATOR_ACCEPTANCE_KEY] = dict(evidence)
+        return result
+    if not github_review_bridge_required(config):
         return result
     try:
         evidence = bridge_github_review_decision(
@@ -8983,7 +9324,7 @@ def finalize_review_decision_intent(
             raise SystemExit(
                 f"{task_id} operator acceptance evidence is invalid: {exc}"
             ) from exc
-    else:
+    elif github_review_bridge_required(load_config()):
         if not isinstance(evidence, Mapping):
             raise SystemExit(f"{task_id} review intent produced no GitHub evidence")
         github_review_bridge = _github_review_bridge_module()
@@ -8998,6 +9339,10 @@ def finalize_review_decision_intent(
             )
         except github_review_bridge.GitHubReviewBridgeError as exc:
             raise SystemExit(f"{task_id} GitHub intent evidence is invalid: {exc}") from exc
+    elif evidence not in (None, {}, []):
+        raise SystemExit(
+            f"{task_id} canonical task review mode must not receive GitHub evidence"
+        )
 
     # Existing audit/archive outboxes predate the reservation. They are safe to
     # recover only now, after admission and GitHub I/O succeeded. Recheck the
@@ -10348,6 +10693,9 @@ def main(argv: list[str]) -> int:
 
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
+
+    if command == "dependency-contract":
+        return run_dependency_contract_batch(args)
 
     read_only_commands = {
         "prompt": command_prompt,

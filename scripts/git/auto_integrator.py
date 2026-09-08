@@ -812,6 +812,24 @@ def is_canonical_review_gate_green(rollup: Any) -> bool:
     return False
 
 
+def integration_status_rollup(
+    rollup: Any, *, review_bridge_is_required: bool
+) -> CheckSummary:
+    """Summarize checks after removing an explicitly disabled legacy bridge."""
+
+    filtered = (
+        [
+            item
+            for item in rollup
+            if review_bridge_is_required
+            or check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT
+        ]
+        if isinstance(rollup, list)
+        else rollup
+    )
+    return summarize_status_rollup(filtered)
+
+
 def make_integrator_tag_lookup(
     json_runner: GitHubJsonCommandRunner,
 ) -> canonical_review_gate_ci.TagLookup:
@@ -1638,6 +1656,7 @@ def revalidate_before_merge(
     prior_gate: ReviewGate,
     prior_decision: review_gate.GateDecision,
     prior_pr_number: int | None,
+    config: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], review_gate.GateDecision, CheckSummary]:
     """Re-read canonical authority and the exact live PR immediately before merge."""
 
@@ -1735,7 +1754,10 @@ def revalidate_before_merge(
             f"PR #{fresh_number} has an auto-merge request at final revalidation.",
         )
 
-    fresh_checks = summarize_status_rollup(fresh_pr.get("statusCheckRollup"))
+    fresh_checks = integration_status_rollup(
+        fresh_pr.get("statusCheckRollup"),
+        review_bridge_is_required=orchestrator_common.github_review_bridge_required(config),
+    )
     if fresh_checks.state == "red":
         raise FinalMergeRevalidationError(
             "final-ci-red",
@@ -2228,6 +2250,7 @@ def integrate_candidate(
     config: Mapping[str, Any] | None = None,
 ) -> IntegrationResult:
     gate = gate or ReviewGate()
+    config = config or {}
     status_root_dir = status_root if status_root is not None else gate.status_root
     target_root = root if root is not None else candidate.repository_root
 
@@ -2690,7 +2713,12 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    checks = summarize_status_rollup(pr.get("statusCheckRollup"))
+    review_bridge_is_required = orchestrator_common.github_review_bridge_required(config)
+    rollup = pr.get("statusCheckRollup")
+    checks = integration_status_rollup(
+        rollup,
+        review_bridge_is_required=review_bridge_is_required,
+    )
     other_failing = [
         c for c in checks.failing if c != github_review_bridge.CANONICAL_REVIEW_CONTEXT
     ]
@@ -2720,7 +2748,7 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    if not is_canonical_review_gate_green(pr.get("statusCheckRollup")):
+    if review_bridge_is_required and not is_canonical_review_gate_green(rollup):
         repo_slug = (
             github_review_bridge.repository_from_pull_request_url(url)
             or candidate.repository_slug
@@ -3028,6 +3056,7 @@ def integrate_candidate(
                     prior_gate=gate,
                     prior_decision=decision,
                     prior_pr_number=number,
+                    config=config,
                 )
                 if execute:
                     merge_proc = runner.run(
