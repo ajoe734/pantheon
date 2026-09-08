@@ -333,9 +333,9 @@ class JournalMigrationEngine:
                                 },
                             })
 
-                        # Readback verification with destination scope
+                        # Readback and checksum verification with destination scope
                         readback = get_entry(self.destination_stores, entry_id, tenant_id=target_tenant_id, actor_id=actor, user_id=user_id)
-                        if readback is None:
+                        if readback is None or compute_journal_row_checksum(readback) != checksum:
                             report.total_conflicts += 1
                             report.items.append(
                                 asdict(
@@ -347,7 +347,7 @@ class JournalMigrationEngine:
                                         target_tenant=target_tenant_id,
                                         target_actor=actor,
                                         status="conflict",
-                                        error="Destination readback verification failed after scoping legacy row",
+                                        error="Destination readback/checksum verification failed after scoping legacy row",
                                         disposed=False,
                                     )
                                 )
@@ -451,27 +451,45 @@ class JournalMigrationEngine:
                 )
                 if self.destination_stores.audit is not None:
                     audit_id = f"aud-mig-{uuid.uuid4().hex[:12]}"
-                    try:
-                        self.destination_stores.audit.put({
-                            "audit_id": audit_id,
-                            "auditId": audit_id,
-                            "action": "governance.decision_journal.migrated",
-                            "target": {"type": "DecisionJournalEntry", "id": entry_id},
-                            "actorId": actor,
-                            "actor_id": actor,
-                            "tenantId": target_tenant_id,
-                            "tenant_id": target_tenant_id,
-                            "userId": user_id,
-                            "user_id": user_id,
-                            "recordedAt": created_at,
-                            "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
-                            "source_checksum": checksum,
-                            "source_id": entry_id,
-                            "disposed": bool(dispose_source and source_store is not None),
-                        })
-                        report.audit_events_recorded += 1
-                    except Exception:
-                        pass
+                    self.destination_stores.audit.put({
+                        "audit_id": audit_id,
+                        "auditId": audit_id,
+                        "action": "governance.decision_journal.migrated",
+                        "target": {"type": "DecisionJournalEntry", "id": entry_id},
+                        "actorId": actor,
+                        "actor_id": actor,
+                        "tenantId": target_tenant_id,
+                        "tenant_id": target_tenant_id,
+                        "userId": user_id,
+                        "user_id": user_id,
+                        "recordedAt": created_at,
+                        "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+                        "source_checksum": checksum,
+                        "source_id": entry_id,
+                        "disposed": bool(dispose_source and source_store is not None),
+                    })
+                    report.audit_events_recorded += 1
+
+                # Readback and checksum verification
+                readback = get_entry(self.destination_stores, entry_id, tenant_id=target_tenant_id, actor_id=actor, user_id=user_id)
+                if readback is None or compute_journal_row_checksum(readback) != checksum:
+                    report.total_conflicts += 1
+                    report.items.append(
+                        asdict(
+                            JournalMigrationItem(
+                                source_id=entry_id,
+                                entry_id=entry_id,
+                                checksum=checksum,
+                                source_tenant=source_tenant,
+                                target_tenant=target_tenant_id,
+                                target_actor=actor,
+                                status="conflict",
+                                error="Destination readback/checksum verification failed after migration",
+                                disposed=False,
+                            )
+                        )
+                    )
+                    continue
 
                 self._save_checkpoint(checkpoint_key, checksum)
                 self._save_checkpoint(entry_id, checksum)

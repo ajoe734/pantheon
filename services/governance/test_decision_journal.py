@@ -13,6 +13,9 @@ Covers:
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -1181,6 +1184,156 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertEqual(len(list_entries(self.stores, tenant_id="tenant-alpha", actor_id="alice")), 1)
         self.assertEqual(len(adapter.list_decision_journal_entries(tenant_id="tenant-alpha", actor_id="alice")), 1)
         self.assertEqual(len(reader.list_decision_journal_entries(tenant_id="tenant-alpha", actor_id="alice")), 1)
+
+
+_CRASH_HELPER_SCRIPT = """
+import os, sys
+os.environ['GOVERNANCE_STORE_BACKEND'] = 'json'
+from services.governance.decision_journal import build_decision_journal_stores, create_entry, patch_entry
+
+mode = sys.argv[1]
+data_dir = sys.argv[2]
+stores = build_decision_journal_stores(data_dir)
+
+def create(s):
+    return create_entry(s, entry_id='entry', title='initial', body='body',
+                        actor_id='alice', tenant_id='tenant-a', created_at='2026-09-08')
+
+def patch(s, key, title, tenant='tenant-a'):
+    return patch_entry(s, 'entry', patch={'title': title}, actor_id='alice',
+                       tenant_id=tenant, idempotency_key=key, request_hash=key,
+                       patched_at='2026-09-08')
+
+if mode == 'crash-create':
+    stores.outbox.put = lambda *_: os._exit(71)
+    create(stores)
+elif mode == 'crash-before-cas':
+    stores.entries.compare_and_set = lambda *_: os._exit(72)
+    patch(stores, 'crashed', 'never committed')
+elif mode == 'crash-after-cas':
+    stores.outbox.put = lambda *_: os._exit(73)
+    patch(stores, 'crashed', 'committed before crash')
+sys.exit(99)
+"""
+
+
+class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="journal-regression-")
+        self.addCleanup(self.tmp.cleanup)
+        self.stores = build_decision_journal_stores(self.tmp.name)
+
+    def _crash(self, mode: str, expected_exit: int) -> None:
+        env = dict(os.environ, PYTHONPATH=".")
+        result = subprocess.run(
+            [sys.executable, "-c", _CRASH_HELPER_SCRIPT, mode, self.tmp.name],
+            env=env,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, expected_exit)
+        self.stores = build_decision_journal_stores(self.tmp.name)
+
+    def _create(self) -> dict:
+        return create_entry(
+            self.stores,
+            entry_id="entry",
+            title="initial",
+            body="body",
+            actor_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08",
+        )
+
+    def _patch(self, key: str, title: str, tenant: Optional[str] = "tenant-a") -> Optional[dict]:
+        return patch_entry(
+            self.stores,
+            "entry",
+            patch={"title": title},
+            actor_id="alice",
+            tenant_id=tenant,
+            idempotency_key=key,
+            request_hash=key,
+            patched_at="2026-09-08",
+        )
+
+    def test_create_crash_retry_preserves_outbox(self) -> None:
+        self._crash("crash-create", 71)
+        self._create()
+        self.assertEqual(
+            len(list_outbox_events(self.stores, tenant_id="tenant-a")),
+            1,
+            "create retry returns success but committed entry has no creation event",
+        )
+
+    def test_aborted_patch_not_replayed_after_other_patch_reuses_version(self) -> None:
+        self._create()
+        self._crash("crash-before-cas", 72)
+        self._patch("other", "actually committed")
+        result = self._patch("crashed", "never committed")
+        self.assertNotEqual(
+            result["status"],
+            "replayed",
+            "aborted patch falsely replayed and phantom audit/outbox appended: " + str(result),
+        )
+
+    def test_committed_patch_recovered_after_later_version(self) -> None:
+        """Interleaving 1: crashed patch retries after later patch commits."""
+        self._create()
+        self._crash("crash-after-cas", 73)
+        self._patch("other", "later committed")
+        result = self._patch("crashed", "committed before crash")
+        self.assertEqual(
+            result["status"],
+            "replayed",
+            "committed mutation marked failed after later version; first audit/outbox absent",
+        )
+        self.assertEqual(len(list_audit_events(self.stores, tenant_id="tenant-a", actor_id="alice")), 2)
+
+    def test_committed_patch_recovered_before_later_version(self) -> None:
+        """Interleaving 2: crashed patch retries before later patch commits."""
+        self._create()
+        self._crash("crash-after-cas", 73)
+        result = self._patch("crashed", "committed before crash")
+        self.assertEqual(result["status"], "replayed")
+        self._patch("other", "later committed")
+        self.assertEqual(len(list_audit_events(self.stores, tenant_id="tenant-a", actor_id="alice")), 2)
+
+    def test_authored_legacy_patch_denied_without_tenant(self) -> None:
+        self.stores.entries.put({
+            "id": "entry",
+            "title": "legacy",
+            "body": "body",
+            "createdBy": "alice",
+            "visibility": "private",
+            "version": 1,
+        })
+        self.assertIsNone(get_entry(self.stores, "entry", actor_id="alice"))
+        result = self._patch("legacy", "ordinary mutation", tenant=None)
+        self.assertIsNone(result, "ordinary patch modifies legacy record that ordinary read denies")
+
+    def test_migration_audit_failure_preserves_source(self) -> None:
+        source = build_decision_journal_stores(Path(self.tmp.name) / "source").entries
+        row = {"id": "legacy", "title": "legacy", "body": "body", "createdBy": "alice"}
+        source.put(row)
+
+        def fail(_: Any) -> None:
+            raise OSError("synthetic audit outage")
+
+        self.stores.audit.put = fail
+        try:
+            JournalMigrationEngine(self.stores).run_migration(
+                [row],
+                target_tenant_id="tenant-a",
+                dry_run=False,
+                dispose_source=True,
+                source_store=source,
+            )
+        except OSError:
+            pass
+        self.assertIsNotNone(
+            source.get("legacy"),
+            "source deleted despite missing durable migration audit",
+        )
 
 
 if __name__ == "__main__":
