@@ -2384,6 +2384,36 @@ class ManagementService:
             source_kind="live",
         )
 
+    def get_context_bindings_for_persona(
+        self,
+        persona_id: str,
+        *,
+        owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "get_bindings_for_persona",
+            subject_type="persona_bindings",
+            owner=owner or persona_id or "management_ai_context",
+            args=(persona_id,),
+            record_filter=record_filter,
+        )
+
+    def get_context_teaching_sessions_for_persona(
+        self,
+        persona_id: str,
+        *,
+        owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "get_teaching_sessions_for_persona",
+            subject_type="persona_teaching_sessions",
+            owner=owner or persona_id or "management_ai_context",
+            args=(persona_id,),
+            record_filter=record_filter,
+        )
+
     def get_context_monitoring_session(
         self, runtime_id: str, binding_id: str, *, owner: Optional[str] = None
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:

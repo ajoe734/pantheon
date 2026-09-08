@@ -11176,12 +11176,20 @@ def _project_persona_fleet_item(
     all_runtime_bindings: List[Dict[str, Any]],
     all_incidents: List[Dict[str, Any]],
     all_evolution_decisions: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
     routed = _routed_strategies_for_persona(persona_id)
     persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
 
-    bindings = list(read_store.get_bindings_for_persona(persona_id) or [])
+    # Bindings and teaching sessions go through the same typed,
+    # exception-safe owner-projection accessor used for every other
+    # contributing owner: a raise here must degrade to a typed unavailable
+    # observation instead of unwinding the whole persona fleet surface and
+    # discarding every other persona/runtime/incident/evolution owner that
+    # already read successfully.
+    bindings, bindings_obs = _management_ai_context_service.get_context_bindings_for_persona(persona_id)
+    bindings = list(bindings or [])
     binding_ids = {
         str(binding.get("id") or binding.get("binding_id") or "").strip()
         for binding in bindings
@@ -11220,17 +11228,27 @@ def _project_persona_fleet_item(
         if str(binding.get("artifact_id") or "").strip()
     }
 
-    telemetry_summaries = [
-        summary
+    # Reuse the same purpose-built telemetry read the caller already
+    # performed for owner-observation aggregation (telemetry_by_runtime_id),
+    # instead of issuing a second, independent read here: two separate reads
+    # of the same runtime can observe different outcomes (e.g. a flaky
+    # provider that fails once and recovers), which would let this snippet
+    # and the surface's owner_observations disagree about the same runtime.
+    matched_telemetry = [
+        telemetry_by_runtime_id[runtime_id]
         for runtime_id in sorted(runtime_ids)
-        for summary in [read_store.get_telemetry_summary(runtime_id)]
-        if summary
+        if runtime_id in telemetry_by_runtime_id
     ]
+    telemetry_summaries = [summary for summary, _obs in matched_telemetry if summary]
     telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
     latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
+    telemetry_observations = [obs for _summary, obs in matched_telemetry]
 
+    teaching_sessions, teaching_sessions_obs = _management_ai_context_service.get_context_teaching_sessions_for_persona(
+        persona_id
+    )
     teaching_sessions = _sort_records_latest_first(
-        list(read_store.get_teaching_sessions_for_persona(persona_id) or []),
+        list(teaching_sessions or []),
         ("started_at", "created_at", "updated_at"),
     )
     latest_training = teaching_sessions[0] if teaching_sessions else None
@@ -11316,7 +11334,7 @@ def _project_persona_fleet_item(
         "decisions": evolution_decisions,
     }
 
-    return {
+    item = {
         "id": persona_id,
         "persona_id": persona_id,
         "persona": persona_dto,
@@ -11335,6 +11353,8 @@ def _project_persona_fleet_item(
         "active_incidents": active_incidents,
         "allowedActions": allowed_actions,
     }
+    owner_observations = [bindings_obs, teaching_sessions_obs, *telemetry_observations]
+    return item, owner_observations
 _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
     "pending",
     "in_review",
@@ -15371,15 +15391,54 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
                 record_filter=_tenant_record_filter
             )
-            fleet_items = [
-                _project_persona_fleet_item(
+            # Telemetry is read exactly once per tenant-scoped runtime
+            # binding, through the same typed owner-observation query used by
+            # the portfolio_book surface, and that single result is shared by
+            # both the per-persona snippet items below and the surface-level
+            # owner_observations aggregate. A second independent read of the
+            # same runtime could observe a different outcome than the first
+            # (e.g. a flaky provider that fails once and recovers), which
+            # would let the snippet and the surface silently disagree about
+            # the same runtime's telemetry.
+            telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+            for runtime_binding in runtime_bindings:
+                fleet_runtime_id = str(
+                    runtime_binding.get("runtime_id")
+                    or runtime_binding.get("id")
+                    or runtime_binding.get("binding_id")
+                    or ""
+                )
+                if not fleet_runtime_id or fleet_runtime_id in telemetry_by_runtime_id:
+                    continue
+                telemetry_by_runtime_id[fleet_runtime_id] = _management_ai_context_service.get_context_telemetry_summary(
+                    fleet_runtime_id
+                )
+            telemetry_observations = [obs for _summary, obs in telemetry_by_runtime_id.values()]
+            # Project every persona independently: a raise from one persona's
+            # bindings/telemetry/teaching-session owner must not discard the
+            # personas that already projected successfully, nor the
+            # runtime/incidents/evolution provenance already collected above.
+            fleet_items = []
+            fleet_owner_observations: List[Dict[str, Any]] = []
+            for persona in personas[:20]:
+                item, item_owner_observations = _project_persona_fleet_item(
                     persona,
                     all_runtime_bindings=runtime_bindings,
                     all_incidents=incidents,
                     all_evolution_decisions=evolution_decisions,
+                    telemetry_by_runtime_id=telemetry_by_runtime_id,
                 )
-                for persona in personas
-            ][:20]
+                fleet_items.append(item)
+                # Telemetry observations are already carried once per unique
+                # runtime in telemetry_observations above; only the
+                # per-persona-only owners (bindings, teaching sessions) are
+                # added here to avoid duplicating the same runtime's
+                # observation for every persona that happens to match it.
+                fleet_owner_observations.extend(
+                    observation
+                    for observation in item_owner_observations
+                    if observation.get("subject_type") != "telemetry"
+                )
             _mgmt_nl_add_record_entities(evidence_entities, personas, "persona", "persona_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             _mgmt_nl_add_record_entities(evidence_entities, incidents, "incident", "incident_id", "id")
@@ -15399,34 +15458,19 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": fleet_summary,
                 "items": fleet_items,
             }
-            # Persona reads and per-runtime telemetry reads are contributing
-            # owners too: a healthy runtime/incidents/evolution aggregate must
-            # not mask a persona or telemetry owner that itself reported
-            # unavailable/degraded, or that owner silently disappears from
-            # both the status and owner_observations. Telemetry is read
-            # through the owner-observation query for every tenant-scoped
-            # runtime binding (same pattern as the portfolio_book surface),
-            # not only the runtimes a persona happens to match.
-            telemetry_observations = []
-            for runtime_binding in runtime_bindings:
-                fleet_runtime_id = str(
-                    runtime_binding.get("runtime_id")
-                    or runtime_binding.get("id")
-                    or runtime_binding.get("binding_id")
-                    or ""
-                )
-                if not fleet_runtime_id:
-                    continue
-                _summary, observation = _management_ai_context_service.get_context_telemetry_summary(
-                    fleet_runtime_id
-                )
-                telemetry_observations.append(observation)
+            # Persona reads, per-persona bindings/teaching-session reads, and
+            # per-runtime telemetry reads are all contributing owners too: a
+            # healthy runtime/incidents/evolution aggregate must not mask a
+            # persona, binding, teaching-session, or telemetry owner that
+            # itself reported unavailable/degraded, or that owner silently
+            # disappears from both the status and owner_observations.
             fleet_contributing_statuses = [
                 personas_obs.get("status"),
                 runtime_bindings_obs.get("status"),
                 incidents_obs.get("status"),
                 evolution_decisions_obs.get("status"),
                 *[observation.get("status") for observation in telemetry_observations],
+                *[observation.get("status") for observation in fleet_owner_observations],
             ]
             if not personas:
                 fleet_status = "unavailable"
@@ -15445,6 +15489,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                     incidents_obs,
                     evolution_decisions_obs,
                     *telemetry_observations,
+                    *fleet_owner_observations,
                 ],
             }
         except Exception:
