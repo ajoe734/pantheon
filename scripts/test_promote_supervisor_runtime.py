@@ -2492,6 +2492,19 @@ def test_drain_signals_and_drains_verified_active_worker(tmp_path: Path) -> None
     assert result["workers_drained"] == [77777]
 
 
+def test_drain_allows_only_inflight_queue_event_owned_by_drained_worker(tmp_path: Path) -> None:
+    import common
+    state = tmp_path / "state.json"
+    generation = common.worker_process_generation_id(
+        task_id="TASK-1", worker_run_id="run-1", queue_event_id="Q-1", pid=77777, pid_start_ticks=33333
+    )
+    state.write_text(json.dumps({"workers": {"run-1": {"status": "running", "pid": 77777, "pid_start_ticks": 33333, "process_generation": generation, "task_id": "TASK-1", "queue_event_id": "Q-1"}}, "queue": {"events": {"Q-1": {"status": "started", "run_id": "run-1"}}}}))
+    alive = [True, True, False]
+    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda _pid: alive.pop(0) if alive else False), mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=33333), mock.patch.object(promotion.os, "kill"):
+        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+    assert result["drained_run_ids"] == ["run-1"]
+
+
 def test_drain_waits_for_active_task_state_store_lock_writer(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     runtime.mkdir()
