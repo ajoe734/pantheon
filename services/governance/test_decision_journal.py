@@ -2092,6 +2092,39 @@ patch_entry(
             ]
             self.assertEqual(len(outbox), 2)
 
+    def test_stale_inventory_must_not_delete_newer_source(self) -> None:
+        """P1: stale inventory snapshot must not delete a newer committed source row during disposal."""
+        with tempfile.TemporaryDirectory() as tmp:
+            source = CoordinatingJsonGovernanceRecordStore(Path(tmp) / "source.json", id_fields=("id",))
+            snapshot = {
+                "id": "synthetic-legacy",
+                "title": "Decision",
+                "decision": "old body",
+                "author": "alice",
+                "tenant_id": "tenant-a",
+                "visibility": "private",
+                "version": 1,
+                "createdAt": "2026-09-01T00:00:00Z",
+                "updatedAt": "2026-09-01T00:00:00Z",
+            }
+            source.put(snapshot)
+            newer = {**snapshot, "decision": "new committed body", "version": 2, "updatedAt": "2026-09-02T00:00:00Z"}
+            source.put(newer)
+            stores = build_decision_journal_stores(Path(tmp) / "dest")
+            report = JournalMigrationEngine(stores).run_migration(
+                [snapshot],
+                target_tenant_id="tenant-a",
+                dry_run=False,
+                dispose_source=True,
+                source_store=source,
+            )
+            dest = get_entry(stores, snapshot["id"], tenant_id="tenant-a", user_id="alice")
+            self.assertIsNotNone(dest)
+            self.assertEqual(dest["body"], "old body")
+            self.assertEqual(dest["version"], 1)
+            self.assertEqual(source.get(snapshot["id"]), newer, "stale inventory deleted a newer committed source row")
+            self.assertFalse(report.disposition_evidence["disposed"])
+
 
 if __name__ == "__main__":
     unittest.main()

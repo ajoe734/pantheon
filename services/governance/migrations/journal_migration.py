@@ -89,10 +89,95 @@ class JournalMigrationReport:
         return asdict(self)
 
 
-def _dispose_source_record(source_store: Optional[Any], entry_id: str) -> bool:
+def _get_source_record(source_store: Optional[Any], entry_id: str) -> Optional[Dict[str, Any]]:
+    if source_store is None:
+        return None
+    if hasattr(source_store, "get_journal_entry") and callable(source_store.get_journal_entry):
+        try:
+            return source_store.get_journal_entry(entry_id)
+        except Exception:
+            pass
+    if hasattr(source_store, "get") and callable(source_store.get):
+        try:
+            return source_store.get(entry_id)
+        except Exception:
+            pass
+    if hasattr(source_store, "_journal"):
+        if isinstance(source_store._journal, dict):
+            return source_store._journal.get(entry_id)
+        elif hasattr(source_store._journal, "get") and callable(source_store._journal.get):
+            try:
+                return source_store._journal.get(entry_id)
+            except Exception:
+                pass
+    return None
+
+
+def _is_source_record_stale_or_conflicting(
+    current_src: Dict[str, Any],
+    record: Dict[str, Any],
+    expected_checksum: Optional[str] = None,
+) -> bool:
+    """Return True if current_src in source_store has been modified or is newer than record."""
+    if expected_checksum and compute_journal_row_checksum(current_src) == expected_checksum:
+        return False
+
+    # Check version: newer version in source store must never be deleted
+    curr_v = int(current_src.get("version") or 1)
+    rec_v = int(record.get("version") or 1)
+    if curr_v > rec_v:
+        return True
+
+    # Check update timestamp: later update in source store must never be deleted
+    curr_upd = str(current_src.get("updatedAt") or current_src.get("updated_at") or "").strip()
+    rec_upd = str(record.get("updatedAt") or record.get("updated_at") or "").strip()
+    if curr_upd and rec_upd and curr_upd > rec_upd:
+        return True
+
+    # Check content fields if present in current_src
+    curr_body = str(current_src.get("body") or current_src.get("decision") or "").strip()
+    rec_body = str(record.get("body") or record.get("decision") or "").strip()
+    if curr_body and rec_body and curr_body != rec_body:
+        return True
+
+    curr_title = str(current_src.get("title") or "").strip()
+    rec_title = str(record.get("title") or "").strip()
+    if curr_title and rec_title and curr_title != rec_title:
+        return True
+
+    if "category" in current_src and current_src.get("category") != record.get("category"):
+        return True
+
+    if "visibility" in current_src:
+        curr_vis = str(current_src.get("visibility") or "").strip().lower()
+        rec_vis = str(record.get("visibility") or "private").strip().lower()
+        if curr_vis and curr_vis != rec_vis:
+            return True
+
+    return False
+
+
+def _dispose_source_record(
+    source_store: Optional[Any],
+    entry_id: str,
+    *,
+    expected_checksum: Optional[str] = None,
+    expected_record: Optional[Dict[str, Any]] = None,
+) -> bool:
     """Verify durable legacy source removal via source_store delete and readback."""
     if source_store is None:
         return False
+
+    current_src = _get_source_record(source_store, entry_id)
+    if current_src is not None and expected_record is not None:
+        if _is_source_record_stale_or_conflicting(current_src, expected_record, expected_checksum):
+            # Source row has been modified or is newer than the migrated snapshot.
+            # Strictly preserve the source store to prevent deleting newer committed data.
+            return False
+    elif current_src is not None and expected_checksum is not None:
+        if compute_journal_row_checksum(current_src) != expected_checksum:
+            return False
+
     deleted = False
     if hasattr(source_store, "delete_decision_journal_entry") and callable(source_store.delete_decision_journal_entry):
         try:
@@ -119,6 +204,11 @@ def _dispose_source_record(source_store: Optional[Any], entry_id: str) -> bool:
                 return False
         elif hasattr(source_store, "_journal") and isinstance(source_store._journal, dict):
             return entry_id not in source_store._journal
+        elif hasattr(source_store, "get") and callable(source_store.get):
+            try:
+                return source_store.get(entry_id) is None
+            except Exception:
+                return False
         return True
     return False
 
@@ -409,7 +499,9 @@ class JournalMigrationEngine:
                             disposed=True,
                         )
                         if has_audit:
-                            disposed_status = _dispose_source_record(source_store, entry_id)
+                            disposed_status = _dispose_source_record(
+                                source_store, entry_id, expected_checksum=checksum, expected_record=record
+                            )
                     checkpoint_key = f"{target_tenant_id}:{actor}:{entry_id}"
                     self._save_checkpoint(checkpoint_key, checksum)
                     self._save_checkpoint(entry_id, checksum)
@@ -566,7 +658,9 @@ class JournalMigrationEngine:
                                 disposed=True,
                             )
                             if has_audit:
-                                disposed_status = _dispose_source_record(source_store, entry_id)
+                                disposed_status = _dispose_source_record(
+                                    source_store, entry_id, expected_checksum=checksum, expected_record=record
+                                )
 
                         report.total_migrated += 1
                         report.audit_events_recorded += 1
@@ -613,7 +707,9 @@ class JournalMigrationEngine:
                                     disposed=True,
                                 )
                                 if has_audit:
-                                    disposed_status = _dispose_source_record(source_store, entry_id)
+                                    disposed_status = _dispose_source_record(
+                                        source_store, entry_id, expected_checksum=checksum, expected_record=record
+                                    )
                                     report.audit_events_recorded += 1
                             report.items.append(
                                 asdict(
@@ -731,7 +827,9 @@ class JournalMigrationEngine:
                         disposed=True,
                     )
                     if has_audit:
-                        disposed_status = _dispose_source_record(source_store, entry_id)
+                        disposed_status = _dispose_source_record(
+                            source_store, entry_id, expected_checksum=checksum, expected_record=record
+                        )
 
                 report.total_migrated += 1
                 report.items.append(
