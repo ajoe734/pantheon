@@ -119,7 +119,7 @@ class ProviderPermissionsTest(unittest.TestCase):
             temp_root = Path(temp_dir).resolve()
             status_root = temp_root / "coordination"
             workspace_root = temp_root / "worktrees" / "task-123"
-            (status_root / ".orchestrator").mkdir(parents=True)
+            (status_root / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
             workspace_root.mkdir(parents=True)
             event_log = temp_root / "runtime" / "task-state-events-v2.jsonl"
             event_log.parent.mkdir()
@@ -160,7 +160,7 @@ class ProviderPermissionsTest(unittest.TestCase):
                 "workspace_path": str(workspace_root),
                 "queue_event_id": "evt-run-123",
             }
-            (status_root / ".orchestrator" / "state.json").write_text(
+            (status_root / ".orchestrator" / "worker-runtime" / "state.json").write_text(
                 json.dumps(
                     {
                         "version": 2,
@@ -598,7 +598,7 @@ class ProviderPermissionsTest(unittest.TestCase):
                 }
             }
             immutable_config = {
-                "paths": {"state_file": ".orchestrator/state.json"},
+                "paths": {"state_file": ".orchestrator/worker-runtime/state.json"},
             }
             status_state = {
                 "tasks": [
@@ -653,7 +653,7 @@ class ProviderPermissionsTest(unittest.TestCase):
             self.assertEqual(len(status_configs), 1)
             self.assertEqual(
                 runtime_configs[0]["paths"]["state_file"],
-                str(status_root / ".orchestrator" / "state.json"),
+                str(status_root / ".orchestrator" / "worker-runtime" / "state.json"),
             )
             self.assertEqual(
                 status_configs[0]["paths"]["status_file"],
@@ -1522,6 +1522,8 @@ EOF
                         "codex": {
                             "codex_home": str(home),
                             "api_key_env": "OPENAI_API_KEY_CODEX2",
+                            "model": "gpt-6-astra",
+                            "model_reasoning_effort": "high",
                         }
                     }
                 }
@@ -1538,6 +1540,8 @@ EOF
         command = run_command.call_args.args[0]
         self.assertEqual(command[:2], ["/usr/bin/codex", "exec"])
         self.assertIn("--skip-git-repo-check", command)
+        self.assertEqual(command[command.index("--model") + 1], "gpt-6-astra")
+        self.assertIn('model_reasoning_effort="high"', command)
         env = run_command.call_args.kwargs["env"]
         self.assertEqual(env["CODEX_HOME"], str(home))
         self.assertNotIn("CODEX_SESSION_ID", env)

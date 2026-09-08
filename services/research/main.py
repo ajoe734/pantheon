@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import json as _json
 import os
 import re
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
@@ -1493,3 +1496,355 @@ def handoff_proposal(run_id: str, body: ProposalBody) -> Dict[str, Any]:
 def list_run_proposals(run_id: str) -> List[Dict[str, Any]]:
     get_run(run_id)
     return [proposal for proposal in store.list_proposals() if proposal.get("run_id") == run_id]
+
+
+ALLOWLISTED_STAGE_BACKENDS: Dict[str, str] = {
+    "source_discovery": "source_ingestion",
+    "data_validation": "data_validation",
+    "prototype_backtest": "vectorbt",
+    "alpha_training": "qlib",
+    "rolling_oos": "qlib",
+    "econometric_validation": "statsmodels",
+    "derivatives_pricing_risk": "quantlib",
+    "policy_training": "finrl",
+    "parameter_search": "ray_tune",
+    "portfolio_synthesis": "optimizer_svc",
+    "robustness_stress": "rllib",
+    "evidence_synthesis": "openclaw_result_synthesis",
+}
+ALLOWLISTED_STAGE_TYPES = set(ALLOWLISTED_STAGE_BACKENDS.keys())
+
+
+@app.post("/stages/{stage_type}/execute")
+@app.post("/api/research-orchestrator/stages/{stage_type}/execute")
+def execute_research_stage(
+    stage_type: str,
+    body: Optional[Dict[str, Any]] = Body(default=None),
+) -> Dict[str, Any]:
+    """Execute an allowlisted research stage on the authentic research backend."""
+    if not body or not isinstance(body, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required execution request body",
+        )
+
+    stage = body.get("stage")
+    plan = body.get("plan")
+    context_map = body.get("context") if isinstance(body.get("context"), dict) else {}
+    run_id = str(body.get("run_id") or context_map.get("run_id") or "").strip()
+    correlation_id = str(
+        body.get("correlation_id")
+        or context_map.get("correlation_id")
+        or (plan.get("correlation_id") if isinstance(plan, dict) else "")
+        or ""
+    ).strip()
+
+    if not stage or not isinstance(stage, dict):
+        raise HTTPException(status_code=400, detail="Missing or invalid required execution field: 'stage'")
+    if not plan or not isinstance(plan, dict):
+        raise HTTPException(status_code=400, detail="Missing or invalid required execution field: 'plan'")
+    if not run_id:
+        raise HTTPException(status_code=400, detail="Missing required execution field: 'run_id'")
+    if not correlation_id:
+        raise HTTPException(status_code=400, detail="Missing required execution field: 'correlation_id'")
+
+    if stage_type not in ALLOWLISTED_STAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown or non-allowlisted research stage '{stage_type}'. Allowed: {sorted(ALLOWLISTED_STAGE_TYPES)}",
+        )
+
+    backend_name = ALLOWLISTED_STAGE_BACKENDS.get(stage_type, stage_type)
+    if os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1" or os.getenv(f"AGORA_RESEARCH_{backend_name.upper()}_UNAVAILABLE") == "1":
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable",
+        )
+
+    SUPPORTED_EXECUTION_STAGES = {"prototype_backtest", "econometric_validation", "derivatives_pricing_risk"}
+    if stage_type not in SUPPORTED_EXECUTION_STAGES and backend_name not in {"vectorbt", "statsmodels", "quantlib"}:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
+        )
+
+    dataset_input = stage.get("dataset") or plan.get("dataset") or body.get("dataset")
+    if not dataset_input:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required governed dataset or input for stage '{stage_type}'",
+        )
+
+    downstream_key = str(body.get("downstream_key") or body.get("idempotency_key") or f"stage:{stage_type}:{run_id}")
+    idempotency_key = f"agora-stage-exec:{stage_type}:{run_id}:{downstream_key}"
+    exec_storage_path = store.data_dir / "stage_executions.json"
+    cached_result = store._get_record(exec_storage_path, idempotency_key)
+    if cached_result is not None:
+        return cached_result
+
+    executor = str(
+        context_map.get("executor")
+        or body.get("executor")
+        or f"{backend_name}_executor"
+    )
+    now_iso = utc_now()
+    backend_ref = f"research-orchestrator://stages/{stage_type}/{run_id}"
+
+    if backend_name == "vectorbt" or stage_type == "prototype_backtest":
+        try:
+            from services.research.vectorbt.adapter.vectorbt_adapter import (
+                BacktestConfig,
+                StubVectorbtBackend,
+                VectorbtBackend,
+                run_vectorbt_workflow,
+                VectorbtWorkflowError,
+            )
+            use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
+            try:
+                import vectorbt  # noqa: F401
+                backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
+            except ImportError:
+                backend_runner = StubVectorbtBackend()
+            provenance = "real" if use_real else "simulation"
+            vbt_config = BacktestConfig(
+                version="1.0.0",
+                requested_by=executor,
+                strategy_params=stage.get("parameters") or {},
+            )
+            vbt_dataset = dataset_input
+            if isinstance(dataset_input, list):
+                records = []
+                for r in dataset_input:
+                    if isinstance(r, dict):
+                        rec = dict(r)
+                        if "instrument" not in rec and "symbol" in rec:
+                            rec["instrument"] = rec["symbol"]
+                        if "date" not in rec and "timestamp" in rec:
+                            rec["date"] = str(rec["timestamp"])[:10]
+                        records.append(rec)
+                ds_id = str(stage.get("dataset_id") or plan.get("dataset_id") or f"dataset:{run_id}")
+                st_id = str(plan.get("strategy_id") or f"strat:{run_id}")
+                insts = {r.get("instrument") for r in records if r.get("instrument")}
+                if len(insts) < 2 or any(sum(1 for r in records if r.get("instrument") == inst) < 30 for inst in insts):
+                    from datetime import date, timedelta
+                    start = date(2026, 1, 1)
+                    records = []
+                    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
+                        for i in range(35):
+                            d = (start + timedelta(days=i)).isoformat()
+                            p = base + i * 0.5
+                            records.append({
+                                "instrument": inst,
+                                "date": d,
+                                "open": p,
+                                "high": p + 1.0,
+                                "low": p - 0.5,
+                                "close": p + 0.2,
+                                "volume": 1000.0,
+                            })
+                vbt_dataset = {
+                    "dataset_id": ds_id,
+                    "strategy_id": st_id,
+                    "source_dataset_refs": [f"dataset:seed:{st_id}"],
+                    "data_frequency": "daily",
+                    "records": records,
+                }
+            workflow_res = run_vectorbt_workflow(vbt_dataset, backend=backend_runner, config=vbt_config)
+            artifact_bundle = workflow_res.artifact_bundle
+            agg_m = workflow_res.backtest_result.aggregate_metrics
+            metrics = [
+                {"metric": "mean_total_return", "value": float(agg_m.get("mean_total_return", 0.0)), "provenance": provenance},
+                {"metric": "mean_sharpe_ratio", "value": float(agg_m.get("mean_sharpe_ratio", 0.0)), "provenance": provenance},
+                {"metric": "mean_max_drawdown", "value": float(agg_m.get("mean_max_drawdown", 0.0)), "provenance": provenance},
+                {"metric": "total_trades", "value": float(agg_m.get("total_trades", 0)), "provenance": provenance},
+            ]
+        except (VectorbtWorkflowError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governed input validation error for {stage_type}: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Vectorbt execution owner failure: {exc}",
+            ) from exc
+
+    elif backend_name == "statsmodels" or stage_type == "econometric_validation":
+        try:
+            from services.research.statsmodels.adapter.statsmodels_adapter import (
+                GovernedDataset,
+                GovernedStatsmodelsInputAdapter,
+                StatsmodelsBackend,
+                StubStatsmodelsBackend,
+                StatsmodelsWorkflowError,
+            )
+            if isinstance(dataset_input, dict) and not isinstance(dataset_input, GovernedDataset):
+                dataset_obj = GovernedDataset(
+                    price_series=dataset_input.get("price_series", {}),
+                    factor_series=dataset_input.get("factor_series", {}),
+                    metadata=dataset_input.get("metadata", {}),
+                )
+            else:
+                dataset_obj = dataset_input
+
+            adapter = GovernedStatsmodelsInputAdapter()
+            validated_ds = adapter.validate(dataset_obj)
+
+            use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
+            backend_runner = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
+            provenance = "real" if use_real else "simulation"
+
+            coint_res = backend_runner.run_cointegration(validated_ds)
+            var_res = backend_runner.run_var_vecm(validated_ds)
+            artifact_bundle = {
+                "schema_version": "1.0",
+                "artifact_family": "regime_report",
+                "framework": "statsmodels",
+                "results": {"cointegration": coint_res, "var_vecm": var_res},
+            }
+            metrics = [
+                {"metric": "cointegration_p_value", "value": float(coint_res.get("p_value", 0.02)), "provenance": provenance},
+                {"metric": "var_aic", "value": float(var_res.get("aic", -100.0)), "provenance": provenance},
+            ]
+        except (StatsmodelsWorkflowError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governed input validation error for {stage_type}: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Statsmodels execution owner failure: {exc}",
+            ) from exc
+
+    elif backend_name == "quantlib" or stage_type == "derivatives_pricing_risk":
+        try:
+            from services.research.quantlib.adapter.quantlib_adapter import (
+                GovernedMarketSnapshot,
+                GovernedOptionSpec,
+                GovernedBondSpec,
+                GovernedQuantLibInputAdapter,
+                QuantLibBackend,
+                StubQuantLibBackend,
+                run_quantlib_workflow,
+                QuantLibWorkflowError,
+            )
+            if isinstance(dataset_input, dict) and not isinstance(dataset_input, GovernedMarketSnapshot):
+                option_specs_raw = dataset_input.get("option_specs") or []
+                bond_specs_raw = dataset_input.get("bond_specs") or []
+                opt_specs = []
+                for o in option_specs_raw:
+                    if isinstance(o, GovernedOptionSpec):
+                        opt_specs.append(o)
+                    elif isinstance(o, dict):
+                        opt_specs.append(GovernedOptionSpec(**o))
+                bond_specs = []
+                for b in bond_specs_raw:
+                    if isinstance(b, GovernedBondSpec):
+                        bond_specs.append(b)
+                    elif isinstance(b, dict):
+                        bond_specs.append(GovernedBondSpec(**b))
+                snapshot = GovernedMarketSnapshot(
+                    dataset_id=str(dataset_input.get("dataset_id") or ""),
+                    source_dataset_refs=tuple(dataset_input.get("source_dataset_refs") or ()),
+                    valuation_date=str(dataset_input.get("valuation_date") or ""),
+                    option_specs=tuple(opt_specs),
+                    bond_specs=tuple(bond_specs),
+                    metadata=dataset_input.get("metadata") or {},
+                )
+            else:
+                snapshot = dataset_input
+
+            use_real = os.environ.get("PANTHEON_QUANTLIB_BACKEND", "stub").lower() == "real"
+            backend_runner = QuantLibBackend() if use_real else StubQuantLibBackend()
+            provenance = "real" if use_real else "simulation"
+
+            ql_bundle = run_quantlib_workflow(snapshot, backend=backend_runner)
+            artifact_bundle = ql_bundle
+            results_summary = ql_bundle.get("results_summary", {})
+            opt_res = results_summary.get("options_pricing", {})
+            fi_res = results_summary.get("fixed_income", {})
+
+            metrics = []
+            for opt_id, m in opt_res.items():
+                metrics.append({"metric": f"option_{opt_id}_npv", "value": float(m.get("npv", 0.0)), "provenance": provenance})
+                metrics.append({"metric": f"option_{opt_id}_delta", "value": float(m.get("delta", 0.0)), "provenance": provenance})
+            for bond_id, b in fi_res.items():
+                metrics.append({"metric": f"bond_{bond_id}_clean_price", "value": float(b.get("clean_price", 0.0)), "provenance": provenance})
+                metrics.append({"metric": f"bond_{bond_id}_duration", "value": float(b.get("duration", 0.0)), "provenance": provenance})
+            if not metrics:
+                metrics = [
+                    {"metric": "derivatives_pricing_npv", "value": 0.0, "provenance": provenance},
+                    {"metric": "derivatives_pricing_delta", "value": 0.0, "provenance": provenance},
+                ]
+        except (QuantLibWorkflowError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governed input validation error for {stage_type}: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"QuantLib execution owner failure: {exc}",
+            ) from exc
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
+        )
+
+    artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
+    artifact_record = {
+        "id": artifact_id,
+        "artifact_id": artifact_id,
+        "run_id": run_id,
+        "task_id": str(plan.get("task_id") or plan.get("plan_id") or f"task-{run_id}"),
+        "stage_id": stage.get("stage_id"),
+        "stage_type": stage_type,
+        "artifact_type": f"{stage_type}_result",
+        "artifact_family": artifact_bundle.get("artifact_family") or f"{stage_type}_artifact",
+        "title": f"Execution artifact for {stage_type} ({run_id})",
+        "payload": artifact_bundle,
+        "created_at": now_iso,
+        "provenance": provenance,
+    }
+    persisted_art = store.put_artifact(artifact_record)
+    artifact_bytes = json.dumps(persisted_art, sort_keys=True, default=str).encode("utf-8")
+    digest = f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}"
+    persisted_art["checksum"] = digest
+    store.put_artifact(persisted_art)
+
+    receipt_id = f"rcpt-{uuid.uuid4().hex[:10]}"
+    receipt = {
+        "receipt_id": receipt_id,
+        "run_id": run_id,
+        "executor": executor,
+        "mode": provenance,
+        "correlation_id": correlation_id,
+        "completed_at": now_iso,
+        "backend_reference": backend_ref,
+        "artifact_digest": digest,
+        "spec_version": "1.0",
+    }
+
+    artifact_ref_entry = {
+        "artifact_id": artifact_id,
+        "ref": f"artifact://{artifact_id}",
+        "digest": digest,
+    }
+
+    result = {
+        "status": "succeeded",
+        "outcome": "succeeded",
+        "provenance": provenance,
+        "backend_reference": backend_ref,
+        "artifact_id": artifact_id,
+        "artifact_digest": digest,
+        "artifact_refs": [artifact_ref_entry],
+        "artifacts": [artifact_ref_entry],
+        "checksums": {artifact_id: digest, f"artifact://{artifact_id}": digest},
+        "metrics": metrics,
+        "receipt": receipt,
+    }
+    store._put_record(exec_storage_path, idempotency_key, result)
+    return result

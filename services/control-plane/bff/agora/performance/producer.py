@@ -35,6 +35,7 @@ class PerformanceOutcomeEvaluationInput(BaseModel):
     source_version: Optional[str] = None
     evidence_refs: List[str] = Field(default_factory=list)
     as_of: Optional[str] = None
+    correlation_id: Optional[str] = None
 
 
 class PerformanceSuggestionProducer:
@@ -62,6 +63,7 @@ class PerformanceSuggestionProducer:
             "outcome_type": evaluation.outcome_type,
             "source_id": evaluation.source_id,
             "as_of": as_of_str,
+            "correlation_id": evaluation.correlation_id or "",
         }
         digest = hashlib.sha256(json.dumps(seed, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         suggestion_id = f"sug-{evaluation.strategy_id[:8]}-{evaluation.outcome_type[:6]}-{digest}"
@@ -72,6 +74,7 @@ class PerformanceSuggestionProducer:
             produced_at=now_str,
             source_version=evaluation.source_version,
             evidence_refs=list(evaluation.evidence_refs),
+            correlation_id=evaluation.correlation_id,
         )
 
         suggestion = AdjustmentSuggestion(
@@ -93,6 +96,7 @@ class PerformanceSuggestionProducer:
             provenance=provenance,
             as_of=as_of_str,
             updated_at=now_str,
+            correlation_id=evaluation.correlation_id,
             no_order_route_proof="agora_suggestion_state_only",
         )
 

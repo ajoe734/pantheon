@@ -29,7 +29,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -72,6 +72,16 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_stall_trace_handler_registers_sigusr2(self) -> None:
+        with mock.patch.object(supervisor.faulthandler, "register") as register:
+            supervisor.install_stall_trace_handler()
+
+        register.assert_called_once_with(
+            signal.SIGUSR2,
+            file=sys.stderr,
+            all_threads=True,
+        )
+
     def test_dashboard_refresh_uses_scoped_canonical_task_state_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -3044,6 +3054,164 @@ class SharedPlannerContractTests(unittest.TestCase):
             (supervisor.REASON_OWNED_FINALIZE, 1),
         )
 
+    def test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator(self) -> None:
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+        merge_sha = "8f8383b507b1fb631d44422031f01ebea5024d5e"
+
+        task_fe = task_fixture("OPS-FE-REVIEW-PROOF-001", status="review_approved", owner="Codex")
+        task_fe.update({
+            "target_repo": "execute-plans",
+            "generation": 1,
+            "review_binding": {
+                "pr": 747,
+                "head_sha": head_sha,
+                "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+                "base": "dev",
+            },
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 747,
+                "head_sha": head_sha,
+                "head_branch": "task/OPS-FE-REVIEW-PROOF-001",
+                "base": "dev",
+            },
+        })
+
+        task_repair = task_fixture("OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001", status="in_progress", owner="Codex")
+        task_repair.update({
+            "target_repo": "pantheon",
+            "generation": 1,
+            "depends_on": [],
+        })
+
+        # 1. Admission check: unreceipted execute-plans task is blocked and cannot finalize
+        fe_dec = planner_decision(self.config, task_fe, target="Codex")
+        self.assertFalse(fe_dec["eligible"])
+        self.assertEqual(fe_dec["first_blocking_gate"], "task_not_dispatchable")
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task_fe, "Codex", {task_fe["id"]: task_fe}
+            )
+        )
+
+        # 2. In-progress receipt-repair task is eligible
+        repair_dec = planner_decision(self.config, task_repair, target="Codex")
+        self.assertTrue(repair_dec["eligible"])
+        self.assertEqual(repair_dec["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+        # 3. Deterministic starvation prevention: planner selects receipt-repair task
+        self.config["ready_dispatcher"]["max_concurrent_workers"] = 1
+        queued: list[dict[str, object]] = []
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex"],
+            status_snapshot={"tasks": [task_fe, task_repair]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: queued.append(event) or True,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["task_id"], "OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001")
+        self.assertEqual(queued[0]["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+        # 4. Once exact canonical integration receipt lands, owner finalization is unlocked
+        task_fe["integration_receipt"] = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": merge_sha,
+            "observed_at": "2026-09-08T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        }
+        fe_reconciled = planner_decision(self.config, task_fe, target="Codex")
+        self.assertTrue(fe_reconciled["eligible"])
+        self.assertEqual(fe_reconciled["reason"], supervisor.REASON_OWNED_FINALIZE)
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task_fe, "Codex", {task_fe["id"]: task_fe}
+            ),
+            (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+
+        # 5. Normal unmerged Pantheon finalization remains eligible
+        pantheon_task = task_fixture("OPS-PAN-NORMAL-001", status="review_approved", owner="Codex")
+        pantheon_task["target_repo"] = "pantheon"
+        pan_dec = planner_decision(self.config, pantheon_task, target="Codex")
+        self.assertTrue(pan_dec["eligible"])
+        self.assertEqual(pan_dec["reason"], supervisor.REASON_OWNED_FINALIZE)
+
+        # 6. Negative controls (fail closed)
+        # 6a. Unknown repository
+        fe_unknown = copy.deepcopy(task_fe)
+        fe_unknown["target_repo"] = "nonexistent_repo"
+        self.assertFalse(planner_decision(self.config, fe_unknown, target="Codex")["eligible"])
+
+        # 6b. Conflicting repository artifacts
+        fe_conflict = copy.deepcopy(task_fe)
+        fe_conflict["artifacts"] = ["execute-plans/src/index.ts", "pantheon/api.py"]
+        self.assertFalse(planner_decision(self.config, fe_conflict, target="Codex")["eligible"])
+
+        # 6c. Malformed receipt version
+        fe_bad_ver = copy.deepcopy(task_fe)
+        fe_bad_ver["integration_receipt"]["version"] = 99
+        self.assertFalse(planner_decision(self.config, fe_bad_ver, target="Codex")["eligible"])
+
+        # 6d. Generation drift
+        fe_drift = copy.deepcopy(task_fe)
+        fe_drift["integration_receipt"]["task_generation"] = 2
+        self.assertFalse(planner_decision(self.config, fe_drift, target="Codex")["eligible"])
+
+        # 6e. Repository mismatch in receipt
+        fe_repo_drift = copy.deepcopy(task_fe)
+        fe_repo_drift["integration_receipt"]["repository"] = "ajoe734/pantheon"
+        self.assertFalse(planner_decision(self.config, fe_repo_drift, target="Codex")["eligible"])
+
+        # 6f. Target branch mismatch in receipt
+        fe_branch_drift = copy.deepcopy(task_fe)
+        fe_branch_drift["integration_receipt"]["target_branch"] = "main"
+        self.assertFalse(planner_decision(self.config, fe_branch_drift, target="Codex")["eligible"])
+
+        # 6g. Malformed coordination.repositories list
+        bad_config_list = copy.deepcopy(self.config)
+        bad_config_list["coordination"] = {"repositories": ["bad-entry"]}
+        self.assertFalse(planner_decision(bad_config_list, task_fe, target="Codex")["eligible"])
+
+        # 6h. Malformed repository override value (not a mapping)
+        bad_config_val = copy.deepcopy(self.config)
+        bad_config_val["coordination"] = {"repositories": {"execute_plans": 42}}
+        self.assertFalse(planner_decision(bad_config_val, task_fe, target="Codex")["eligible"])
+
+        # 6i. Misconfigured explicit default_branch=None fails closed
+        bad_config_branch = copy.deepcopy(self.config)
+        bad_config_branch["coordination"] = {"repositories": {"execute_plans": {"default_branch": None}}}
+        self.assertFalse(planner_decision(bad_config_branch, task_fe, target="Codex")["eligible"])
+
+        # 6j. Misconfigured explicit repo slug=None fails closed
+        bad_config_slug = copy.deepcopy(self.config)
+        bad_config_slug["coordination"] = {"repositories": {"execute_plans": {"repo": None}}}
+        self.assertFalse(planner_decision(bad_config_slug, task_fe, target="Codex")["eligible"])
+
+        # 6k. Malformed coordination parent container (list)
+        bad_config_coord_list = copy.deepcopy(self.config)
+        bad_config_coord_list["coordination"] = ["bad-entry"]
+        self.assertFalse(planner_decision(bad_config_coord_list, task_fe, target="Codex")["eligible"])
+
+        # 6l. Malformed coordination parent container (non-mapping scalar)
+        bad_config_coord_scalar = copy.deepcopy(self.config)
+        bad_config_coord_scalar["coordination"] = 42
+        self.assertFalse(planner_decision(bad_config_coord_scalar, task_fe, target="Codex")["eligible"])
+
     def _pending_intent_task_with_recovery_receipt(
         self,
         *,
@@ -3674,9 +3842,12 @@ class ExecutionAuthorizationProcessTests(unittest.TestCase):
         status_root = root / "status"
         (status_root / ".orchestrator").mkdir(parents=True)
         self.config = config_fixture(status_root)
-        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(root / "runtime" / "tasks.jsonl")}
+        event_log = root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(event_log)}
         self.task = _synthetic_privileged_task()
-        supervisor.write_status(self.config, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        from rewrite.task_state_store import append_state_commit
+        append_state_commit(event_log, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        supervisor.write_json(supervisor.config_path(self.config, "status_file"), {"tasks": [self.task]})
         self.ctx = multiprocessing.get_context("fork")
         self.marker = root / "effect"
 
@@ -13540,8 +13711,9 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             cmd_root = temp_path / "cmd_root"
             worktree = temp_path / "worktree"
             runtime_dir = temp_path / "runtime"
-            runtime_dir.mkdir(parents=True)
-            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+            task_state_dir = runtime_dir / "task-state"
+            task_state_dir.mkdir(parents=True)
+            task_state_event_log = task_state_dir / "task-state-events.jsonl"
 
             for d in (central, cmd_root, worktree):
                 d.mkdir(parents=True, exist_ok=True)
@@ -14246,7 +14418,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 },
             }
             (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
-            supervisor.write_status(config, init_state, source="test-init")
+            rewrite_task_state_store.append_state_commit(task_state_event_log, init_state, source="init")
 
             child_env = os.environ.copy()
             for k in list(child_env.keys()):
@@ -14499,7 +14671,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 },
             }
             (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
-            supervisor.write_status(config, init_state, source="test-init")
+            rewrite_task_state_store.append_state_commit(task_state_event_log, init_state, source="init")
 
             child_env = os.environ.copy()
             for k in list(child_env.keys()):
@@ -16557,6 +16729,82 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         if proc.poll() is None:
                             proc.kill()
                             proc.wait(timeout=2)
+
+
+class RuntimeAdmissionReentryTests(unittest.TestCase):
+    def test_recovery_reuses_an_already_held_runtime_admission_lock(self) -> None:
+        state: dict[str, Any] = {
+            "supervisor": {
+                "runtime_phase_reservations": {
+                    "poll_workers_before_plan": {"token": "legacy-token"}
+                }
+            }
+        }
+        saved: list[dict[str, Any]] = []
+
+        @contextmanager
+        def unexpected_lock(_config: dict[str, Any]):
+            raise AssertionError("recovery attempted to re-enter runtime-admission lock")
+            yield
+
+        with (
+            mock.patch.object(
+                supervisor, "_measured_runtime_state_lock", unexpected_lock
+            ),
+            mock.patch.object(supervisor, "load_runtime_state", return_value=state),
+            mock.patch.object(
+                supervisor,
+                "save_runtime_state",
+                side_effect=lambda _c, s: saved.append(copy.deepcopy(s)),
+            ),
+        ):
+            result = supervisor._recover_runtime_phase_reservation(
+                {},
+                "poll_workers_before_plan",
+                runtime_admission_locked=True,
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(saved), 1)
+        self.assertNotIn("runtime_phase_reservations", saved[0]["supervisor"])
+
+
+class SchedulerCadenceTelemetryTests(unittest.TestCase):
+    _SAMPLE = {
+        "cycle_elapsed_seconds": 1.0,
+        "skipped_deadlines_after_cycle": 0,
+        "next_deadline": 2.0,
+    }
+
+    def test_completion_skips_runtime_lock_contention(self) -> None:
+        @contextmanager
+        def contended_update(*_args: Any, **kwargs: Any):
+            self.assertTrue(kwargs["nonblocking"])
+            raise common.LockContentionError(11, "contended", "runtime-admission.lock")
+            yield
+
+        with mock.patch.object(supervisor, "runtime_state_update", contended_update):
+            self.assertFalse(
+                supervisor.publish_scheduler_cadence_completion(
+                    {},
+                    self._SAMPLE,
+                )
+            )
+
+    def test_completion_persists_when_runtime_lock_is_available(self) -> None:
+        state: dict[str, Any] = {"supervisor": {"scheduler_cycle_elapsed_peak_seconds": 2.0}}
+
+        @contextmanager
+        def available_update(*_args: Any, **kwargs: Any):
+            self.assertTrue(kwargs["nonblocking"])
+            yield state
+
+        with mock.patch.object(supervisor, "runtime_state_update", available_update):
+            self.assertTrue(supervisor.publish_scheduler_cadence_completion({}, self._SAMPLE))
+
+        self.assertEqual(state["supervisor"]["scheduler_cycle_elapsed_seconds"], 1.0)
+        self.assertEqual(state["supervisor"]["scheduler_cycle_elapsed_peak_seconds"], 2.0)
+        self.assertEqual(state["supervisor"]["cadence_next_deadline_monotonic"], 2.0)
 
 
 if __name__ == "__main__":

@@ -272,7 +272,9 @@ def resolved_coordinator_status_root(repo_root: Path, config: dict[str, Any]) ->
         return resolve_repo_path(repo_root, str(status_value), "ai-status.json").parent.resolve()
     state_value = paths.get("state_file")
     if state_value:
-        state_path = resolve_repo_path(repo_root, str(state_value), ".orchestrator/state.json").resolve()
+        state_path = resolve_repo_path(repo_root, str(state_value), ".orchestrator/worker-runtime/state.json").resolve()
+        if state_path.parent.name == "worker-runtime" and state_path.parent.parent.name == ".orchestrator":
+            return state_path.parent.parent.parent
         return state_path.parent.parent if state_path.parent.name == ".orchestrator" else state_path.parent
     env_val = os.environ.get("PANTHEON_STATUS_ROOT")
     if env_val and env_val.strip():
@@ -331,12 +333,12 @@ def evaluate_runtime_health(
     except OSError:
         config_sha256 = None
 
-    state_path = config_path(repo_root, config, "state_file", ".orchestrator/state.json")
+    state_path = config_path(repo_root, config, "state_file", ".orchestrator/worker-runtime/state.json")
     state, state_error = _load_json_object(state_path)
     state = state or {}
     supervisor = state.get("supervisor") if isinstance(state.get("supervisor"), dict) else {}
     coord_root = resolved_coordinator_status_root(repo_root, config)
-    pid_path = state_path.parent / "supervisor.pid"
+    pid_path = coord_root / ".orchestrator" / "supervisor.pid"
     lock_path = coord_root / ".orchestrator" / "supervisor.lock"
     pid = read_pid(pid_path)
     state_pid = supervisor.get("pid") if isinstance(supervisor.get("pid"), int) else None

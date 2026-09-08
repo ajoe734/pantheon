@@ -18,8 +18,9 @@ from pathlib import Path
 
 import pytest
 
-# Allow import of parent package
+# Allow import of parent package and bff services
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff"))
 
 from fastapi.testclient import TestClient
 
@@ -83,8 +84,11 @@ def clean_store(monkeypatch):
     fresh_store = IncidentStore(path=None)
     monkeypatch.setattr("services.incidents.main.store", fresh_store)
     monkeypatch.setattr(sys.modules[__name__], "store", fresh_store)
+    from services.incidents.main import _DELIVERED_SUGGESTION_INCIDENT_IDS
+    _DELIVERED_SUGGESTION_INCIDENT_IDS.clear()
     _reset_outbox()
     yield
+    _DELIVERED_SUGGESTION_INCIDENT_IDS.clear()
     _reset_outbox()
 
 
@@ -527,6 +531,307 @@ def test_consume_threshold_route_rejects_missing_threshold_value():
     assert store.get_incident("inc-missing-threshold-value") is None
 
 
+def test_consume_threshold_suggestion_failure_surfaces_503_and_retry_delivers_without_duplicates(tmp_path):
+    """P1 regression test: Stop swallowing suggestion persistence failures with created=True.
+
+    When downstream suggestion persistence fails:
+    1. Incident is created in IncidentStore, but route raises 503 (IncidentConsumerRetryableError).
+    2. Pending downstream work is recorded.
+    3. On retry/replay after downstream recovery, suggestion is persisted and read-model event emitted.
+    4. Further replays do NOT create duplicate suggestions or events.
+    """
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
+
+    from services.incidents.main import attach_incident_suggestion_consumer
+    from agora.performance.consumer import EvaluationTelemetryConsumer
+    from agora.performance.store import PerformanceSuggestionStore
+
+    perf_db_path = str(tmp_path / "perf_suggestions.sqlite3")
+    perf_store = PerformanceSuggestionStore(path=perf_db_path)
+    published_events = []
+
+    def record_event(topic, entity_id, payload):
+        published_events.append({"topic": topic, "entity_id": entity_id, "payload": payload})
+
+    eval_consumer = EvaluationTelemetryConsumer(
+        store=perf_store,
+        publish_event_fn=record_event,
+    )
+
+    should_fail = True
+
+    def flaky_suggestion_consumer(outcome_event):
+        if should_fail:
+            raise RuntimeError("Temporary downstream outage")
+        return eval_consumer.consume(outcome_event)
+
+    attach_incident_suggestion_consumer(flaky_suggestion_consumer)
+    try:
+        payload = _threshold_fixture()
+        payload["incident_id"] = "inc-downstream-retry-001"
+        payload["strategy_id"] = "strat-retry-123"
+        payload["tenant_id"] = "tenant-downstream-1"
+
+        # 1. First attempt fails downstream -> surfaces HTTP 503
+        r = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r.status_code == 503
+        assert "Downstream suggestion persistence failed" in r.text
+
+        # The incident itself was created in incident store
+        assert store.get_incident("inc-downstream-retry-001") is not None
+        # No suggestions persisted yet
+        with perf_store._connect() as conn:
+            row_count = conn.execute("SELECT count(*) FROM performance_suggestions").fetchone()[0]
+        assert row_count == 0
+        assert len(published_events) == 0
+
+        # 2. Downstream is recovered, replay delivers suggestion & read-model event
+        should_fail = False
+
+        r2 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r2.status_code == 200
+
+        # Suggestion is now persisted in PerformanceSuggestionStore
+        suggestions = perf_store.list_suggestions(tenant_id="tenant-downstream-1")
+        assert len(suggestions) == 1
+        assert suggestions[0]["strategy_id"] == "strat-retry-123"
+        assert len(published_events) == 1
+        assert published_events[0]["topic"] == "agora.performance.suggestion.created"
+
+        # 3. Further retries / replays produce ZERO duplicate suggestions and events
+        r3 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r3.status_code == 200
+        with perf_store._connect() as conn:
+            total_count = conn.execute("SELECT count(*) FROM performance_suggestions").fetchone()[0]
+        assert total_count == 1
+        assert len(published_events) == 1
+    finally:
+        attach_incident_suggestion_consumer(None)
+
+
+def test_threshold_consumer_unit_retry_pending_downstream_work(tmp_path):
+    """Unit test for ThresholdTelemetryIncidentConsumer retry_pending_downstream_work()."""
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
+
+    from services.incidents.consumer import (
+        IncidentConsumerRetryableError,
+        ThresholdTelemetryIncidentConsumer,
+    )
+    from agora.performance.consumer import EvaluationTelemetryConsumer
+    from agora.performance.store import PerformanceSuggestionStore
+
+    perf_db_path = str(tmp_path / "perf_suggestions_unit.sqlite3")
+    perf_store = PerformanceSuggestionStore(path=perf_db_path)
+    published_events = []
+
+    def record_event(topic, entity_id, payload):
+        published_events.append({"topic": topic, "entity_id": entity_id, "payload": payload})
+
+    eval_consumer = EvaluationTelemetryConsumer(
+        store=perf_store,
+        publish_event_fn=record_event,
+    )
+
+    should_fail = True
+
+    def flaky_suggestion_consumer(outcome_event):
+        if should_fail:
+            raise RuntimeError("Database temporary lock")
+        return eval_consumer.consume(outcome_event)
+
+    consumer = ThresholdTelemetryIncidentConsumer(
+        incident_store=store,
+        suggestion_consumer=flaky_suggestion_consumer,
+    )
+
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-pending-work-unit-001"
+    payload["strategy_id"] = "strat-pending-work-456"
+    payload["tenant_id"] = "tenant-unit-1"
+
+    with pytest.raises(IncidentConsumerRetryableError) as excinfo:
+        consumer.consume(payload)
+    assert "Downstream suggestion persistence failed" in str(excinfo.value)
+
+    assert len(consumer._pending_downstream_work) == 1
+    with perf_store._connect() as conn:
+        assert conn.execute("SELECT count(*) FROM performance_suggestions").fetchone()[0] == 0
+
+    should_fail = False
+    retried = consumer.retry_pending_downstream_work()
+    assert retried == 1
+    assert len(consumer._pending_downstream_work) == 0
+
+    suggestions = perf_store.list_suggestions(tenant_id="tenant-unit-1")
+    assert len(suggestions) == 1
+    assert suggestions[0]["strategy_id"] == "strat-pending-work-456"
+    assert len(published_events) == 1
+
+    # Calling retry again when empty does nothing and produces 0 duplicates
+    assert consumer.retry_pending_downstream_work() == 0
+    with perf_store._connect() as conn:
+        assert conn.execute("SELECT count(*) FROM performance_suggestions").fetchone()[0] == 1
+    assert len(published_events) == 1
+
+
+def test_consume_threshold_publisher_outage_recovery_and_no_duplicates(tmp_path):
+    """Test publisher failure propagates (HTTP 503), recovery succeeds, and replay produces 0 duplicate events."""
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
+
+    from services.incidents.main import attach_incident_suggestion_consumer
+    from agora.performance.consumer import EvaluationTelemetryConsumer
+    from agora.performance.store import PerformanceSuggestionStore
+
+    perf_db_path = str(tmp_path / "perf_suggestions_pub.sqlite3")
+    perf_store = PerformanceSuggestionStore(path=perf_db_path)
+    published_events = []
+    should_fail = True
+
+    def flaky_publisher(topic, entity_id, payload):
+        if should_fail:
+            raise RuntimeError("Event bus unreachable: 503 Service Unavailable")
+        published_events.append({"topic": topic, "entity_id": entity_id, "payload": payload})
+
+    eval_consumer = EvaluationTelemetryConsumer(
+        store=perf_store,
+        publish_event_fn=flaky_publisher,
+    )
+
+    attach_incident_suggestion_consumer(eval_consumer.consume)
+    try:
+        payload = _threshold_fixture()
+        payload["incident_id"] = "inc-pub-retry-001"
+        payload["strategy_id"] = "strat-pub-retry"
+        payload["tenant_id"] = "tenant-pub-1"
+
+        # 1. First attempt fails inside publisher -> must NOT be swallowed -> surfaces HTTP 503
+        r1 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r1.status_code == 503
+        assert "Downstream suggestion persistence failed" in r1.text
+
+        # The incident was created, but event was NOT marked published
+        assert store.get_incident("inc-pub-retry-001") is not None
+        assert not perf_store.is_event_published("agora.performance.suggestion.created", "inc-pub-retry-001")
+        assert len(published_events) == 0
+
+        # 2. Publisher recovers -> replay successfully publishes and returns 200
+        should_fail = False
+        r2 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r2.status_code == 200
+        assert len(published_events) == 1
+        assert published_events[0]["topic"] == "agora.performance.suggestion.created"
+        assert published_events[0]["payload"]["strategy_id"] == "strat-pub-retry"
+
+        # 3. Third call (replay) produces 0 duplicate published events
+        r3 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r3.status_code == 200
+        assert len(published_events) == 1
+    finally:
+        attach_incident_suggestion_consumer(None)
+
+
+def test_process_reconstruction_durable_delivered_ids_and_published_events_dedup(tmp_path):
+    """Test process reconstruction: durable delivered IDs and published event tracking prevent duplicate events across restarts."""
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
+
+    from services.incidents.consumer import (
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
+        ThresholdTelemetryIncidentConsumer,
+    )
+    from agora.performance.consumer import EvaluationTelemetryConsumer
+    from agora.performance.store import PerformanceSuggestionStore
+
+    delivered_path = tmp_path / "delivered_store.json"
+    downstream_path = tmp_path / "downstream_work.json"
+    perf_db_path = str(tmp_path / "perf_store_restart.sqlite3")
+
+    published_events = []
+    dispatched_events = []
+
+    def publisher(topic, entity_id, payload):
+        published_events.append({"topic": topic, "entity_id": entity_id, "payload": payload})
+
+    # Process generation 1: initial run
+    delivered_store_1 = DurableDeliveredIncidentsStore(delivered_path)
+    downstream_store_1 = DurableDownstreamWorkStore(downstream_path)
+    perf_store_1 = PerformanceSuggestionStore(path=perf_db_path)
+    eval_consumer_1 = EvaluationTelemetryConsumer(
+        store=perf_store_1,
+        publish_event_fn=publisher,
+    )
+
+    def recording_consumer(ev):
+        dispatched_events.append(ev)
+        return eval_consumer_1.consume(ev)
+
+    consumer_1 = ThresholdTelemetryIncidentConsumer(
+        incident_store=store,
+        suggestion_consumer=recording_consumer,
+        delivered_incident_ids=delivered_store_1,
+        downstream_work_store=downstream_store_1,
+    )
+
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-restart-recon-001"
+    payload["strategy_id"] = "strat-restart-recon"
+    payload["tenant_id"] = "tenant-restart-1"
+
+    res1 = consumer_1.consume(payload)
+    assert res1.created is True
+    assert len(published_events) == 1
+    assert len(dispatched_events) == 1
+    assert "inc-restart-recon-001" in delivered_store_1
+
+    # Simulate process termination: discard generation 1 in-memory objects
+    del consumer_1
+    del eval_consumer_1
+    del perf_store_1
+    del downstream_store_1
+    del delivered_store_1
+
+    # Process generation 2 (reconstructed process after restart)
+    delivered_store_2 = DurableDeliveredIncidentsStore(delivered_path)
+    downstream_store_2 = DurableDownstreamWorkStore(downstream_path)
+    perf_store_2 = PerformanceSuggestionStore(path=perf_db_path)
+    eval_consumer_2 = EvaluationTelemetryConsumer(
+        store=perf_store_2,
+        publish_event_fn=publisher,
+    )
+    consumer_2 = ThresholdTelemetryIncidentConsumer(
+        incident_store=store,
+        suggestion_consumer=eval_consumer_2.consume,
+        delivered_incident_ids=delivered_store_2,
+        downstream_work_store=downstream_store_2,
+    )
+
+    assert "inc-restart-recon-001" in delivered_store_2
+
+    # Replay through reconstructed incident consumer
+    res2 = consumer_2.consume(payload)
+    assert res2.created is False
+    assert len(published_events) == 1  # ZERO duplicate events published
+
+    # Direct replay through reconstructed evaluation consumer with the same outcome event
+    eval_consumer_2.replay(dispatched_events[0])
+    assert len(published_events) == 1  # Still exactly 1, idempotent publication deduplication held
+
+
+
+
+
 def test_consume_drift_report_route_creates_incident_case():
     payload = _drift_report_payload()
     r = client.post("/api/incidents/consume-drift-report", json={"drift_report": payload})
@@ -918,3 +1223,102 @@ def test_operator_payload_evidence_fields_present():
     ):
         assert field in body, f"Missing evidence field: {field}"
         assert body[field], f"Evidence field should not be empty: {field}"
+
+
+# ---------------------------------------------------------------------------
+# AGORA-CHAIN-001: Unacknowledged publish durability & restart retry
+# ---------------------------------------------------------------------------
+
+def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart(tmp_path: Path, monkeypatch):
+    """Prove that unacknowledged publish fails closed (HTTP 503), persists pending work to disk,
+    survives restart, and on replay with restored subscriber delivers the event and deduplicates.
+    """
+    import sys
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+
+    import services.incidents.main as main_mod
+    from services.incidents.consumer import (
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
+    )
+    from agora.performance.consumer import (
+        clear_performance_subscribers,
+        canonical_performance_publisher,
+    )
+
+    # Isolate storage to tmp_path
+    perf_db_path = str(tmp_path / "agora_performance.sqlite3")
+    downstream_path = tmp_path / "downstream_pending_work.json"
+    delivered_path = tmp_path / "delivered_suggestions.json"
+
+    monkeypatch.setenv("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH", perf_db_path)
+    monkeypatch.setattr(main_mod, "_DEFAULT_SUGGESTION_STORE", None)
+    monkeypatch.setattr(main_mod, "DOWNSTREAM_WORK_PATH", downstream_path)
+    monkeypatch.setattr(main_mod, "DELIVERED_SUGGESTIONS_PATH", delivered_path)
+    isolated_work_store = DurableDownstreamWorkStore(downstream_path)
+    isolated_delivered = DurableDeliveredIncidentsStore(delivered_path)
+    monkeypatch.setattr(main_mod, "_DOWNSTREAM_WORK_STORE", isolated_work_store)
+    monkeypatch.setattr(main_mod, "_DELIVERED_SUGGESTION_INCIDENT_IDS", isolated_delivered)
+
+    # Ensure clean state with no registered subscribers
+    clear_performance_subscribers()
+    # Reset suggestion consumer to default (which uses canonical_performance_publisher)
+    main_mod.attach_incident_suggestion_consumer(None)
+
+    payload = _threshold_fixture()
+    incident_id = "inc-unack-restart-001"
+    payload["incident_id"] = incident_id
+    payload["strategy_id"] = "strat-unack-99"
+    payload["tenant_id"] = "tenant-unack-1"
+
+    # Step 1: No subscribers registered -> publish fails closed -> HTTP 503 retryable
+    r1 = client.post("/api/incidents/consume-threshold", json=payload)
+    assert r1.status_code == 503
+    assert "Downstream suggestion persistence failed" in r1.text
+
+    # Incident created in store
+    assert store.get_incident(incident_id) is not None
+    # NOT marked delivered
+    assert incident_id not in isolated_delivered
+    # Pending work saved to disk
+    pending_disk = isolated_work_store.get_pending_work()
+    assert any(w.get("incident_id") == incident_id for w in pending_disk)
+
+    # Step 2: Simulate restart by reloading downstream work store from disk
+    reloaded_work_store = DurableDownstreamWorkStore(downstream_path)
+    reloaded_delivered = DurableDeliveredIncidentsStore(delivered_path)
+    assert any(w.get("incident_id") == incident_id for w in reloaded_work_store.get_pending_work())
+    assert incident_id not in reloaded_delivered
+
+    # Step 3: Wire working subscriber
+    received_events = []
+
+    def record_subscriber(topic, entity_id, event_payload):
+        received_events.append({"topic": topic, "entity_id": entity_id, "payload": event_payload})
+
+    canonical_performance_publisher.subscribe(record_subscriber)
+    main_mod._wire_canonical_performance_subscriber()
+
+    try:
+        # Step 4: Replay payload through the incidents route
+        r2 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r2.status_code == 200
+
+        # Event delivered
+        assert len(received_events) == 1
+        assert received_events[0]["topic"] == "agora.performance.suggestion.created"
+        assert received_events[0]["payload"]["strategy_id"] == "strat-unack-99"
+
+        # Marked delivered and removed from disk pending work
+        assert incident_id in isolated_delivered
+        pending_after = isolated_work_store.get_pending_work()
+        assert not any(w.get("incident_id") == incident_id for w in pending_after)
+
+        # Step 5: Deduplication - subsequent replay does NOT emit duplicate events
+        r3 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r3.status_code == 200
+        assert len(received_events) == 1
+    finally:
+        clear_performance_subscribers()

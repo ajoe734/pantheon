@@ -339,6 +339,7 @@ class GovernedIntentHandoffRequest(BaseModel):
     management_handoff_ref: Optional[str] = None
     deployment_plan_ref: Optional[str] = None
     runtime_binding_ref: Optional[str] = None
+    correlation_id: Optional[str] = None
     updated_at: Optional[str] = None
     expires_at: Optional[str] = None
 

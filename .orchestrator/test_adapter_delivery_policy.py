@@ -108,6 +108,46 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertNotIn("CODEX_THREAD_ID", env)
         self.assertNotIn("CODEX_SESSION_ID", env)
 
+    def test_codex_forwards_configured_model_and_reasoning_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "codex": {
+                        "id": "codex",
+                        "display_name": "Codex",
+                        "provider": "codex",
+                        "adapter": "codex",
+                    }
+                },
+                "providers": {
+                    "codex": {
+                        "codex": {
+                            "cli": "codex",
+                            "model": "gpt-6-astra",
+                            "model_reasoning_effort": "high",
+                        }
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="codex", provider="codex", delivery_mode="codex", message="wake")
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, root / "codex.log")),
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.command[result.command.index("--model") + 1], "gpt-6-astra")
+        self.assertEqual(
+            result.command[result.command.index("model_reasoning_effort=\"high\"")],
+            'model_reasoning_effort="high"',
+        )
+
     def test_codex_without_api_key_env_does_not_inherit_parent_openai_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

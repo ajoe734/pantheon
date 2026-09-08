@@ -638,6 +638,8 @@ def build_candidates_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             subject_id=pool_id,
             scope=scope,
             now=ctx.utc_now(),
+            bff_error_fn=ctx.bff_error,
+            error_code_enum_fn=ctx.error_code_enum,
         )
         created = ctx.store.add_candidate_discussion(record)
         ctx.store.record_audit_action({
@@ -719,6 +721,8 @@ def build_candidates_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             subject_id=artifact_id,
             scope=scope,
             now=ctx.utc_now(),
+            bff_error_fn=ctx.bff_error,
+            error_code_enum_fn=ctx.error_code_enum,
         )
         created = ctx.store.add_candidate_discussion(record)
         ctx.store.record_audit_action({

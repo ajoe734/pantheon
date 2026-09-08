@@ -37,10 +37,6 @@
     ],
     "allowed_environments": [
       "pantheon-dev"
-    ],
-    "disallowed_phases": [
-      "S5",
-      "step-5"
     ]
   }
 }
