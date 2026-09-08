@@ -241,6 +241,89 @@ class MultiRepoRegistryTests(unittest.TestCase):
             "execute_plans",
         )
 
+    def test_task_repository_slug_and_default_branch_default_pantheon(self) -> None:
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch({}, {}),
+            ("ajoe734/pantheon", "dev"),
+        )
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                None, {"target_repo": "pantheon"}
+            ),
+            ("ajoe734/pantheon", "dev"),
+        )
+
+    def test_task_repository_slug_and_default_branch_execute_plans(self) -> None:
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {}, {"target_repo": "execute-plans"}
+            ),
+            ("ajoe734/execute-plans", "dev"),
+        )
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {}, {"target_repo": "execute_plans"}
+            ),
+            ("ajoe734/execute-plans", "dev"),
+        )
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {}, {"target_repo": "ajoe734/execute-plans"}
+            ),
+            ("ajoe734/execute-plans", "dev"),
+        )
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {}, {"artifacts": ["execute-plans/src/App.tsx"]}
+            ),
+            ("ajoe734/execute-plans", "dev"),
+        )
+
+    def test_task_repository_slug_and_default_branch_fails_closed(self) -> None:
+        self.assertIsNone(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {}, {"target_repo": "unknown-repo"}
+            )
+        )
+        self.assertIsNone(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {}, {"target_repo": "runtime_platform"}
+            )
+        )
+        self.assertIsNone(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {},
+                {"target_repo": "pantheon", "artifacts": ["execute-plans/src/App.tsx"]},
+            )
+        )
+        self.assertIsNone(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                {},
+                {"target_repo": "pantheon+execute-plans"},
+            )
+        )
+        self.assertIsNone(
+            multi_repo_registry.task_repository_slug_and_default_branch({}, None)
+        )
+
+    def test_task_repository_slug_and_default_branch_respects_config_override(self) -> None:
+        config = {
+            "coordination": {
+                "repositories": {
+                    "execute_plans": {
+                        "repo": "custom/execute-plans-fork",
+                        "default_branch": "dev-custom",
+                    }
+                }
+            }
+        }
+        self.assertEqual(
+            multi_repo_registry.task_repository_slug_and_default_branch(
+                config, {"target_repo": "execute-plans"}
+            ),
+            ("custom/execute-plans-fork", "dev-custom"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
