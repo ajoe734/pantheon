@@ -30,14 +30,14 @@ def stamp(event):
     return event
 
 
-def fixture(tmp_path):
+def fixture(tmp_path, terminal_outcome="completed"):
     root = tmp_path / "status"
     (root / ".orchestrator").mkdir(parents=True)
     config = config_fixture(root)
     config["paths"]["approval_queue"] = str(root / ".orchestrator" / "approvals.json")
     config["task_state_store"] = {"mode": "authoritative", "event_log": str(tmp_path / "tasks.jsonl")}
     full = task_fixture("TASK-1", status="done", owner="Codex", reviewer="Claude")
-    full.update(generation=1, terminal_outcome="completed")
+    full.update(generation=1, terminal_outcome=terminal_outcome)
     archive = {"task_id": full["id"], "task": copy.deepcopy(full)}
     path = root / "ai-task-archive" / "tasks" / "TASK-1.json"
     path.parent.mkdir(parents=True)
@@ -81,8 +81,9 @@ def test_archive_resolution_is_proven_detached_and_fail_closed(tmp_path, damage)
 @pytest.mark.parametrize("mode", ["poll", "boot"])
 @pytest.mark.parametrize("bad_proof", [False, True])
 @pytest.mark.parametrize("proof_drift", [False, True])
-def test_real_exited_workers_archive_and_unrelated_cleanup_commit(tmp_path, mode, bad_proof, proof_drift):
-    config, canonical, path = fixture(tmp_path)
+@pytest.mark.parametrize("terminal_outcome", ["completed", "superseded"])
+def test_real_exited_workers_archive_and_unrelated_cleanup_commit(tmp_path, mode, bad_proof, proof_drift, terminal_outcome):
+    config, canonical, path = fixture(tmp_path, terminal_outcome)
     if bad_proof:
         canonical["archive_receipts"]["TASK-1"]["snapshot_sha256"] = "f" * 64
     second = task_fixture("TASK-2", status="done", owner="Codex", reviewer="Claude")
@@ -103,7 +104,11 @@ def test_real_exited_workers_archive_and_unrelated_cleanup_commit(tmp_path, mode
                 task_id=worker["task_id"], worker_run_id=worker["run_id"],
                 queue_event_id=worker["queue_event_id"], pid=worker["pid"],
                 pid_start_ticks=worker["pid_start_ticks"])
-            event = fixtures.RuntimeAndFailureSemanticsTests._exact_lifecycle_event(worker, event_type="done")
+            event_type = "superseded" if number == 1 and terminal_outcome == "superseded" else "done"
+            # Independent cancellation requires archive-proven role authority;
+            # it is not this worker's exact normal-done responsibility event.
+            actor = "Claude" if event_type == "superseded" else "Codex"
+            event = fixtures.RuntimeAndFailureSemanticsTests._exact_lifecycle_event(worker, event_type=event_type, agent=actor)
             event["task_id"] = worker["task_id"]
             events.append(stamp(event))
             runtime["workers"][worker["run_id"]] = worker
@@ -135,7 +140,8 @@ def test_real_exited_workers_archive_and_unrelated_cleanup_commit(tmp_path, mode
         assert sup._run_reserved_runtime_phase(config, "test-boundary", run) == expect_commit
         retry_write.assert_not_called()
     final = runtime_state.load_runtime_state(config)
-    assert final["workers"].get("run-1", {}).get("status", "completed") == ("running" if bad_proof or not expect_commit else "completed")
+    ended_status = "superseded" if terminal_outcome == "superseded" else "completed"
+    assert final["workers"].get("run-1", {}).get("status", ended_status) == ("running" if bad_proof or not expect_commit else ended_status)
     assert final["workers"].get("run-2", {}).get("status", "completed") == ("completed" if expect_commit else "running")
     assert final["queue"]["events"]["event-1"]["status"] == ("processing" if bad_proof or not expect_commit else "completed")
     assert final["queue"]["events"]["event-2"]["status"] == ("completed" if expect_commit else "processing")
