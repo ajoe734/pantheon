@@ -15116,6 +15116,14 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     evidence_entities: Set[Tuple[str, str]] = set()
     evidence_source_types: Set[str] = set()
 
+    # Authorization scoping must happen before any owner/provenance is derived
+    # from a record list, or a foreign tenant's owner/source_version/
+    # correlation_id can leak into this tenant's observation even when the
+    # authorized record count is zero. Pass this into the service so the
+    # filter runs before provenance derivation, not after.
+    def _tenant_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return _mgmt_nl_filter_tenant_records(records, tenant_id)
+
     if use_all or focus == "cockpit":
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
@@ -15133,8 +15141,9 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(anomalies_payload.get("items") or []),
                 tenant_id,
             )
-            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
-            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
             trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "human_inbox", "id", "item_id")
@@ -15164,8 +15173,9 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "trading_pulse":
         try:
-            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
-            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
             pulse_data = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             evidence_source_types.update({"runtime", "runtime_binding", "telemetry", "paper_live_drift"})
             snippets["trading_pulse"] = {
@@ -15182,10 +15192,12 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "portfolio":
         try:
-            pools_raw, pools_obs = _management_ai_context_service.get_context_capital_pools()
-            pools = _mgmt_nl_filter_tenant_records(pools_raw, tenant_id)
-            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
-            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
+            pools, pools_obs = _management_ai_context_service.get_context_capital_pools(
+                record_filter=_tenant_record_filter
+            )
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
@@ -15198,7 +15210,6 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             ]
             telemetry_values = [t for t, _obs in telemetry_results if t is not None]
             telemetry_observations = [obs for _t, obs in telemetry_results]
-            telemetry_failed = any(obs.get("status") != "ok" for obs in telemetry_observations)
             portfolio_rollup = _management_telemetry_rollup(telemetry_values)
             snippets["portfolio"] = {
                 "capital_pool_count": len(pools),
@@ -15208,12 +15219,21 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
                 "total_trades": portfolio_rollup.get("total_trades"),
             }
-            if telemetry_failed:
+            # Aggregate every contributing owner observation instead of only
+            # looking at telemetry: a runtime/pool read failure must not be
+            # masked by another surface's success (e.g. pools present while
+            # runtime bindings raised).
+            contributing_statuses = [
+                pools_obs.get("status"),
+                runtime_bindings_obs.get("status"),
+                *[obs.get("status") for obs in telemetry_observations],
+            ]
+            if any(status == "unavailable" for status in contributing_statuses):
+                portfolio_status = "unavailable"
+            elif any(status != "ok" for status in contributing_statuses):
                 portfolio_status = "degraded"
-            elif pools or runtime_bindings:
-                portfolio_status = "ok"
             else:
-                portfolio_status = pools_obs["status"]
+                portfolio_status = "ok"
             surfaces["portfolio_book"] = {
                 "status": portfolio_status,
                 "source": "bff_composed",
@@ -15225,12 +15245,15 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     if use_all or focus == "persona_fleet":
         try:
             personas = _mgmt_nl_filter_tenant_records(_list_persona_records(tenant_id), tenant_id)
-            runtime_bindings_raw, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings()
-            runtime_bindings = _mgmt_nl_filter_tenant_records(runtime_bindings_raw, tenant_id)
-            incidents_raw, incidents_obs = _management_ai_context_service.get_context_incidents()
-            incidents = _mgmt_nl_filter_tenant_records(incidents_raw, tenant_id)
-            evolution_decisions_raw, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions()
-            evolution_decisions = _mgmt_nl_filter_tenant_records(evolution_decisions_raw, tenant_id)
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
+            incidents, incidents_obs = _management_ai_context_service.get_context_incidents(
+                record_filter=_tenant_record_filter
+            )
+            evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
+                record_filter=_tenant_record_filter
+            )
             fleet_items = [
                 _project_persona_fleet_item(
                     persona,
@@ -15259,8 +15282,21 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": fleet_summary,
                 "items": fleet_items,
             }
+            fleet_contributing_statuses = [
+                runtime_bindings_obs.get("status"),
+                incidents_obs.get("status"),
+                evolution_decisions_obs.get("status"),
+            ]
+            if not personas:
+                fleet_status = "unavailable"
+            elif any(status == "unavailable" for status in fleet_contributing_statuses):
+                fleet_status = "unavailable"
+            elif any(status != "ok" for status in fleet_contributing_statuses):
+                fleet_status = "degraded"
+            else:
+                fleet_status = "ok"
             surfaces["persona_fleet"] = {
-                "status": "ok" if personas else "unavailable",
+                "status": fleet_status,
                 "source": "bff_composed",
                 "owner_observations": [runtime_bindings_obs, incidents_obs, evolution_decisions_obs],
             }

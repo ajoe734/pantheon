@@ -2110,6 +2110,7 @@ class ManagementService:
         subject_type: str,
         owner: str,
         args: Tuple[Any, ...] = (),
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         store = self._resolve_store()
         domain_status = self._resolve_domain_surface_status(subject_type, store)
@@ -2140,8 +2141,22 @@ class ManagementService:
                 source_kind="unavailable",
                 degradation_reason=f"{subject_type} read failed: {exc}",
             )
-        status = "ok"
-        if not items and domain_status is not None and domain_status.get("status") == "degraded":
+        # Authorization scoping (e.g. tenant filtering) must happen before any
+        # owner/provenance derivation below, or a foreign owner's provenance
+        # (or presence) can leak into the caller's observation even when the
+        # caller's own scoped record count is zero.
+        if record_filter is not None:
+            items = record_filter(items)
+        # A separately probed domain_status can go stale relative to the read
+        # that just happened (e.g. a flaky provider that answered the probe
+        # but then failed on the actual list call and swallowed the error).
+        # Only a non-empty read outcome is trusted as "ok"; any empty result
+        # fails closed instead of inheriting a possibly-stale healthy probe.
+        if items:
+            status = "ok"
+        elif domain_status is not None and domain_status.get("status") == "unavailable":
+            status = "unavailable"
+        else:
             status = "degraded"
         provenance = self._record_provenance(items)
         if provenance is not None:
@@ -2162,25 +2177,46 @@ class ManagementService:
         )
 
     def get_context_runtime_bindings(
-        self, *, owner: str = "management_ai_context"
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_list("list_runtime_bindings", subject_type="runtime_bindings", owner=owner)
-
-    def get_context_capital_pools(
-        self, *, owner: str = "management_ai_context"
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_list("list_capital_pools", subject_type="capital_pools", owner=owner)
-
-    def get_context_incidents(
-        self, *, owner: str = "management_ai_context"
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        return self._typed_context_list("list_incidents", subject_type="incidents", owner=owner)
-
-    def get_context_evolution_decisions(
-        self, *, owner: str = "management_ai_context"
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         return self._typed_context_list(
-            "list_evolution_decisions", subject_type="evolution_decisions", owner=owner
+            "list_runtime_bindings", subject_type="runtime_bindings", owner=owner, record_filter=record_filter
+        )
+
+    def get_context_capital_pools(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_capital_pools", subject_type="capital_pools", owner=owner, record_filter=record_filter
+        )
+
+    def get_context_incidents(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_incidents", subject_type="incidents", owner=owner, record_filter=record_filter
+        )
+
+    def get_context_evolution_decisions(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_evolution_decisions",
+            subject_type="evolution_decisions",
+            owner=owner,
+            record_filter=record_filter,
         )
 
     def get_context_telemetry_summary(
@@ -2216,6 +2252,18 @@ class ManagementService:
                 owner=observation_owner,
                 source_kind="live",
                 degradation_reason="telemetry summary not found for this runtime.",
+            )
+        provenance = self._record_provenance([summary]) if isinstance(summary, dict) else None
+        if provenance is not None:
+            return summary, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status="ok",
+                owner=str(provenance.get("owner") or observation_owner),
+                source_kind=str(provenance.get("source_kind") or "live"),
+                source_version=provenance.get("source_version"),
+                observed_at=provenance.get("observed_at"),
+                correlation_id=provenance.get("correlation_id"),
             )
         return summary, self._context_observation(
             subject_type="telemetry",

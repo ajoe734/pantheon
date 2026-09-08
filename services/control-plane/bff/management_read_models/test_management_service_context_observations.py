@@ -13,11 +13,25 @@ Acceptance criteria covered (pkt-pantheon-structural-closure-functional-v2-20260
      ``_mgmt_nl_collect_context`` portfolio collector produces an explicit
      unavailable telemetry observation and the portfolio_book surface does
      not report "ok" while that failure is unresolved.
+  4. Tenant scoping filters records before any owner/provenance is derived,
+     so a foreign tenant's provenance never leaks into another tenant's
+     context even when the authorized record count is zero.
+  5. Real telemetry-summary provenance (owner/source_kind/source_version/
+     observed_at/correlation_id) is preserved, not overwritten with
+     runtime_id/live/now/freshness=0.
+  6. A domain surface status probe answered successfully followed by the
+     actual read call failing (error swallowed by the underlying port) is
+     not reported as a healthy/live read; availability is bound to the
+     real read outcome and fails closed.
+  7. A runtime/pool observation failure inside the portfolio/persona_fleet
+     collectors is aggregated into the surface status instead of being
+     masked by another contributing surface's success.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,8 +39,32 @@ import pytest
 
 from services.control_plane.bff.management_read_models.service import ManagementService
 from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.ports.persona_capital_runtime import RuntimePort
 
 NOW = "2026-09-08T18:00:00Z"
+
+
+def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a") -> dict:
+    """Execute the exact committed context collector plus its tenant-scoping
+    helpers, isolating unrelated adapters."""
+    tree = ast.parse(Path("services/control-plane/bff/main.py").read_text())
+    names = {
+        "_mgmt_nl_collect_context",
+        "_mgmt_nl_filter_tenant_records",
+        "_mgmt_nl_record_matches_tenant",
+        "_mgmt_nl_record_tenant_ids",
+        "_mgmt_nl_scope_values",
+    }
+    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    namespace = dict(__import__("typing").__dict__)
+    namespace.update(
+        re=re,
+        _management_ai_context_service=ManagementService(read_store=store, utc_now=lambda: NOW),
+        _mgmt_nl_add_record_entities=lambda *args: None,
+        _management_telemetry_rollup=lambda *args: {},
+    )
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "main.py", "exec"), namespace)
+    return namespace["_mgmt_nl_collect_context"]("portfolio", NOW, tenant_id)
 
 
 def test_replay_owner_provenance_is_preserved() -> None:
@@ -107,3 +145,69 @@ def test_telemetry_failure_remains_explicit_in_portfolio_context() -> None:
         o["subject_type"] == "telemetry" and o["status"] == "unavailable"
         for o in surface["owner_observations"]
     )
+
+
+def test_telemetry_replay_provenance_is_preserved() -> None:
+    record = dict(
+        runtime_id="r1",
+        owner="telemetry",
+        source_kind="backfill",
+        source_version="v9",
+        observed_at="2026-09-07T18:00:00Z",
+        correlation_id="c9",
+    )
+    store = SimpleNamespace(get_telemetry_summary=lambda _: record)
+    _summary, obs = ManagementService(read_store=store, utc_now=lambda: NOW).get_context_telemetry_summary("r1")
+    assert (
+        obs["owner"],
+        obs["source_kind"],
+        obs["source_version"],
+        obs["observed_at"],
+        obs["freshness_seconds"],
+        obs["correlation_id"],
+    ) == ("telemetry", "backfill", "v9", record["observed_at"], 86400, "c9"), obs
+
+
+def test_tenant_b_provenance_does_not_enter_tenant_a_context() -> None:
+    foreign = dict(
+        runtime_id="r-b",
+        tenant_id="tenant-b",
+        owner="owner-b",
+        source_kind="live",
+        source_version="private-v-b",
+        correlation_id="private-c-b",
+    )
+    store = SimpleNamespace(list_runtime_bindings=lambda: [foreign], list_capital_pools=lambda: [])
+    context = _collect_context(store)
+    assert context["snippets"]["portfolio"]["runtime_count"] == 0
+    assert "private-c-b" not in repr(context), context["surfaces"]
+
+
+def test_unavailable_runtime_does_not_produce_healthy_portfolio() -> None:
+    def fail() -> None:
+        raise RuntimeError("runtime owner down")
+
+    context = _collect_context(
+        SimpleNamespace(list_runtime_bindings=fail, list_capital_pools=lambda: [{"pool_id": "p1"}])
+    )
+    surface = context["surfaces"]["portfolio_book"]
+    assert surface["status"] != "ok", surface
+
+
+def test_read_failure_after_status_probe_is_not_healthy_live() -> None:
+    calls = []
+
+    def provider():
+        calls.append(1)
+        if len(calls) == 1:
+            return [{"runtime_id": "r1"}]
+        raise RuntimeError("provider became unavailable")
+
+    runtime = RuntimePort(runtime_bindings_provider=provider)
+    store = SimpleNamespace(
+        get_surface_status=lambda: {"persona_capital_runtime": {"runtime": runtime.get_surface_status()}},
+        list_runtime_bindings=runtime.list_runtime_bindings,
+    )
+    rows, obs = ManagementService(read_store=store).get_context_runtime_bindings()
+    assert rows == []
+    assert obs["status"] != "ok", obs
