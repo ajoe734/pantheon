@@ -15931,12 +15931,6 @@ def run_once(
             config,
             quiet=quiet,
         )
-        _safe_phase(
-            "refresh_dashboard_runtime_artifacts",
-            refresh_dashboard_runtime_artifacts,
-            config,
-            quiet=quiet,
-        )
         if isinstance(postlock_state, dict):
             _safe_phase(
                 "log_runtime_summary",
