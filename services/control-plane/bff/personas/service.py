@@ -2131,24 +2131,19 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
         ) from exc
 
     for record in prov_records:
-        persona_proj, meta_proj = _persona_record_for_provisioning(
-            record,
-            payload=record.request_payload,
-            owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
-        )
-        pid = record.persona_id
-        if pid not in records_by_id:
-            records_by_id[pid] = persona_proj
-        else:
-            existing = records_by_id[pid]
-            existing_meta = dict(existing.get("metadata") or {}) if isinstance(existing.get("metadata"), dict) else {}
-            for k, v in meta_proj.items():
-                if v is not None and (k not in existing_meta or not existing_meta[k]):
-                    existing_meta[k] = v
-            existing["metadata"] = existing_meta
-            if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
-                existing["lifecycle_state"] = "paper_running"
-
+        try:
+            persona_proj, _ = _persona_record_for_provisioning(
+                record,
+                payload=record.request_payload,
+                owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
+            )
+        except ProvisioningConflict:
+            # A ledger row cannot relabel a different canonical owner record.
+            log.warning("Skipping Persona provisioning projection with conflicting owner scope")
+            continue
+        # This scoped projection retains canonical fields and overlays current
+        # ledger metadata, including pending/failed progress after a reload.
+        records_by_id[record.persona_id] = persona_proj
 
     result = list(records_by_id.values())
     if clean_tenant:
@@ -3761,7 +3756,18 @@ def _persona_record_for_provisioning(
         )
         if isinstance(raw_traits, dict) and raw_traits.get(key) not in (None, "")
     } or None
-    if record.state == "succeeded":
+    # Match the terminal materializer's minimum receipt contract. A state
+    # label alone must not bypass authoritative runtime readback.
+    succeeded_with_readback = (
+        record.state == "succeeded"
+        and bool(str(record.references.get("runtime_binding_id") or "").strip())
+        and bool(str(record.references.get("runtime_id") or "").strip())
+        and isinstance(record.references.get("authoritative_readback"), Mapping)
+        and isinstance(record.result, Mapping)
+        and record.result.get("paper_running") is True
+        and record.result.get("status") == "paper_running"
+    )
+    if succeeded_with_readback:
         lifecycle_state = "paper_running"
     elif record.state in {"failed", "compensated"}:
         lifecycle_state = "provisioning_failed"
@@ -3824,20 +3830,22 @@ def _persona_record_for_provisioning(
     else:
         existing_metadata = existing.get("metadata")
         existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
-        if mutate_store and (
+        if (
+            str(existing.get("persona_id") or existing.get("id") or "").strip()
+            != record.persona_id
+            or
             str(existing.get("name") or "").strip()
             != str(payload.get("name") or record.normalized_name).strip()
-            or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
+            or _persona_record_tenant_id(existing) != record.tenant_id
         ):
             raise ProvisioningConflict(
                 "stable Persona identity is already occupied by different tenant/name semantics"
             )
-        if (
-            record.state == "succeeded"
-            and str(existing.get("lifecycle_state") or "") == "paper_running"
-        ):
-            lifecycle_state = "paper_running"
-        elif existing.get("lifecycle_state") and record.state == "succeeded":
+        if existing.get("lifecycle_state") not in {
+            "draft", "research_only", "provisioning", "provisioning_failed", "paper_running",
+        }:
+            # Provisioning is not authority to reactivate frozen/retired
+            # owners or downgrade a later governed lifecycle.
             lifecycle_state = str(existing.get("lifecycle_state"))
         if mutate_store:
             if not callable(updater):
@@ -3859,7 +3867,6 @@ def _persona_record_for_provisioning(
                 "actor_id": str(existing.get("actor_id") or canonical_owner),
                 "created_by": str(existing.get("created_by") or canonical_owner),
                 "archetype": existing.get("archetype") or archetype,
-                "lifecycle_state": lifecycle_state,
                 "risk_level": existing.get("risk_level") or risk,
                 "mandate": existing.get("mandate") or mandate,
                 "strategy_family": existing.get("strategy_family") or strategy_family,
@@ -3867,6 +3874,21 @@ def _persona_record_for_provisioning(
                 "metadata": {**existing_metadata, **metadata},
                 "required_data_sources": existing.get("required_data_sources") or _persona_create_required_data_sources(payload),
             }
+    if persona.get("lifecycle_state") in {
+        "draft", "research_only", "provisioning", "provisioning_failed", "paper_running",
+    }:
+        # The owner remains draft/research_only. Only this BFF projection
+        # exposes coordinator progress to the response and reconciler.
+        owner_state = persona.get("owner_lifecycle_state")
+        if persona.get("lifecycle_state") in {"draft", "research_only"}:
+            owner_state = persona["lifecycle_state"]
+        persona = {
+            **persona,
+            "lifecycle_state": lifecycle_state,
+            "metadata": {**(persona.get("metadata") or {}), **metadata},
+        }
+        if owner_state:
+            persona["owner_lifecycle_state"] = owner_state
     return persona, metadata
 
 
