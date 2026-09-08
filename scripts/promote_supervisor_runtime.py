@@ -1176,6 +1176,7 @@ def qualify_and_drain_incumbent_writers(
     # 2. Check and drain workers
     workers = raw_state.get("workers") if isinstance(raw_state.get("workers"), Mapping) else {}
     workers_drained: list[int] = []
+    drained_run_ids: set[str] = set()
     conflict_statuses = {
         "queued",
         "started",
@@ -1220,6 +1221,7 @@ def qualify_and_drain_incumbent_writers(
                     f"worker process {pid} ({run_id}) did not stop within {timeout_seconds:g}s"
                 )
             workers_drained.append(pid)
+            drained_run_ids.add(str(run_id))
         else:
             raise RuntimeError(
                 f"cannot promote runtime: active worker {run_id} in un-drainable status {status}"
@@ -1233,7 +1235,9 @@ def qualify_and_drain_incumbent_writers(
     )
     in_flight_events = [
         str(eid) for eid, ev in queue_events.items()
-        if isinstance(ev, Mapping) and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
+        if isinstance(ev, Mapping)
+        and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
+        and str(ev.get("run_id") or "") not in drained_run_ids
     ]
     if in_flight_events:
         raise RuntimeError(
@@ -1276,6 +1280,7 @@ def qualify_and_drain_incumbent_writers(
     return {
         "drained": True,
         "workers_drained": workers_drained,
+        "drained_run_ids": sorted(drained_run_ids),
         "reservations": recovered_reservations,
     }
 
