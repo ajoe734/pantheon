@@ -1096,7 +1096,11 @@ def _recover_stopped_runtime_phase_reservations(
     recovered: list[str] = []
     config = dict(incumbent)
     for phase_name in active_reservations:
-        outcome = supervisor._recover_runtime_phase_reservation(config, phase_name)
+        outcome = supervisor._recover_runtime_phase_reservation(
+            config,
+            phase_name,
+            runtime_admission_locked=True,
+        )
         if outcome is False:
             raise RuntimeError(
                 "cannot promote runtime: supervisor reservation could not be "

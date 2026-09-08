@@ -2085,6 +2085,31 @@ def test_qualify_and_drain_incumbent_writers_fails_closed_on_active_reservations
         promotion.qualify_and_drain_incumbent_writers(incumbent, timeout_seconds=1.0)
 
 
+def test_stopped_reservation_recovery_uses_the_promotion_admission_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def recover(
+        _config: dict[str, object],
+        phase_name: str,
+        *,
+        runtime_admission_locked: bool = False,
+    ) -> None:
+        calls.append((phase_name, runtime_admission_locked))
+
+    monkeypatch.setattr(
+        promotion.supervisor,
+        "_recover_runtime_phase_reservation",
+        recover,
+    )
+
+    assert promotion._recover_stopped_runtime_phase_reservations(
+        {"paths": {}}, ["poll_workers_before_plan"]
+    ) == ["poll_workers_before_plan"]
+    assert calls == [("poll_workers_before_plan", True)]
+
+
 def test_remove_retired_path_fence_restricted_to_verified_fences(tmp_path: Path) -> None:
     reg_file = tmp_path / "regular.json"
     reg_file.write_text("{}", encoding="utf-8")

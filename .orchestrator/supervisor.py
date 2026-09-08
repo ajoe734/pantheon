@@ -7191,11 +7191,23 @@ def _clear_stale_runtime_phase_launch_intent(
     reservation_token: str,
     intent: Mapping[str, Any],
     marker_count: int,
+    runtime_admission_locked: bool = False,
 ) -> bool:
-    """Clear an unchanged stale intent after a conclusive zero-process scan."""
+    """Clear an unchanged stale intent after a conclusive zero-process scan.
+
+    Callers that already own the canonical runtime-admission lock may set
+    ``runtime_admission_locked``.  This is needed by runtime promotion, which
+    owns that lock across its stop/drain/migrate transaction and therefore
+    cannot acquire the non-reentrant file lock a second time.
+    """
 
     cleared = False
-    with _measured_runtime_state_lock(config):
+    lock = (
+        nullcontext()
+        if runtime_admission_locked
+        else _measured_runtime_state_lock(config)
+    )
+    with lock:
         current = load_runtime_state(config)
         reservation = _runtime_phase_reservation_record(
             current,
@@ -7240,6 +7252,8 @@ def _clear_stale_runtime_phase_launch_intent(
 def _recover_runtime_phase_reservation(
     config: dict[str, Any],
     phase_name: str,
+    *,
+    runtime_admission_locked: bool = False,
 ) -> bool | None:
     """Adopt a launched worker before allowing a reserved phase to repeat.
 
@@ -7248,8 +7262,13 @@ def _recover_runtime_phase_reservation(
     closed. ``True`` means the exact worker/queue lease was adopted.
     """
 
+    lock = (
+        nullcontext()
+        if runtime_admission_locked
+        else _measured_runtime_state_lock(config)
+    )
     cleared_legacy = False
-    with _measured_runtime_state_lock(config):
+    with lock:
         current = load_runtime_state(config)
         reservations = current.setdefault("supervisor", {}).setdefault(
             "runtime_phase_reservations",
@@ -7322,6 +7341,7 @@ def _recover_runtime_phase_reservation(
                 reservation_token=reservation_token,
                 intent=intent,
                 marker_count=len(marker_candidates),
+                runtime_admission_locked=runtime_admission_locked,
             ):
                 return False
             return None
@@ -7347,7 +7367,12 @@ def _recover_runtime_phase_reservation(
 
     reservation_token = str(reservation_snapshot.get("token") or "")
     adopted = False
-    with _measured_runtime_state_lock(config):
+    lock = (
+        nullcontext()
+        if runtime_admission_locked
+        else _measured_runtime_state_lock(config)
+    )
+    with lock:
         current = load_runtime_state(config)
         current_reservation = _runtime_phase_reservation_record(
             current,

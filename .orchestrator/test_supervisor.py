@@ -16721,5 +16721,43 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                             proc.wait(timeout=2)
 
 
+class RuntimeAdmissionReentryTests(unittest.TestCase):
+    def test_recovery_reuses_an_already_held_runtime_admission_lock(self) -> None:
+        state: dict[str, Any] = {
+            "supervisor": {
+                "runtime_phase_reservations": {
+                    "poll_workers_before_plan": {"token": "legacy-token"}
+                }
+            }
+        }
+        saved: list[dict[str, Any]] = []
+
+        @contextmanager
+        def unexpected_lock(_config: dict[str, Any]):
+            raise AssertionError("recovery attempted to re-enter runtime-admission lock")
+            yield
+
+        with (
+            mock.patch.object(
+                supervisor, "_measured_runtime_state_lock", unexpected_lock
+            ),
+            mock.patch.object(supervisor, "load_runtime_state", return_value=state),
+            mock.patch.object(
+                supervisor,
+                "save_runtime_state",
+                side_effect=lambda _c, s: saved.append(copy.deepcopy(s)),
+            ),
+        ):
+            result = supervisor._recover_runtime_phase_reservation(
+                {},
+                "poll_workers_before_plan",
+                runtime_admission_locked=True,
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(saved), 1)
+        self.assertNotIn("runtime_phase_reservations", saved[0]["supervisor"])
+
+
 if __name__ == "__main__":
     unittest.main()
