@@ -11047,6 +11047,36 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def test_canonical_task_review_mode_accepts_matching_exact_bindings(self) -> None:
+        task = {
+            "status": "review_approved",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "kind": "pull_request",
+                "pr": 152,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+        }
+        self.assertFalse(ai_status.exact_head_acceptance_available(task, {}))
+        self.assertTrue(
+            ai_status.exact_head_acceptance_available(
+                task, {"review_gate": {"github_review_bridge_required": False}}
+            )
+        )
+        task[ai_status.APPROVAL_BINDING_KEY]["head_sha"] = "b" * 40
+        self.assertFalse(
+            ai_status.exact_head_acceptance_available(
+                task, {"review_gate": {"github_review_bridge_required": False}}
+            )
+        )
+
     def test_collect_done_uses_exact_approved_head_after_workspace_fast_forward(self) -> None:
         approved_head = "a" * 40
         workspace_head = "d" * 40

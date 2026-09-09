@@ -918,13 +918,31 @@ class ReadSurfacePorts:
         return actions
 
     def get_rollbacks(self, runtime_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        _, runs = self.lifecycle_telemetry_governance.list_loop_runs()
+        # list_loop_runs() returns (False, []) when the rollback owner is
+        # unconfigured/unavailable, distinct from an authoritative healthy
+        # empty result (True, []). A bare empty list cannot be told apart
+        # from a missing owner, so a genuinely unavailable owner must raise
+        # instead of returning a false-healthy empty list; callers that need
+        # the previous best-effort-empty behavior already catch broadly
+        # (management context rollback observations, and the runtime/
+        # deployment-review routers that must not surface a 500 for a
+        # merely-unconfigured owner).
+        available, runs = self.lifecycle_telemetry_governance.list_loop_runs()
+        if not available:
+            raise RuntimeError("rollback read surface is unavailable or unconfigured.")
         if runtime_id:
             return [r for r in runs if r.get("runtime_id") == runtime_id]
         return runs
 
     def list_all_rollbacks(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.get_rollbacks()
+        # Preserves its long-standing best-effort empty-list contract for
+        # generic evolution-journal/rollback-listing callers that are not
+        # owner-observation aware; get_rollbacks() itself raises on a
+        # genuinely unavailable owner for callers that need that signal.
+        try:
+            return self.get_rollbacks()
+        except Exception:
+            return []
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_paper_live_drift_reports()

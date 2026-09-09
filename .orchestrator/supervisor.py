@@ -4534,15 +4534,19 @@ def provider_stream_event_key(payload: Mapping[str, Any]) -> str:
 
 
 def provider_stream_event_is_meaningful(payload: Mapping[str, Any]) -> bool:
+    """Return whether a provider event extends a worker's work lease.
+
+    Streamed tool calls and text deltas show that a model is alive, but do not
+    establish that the task moved forward.  Treating each of them as work
+    progress lets an agent indefinitely renew a lease by repeatedly reading
+    the same files.  Source/commit observations cover durable work; a terminal
+    provider result covers completion or failure.
+    """
     event_type = str(payload.get("type") or "").strip().lower()
     if event_type == "init":
         return False
     if event_type == "step_update":
-        step = payload.get("step_update")
-        if not isinstance(step, Mapping):
-            return False
-        step_type = str(step.get("type") or step.get("step_type") or "").strip().lower()
-        return step_type not in {"", "user_input", "checkpoint"}
+        return False
     if event_type == "user":
         return False
     return bool(event_type)
@@ -5327,8 +5331,10 @@ def worker_active_process_lease_is_fresh(
 
     Provider output and commits are still the preferred progress signals.  A
     quiet test process can use this fallback only while its process tree keeps
-    advancing, its provider has a configured hard timeout, and that deadline
-    has not passed.  A provider without a timeout never receives this grace.
+    advancing, its provider is quiet, it has a configured hard timeout, and
+    that deadline has not passed.  A provider without a timeout never receives
+    this grace.  Provider output that continues without durable work is an
+    active agent loop, not a quiet foreground validation command.
     """
 
     deadline = worker_active_process_lease_deadline(config, worker)
@@ -5338,6 +5344,13 @@ def worker_active_process_lease_is_fresh(
     if last_activity is None:
         return False
     settings = worker_runtime_settings(config)
+    last_provider_event = _parse_iso_utc(str(worker.get("last_event_at") or ""))
+    if last_provider_event is not None and rewrite_worker_lifecycle.lease_progress_is_fresh(
+        last_progress_epoch=last_provider_event.timestamp(),
+        now_epoch=now.timestamp(),
+        stall_seconds=float(settings.get("work_progress_stale_seconds", 360)),
+    ):
+        return False
     return rewrite_worker_lifecycle.lease_progress_is_fresh(
         last_progress_epoch=last_activity.timestamp(),
         now_epoch=now.timestamp(),
@@ -11020,7 +11033,7 @@ def poll_worker_stall_stage(
     now: datetime,
     stall_after: float,
 ) -> dict[str, bool]:
-    """Mark a stale worker; lease expiry remains the sole termination path."""
+    """Fence a stale worker for the existing next-cycle lease recovery path."""
     if not alive:
         return {"changed": False, "stop": False}
 
@@ -11048,22 +11061,37 @@ def poll_worker_stall_stage(
     baseline = last_work_progress_dt or _parse_iso_utc(str(worker.get("lease_acquired_at") or ""))
     if baseline is not None:
         stalled_for_seconds = (now - baseline).total_seconds()
-        if stalled_for_seconds >= stall_after and worker.get("status") != "stalled":
+        # A quiet, bounded foreground validation command is allowed to retain
+        # its active-process grace.  A provider that continues to emit tool or
+        # text steps without source/commit progress is not such a command.
+        if (
+            stalled_for_seconds >= stall_after
+            and worker.get("status") != "stalled"
+            and not worker_lease_progress_is_fresh(config, worker, now)
+        ):
             worker["status"] = "stalled"
+            # Do not terminate here: the observation stage owns the one
+            # typed lost-lease recovery path.  Fencing the lease makes the
+            # next cycle take that path instead of leaving a stale worker to
+            # occupy its initial multi-hour lease.
+            worker["lease_expires_at"] = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
             write_activity_log(
                 config,
                 {
                     "type": "worker_stalled",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": f"Worker appears stalled after {int(stall_after)} seconds without meaningful provider or commit progress.",
+                    "message": (
+                        f"Worker appears stalled after {int(stall_after)} seconds without "
+                        "durable work progress; its lease was fenced for typed recovery."
+                    ),
                     "worker_run_id": worker["run_id"],
                 },
             )
             changed = True
     # Preserve the existing stage short-circuit for live workers. The
-    # observation stage's lease expiry is the only code allowed to terminate
-    # this process; this stage only changes the diagnostic status.
+    # observation stage is the only code allowed to terminate a worker and
+    # materialize its typed recovery receipt.
     return {"changed": changed, "stop": True}
 
 

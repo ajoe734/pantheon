@@ -692,7 +692,14 @@ def create_runtime_router(
         identity = _extract_identity(authorization)
         _require_read_role(identity)
 
-        rollbacks = read_store.get_rollbacks(runtime_id)
+        # An unavailable/unconfigured rollback owner now raises instead of
+        # returning a false-healthy empty list; this route is not
+        # owner-observation aware, so it keeps its prior best-effort
+        # empty-list behavior instead of turning a missing owner into a 500.
+        try:
+            rollbacks = read_store.get_rollbacks(runtime_id)
+        except Exception:
+            rollbacks = []
         return {
             "data": rollbacks,
             "meta": {
