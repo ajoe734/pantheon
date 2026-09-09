@@ -111,8 +111,10 @@ from runtime_state import (
 from rewrite.task_state_store import (
     append_state_commit,
     load_snapshot,
+    review_decision_task_digest,
     snapshot_transaction,
 )
+from rewrite.worker_recovery import task_has_active_worker_recovery
 from rewrite import task_machine, task_state_store
 from rewrite.task_contract import (
     OpenPullRequestDiscovery,
@@ -252,6 +254,9 @@ ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
 WORKER_RECOVERY_TASK_KEY = "worker_recovery"
+RECOGNIZED_WORKER_RECOVERY_STATUSES = frozenset(
+    {"pending", "held", "resolved", "reassigned", "materialized"}
+)
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -2657,33 +2662,6 @@ def task_assignment_generation(task: Mapping[str, Any] | None) -> int:
     return value
 
 
-def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
-    """Fail closed while supervisor-owned lost-lease recovery is unresolved."""
-
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping):
-        return False
-    receipt_id = str(pointer.get("receipt_id") or "").strip()
-    status = str(pointer.get("status") or "").strip()
-    if not receipt_id or status not in {"pending", "reassigned"}:
-        return False
-    generation_key = (
-        "fence_generation" if status == "pending" else "replacement_generation"
-    )
-    raw_authority_generation = pointer.get(generation_key)
-    if (
-        raw_authority_generation in (None, "")
-        or isinstance(raw_authority_generation, bool)
-    ):
-        return True
-    try:
-        authority_generation = int(raw_authority_generation)
-        current_generation = task_assignment_generation(task)
-    except (TypeError, ValueError, RuntimeError):
-        return True
-    return authority_generation == current_generation
-
-
 def validate_bound_status_command_task_authority(
     state: dict[str, Any], command: str, args: list[str]
 ) -> None:
@@ -2965,7 +2943,7 @@ def approved_closeout_commit_ref(
 
     if str(task.get("status") or "").strip() != "review_approved":
         return None
-    if not exact_head_acceptance_evidence_matches(task):
+    if not exact_head_acceptance_available(task, load_config()):
         return None
     binding = task.get(APPROVAL_BINDING_KEY)
     if not isinstance(binding, Mapping):
@@ -2997,6 +2975,34 @@ def approved_closeout_commit_ref(
             f"delivery repository ({approved_head})."
         )
     return approved_head
+
+
+def exact_head_acceptance_available(
+    task: Mapping[str, Any], config: Mapping[str, Any]
+) -> bool:
+    """Resolve exact-head acceptance in the configured review mode.
+
+    Canonical-task review temporarily omits only the GitHub proof write. The
+    same delivery/review binding is still recorded atomically and callers
+    below validate the immutable approval audit before restoring or closing a
+    task. Normal mode keeps the existing GitHub/operator evidence predicate.
+    """
+
+    if exact_head_acceptance_evidence_matches(task):
+        return True
+    if github_review_bridge_required(config):
+        return False
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    approval = task.get(APPROVAL_BINDING_KEY)
+    if not isinstance(delivery, Mapping) or not isinstance(approval, Mapping):
+        return False
+    if str(delivery.get("kind") or "") != "pull_request":
+        return False
+    return all(
+        str(delivery.get(field) or "").strip()
+        == str(approval.get(field) or "").strip()
+        for field in ("pr", "head_sha", "head_branch", "base")
+    )
 
 
 def approved_closeout_metadata_ref(
@@ -5028,7 +5034,44 @@ class DependencyContractBusy(RuntimeError):
     """Existing dispatch/review authority must settle before a revision."""
 
 
-def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set[str]) -> None:
+def _dependency_contract_inactive_worktree_lease(
+    task_id: str,
+    task: Mapping[str, Any],
+    lease: Mapping[str, Any],
+    queue_events: Mapping[str, Any],
+) -> None:
+    """Raise unless a retained lease is provably inactive allocation metadata.
+
+    Absence of an explicit active/released field is not proof by itself.
+    Every correlated signal must independently agree the lease is inactive:
+    the lease's own identity fields must be well-formed and self-consistent,
+    the queue event it last touched must have settled to completed, and the
+    task's own worker_recovery must already pass the existing settled/held
+    recovery validator. Any missing, inconsistent, or malformed signal falls
+    back to the unconditional rejection.
+    """
+    identity_fields = (
+        "branch", "path", "status_root", "source_root", "repository_id",
+        "base_ref", "base_sha", "last_used_at",
+    )
+    if lease.get("task_id") != task_id or lease.get("workspace_task_id") != task_id:
+        raise DependencyContractBusy("affected task has a worktree lease")
+    for key in identity_fields:
+        value = lease.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise DependencyContractBusy("affected task has a worktree lease")
+    event_id = lease.get("last_queue_event_id")
+    event = queue_events.get(event_id) if isinstance(event_id, str) and event_id.strip() else None
+    if not isinstance(event, Mapping) or event.get("status") != "completed":
+        raise DependencyContractBusy("affected task has a worktree lease")
+    # Delegate to the existing settled-recovery contract; its own busy
+    # reasons already distinguish pending/reassigned/malformed recovery.
+    _dependency_contract_validate_worker_recovery(task_id, task)
+
+
+def _dependency_contract_runtime_fence(
+    runtime: Mapping[str, Any], task_ids: set[str], tasks: Mapping[str, Mapping[str, Any]],
+) -> None:
     settled = {"done", "completed", "failed", "cancelled", "canceled", "superseded", "skipped", "expired"}
 
     def records(value, label):
@@ -5055,12 +5098,16 @@ def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set
             raise DependencyContractBusy("unattributable queued intent")
         if (intent.get("task_id") in task_ids or event.get("task_id") in task_ids) and event.get("status") not in settled:
             raise DependencyContractBusy("affected task has a queued launch intent")
+    queue_events = queue.get("events")
     worktrees = runtime.get("worker_worktrees", {})
     if not isinstance(worktrees, Mapping):
         raise DependencyContractBusy("runtime worktree leases are malformed")
     for lease in records(worktrees.get("leases", {}), "worktree leases"):
-        if lease.get("task_id") in task_ids:
-            raise DependencyContractBusy("affected task has a worktree lease")
+        lease_task_id = lease.get("task_id")
+        if lease_task_id in task_ids:
+            _dependency_contract_inactive_worktree_lease(
+                lease_task_id, tasks.get(lease_task_id, {}), lease, queue_events,
+            )
     supervisor = runtime.get("supervisor", {})
     if not isinstance(supervisor, Mapping):
         raise DependencyContractBusy("runtime supervisor is malformed")
@@ -5108,6 +5155,54 @@ def _dependency_contract_reachability(tasks: Mapping[str, Mapping[str, Any]], *,
     return result
 
 
+def _dependency_contract_validate_worker_recovery(
+    task_id: str, task: Mapping[str, Any]
+) -> None:
+    recovery = task.get(WORKER_RECOVERY_TASK_KEY)
+    if recovery in (None, {}, []):
+        return
+    if not isinstance(recovery, Mapping):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    receipt_id = recovery.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id.strip():
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = recovery.get("status")
+    if not isinstance(status, str) or status.strip() not in RECOGNIZED_WORKER_RECOVERY_STATUSES:
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = status.strip()
+    try:
+        current_generation = task_assignment_generation(task)
+    except (TypeError, ValueError, RuntimeError):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    required_generation_keys = {"task_generation", "fence_generation"}
+    if status == "reassigned":
+        required_generation_keys.add("replacement_generation")
+    for req_key in required_generation_keys:
+        if req_key not in recovery:
+            raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    all_gen_keys = {"task_generation", "fence_generation", "replacement_generation"}.union(
+        k for k in recovery if "generation" in k
+    )
+    for gen_key in all_gen_keys:
+        if gen_key not in recovery:
+            continue
+        raw_gen = recovery.get(gen_key)
+        if gen_key in required_generation_keys:
+            if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+            if raw_gen < 0 or raw_gen > current_generation:
+                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+        else:
+            if raw_gen is not None:
+                if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+                if raw_gen < 0 or raw_gen > current_generation:
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    if task_has_active_worker_recovery(task):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+
+
+
 def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:
     """Validate detached prospective rows before one canonical/outbox commit."""
     if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
@@ -5127,7 +5222,7 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
         for row in rows for task_id in [row["task_id"]]
     ):
         return {"status": "replayed", "task_ids": sorted(ids), "request_sha256": digest}
-    _dependency_contract_runtime_fence(runtime, ids)
+    _dependency_contract_runtime_fence(runtime, ids, tasks)
     prospective = deepcopy(tasks)
     terminal_facts = state.get(TERMINAL_FACTS_KEY) or {}
     timestamp = iso_now()
@@ -5144,7 +5239,8 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
         for field in ("review_decision_intent", "review_decision_intent_recovery", "review_decision_resume", "review_requeue_intent", "worker_recovery", "finalize_intent"):
             value = task.get(field)
             if value not in (None, {}, []):
-                if field == "worker_recovery" and isinstance(value, Mapping) and value.get("status") in {"materialized", "resolved"}:
+                if field == "worker_recovery":
+                    _dependency_contract_validate_worker_recovery(task_id, task)
                     continue
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
         if execution_authorization.task_privileged_by_source(task) or any(
@@ -5782,9 +5878,9 @@ def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
             raise SystemExit(
                 f"{task_id} cannot resume integration: delivery and review {field} differ"
             )
-    if not exact_head_acceptance_evidence_matches(task):
+    if not exact_head_acceptance_available(task, load_config()):
         raise SystemExit(
-            f"{task_id} cannot resume integration without matching GitHub approval evidence"
+            f"{task_id} cannot resume integration without matching exact-head acceptance evidence"
         )
 
     # Reuse the merge gate's audit interpretation. Restoring a status must
@@ -8460,17 +8556,6 @@ def task_mutation_cas_digest(task: Mapping[str, Any]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def review_decision_task_digest(task: Mapping[str, Any]) -> str:
-    """Digest business task truth while excluding the intent and UI markers."""
-
-    candidate = deepcopy(dict(task))
-    candidate.pop(REVIEW_DECISION_INTENT_KEY, None)
-    candidate.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
-    candidate.pop("status_write_pending", None)
-    candidate.pop("status_write_pending_count", None)
-    return task_mutation_cas_digest(candidate)
 
 
 def validate_review_decision_intent(value: Any) -> dict[str, Any]:

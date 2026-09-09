@@ -34,6 +34,7 @@ from services.registry.strategy_artifact import (
 from services.governance.approval_authority import (
     ApprovalInvalid, ApprovalUnavailable, configured_approval_reader, NoOwnerRedirect,
 )
+from services.governance.paper_approval_scope import ApprovalUsageContext, current_environment
 
 
 class DeployAuthorityError(RuntimeError):
@@ -240,7 +241,11 @@ def verify_deploy_authorities(
     fetch = fetch_json or _fetch_json
     registry_fetch = registry_fetch_json
     if registry_fetch is None:
-        registry_token = os.getenv('RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN', '').strip()
+        from services.service_token_file import configured_service_token
+        try:
+            registry_token = configured_service_token('RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN')
+        except RuntimeError as exc:
+            raise DeployAuthorityUnavailableError('Registry read principal unavailable') from exc
         if not registry_token:
             raise DeployAuthorityUnavailableError('Registry scoped read principal required')
 
@@ -409,8 +414,28 @@ def verify_deploy_authorities(
     }
     approval_mismatches = []
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    # Bind the approval to the ACTUAL stage and capital scale the runtime is
+    # about to exercise: the canonical plan's target_stage (already proven
+    # equal to the request) and its persisted scale.capital_scale_pct.  The
+    # canary/live promotion verifier calls this same function, so a
+    # paper-scoped approval can never admit promotion or non-zero capital.
+    plan_scale = plan.get("scale")
+    usage_context = None
+    if isinstance(plan_scale, Mapping) and isinstance(plan_scale.get("capital_scale_pct"), (int, float)) \
+            and not isinstance(plan_scale.get("capital_scale_pct"), bool):
+        usage_context = ApprovalUsageContext(
+            environment=current_environment(),
+            target_stage=target_stage,
+            capital_scale_pct=float(plan_scale["capital_scale_pct"]),
+        )
+    elif approval_evidence.authorization_scope is not None:
+        approval_mismatches.append(
+            "DeploymentPlan.scale.capital_scale_pct is required under a scoped approval"
+        )
     try:
-        approval_evidence.require_valid(expected=expected_approval, now=observed_at)
+        approval_evidence.require_valid(
+            expected=expected_approval, now=observed_at, usage_context=usage_context
+        )
     except ApprovalInvalid as exc:
         approval_mismatches.append(str(exc))
 
@@ -508,6 +533,7 @@ def verify_deploy_authorities(
         "approval_actor_id": _required_text(
             approval, "actor_id", "ApprovalDecision"
         ),
+        "approval_authorization_scope": approval.get("authorization_scope"),
         "capital_pool_id": capital_pool_id,
         "sponsor_persona_id": sponsor_persona_id,
         "persona_capital_binding_id": persona_capital_binding_id,
@@ -532,7 +558,14 @@ def verify_deploy_authorities(
             _deployment_plan_authority_view(plan)
         ),
         "registry_entry_sha256": _canonical_digest(entry),
-        "approval_decision_sha256": _canonical_digest(approval),
+        # A newly introduced optional null must not change the authority digest
+        # stored by pre-scope RuntimeBindings. Only this null field is omitted;
+        # real scopes remain hash-covered. Dedicated missing-scope evidence was
+        # already rejected by require_valid above, never admitted as legacy.
+        "approval_decision_sha256": _canonical_digest({
+            key: value for key, value in approval.items()
+            if key != "authorization_scope" or value is not None
+        }),
         "capital_pool_sha256": _canonical_digest(capital_pool),
         "capital_admissibility_sha256": _canonical_digest(capital_admissibility),
         "persona_capital_binding_sha256": _canonical_digest(persona_binding),

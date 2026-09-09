@@ -22,23 +22,45 @@ commits, exact bundle/OpenAPI/capability/type hashes, and both `dev` branches.
 The deployment workflow checks out execute-plans history and runs the
 fail-closed gate before acquiring the environment lease or invoking a deploy.
 
+## Transitive Derivation Closure And Bundle Chain
+
+`AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001` repairs complete Agora generation source
+provenance across the entire 14-bundle extension chain from `bundle_index.json` (v1.0)
+up through `bundle_index.v1_13.json`.
+
+- **Transitive derivation closure**: captures all 90 distinct files (89 input/spec/bundle
+  files plus the generator itself). This includes all 14 bundle indexes, intermediate
+  and aggregate OpenAPI definitions, schemas, and recursive external `$ref` closures,
+  notably including `services/control-plane/specs/agora/v4/research_run_projection.schema.json`
+  with the `provenance` enum introduced by `AGORA-CHAIN-001`.
+- **Deterministic parent-hash propagation**: deterministic generation updates the
+  `extends.bundle_index_sha256` chain from `bundle_index.v1_3.json` sequentially through
+  `bundle_index.v1_4.json` up to `bundle_index.v1_13.json`, along with the aggregate
+  `capability_manifest_v1_13.json` `source_contracts` entries.
+- **Fail-closed verification**: `verify` and `bundle --check` reject stale parent hashes,
+  cyclic references, out-of-root bundle paths, missing referenced schemas/files, and
+  exact-byte mismatches at the claimed contract commit.
+
 ## Deterministic generation and verification
 
-Generate or check the static bundle:
+Generate or check the static bundle artifacts (refreshes `v1_4`..`v1_13` indexes,
+capability manifest, and OpenAPI):
 
 ```sh
 python3 docs/contracts/agora/generate_backend_contract.py bundle
 python3 docs/contracts/agora/generate_backend_contract.py bundle --check
 ```
 
-After committing the bundle, bind the handoff to the runtime commit containing
-the backend implementations and the contract commit containing the exact
-v1.13 bytes:
+Following the two-commit generation anchor protocol:
+1. First, commit the verified generator, tests, and derived source metadata as
+   source anchor commit `A`.
+2. Second, emit and commit the backend handoff bound to the schema-containing
+   runtime commit and `contract_commit = A`:
 
 ```sh
 python3 docs/contracts/agora/generate_backend_contract.py handoff \
   --backend-runtime-commit <40-char-sha> \
-  --backend-contract-commit <40-char-sha>
+  --backend-contract-commit <A-commit-sha>
 python3 docs/contracts/agora/generate_backend_contract.py verify
 ```
 

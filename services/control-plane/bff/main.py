@@ -987,6 +987,14 @@ persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutation
 )
 read_store: ReadSurfacePorts = app_deps.read_surface
 
+from .management_read_models.service import ManagementService as _ManagementServiceForContext
+
+# Management AI context collection (_mgmt_nl_collect_context) must reach the
+# Management domain through purpose-built queries rather than bare
+# ReadSurfacePorts calls; MGMT-READ-001 mandatory deletion: generic store
+# access and migrated overlay reads.
+_management_ai_context_service = _ManagementServiceForContext(read_store=read_store, utc_now=utc_now)
+
 
 def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     """Route mutation audits to the dedicated writer.
@@ -6289,26 +6297,39 @@ def _project_operator_runtime_state_row(
         or binding.get("binding_id")
         or binding.get("id")
     )
-    raw_telemetry_summary = (
-        telemetry_summary_record
-        if prefetched
-        else read_store.get_telemetry_summary(runtime_id)
-    )
+    telemetry_observation: Optional[Dict[str, Any]] = None
+    if prefetched:
+        raw_telemetry_summary = telemetry_summary_record
+    else:
+        # Route through the purpose-built owner-observation accessor instead
+        # of a bare store call: it never raises (a failed read is reported
+        # as a typed unavailable observation) and it preserves the owner's
+        # own status/degradation_reason/provenance instead of collapsing an
+        # explicitly degraded telemetry record into a healthy-looking blob.
+        raw_telemetry_summary, telemetry_observation = (
+            _management_ai_context_service.get_context_telemetry_summary(runtime_id)
+        )
     telemetry_summary = _project_runtime_state_telemetry_summary(
         raw_telemetry_summary
     )
-    raw_monitoring_session = (
-        monitoring_session_record
-        if prefetched
-        else read_store.get_paper_runtime_monitoring_session(
-            runtime_id=runtime_id,
-            binding_id=str(runtime_binding_id or ""),
+    monitoring_observation: Optional[Dict[str, Any]] = None
+    if prefetched:
+        raw_monitoring_session = monitoring_session_record
+    else:
+        # Same purpose-built accessor pattern as telemetry above: a raised
+        # exception here must not blow past this row and discard every
+        # owner observation already collected by the caller.
+        raw_monitoring_session, monitoring_observation = (
+            _management_ai_context_service.get_context_monitoring_session(
+                runtime_id, str(runtime_binding_id or "")
+            )
         )
-    )
     monitoring_session = _project_runtime_state_monitoring_session(
         raw_monitoring_session
     )
-    rollbacks = read_store.get_rollbacks(runtime_id)
+    rollbacks, rollback_observation = _management_ai_context_service.get_context_rollbacks(
+        runtime_id
+    )
     latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
     artifact_id = binding.get("artifact_id")
     artifact_version = binding.get("artifact_version") or binding.get("version")
@@ -6337,6 +6358,9 @@ def _project_operator_runtime_state_row(
             else None
         ),
         "telemetry_summary": telemetry_summary,
+        "telemetry_observation": telemetry_observation,
+        "monitoring_observation": monitoring_observation,
+        "rollback_observation": rollback_observation,
         "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
         "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
         "position_count": (telemetry_summary or {}).get("position_count"),
@@ -8245,26 +8269,64 @@ def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
             suggestion="Escalate to a user with analyst-level Agora write access",
         )
 def _agora_private_record_owner(record: Dict[str, Any]) -> str:
-    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId"):
+    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId", "author"):
         clean = str(record.get(key) or "").strip()
         if clean:
             return clean
     owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
     return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
-def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+def _agora_private_record_visible(
+    record: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> bool:
+    from .agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
+    identity_tenant = str(resolved_tenant or "").strip()
+    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+    if identity_tenant:
+        if not record_tenant or record_tenant != identity_tenant:
+            return False
+    elif record_tenant:
+        return False
     visibility = str(record.get("visibility") or "private").strip().lower()
     owner = _agora_private_record_owner(record)
     if visibility != "private" or not owner:
         return True
-    return owner == identity.operator_id
+    operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
+    allowed_users = {u for u in (resolved_user, operator_id) if u}
+    return owner in allowed_users
 def _agora_filter_private_records(
     records: List[Dict[str, Any]],
     identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    from .agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
     return [
         record
         for record in records
-        if isinstance(record, dict) and _agora_private_record_visible(record, identity)
+        if isinstance(record, dict)
+        and _agora_private_record_visible(
+            record,
+            identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
     ]
 def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
     for field in fields:
@@ -11152,12 +11214,26 @@ def _project_persona_fleet_item(
     all_runtime_bindings: List[Dict[str, Any]],
     all_incidents: List[Dict[str, Any]],
     all_evolution_decisions: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]],
+    tenant_id: Optional[str] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
+    record_filter = lambda rows: _mgmt_nl_filter_tenant_records(rows, tenant_id)
+    strategies, strategies_obs = _management_ai_context_service.get_context_strategies_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=len(strategies))
 
-    bindings = list(read_store.get_bindings_for_persona(persona_id) or [])
+    # Bindings and teaching sessions go through the same typed,
+    # exception-safe owner-projection accessor used for every other
+    # contributing owner: a raise here must degrade to a typed unavailable
+    # observation instead of unwinding the whole persona fleet surface and
+    # discarding every other persona/runtime/incident/evolution owner that
+    # already read successfully.
+    bindings, bindings_obs = _management_ai_context_service.get_context_bindings_for_persona(
+        persona_id, record_filter=record_filter
+    )
+    bindings = list(bindings or [])
     binding_ids = {
         str(binding.get("id") or binding.get("binding_id") or "").strip()
         for binding in bindings
@@ -11169,7 +11245,9 @@ def _project_persona_fleet_item(
         if str(binding.get("capital_pool_id") or "").strip()
     }
 
-    sessions = list(read_store.get_sessions_for_persona(persona_id) or [])
+    sessions, sessions_obs = _management_ai_context_service.get_context_sessions_for_persona(
+        persona_id, record_filter=record_filter
+    )
     runtime_refs = {
         str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
         for session in sessions
@@ -11196,17 +11274,27 @@ def _project_persona_fleet_item(
         if str(binding.get("artifact_id") or "").strip()
     }
 
-    telemetry_summaries = [
-        summary
+    # Reuse the same purpose-built telemetry read the caller already
+    # performed for owner-observation aggregation (telemetry_by_runtime_id),
+    # instead of issuing a second, independent read here: two separate reads
+    # of the same runtime can observe different outcomes (e.g. a flaky
+    # provider that fails once and recovers), which would let this snippet
+    # and the surface's owner_observations disagree about the same runtime.
+    matched_telemetry = [
+        telemetry_by_runtime_id[runtime_id]
         for runtime_id in sorted(runtime_ids)
-        for summary in [read_store.get_telemetry_summary(runtime_id)]
-        if summary
+        if runtime_id in telemetry_by_runtime_id
     ]
+    telemetry_summaries = [summary for summary, _obs in matched_telemetry if summary]
     telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
     latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
+    telemetry_observations = [obs for _summary, obs in matched_telemetry]
 
+    teaching_sessions, teaching_sessions_obs = _management_ai_context_service.get_context_teaching_sessions_for_persona(
+        persona_id, record_filter=record_filter
+    )
     teaching_sessions = _sort_records_latest_first(
-        list(read_store.get_teaching_sessions_for_persona(persona_id) or []),
+        list(teaching_sessions or []),
         ("started_at", "created_at", "updated_at"),
     )
     latest_training = teaching_sessions[0] if teaching_sessions else None
@@ -11242,16 +11330,18 @@ def _project_persona_fleet_item(
     ]
     evolution_decisions = _sort_records_latest_first(evolution_decisions, ("updated_at", "created_at"))
 
-    capital_pools = [
-        pool
+    # Each pool read supplies both enrichment and provenance, once.
+    pool_results = {
+        pool_id: _management_ai_context_service.get_context_capital_pool(
+            pool_id, record_filter=record_filter
+        )
         for pool_id in sorted(capital_pool_ids)
-        for pool in [read_store.get_capital_pool(pool_id)]
-        if pool
-    ]
+    }
+    capital_pools = [pool for pool, _obs in pool_results.values() if pool]
     enriched_bindings = [
         {
             **binding,
-            "capital_pool": read_store.get_capital_pool(str(binding.get("capital_pool_id") or "")),
+            "capital_pool": pool_results.get(str(binding.get("capital_pool_id") or "").strip(), (None, None))[0],
         }
         for binding in bindings
     ]
@@ -11261,7 +11351,9 @@ def _project_persona_fleet_item(
         telemetry_summaries=telemetry_summaries,
         active_incidents=active_incidents,
     )
-    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    allowed_actions, allowed_actions_obs = _management_ai_context_service.get_context_persona_allowed_actions(
+        persona_id, record_filter=record_filter
+    )
 
     telemetry_summary = {
         "latest": latest_telemetry,
@@ -11292,7 +11384,7 @@ def _project_persona_fleet_item(
         "decisions": evolution_decisions,
     }
 
-    return {
+    item = {
         "id": persona_id,
         "persona_id": persona_id,
         "persona": persona_dto,
@@ -11309,8 +11401,15 @@ def _project_persona_fleet_item(
         "sessions": sessions,
         "activeIncidents": active_incidents,
         "active_incidents": active_incidents,
-        "allowedActions": allowed_actions,
+        "allowedActions": allowed_actions or {},
     }
+    owner_observations = [
+        strategies_obs, bindings_obs, sessions_obs, teaching_sessions_obs,
+        allowed_actions_obs, *[obs for _pool, obs in pool_results.values()],
+        *telemetry_observations,
+    ]
+    item["owner_observations"] = owner_observations
+    return item, owner_observations
 _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
     "pending",
     "in_review",
@@ -15060,6 +15159,12 @@ def _mgmt_nl_trading_pulse_snippet(
         for row in runtime_rows
         if isinstance(row.get("telemetry_summary"), dict)
     ]
+    telemetry_observations = [
+        row.get(key)
+        for row in runtime_rows
+        for key in ("telemetry_observation", "monitoring_observation", "rollback_observation")
+        if isinstance(row.get(key), dict)
+    ]
     pnl_values = [
         value
         for value in (_management_number((row.get("metrics") or {}).get("pnl")) for row in telemetry_rows)
@@ -15096,7 +15201,78 @@ def _mgmt_nl_trading_pulse_snippet(
         {"cardId": "pnl", "card_id": "pnl", "label": "P&L", "value": summary["totalPnl"]},
         {"cardId": "execution-quality", "card_id": "execution-quality", "label": "Execution Quality", "value": summary["averageFillRate"]},
     ]
-    return {"summary": summary, "cards": cards}
+    return {"summary": summary, "cards": cards, "telemetry_observations": telemetry_observations}
+def _mgmt_nl_surface_owner_observation(
+    surface: Optional[Dict[str, Any]],
+    *,
+    subject_type: str,
+    owner: str,
+) -> Dict[str, Any]:
+    """Convert a dataset/aggregate surface-status dict into an owner
+    observation shape so a cockpit source's real availability (e.g. the
+    incident feed, approval queue, or sentinel findings) can be merged the
+    same way as a typed context-service observation instead of being
+    silently dropped because it never went through that service."""
+    surface = surface if isinstance(surface, dict) else {}
+    status = str(surface.get("status") or "unavailable")
+    reason = surface.get("degradation_reason") or surface.get("message") or surface.get("note")
+    return {
+        "subject_type": subject_type,
+        "subject_id": subject_type,
+        "status": status,
+        "owner": surface.get("owner") or owner,
+        "source_kind": surface.get("source_kind") or surface.get("source") or ("live" if status == "ok" else "unavailable"),
+        "source_version": surface.get("source_version"),
+        "observed_at": surface.get("observed_at"),
+        "freshness_seconds": surface.get("freshness_seconds"),
+        "correlation_id": surface.get("correlation_id"),
+        "degradation_reason": reason if status != "ok" else None,
+        "contributing_observations": [],
+    }
+def _mgmt_nl_payload_surface_observations(
+    payload: Optional[Dict[str, Any]],
+    *,
+    owner: str,
+) -> List[Dict[str, Any]]:
+    """Turn every surface entry in a payload's meta.surfaces into an owner
+    observation. Every contributing surface a cockpit source reports
+    (e.g. incident_feed, approval_queue, sentinel_findings), not only the
+    payload's own top-level aggregate, must be preserved so a healthy
+    runtime/telemetry read cannot mask one of them going unavailable."""
+    surfaces = ((payload or {}).get("meta") or {}).get("surfaces") or {}
+    return [
+        _mgmt_nl_surface_owner_observation(surface, subject_type=key, owner=owner)
+        for key, surface in surfaces.items()
+        if isinstance(surface, dict)
+    ]
+def _mgmt_nl_merge_owner_observations(
+    observations: List[Optional[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Aggregate every contributing owner observation into one surface-level
+    observation instead of reporting only the runtime binding's status: a
+    degraded/unavailable contributor (e.g. telemetry) must not be masked by
+    another contributor's healthy status, and no contributor's provenance is
+    discarded even when it did not determine the worst status."""
+    status_rank = {"ok": 0, "degraded": 1, "unavailable": 2}
+    present = [obs for obs in observations if isinstance(obs, dict)]
+    if not present:
+        return {
+            "status": "unavailable",
+            "owner": "management_ai_context",
+            "source_kind": "unavailable",
+            "degradation_reason": "no contributing owner observation was collected.",
+            "contributing_observations": [],
+        }
+    worst = max(present, key=lambda obs: status_rank.get(str(obs.get("status")), 0))
+    degradation_reasons = [
+        str(obs.get("degradation_reason"))
+        for obs in present
+        if obs.get("degradation_reason")
+    ]
+    merged = dict(worst)
+    merged["degradation_reason"] = "; ".join(dict.fromkeys(degradation_reasons)) or worst.get("degradation_reason")
+    merged["contributing_observations"] = present
+    return merged
 def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """Collect management summary context for the requested focus surface(s).
 
@@ -15107,6 +15283,14 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     surfaces: Dict[str, Any] = {}
     evidence_entities: Set[Tuple[str, str]] = set()
     evidence_source_types: Set[str] = set()
+
+    # Authorization scoping must happen before any owner/provenance is derived
+    # from a record list, or a foreign tenant's owner/source_version/
+    # correlation_id can leak into this tenant's observation even when the
+    # authorized record count is zero. Pass this into the service so the
+    # filter runs before provenance derivation, not after.
+    def _tenant_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return _mgmt_nl_filter_tenant_records(records, tenant_id)
 
     if use_all or focus == "cockpit":
         try:
@@ -15125,9 +15309,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(anomalies_payload.get("items") or []),
                 tenant_id,
             )
-            runtime_bindings = _mgmt_nl_filter_tenant_records(
-                list(read_store.list_runtime_bindings() or []),
-                tenant_id,
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
             )
             trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
@@ -15148,15 +15331,31 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "human_inbox_summary": {"total": len(inbox_items)},
                 "anomalies_summary": {"total": len(anomalies)},
             }
-            surfaces["management_cockpit"] = {"status": "ok", "source": "bff_composed"}
+            cockpit_owner_observation = _mgmt_nl_merge_owner_observations(
+                [
+                    runtime_bindings_obs,
+                    *trading_pulse.get("telemetry_observations", []),
+                    # Every cockpit source's own contributing surfaces, not
+                    # just runtime/telemetry: an unavailable incident feed,
+                    # approval queue, or sentinel-findings surface must not be
+                    # masked behind a healthy runtime/telemetry status.
+                    *_mgmt_nl_payload_surface_observations(alerts_payload, owner="operator_alerts"),
+                    *_mgmt_nl_payload_surface_observations(human_inbox_payload, owner="human_inbox"),
+                    *_mgmt_nl_payload_surface_observations(anomalies_payload, owner="management_anomalies"),
+                ]
+            )
+            surfaces["management_cockpit"] = {
+                "status": cockpit_owner_observation["status"],
+                "source": "bff_composed",
+                "owner_observation": cockpit_owner_observation,
+            }
         except Exception:
             surfaces["management_cockpit"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "trading_pulse":
         try:
-            runtime_bindings = _mgmt_nl_filter_tenant_records(
-                list(read_store.list_runtime_bindings() or []),
-                tenant_id,
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
             )
             pulse_data = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             evidence_source_types.update({"runtime", "runtime_binding", "telemetry", "paper_live_drift"})
@@ -15164,28 +15363,37 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": pulse_data.get("summary"),
                 "cards": pulse_data.get("cards"),
             }
+            trading_pulse_owner_observation = _mgmt_nl_merge_owner_observations(
+                [runtime_bindings_obs, *pulse_data.get("telemetry_observations", [])]
+            )
             surfaces["management_trading_pulse"] = {
-                "status": "ok" if runtime_bindings else "unavailable",
+                "status": trading_pulse_owner_observation["status"],
                 "source": "bff_composed",
+                "owner_observation": trading_pulse_owner_observation,
             }
         except Exception:
             surfaces["management_trading_pulse"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "portfolio":
         try:
-            pools = _mgmt_nl_filter_tenant_records(list(read_store.list_capital_pools() or []), tenant_id)
-            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
+            pools, pools_obs = _management_ai_context_service.get_context_capital_pools(
+                record_filter=_tenant_record_filter
+            )
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
-            telemetry_values = [
-                read_store.get_telemetry_summary(
+            telemetry_results = [
+                _management_ai_context_service.get_context_telemetry_summary(
                     str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
                 )
                 for r in runtime_bindings
                 if r.get("runtime_id") or r.get("id") or r.get("binding_id")
             ]
-            telemetry_values = [t for t in telemetry_values if t is not None]
+            telemetry_values = [t for t, _obs in telemetry_results if t is not None]
+            telemetry_observations = [obs for _t, obs in telemetry_results]
             portfolio_rollup = _management_telemetry_rollup(telemetry_values)
             snippets["portfolio"] = {
                 "capital_pool_count": len(pools),
@@ -15195,26 +15403,93 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
                 "total_trades": portfolio_rollup.get("total_trades"),
             }
-            portfolio_status = "ok" if pools or runtime_bindings else "unavailable"
-            surfaces["portfolio_book"] = {"status": portfolio_status, "source": "bff_composed"}
+            # Aggregate every contributing owner observation instead of only
+            # looking at telemetry: a runtime/pool read failure must not be
+            # masked by another surface's success (e.g. pools present while
+            # runtime bindings raised).
+            contributing_statuses = [
+                pools_obs.get("status"),
+                runtime_bindings_obs.get("status"),
+                *[obs.get("status") for obs in telemetry_observations],
+            ]
+            if any(status == "unavailable" for status in contributing_statuses):
+                portfolio_status = "unavailable"
+            elif any(status != "ok" for status in contributing_statuses):
+                portfolio_status = "degraded"
+            else:
+                portfolio_status = "ok"
+            surfaces["portfolio_book"] = {
+                "status": portfolio_status,
+                "source": "bff_composed",
+                "owner_observations": [pools_obs, runtime_bindings_obs, *telemetry_observations],
+            }
         except Exception:
             surfaces["portfolio_book"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "persona_fleet":
         try:
-            personas = _mgmt_nl_filter_tenant_records(_list_persona_records(tenant_id), tenant_id)
-            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
-            incidents = _mgmt_nl_filter_tenant_records(list(read_store.list_incidents() or []), tenant_id)
-            evolution_decisions = _mgmt_nl_filter_tenant_records(list(read_store.list_evolution_decisions() or []), tenant_id)
-            fleet_items = [
-                _project_persona_fleet_item(
+            personas, personas_obs = _management_ai_context_service.get_context_personas(
+                lambda: _list_persona_records(tenant_id), record_filter=_tenant_record_filter
+            )
+            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
+            incidents, incidents_obs = _management_ai_context_service.get_context_incidents(
+                record_filter=_tenant_record_filter
+            )
+            evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
+                record_filter=_tenant_record_filter
+            )
+            # Telemetry is read exactly once per tenant-scoped runtime
+            # binding, through the same typed owner-observation query used by
+            # the portfolio_book surface, and that single result is shared by
+            # both the per-persona snippet items below and the surface-level
+            # owner_observations aggregate. A second independent read of the
+            # same runtime could observe a different outcome than the first
+            # (e.g. a flaky provider that fails once and recovers), which
+            # would let the snippet and the surface silently disagree about
+            # the same runtime's telemetry.
+            telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+            for runtime_binding in runtime_bindings:
+                fleet_runtime_id = str(
+                    runtime_binding.get("runtime_id")
+                    or runtime_binding.get("id")
+                    or runtime_binding.get("binding_id")
+                    or ""
+                )
+                if not fleet_runtime_id or fleet_runtime_id in telemetry_by_runtime_id:
+                    continue
+                telemetry_by_runtime_id[fleet_runtime_id] = _management_ai_context_service.get_context_telemetry_summary(
+                    fleet_runtime_id, record_filter=_tenant_record_filter
+                )
+            telemetry_observations = [obs for _summary, obs in telemetry_by_runtime_id.values()]
+            # Project every persona independently: a raise from one persona's
+            # bindings/telemetry/teaching-session owner must not discard the
+            # personas that already projected successfully, nor the
+            # runtime/incidents/evolution provenance already collected above.
+            fleet_items = []
+            fleet_owner_observations: List[Dict[str, Any]] = []
+            for persona in personas:
+                item, item_owner_observations = _project_persona_fleet_item(
                     persona,
                     all_runtime_bindings=runtime_bindings,
                     all_incidents=incidents,
                     all_evolution_decisions=evolution_decisions,
+                    telemetry_by_runtime_id=telemetry_by_runtime_id,
+                    tenant_id=tenant_id,
                 )
-                for persona in personas
-            ][:20]
+                if len(fleet_items) < 20:
+                    fleet_items.append(item)
+                # Telemetry observations are already carried once per unique
+                # runtime in telemetry_observations above; only the
+                # per-persona-only owners (bindings, teaching sessions) are
+                # added here to avoid duplicating the same runtime's
+                # observation for every persona that happens to match it.
+                fleet_owner_observations.extend(
+                    observation
+                    for observation in item_owner_observations
+                    if observation.get("subject_type") != "telemetry"
+                )
             _mgmt_nl_add_record_entities(evidence_entities, personas, "persona", "persona_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             _mgmt_nl_add_record_entities(evidence_entities, incidents, "incident", "incident_id", "id")
@@ -15234,7 +15509,40 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "summary": fleet_summary,
                 "items": fleet_items,
             }
-            surfaces["persona_fleet"] = {"status": "ok" if personas else "unavailable", "source": "bff_composed"}
+            # Persona reads, per-persona bindings/teaching-session reads, and
+            # per-runtime telemetry reads are all contributing owners too: a
+            # healthy runtime/incidents/evolution aggregate must not mask a
+            # persona, binding, teaching-session, or telemetry owner that
+            # itself reported unavailable/degraded, or that owner silently
+            # disappears from both the status and owner_observations.
+            fleet_contributing_statuses = [
+                personas_obs.get("status"),
+                runtime_bindings_obs.get("status"),
+                incidents_obs.get("status"),
+                evolution_decisions_obs.get("status"),
+                *[observation.get("status") for observation in telemetry_observations],
+                *[observation.get("status") for observation in fleet_owner_observations],
+            ]
+            if not personas:
+                fleet_status = "unavailable"
+            elif any(status == "unavailable" for status in fleet_contributing_statuses):
+                fleet_status = "unavailable"
+            elif any(status != "ok" for status in fleet_contributing_statuses):
+                fleet_status = "degraded"
+            else:
+                fleet_status = "ok"
+            surfaces["persona_fleet"] = {
+                "status": fleet_status,
+                "source": "bff_composed",
+                "owner_observations": [
+                    personas_obs,
+                    runtime_bindings_obs,
+                    incidents_obs,
+                    evolution_decisions_obs,
+                    *telemetry_observations,
+                    *fleet_owner_observations,
+                ],
+            }
         except Exception:
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
 
@@ -22791,8 +23099,22 @@ def _resolve_agora_interaction_context_ref(
             )
             return {"row": episode, "audience_verified": audience_verified}
 
+        from .agora.identity.scope import resolve_canonical_agora_scope
+
+        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=getattr(resolved, "tenant_id", None),
+            user_id=getattr(resolved, "user_id", None),
+        )
+        try:
+            journal_entries = read_store.list_decision_journal_entries(tenant_id=scoped_tenant, user_id=scoped_user)
+        except TypeError:
+            journal_entries = read_store.list_decision_journal_entries()
         journal_rows = _agora_filter_private_records(
-            read_store.list_decision_journal_entries(), identity,
+            journal_entries,
+            identity,
+            tenant_id=scoped_tenant,
+            user_id=scoped_user,
         )
         journal = next(
             (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),

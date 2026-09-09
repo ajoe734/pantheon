@@ -287,6 +287,325 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._snapshot(), before)
                 self.state['tasks'][1].pop(field)
 
+    def test_settled_held_recovery_allows_dependency_revision_and_preserves_holds(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['generation'] = 10
+        dep['waiting_for'] = 'Human/Ops'
+        dep['next'] = 'The direct owner retains its current source handoff'
+        dep['owner'] = 'Codex'
+        dep['reviewer'] = 'Claude'
+        dep['acceptance'] = ['Preserve the admitted source acceptance']
+        dep['artifacts'] = ['package.json', 'vite.config.ts']
+        dep['dev_bridge'] = {
+            'task_spec_hash': 'a' * 64,
+            'task_spec': {'depends_on': list(dep['depends_on'])},
+            'documents': [{'path': 'immutable.md'}],
+            'work_class': 'ci',
+        }
+        held_pointer = {
+            'status': 'held',
+            'receipt_id': 'lost-lease-probe-settled',
+            'task_generation': 8,
+            'fence_generation': 9,
+            'replacement_generation': None,
+        }
+        dep['worker_recovery'] = deepcopy(held_pointer)
+        self.state['worker_recovery_receipts'] = {
+            held_pointer['receipt_id']: {
+                **deepcopy(held_pointer),
+                'task_id': 'DEP',
+                'resolved_reason': 'Historical settled receipt',
+            }
+        }
+        self._seed()
+
+        batch = self._request()
+        before = self._snapshot()
+        code, result = self._run(batch)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['status'], 'committed')
+
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        updated = ai_status.get_task(after['state'], 'DEP')
+        self.assertEqual(updated['generation'], 11)
+        self.assertEqual(updated['status'], 'blocked')
+        self.assertEqual(updated['waiting_for'], 'Human/Ops')
+        self.assertEqual(updated['next'], 'The direct owner retains its current source handoff')
+        self.assertEqual(updated['owner'], 'Codex')
+        self.assertEqual(updated['reviewer'], 'Claude')
+        self.assertEqual(updated['acceptance'], ['Preserve the admitted source acceptance'])
+        self.assertEqual(updated['artifacts'], ['package.json', 'vite.config.ts'])
+        self.assertEqual(updated['dev_bridge'], dep['dev_bridge'])
+        self.assertEqual(updated['worker_recovery'], held_pointer)
+        self.assertEqual(
+            after['state']['worker_recovery_receipts'],
+            before['state']['worker_recovery_receipts'],
+        )
+
+        replay_code, replay_result = self._run(batch)
+        self.assertEqual(replay_code, 0)
+        self.assertEqual(replay_result['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_settled_recovery_variants_and_rejected_active_or_malformed_pointers(self):
+        base_held = {
+            'status': 'held',
+            'receipt_id': 'lost-lease-probe-settled',
+            'task_generation': 8,
+            'fence_generation': 9,
+            'replacement_generation': None,
+        }
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['generation'] = 10
+        dep['waiting_for'] = 'Human/Ops'
+        dep['next'] = 'The direct owner retains its current source handoff'
+        dep['owner'] = 'Codex'
+        dep['reviewer'] = 'Claude'
+        dep['acceptance'] = ['Preserve the admitted source acceptance']
+        dep['artifacts'] = ['package.json', 'vite.config.ts']
+
+        # 1. Valid older/settled recovery variants that must succeed
+        valid_variants = [
+            ('resolved', {**base_held, 'status': 'resolved'}),
+            ('materialized', {**base_held, 'status': 'materialized', 'replacement_generation': 9}),
+            ('obsolete_pending', {**base_held, 'status': 'pending'}),
+            ('obsolete_reassigned', {**base_held, 'status': 'reassigned', 'replacement_generation': 9}),
+        ]
+        for name, pointer in valid_variants:
+            with self.subTest(valid_variant=name):
+                dep['generation'] = 10
+                dep['depends_on'] = ['STRICT', 'PROTOCOL', 'COVERAGE']
+                dep['worker_recovery'] = deepcopy(pointer)
+                self._seed()
+                batch = self._request()
+                before = self._snapshot()
+                code, result = self._run(batch)
+                self.assertEqual(code, 0)
+                self.assertEqual(result['status'], 'committed')
+                after = self._snapshot()
+                self.assertEqual(after['event_count'], before['event_count'] + 1)
+                updated = ai_status.get_task(after['state'], 'DEP')
+                self.assertEqual(updated['generation'], 11)
+                self.assertEqual(updated['worker_recovery'], pointer)
+
+        # 2. Active, malformed, unknown, or future recovery pointers that must fail closed
+        dep['generation'] = 10
+        dep['depends_on'] = ['STRICT', 'PROTOCOL', 'COVERAGE']
+        dep['worker_recovery'] = deepcopy(base_held)
+        self._seed()
+
+        rejected_pointers = [
+            ('current_pending', {**base_held, 'status': 'pending', 'fence_generation': 10}),
+            ('current_reassigned', {**base_held, 'status': 'reassigned', 'replacement_generation': 10}),
+            ('unknown_status', {**base_held, 'status': 'unknown'}),
+            ('malformed_pointer', 'not-a-pointer'),
+            ('missing_receipt_identity', {**base_held, 'receipt_id': ''}),
+            ('invalid_generation', {**base_held, 'fence_generation': 'invalid'}),
+            ('future_generation', {**base_held, 'fence_generation': 11}),
+            ('pending_missing_fence', {k: v for k, v in {**base_held, 'status': 'pending'}.items() if k != 'fence_generation'}),
+            ('pending_missing_task_generation', {k: v for k, v in {**base_held, 'status': 'pending'}.items() if k != 'task_generation'}),
+            ('reassigned_missing_replacement', {k: v for k, v in {**base_held, 'status': 'reassigned'}.items() if k != 'replacement_generation'}),
+            ('reassigned_missing_fence', {k: v for k, v in {**base_held, 'status': 'reassigned', 'replacement_generation': 9}.items() if k != 'fence_generation'}),
+            ('reassigned_missing_task_generation', {k: v for k, v in {**base_held, 'status': 'reassigned', 'replacement_generation': 9}.items() if k != 'task_generation'}),
+            ('pending_float_fence_9_5', {**base_held, 'status': 'pending', 'fence_generation': 9.5}),
+            ('pending_float_fence_10_5', {**base_held, 'status': 'pending', 'fence_generation': 10.5}),
+            ('reassigned_float_replacement_9_5', {**base_held, 'status': 'reassigned', 'replacement_generation': 9.5}),
+            ('reassigned_float_replacement_10_5', {**base_held, 'status': 'reassigned', 'replacement_generation': 10.5}),
+            ('held_float_fence_9_5', {**base_held, 'fence_generation': 9.5}),
+            ('held_float_fence_10_5', {**base_held, 'fence_generation': 10.5}),
+            ('held_float_task_generation', {**base_held, 'task_generation': 8.5}),
+            ('held_missing_fence', {k: v for k, v in base_held.items() if k != 'fence_generation'}),
+            ('held_invalid_fence_string', {**base_held, 'fence_generation': 'bad'}),
+            ('held_nonstring_receipt_integer', {**base_held, 'receipt_id': 123}),
+            ('held_nonstring_receipt_list', {**base_held, 'receipt_id': ['bogus']}),
+            ('obsolete_pending_nonstring_receipt', {**base_held, 'status': 'pending', 'receipt_id': 123}),
+            ('current_pending_nonstring_receipt', {**base_held, 'status': 'pending', 'fence_generation': 10, 'receipt_id': 123}),
+        ]
+        for name, pointer in rejected_pointers:
+            with self.subTest(rejected_pointer=name):
+                current = ai_status.load_state()
+                ai_status.get_task(current, 'DEP')['worker_recovery'] = deepcopy(pointer)
+                ai_status.append_state_commit(self.journal, current, source=f'pointer-{name}')
+                before = self._snapshot()
+                batch = self._request()
+                code, _ = self._run(batch)
+                self.assertEqual(code, 75)
+                self.assertEqual(self._snapshot(), before)
+
+        # 3. Active runtime conditions and stale CAS remain rejected even with valid held recovery
+        current = ai_status.load_state()
+        ai_status.get_task(current, 'DEP')['worker_recovery'] = deepcopy(base_held)
+        ai_status.append_state_commit(self.journal, current, source='settled-held-runtime-tests')
+
+        # 3a. Active worker
+        runtime_worker = deepcopy(self.runtime)
+        runtime_worker['workers']['run-test'] = {'task_id': 'DEP', 'status': 'running', 'queue_event_id': 'evt'}
+        runtime_worker['queue']['events']['evt'] = {'status': 'pending', 'intent': {'task_id': 'DEP'}}
+        self.runtime_module.save_runtime_state(self.config, runtime_worker)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # 3b. Queued launch
+        runtime_queue = deepcopy(self.runtime)
+        runtime_queue['queue']['events']['evt'] = {'status': 'pending', 'intent': {'task_id': 'DEP'}}
+        self.runtime_module.save_runtime_state(self.config, runtime_queue)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # 3c. Worktree lease
+        runtime_lease = deepcopy(self.runtime)
+        runtime_lease['worker_worktrees'] = {'leases': {'lease': {'task_id': 'DEP'}}}
+        self.runtime_module.save_runtime_state(self.config, runtime_lease)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # 3d. Off-lock phase reservation
+        runtime_phase = deepcopy(self.runtime)
+        runtime_phase['supervisor']['runtime_phase_reservations'] = {'process_queue': {'token': 'off-lock'}}
+        self.runtime_module.save_runtime_state(self.config, runtime_phase)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # Reset clean runtime
+        self.runtime_module.save_runtime_state(self.config, self.runtime)
+
+        # 3e. Stale CAS
+        stale_batch = self._request()
+        stale_batch['tasks'][0]['expected_sha256'] = '0' * 64
+        before = self._snapshot()
+        with self.assertRaisesRegex(SystemExit, 'CAS failed'):
+            self._run(stale_batch)
+        self.assertEqual(self._snapshot(), before)
+
+    def _held_worker_recovery_pointer(self):
+        return {
+            'status': 'held', 'receipt_id': 'lost-lease-probe-settled',
+            'task_generation': 0, 'fence_generation': 1, 'replacement_generation': None,
+        }
+
+    def _inactive_lease_fixture(self, task_id='DEP', event_id='evt-lease', event_status='completed', **overrides):
+        lease = {
+            'task_id': task_id,
+            'workspace_task_id': task_id,
+            'branch': f'task/{task_id}',
+            'path': f'/tmp/pantheon-worker-worktrees/pantheon/{task_id.lower()}',
+            'status_root': str(self._test_root),
+            'source_root': str(self._test_root),
+            'repository_id': 'pantheon',
+            'base_ref': 'origin/dev',
+            'base_sha': 'a' * 40,
+            'last_used_at': '2026-09-09T03:13:31Z',
+            'last_queue_event_id': event_id,
+            'recovery_receipt_id': 'lost-lease-probe-settled',
+        }
+        lease.update(overrides)
+        runtime = deepcopy(self.runtime)
+        if event_id:
+            runtime['queue']['events'][event_id] = {'status': event_status, 'intent': {'task_id': task_id}}
+        runtime['worker_worktrees'] = {'leases': {'lease': lease}}
+        return runtime, lease
+
+    def test_provably_inactive_worktree_lease_allows_dependency_revision(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['waiting_for'] = 'Human/Ops'
+        held_pointer = self._held_worker_recovery_pointer()
+        dep['worker_recovery'] = deepcopy(held_pointer)
+        self._seed()
+        runtime, lease = self._inactive_lease_fixture()
+        self.runtime_module.save_runtime_state(self.config, runtime)
+
+        batch = self._request()
+        before = self._snapshot()
+        code, result = self._run(batch)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['status'], 'committed')
+
+        after = self._snapshot()
+        updated = ai_status.get_task(after['state'], 'DEP')
+        self.assertEqual(updated['status'], 'blocked')
+        self.assertEqual(updated['waiting_for'], 'Human/Ops')
+        self.assertEqual(updated['worker_recovery'], held_pointer)
+        # The retained lease/workspace metadata itself is never mutated by
+        # the dependency command; only the canonical task row changes.
+        current_runtime = self.runtime_module.load_runtime_state(self.config)
+        self.assertEqual(current_runtime['worker_worktrees'], runtime['worker_worktrees'])
+
+        replay_code, replay_result = self._run(batch)
+        self.assertEqual(replay_code, 0)
+        self.assertEqual(replay_result['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_ambiguous_or_active_worktree_lease_signals_remain_busy(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['waiting_for'] = 'Human/Ops'
+        dep['worker_recovery'] = deepcopy(self._held_worker_recovery_pointer())
+        self._seed()
+        batch = self._request()
+
+        runtimes = []
+        # Missing/blank identity fields must not prove inactivity.
+        for field in ('branch', 'path', 'status_root', 'source_root', 'repository_id', 'base_ref', 'base_sha', 'last_used_at'):
+            runtime, _ = self._inactive_lease_fixture(**{field: ''})
+            runtimes.append(runtime)
+        for field in ('branch', 'path', 'status_root', 'source_root', 'repository_id', 'base_ref', 'base_sha', 'last_used_at'):
+            runtime, _ = self._inactive_lease_fixture()
+            del runtime['worker_worktrees']['leases']['lease'][field]
+            runtimes.append(runtime)
+        # Mismatched or missing correlated identity.
+        runtime, _ = self._inactive_lease_fixture(workspace_task_id='OTHER-TASK')
+        runtimes.append(runtime)
+        # An unsettled or unresolvable queue-event correlation is not proof.
+        runtime, _ = self._inactive_lease_fixture(event_status='pending')
+        runtimes.append(runtime)
+        runtime, _ = self._inactive_lease_fixture(event_id='')
+        runtimes.append(runtime)
+        runtime, lease = self._inactive_lease_fixture()
+        lease['last_queue_event_id'] = 'evt-does-not-exist'
+        runtimes.append(runtime)
+
+        for runtime in runtimes:
+            with self.subTest(runtime=runtime):
+                self.runtime_module.save_runtime_state(self.config, runtime)
+                before = self._snapshot()
+                self.assertEqual(self._run(batch)[0], 75)
+                self.assertEqual(self._snapshot(), before)
+
+        # A well-formed, correlated lease is still busy when a real active
+        # worker, queued intent, or off-lock reservation exists for the task.
+        runtime, _ = self._inactive_lease_fixture()
+        runtime['workers']['run-test'] = {'task_id': 'DEP', 'status': 'running', 'queue_event_id': 'evt-lease'}
+        self.runtime_module.save_runtime_state(self.config, runtime)
+        before = self._snapshot()
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        runtime, _ = self._inactive_lease_fixture()
+        runtime['supervisor']['runtime_phase_reservations'] = {'process_queue': {'token': 'off-lock', 'launch_receipt': {'task_id': 'DEP'}}}
+        self.runtime_module.save_runtime_state(self.config, runtime)
+        before = self._snapshot()
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # An unsettled task-side worker_recovery still fences even though the
+        # lease itself is otherwise well-formed and correlated.
+        runtime, _ = self._inactive_lease_fixture()
+        self.runtime_module.save_runtime_state(self.config, runtime)
+        current = ai_status.load_state()
+        ai_status.get_task(current, 'DEP')['worker_recovery'] = {'status': 'pending', 'receipt_id': 'still-pending'}
+        ai_status.append_state_commit(self.journal, current, source='pending-recovery-with-lease')
+        before = self._snapshot()
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
     def test_worker_and_nonoperator_ingress_rejected(self):
         for env in [{'AI_NAME':'Codex'}, {'ORCH_RUN_ID':'worker'}, {ai_status.LOCAL_HUMAN_OPS_ENV:'0'}, {'PANTHEON_WORKTREE_ROOT':'/worker'}]:
             with self.subTest(env=env), mock.patch.dict(os.environ, env):
@@ -3196,6 +3515,8 @@ class StatusRootRoutingTests(unittest.TestCase):
             ".orchestrator/rewrite/task_machine.py",
             ".orchestrator/rewrite/task_contract.py",
             ".orchestrator/rewrite/task_state_store.py",
+            ".orchestrator/rewrite/task_identity.py",
+            ".orchestrator/rewrite/worker_recovery.py",
             ".orchestrator/rewrite/status_projection.py",
             ".orchestrator/development_bridge/__init__.py",
             ".orchestrator/development_bridge/dev_bridge_materialize.py",
@@ -11047,6 +11368,36 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def test_canonical_task_review_mode_accepts_matching_exact_bindings(self) -> None:
+        task = {
+            "status": "review_approved",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "kind": "pull_request",
+                "pr": 152,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+        }
+        self.assertFalse(ai_status.exact_head_acceptance_available(task, {}))
+        self.assertTrue(
+            ai_status.exact_head_acceptance_available(
+                task, {"review_gate": {"github_review_bridge_required": False}}
+            )
+        )
+        task[ai_status.APPROVAL_BINDING_KEY]["head_sha"] = "b" * 40
+        self.assertFalse(
+            ai_status.exact_head_acceptance_available(
+                task, {"review_gate": {"github_review_bridge_required": False}}
+            )
+        )
+
     def test_collect_done_uses_exact_approved_head_after_workspace_fast_forward(self) -> None:
         approved_head = "a" * 40
         workspace_head = "d" * 40
@@ -16525,6 +16876,12 @@ class TestSentinelTimestampOverflow(unittest.TestCase):
 
 
 class TestStaleArchiveResurrectionContract(unittest.TestCase):
+    @staticmethod
+    def _disable_test_repo_maintenance(root: Path) -> None:
+        """Keep disposable fixture repositories from spawning background Git jobs."""
+        subprocess.run(["git", "config", "gc.auto", "0"], cwd=root, check=True)
+        subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=root, check=True)
+
     def setUp(self) -> None:
         _setup_test_isolation(self)
         self.addCleanup(_teardown_test_isolation, self)
@@ -16556,6 +16913,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.addCleanup(self._task_state_env.stop)
 
         subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
+        self._disable_test_repo_maintenance(self.root)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
         dummy_file = self.root / "dummy.txt"
@@ -16568,6 +16926,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             shutil.rmtree(root)
         root.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        self._disable_test_repo_maintenance(root)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
         subprocess.run(["git", "remote", "add", "origin", remote], cwd=root, check=True)
@@ -16624,6 +16983,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             shutil.rmtree(evidence_root)
         evidence_root.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=evidence_root, check=True, capture_output=True)
+        self._disable_test_repo_maintenance(evidence_root)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=evidence_root, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=evidence_root, check=True)
         subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=evidence_root, check=True)

@@ -1,0 +1,248 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+  "worker": "Claude",
+  "reviewer": "Codex",
+  "governing_spec": {
+    "document": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/reaudit-task-intake-20260909/SA_SD.md",
+    "section": "## GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 — Close non-journal governance JSON store lost updates",
+    "finding": "F09 · Governance JSON store 會遺失第二實例未看到的資料"
+  },
+  "source_baseline": "c0c035b5f32436b96f10cd10c91834861d555144",
+  "predecessors": [
+    {
+      "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+      "status": "done",
+      "satisfied": true,
+      "merge_commit": "0565b5f1615078a57c93eab2c7897b0afedb36ee",
+      "reviewed_source_commit": "66038e61c57bc47e1aaee6aa5d3a1942b3766a32"
+    }
+  ],
+  "scorecard_status": {
+    "two_instance_lost_update_prevention": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: JsonGovernanceRecordStore upgraded with re-entrant POSIX file locking (_FileLock using fcntl.flock), fresh disk reload on read and write (_refresh()), and atomic file replacement (_save() with unique temporary file .tmp.<pid>.<uuid>, fsync, and os.replace). Multiple instances pointing to the same file coordinate safely without lost updates, including nested re-entrant scopes across independent store instances."
+    },
+    "multiprocess_concurrency": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: Independent OS processes writing distinct records concurrently coordinate via POSIX file locking on .<storage_name>.json.flock, preserving 100% of all distinct records without dropping or corrupting data."
+    },
+    "insert_if_absent_duplicate_rejection": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: insert_if_absent re-reads fresh state under file lock and in-process RLock, returning (True, record) for the winning insert and (False, canonical) for all concurrent or subsequent attempts with matching ID."
+    },
+    "compare_and_set_version_conflict": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: compare_and_set re-reads fresh state under file lock, verifying exact equality with expected_record before atomic write. Concurrent mutations with stale expected records fail closed, returning (False, current_record)."
+    },
+    "fresh_reads_across_instances": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: get() and list_all() reload from disk under file lock via _coordinate(), ensuring writes from any process or instance are immediately observed by other long-lived instances without restart."
+    },
+    "failed_write_restart_durability": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: Atomic durable replacement using temporary file, os.fsync on file and parent directory, and os.replace. Pre-replacement filesystem errors during save restore in-memory state and preserve previous on-disk data without corruption. Post-replacement directory fsync errors raise without masking, while replaced bytes may already be visible on disk; durability remains unconfirmed without successful directory fsync. Readers never observe uncommitted state prior to replacement."
+    },
+    "four_mounted_consumers_isolation": {
+      "status": "satisfied",
+      "backend_call_site_inventory": {
+        "freeze_orders": {
+          "backend": "json (JsonGovernanceRecordStore)",
+          "store_path": "GOVERNANCE_DATA_DIR/freeze_orders.json (default: data/governance/freeze_orders.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.freeze_orders.json.flock (default: data/governance/.freeze_orders.json.flock)",
+          "mounted_handlers": [
+            "POST /api/governance/freeze-orders (main.record_freeze_order)"
+          ],
+          "command_locks": [
+            "store.lock() (POSIX file lock on .freeze_orders.json.flock + in-process store RLock)",
+            "_freeze_order_lock (in-process threading.Lock at main.py:446)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_freeze_orders_multiprocess",
+            "services/governance/test_record_store_isolation.py::test_mounted_freeze_orders_command_isolation_multiprocess",
+            "services/governance/test_freeze_rollback_store.py::test_freeze_and_rollback_stores_multi_instance_isolation",
+            "services/governance/test_freeze_rollback_store.py::test_mounted_freeze_and_rollback_command_isolation_interleaved"
+          ]
+        },
+        "rollbacks": {
+          "backend": "json (JsonGovernanceRecordStore)",
+          "store_path": "GOVERNANCE_DATA_DIR/rollbacks.json (default: data/governance/rollbacks.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.rollbacks.json.flock (default: data/governance/.rollbacks.json.flock)",
+          "mounted_handlers": [
+            "POST /api/governance/rollbacks (main.record_rollback)"
+          ],
+          "command_locks": [
+            "store.lock() (POSIX file lock on .rollbacks.json.flock + in-process store RLock)",
+            "_rollback_lock (in-process threading.Lock at main.py:447)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_rollbacks_multiprocess",
+            "services/governance/test_record_store_isolation.py::test_mounted_rollbacks_command_isolation_multiprocess",
+            "services/governance/test_freeze_rollback_store.py::test_freeze_and_rollback_stores_multi_instance_isolation",
+            "services/governance/test_freeze_rollback_store.py::test_mounted_freeze_and_rollback_command_isolation_interleaved"
+          ]
+        },
+        "human_gate_decisions": {
+          "backend": "json (JsonGovernanceRecordStore via GovernanceHumanGateDecisionStore)",
+          "store_path": "GOVERNANCE_DATA_DIR/human_gate_decisions.json (default: data/governance/human_gate_decisions.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.human_gate_decisions.json.flock (default: data/governance/.human_gate_decisions.json.flock)",
+          "mounted_handlers": [
+            "POST /api/governance/human-gates (main.create_human_gate)",
+            "POST /api/governance/human-gates/{decision_id}/signatures (main.sign_human_gate)",
+            "POST /api/governance/human-gates/{decision_id}/revoke (main.revoke_human_gate)"
+          ],
+          "concurrency_control": [
+            "insert_if_absent on creation (rejects duplicate decision_id with HTTP 409 conflict)",
+            "put_if_matches CAS on signatures/revocations (rejects concurrent mismatch with HTTP 409 conflict, enabling client retry from fresh state)",
+            "_human_gate_lock (in-process threading.Lock at main.py:448)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_human_gates_multi_instance",
+            "services/governance/test_record_store_isolation.py::test_mounted_human_gates_command_isolation_multiprocess",
+            "services/governance/test_human_gate_api.py::test_human_gate_multi_instance_isolation",
+            "services/governance/test_human_gate_api.py::test_mounted_human_gate_interleaved_conflict_isolation"
+          ]
+        },
+        "consultation_handoffs": {
+          "backend": "json (JsonGovernanceRecordStore via build_governance_record_store)",
+          "store_path": "GOVERNANCE_DATA_DIR/consultation_handoffs.json (default: data/governance/consultation_handoffs.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.consultation_handoffs.json.flock (default: data/governance/.consultation_handoffs.json.flock)",
+          "mounted_handlers": [
+            "POST /api/governance/consultation-handoffs (main.accept_consultation_handoff)"
+          ],
+          "concurrency_control": [
+            "insert_if_absent idempotency (exact replay returns 200 with matching payload, duplicate mismatch returns HTTP 409 conflict)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_consultation_handoff_multi_instance",
+            "services/governance/test_consultation_handoff.py::test_handoff_is_durable_exact_and_idempotent",
+            "services/governance/test_consultation_handoff.py::test_handoff_fails_closed_on_identity_and_tenant",
+            "services/governance/test_consultation_handoff.py::test_handoff_rejects_wrong_idempotency_binding",
+            "services/governance/test_consultation_handoff.py::test_handoff_rejects_published_token_in_enforced_posture",
+            "services/governance/test_consultation_handoff.py::test_consultation_handoff_multi_instance_isolation"
+          ],
+          "coverage_note": "Consultation handoff HTTP route tests cover sequential operations, idempotent replays, security failures, and conflict rejection. Controlled multi-instance concurrent insertion semantics are verified by test_mounted_consumer_consultation_handoff_multi_instance."
+        }
+      }
+    },
+    "corrective_fix_umask_race_and_fsync_order": {
+      "status": "satisfied",
+      "finding": "Independent review rejected PR #5709 head 97b4cfa95aa91018be778ce23e4c1bb024c82b51 (record_store.py sha256 e412f3d56207c3ad2e11dca80d2c32d59718178f854d29c6315a37fae6c66504). P1 (record_store.py:268-270): _replacement_mode() read the ambient umask via os.umask(0) immediately followed by os.umask(current_umask) to restore it; os.umask is process-global and not thread-local, so any unrelated thread in the same process creating a file during that window observed umask 0 and created its file at 0666 instead of the ambient umask's restrictive mode (deterministic Event-coordinated probe reproduced an unrelated-thread file landing at 0666 under ambient umask 0077, where 0600 was expected). P2 (record_store.py:240-242): the observed save order was file fsync, chmod, os.replace, directory fsync -- the final inode permission metadata set by chmod was applied after the file's own durability fsync, so that fsync did not cover the final mode bits.",
+      "implementation": "services/governance/record_store.py: _save() no longer calls os.umask() at all, in either branch, eliminating the race entirely rather than narrowing its window. The temporary file is created directly via os.open(..., os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode) instead of tempfile.NamedTemporaryFile. For a brand-new record file, mode=0o666 is passed to os.open so the kernel applies the ambient umask atomically as an intrinsic part of file creation (the same single-syscall semantics an ordinary open() call relies on) -- no separate read of the umask is needed or performed. For a file that already exists, the existing file's mode is first read via os.stat (no umask involved) and then re-applied via os.fchmod on the still-open write descriptor, strictly before that descriptor's os.fsync call, so the final fsync commits both the data and the final permission bits together (resolving P2). _replacement_mode() was replaced by _existing_mode(), which only stats the existing file and returns None for a new file; it performs no umask I/O.",
+      "tests": [
+        "services/governance/test_record_store_isolation.py::test_save_never_mutates_process_global_umask (new) -- patches os.umask to record every call across both the new-file and existing-file put() paths and asserts zero calls.",
+        "services/governance/test_record_store_isolation.py::test_final_mode_is_set_before_the_durability_fsync (new) -- patches os.fsync/os.fchmod/os.replace and asserts the exact call order fchmod, fsync_file, replace, fsync_directory, and that the final on-disk mode matches the preserved existing mode.",
+        "services/governance/test_record_store_isolation.py::test_new_record_file_gets_umask_controlled_mode (existing, still passes) -- new record file lands at the umask-controlled default.",
+        "services/governance/test_record_store_isolation.py::test_replacing_existing_record_file_preserves_its_mode (existing, still passes) -- existing record file's mode survives a replace.",
+        "services/governance/test_record_store_isolation.py::test_atomic_save_fsyncs_file_and_directory (existing, still passes) -- file-then-directory fsync ordering unchanged."
+      ],
+      "regression_verification": "Adapted the reviewer's deterministic Event-coordinated reproduction (concurrent unrelated file creation gated on an os.umask(0) call) against the corrective source: under patch('os.umask', ...) the instrumented wrapper recorded zero invocations during put() for both a new-file and an existing-file write, so the race window the original probe exploited no longer exists (there is nothing to race). Re-ran the save-order trace from the same probe style with os.fsync/os.fchmod/os.replace patched: observed order is fchmod, fsync_file, replace, fsync_directory, with fchmod occurring strictly before the file's durability fsync -- confirms P2 is resolved. Command: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. timeout 30 .venv-pantheon/bin/python3 <adapted probe script>, exit 0."
+    },
+    "ci_regression_fixed_permission_mode_on_replace": {
+      "status": "satisfied",
+      "finding": "PR #5709 real Persona provisioning owner contracts CI (workflow 34304100683 / job 102317075569) at reviewed head d4d961804 failed 2/2 on the actual readonly-Docker-mount decision journal tests with PermissionError: [Errno 13] Permission denied. Root cause: services/governance/record_store.py switched _save() from an ordinary write to tempfile.NamedTemporaryFile, whose backing file is always created mode 0600 regardless of umask; os.replace then published that restrictive mode verbatim as the canonical record file, narrowing an existing readable (0644) journal file to 0600 on its next write and breaking the distinct-UID readonly consumer relied on by the unchanged CI test. Base 15e2907b5 passed 2/2; head d4d961804 reproduced the same 2 failures locally against the actual pantheon-governance-contract:ci image with --read-only --cap-drop ALL mounts.",
+      "implementation": "services/governance/record_store.py: added JsonGovernanceRecordStore._replacement_mode(), called via os.chmod(temporary_path, ...) immediately before os.replace() in _save(). When storage_path already exists, the temporary file is chmod'd to the existing file's exact current mode (stat.S_IMODE), so an established readable posture is never narrowed by a replace. When storage_path does not yet exist (first write), the temporary file is chmod'd to the umask-controlled default an ordinary open() would have produced (0o666 & ~current_umask), read via the standard os.umask(0)/os.umask(restore) probe. Unique temporary file creation, POSIX file locking, fsync of file and parent directory, and atomic os.replace are all unchanged.",
+      "tests": [
+        "services/governance/test_record_store_isolation.py::test_new_record_file_gets_umask_controlled_mode (new)",
+        "services/governance/test_record_store_isolation.py::test_replacing_existing_record_file_preserves_its_mode (new)",
+        "services/governance/test_decision_journal.py::TestDecisionJournalReadOnlySnapshots::test_actual_readonly_mount_fresh_process_pending_snapshots_never_recover (actual Docker readonly mount, previously failing)",
+        "services/governance/test_decision_journal.py::TestDecisionJournalReadOnlySnapshots::test_actual_readonly_process_waits_for_same_writer_bundle_inode (actual Docker readonly mount, previously failing)"
+      ],
+      "regression_verification": "Reverted only record_store.py to the exact HEAD (d4d961804) blob while keeping the two new tests: both new tests failed (AssertionError comparing 0600 vs the expected preserved/umask mode), confirming they reproduce the exact CI defect. Restoring the fix made all tests pass again. The two real readonly-Docker-mount tests, run against the unchanged pantheon-governance-contract:ci image with --read-only --cap-drop ALL --network none mounts, now pass (previously PermissionError)."
+    }
+  },
+  "verification_results": {
+    "execution_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest -q services/governance/test_record_store_isolation.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/governance/test_human_gate_api.py",
+    "exit_code": 0,
+    "note": "Corrective re-run for the P1/P2 umask-race and fsync-order rejection of PR #5709 head 97b4cfa95aa91018be778ce23e4c1bb024c82b51. This re-run did not re-execute the Docker-readonly-mount or decision-journal suites, which were unaffected by the corrective source delta and already passed at the unchanged source_baseline; see corrective_fix_umask_race_and_fsync_order above for the targeted regression reproduction against the umask/fsync-order defects specifically.",
+    "suites": [
+      {
+        "name": "services/governance/test_record_store_isolation.py",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_record_store_isolation.py",
+        "tests": 20,
+        "failures": 0,
+        "errors": 0,
+        "exit_code": 0,
+        "status": "PASSED",
+        "note": "+2 vs prior evidence: test_save_never_mutates_process_global_umask, test_final_mode_is_set_before_the_durability_fsync"
+      },
+      {
+        "name": "services/governance/test_freeze_rollback_store.py",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_freeze_rollback_store.py",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "exit_code": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_consultation_handoff.py",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_consultation_handoff.py",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "exit_code": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_human_gate_api.py",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_human_gate_api.py",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "exit_code": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_decision_journal.py",
+        "runner": "not re-run in this corrective verification pass",
+        "status": "UNCHANGED",
+        "note": "Not touched by this corrective source delta (decision_journal.py is not part of this task's artifact set); prior passing result at the unchanged source_baseline stands. Re-run only if the decision journal path changes."
+      },
+      {
+        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "runner": "not re-run in this corrective verification pass",
+        "status": "UNCHANGED",
+        "note": "Not touched by this corrective source delta; prior passing result at the unchanged source_baseline stands."
+      }
+    ],
+    "total_tests_passed_this_run": 39,
+    "total_tests_skipped_this_run": 0,
+    "mutation_probe": {
+      "runner": ".venv-pantheon/bin/python3 /tmp/governance_r1_lock_coverage_probe.py",
+      "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 /tmp/governance_r1_lock_coverage_probe.py",
+      "result": "PASSED (both test_mounted_freeze_orders_command_isolation_multiprocess and test_mounted_rollbacks_command_isolation_multiprocess fail with AssertionError when JsonGovernanceRecordStore.lock is made nullcontext, proving command-wide lock coverage)",
+      "exit_code": 0,
+      "note": "Carried over from the prior R1 evidence; unaffected by this corrective source delta."
+    },
+    "actual_docker_readonly_mount_regression_probe": {
+      "runner": "actual pantheon-governance-contract:ci Docker image, --read-only --cap-drop ALL --network none --security-opt no-new-privileges:true",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/governance/test_decision_journal.py::TestDecisionJournalReadOnlySnapshots",
+      "result": "PASSED at the prior R1 fix (6/6, including the two tests that reproduced PermissionError at PR #5709 reviewed head d4d961804 in CI run 34304100683/102317075569)",
+      "exit_code": 0,
+      "note": "Carried over from the prior R1 evidence; decision_journal.py is unchanged by this corrective source delta."
+    },
+    "tested_source_hashes": {
+      "services/governance/record_store.py": "6e45e7ed541c4337e5c9cd34ee09aeb8ef1a129b058df013b665090a427e889d",
+      "services/governance/main.py": "9fe9c9db46abc8d0a2dfe982ac15388a40890925d09cf152e22a0654d2230293",
+      "services/governance/test_record_store_isolation.py": "9902dc8f3ac028e0c897f4be3cff7dc715625ef9d6240a6cc4d110e4b7934168",
+      "services/governance/test_freeze_rollback_store.py": "998686d1658aa8559d835b89c71f9c1c4e4636c9b4bda6584c4a457377605e13",
+      "services/governance/test_consultation_handoff.py": "5a078f85f2a9d13a371da4a3044c6d473c9cb5672d025e3c27eb04f3d4e4df2d",
+      "services/governance/test_human_gate_api.py": "a16cc3a81ed825408d107741ee2e1f5a7d8c965ece8582097b3ab56f26f19580"
+    },
+    "prior_source_baseline_note": "This evidence supersedes the R1 finalization evidence recorded at PR #5709 reviewed head 97b4cfa95aa91018be778ce23e4c1bb024c82b51 (record_store.py sha256 e412f3d56207c3ad2e11dca80d2c32d59718178f854d29c6315a37fae6c66504), which was independently reviewed and rejected for the P1 umask race and P2 fsync-order defects documented in corrective_fix_umask_race_and_fsync_order above. source_baseline below is unchanged; this corrective fix applies on top of that baseline plus the already-merged R1/R1b work, changing only record_store.py and test_record_store_isolation.py."
+  },
+  "artifacts": [
+    "services/governance/record_store.py",
+    "services/governance/main.py",
+    "services/governance/test_record_store_isolation.py",
+    "services/governance/test_freeze_rollback_store.py",
+    "services/governance/test_consultation_handoff.py",
+    "services/governance/test_human_gate_api.py",
+    "docs/deployment/evidence/GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001/evidence.json"
+  ]
+}

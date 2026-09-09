@@ -1,0 +1,96 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "MGMT-READ-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "base_ref": "dev@55d83d5b380bf8640f41cf611d65ee8a4a46f1a8",
+  "tested_source_commit": "73d229d16084f6e30af05f72a3906a2ea973a59b",
+  "prior_head": "270b535b7c8a9c8c12a7d5d9aa10943b8edb78b5",
+  "prior_evidence": "Earlier review findings and historical validation remain in this file at commit 270b535b7c8a9c8c12a7d5d9aa10943b8edb78b5. They are not fresh validation of this delivery.",
+  "depends_on": {
+    "LOOP-TRUTH-001": "done",
+    "DOMAIN-WRITERS-001": "done"
+  },
+  "normative_plan": "SD sec7 ManagementObservation row shape and Management AI product/development boundary, SA invariants 11-12 and ADR-01/ADR-08; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "implementation": {
+    "files_modified": [
+      "docs/deployment/evidence/MGMT-READ-001/evidence.json",
+      "services/control-plane/bff/deployment/adapters.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/management_read_models/models.py",
+      "services/control-plane/bff/management_read_models/service.py",
+      "services/control-plane/bff/management_read_models/test_management_service_context_observations.py",
+      "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
+      "services/control-plane/bff/ports/read_surface_ports.py",
+      "services/control-plane/bff/runtime/router.py",
+      "services/control-plane/bff/test_runtime_state_trades.py",
+      "services/control-plane/bff/tests/test_bff_management_cockpit.py",
+      "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py"
+    ],
+    "summary": "Management AI cockpit, trading-pulse, portfolio and persona-fleet context reads carry typed ManagementObservation owner evidence. Aggregate status preserves the worst contributing owner status and every owner's provenance; missing observation times remain null. Rollback owner availability is bound to the actual port outcome, with legacy generic route best-effort behavior preserved.",
+    "current_fix": "Persona fleet now shares one telemetry read per distinct runtime between its snippets and owner observations. Persona composition, binding, strategy, session, teaching-session, capital-pool and allowed-action reads return failure observations instead of discarding other owners or personas. Per-persona observations also accompany each snippet. Pool enrichment reuses its observation read. Tenant filtering precedes nested owner provenance. The 20-item display limit does not hide a later persona's unavailable owner.",
+    "regressions": "Durable test_persona_fleet_read_failures.py covers seven independent raising owners, persona composition failure, two personas sharing flaky telemetry, all-healthy evidence, seven foreign-tenant reads, pool read reuse, and failure beyond the display limit. The older incomplete-owner fixture now expects degraded instead of incorrectly claiming all owners healthy.",
+    "boundary": "Product read models only; no development task authority, repository-writing product endpoint, synthetic fallback, domain writer or hosted deployment change.",
+    "rollback_plan": "Return typed unavailable owner observations for a disabled or failing projection. Do not revert to generic/synthetic reads or restore seed/task-status product truth. No persistence migration is introduced."
+  },
+  "verification": {
+    "tested_at_utc": "2026-09-08",
+    "collection": "Every listed batch was run in bounded foreground execution and terminal exit status was collected.",
+    "commands": [
+      {
+        "command": "timeout 120 env RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_runtime_state_trades.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/management_read_models services/control-plane/bff/tests/test_bff_lineage_contract.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/deployment /tmp/test_mgmt_read_001_tenth_review.py --tb=short --disable-warnings",
+        "exit_code": 0,
+        "result": "172 passed, 623 warnings in 88.81 seconds",
+        "passed": 172
+      },
+      {
+        "command": "timeout 60 env RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/assistant/tests/test_user_mode_regression.py services/control-plane/bff/assistant/tests/test_command_idempotency.py --tb=short --disable-warnings",
+        "exit_code": 1,
+        "result": "46 passed, 1 failed: test_nl_ask_dry_run_returns_compact_receipt_without_context_work; reproduced on clean base",
+        "passed": 46,
+        "failed": 1
+      },
+      {
+        "command": "timeout 90 env RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/assistant/tests/test_user_mode_regression.py services/control-plane/bff/assistant/tests/test_command_idempotency.py --tb=short --disable-warnings",
+        "exit_code": 2,
+        "result": "Collection failed: command_executor.py relative import has no known parent package; provider tests did not execute"
+      },
+      {
+        "cwd": "/tmp/MGMT-READ-001-baseline",
+        "commit": "55d83d5b380bf8640f41cf611d65ee8a4a46f1a8",
+        "command": "timeout 60 env RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py --tb=short --disable-warnings",
+        "exit_code": 2,
+        "result": "Same command_executor.py ImportError on clean unmodified dev"
+      },
+      {
+        "cwd": "/tmp/MGMT-READ-001-baseline",
+        "commit": "55d83d5b380bf8640f41cf611d65ee8a4a46f1a8",
+        "command": "timeout 60 env RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py::test_nl_ask_dry_run_returns_compact_receipt_without_context_work --tb=line --disable-warnings",
+        "exit_code": 1,
+        "result": "Same dry-run must not collect management context assertion on clean unmodified dev"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      }
+    ],
+    "limitations": [
+      "Provider suite execution is unverified because of the baseline import error; it is not counted as passed.",
+      "The baseline dry-run context-collection defect remains; the NL/command batch is not wholly green.",
+      "The four external tenth-review reproductions are included in the 172 passing cases; their behavior is also covered by committed regressions.",
+      "No hosted deployment or live/capital-affecting write was performed."
+    ]
+  },
+  "acceptance_check": {
+    "typed_owner_provenance_and_unavailability": "covered by passing model, cockpit, pulse, fleet and router tests",
+    "tenant_filtering_before_owner_provenance": "covered by passing context tests and nested fleet regressions",
+    "product_confirmation_and_idempotency": "46 passing NL/user-mode/command cases; baseline dry-run defect recorded above",
+    "provider_failure_contract": "provider suite blocked during collection by independently reproduced baseline import error",
+    "independent_review": "pending Claude exact-head review"
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review; no approval claimed"
+  }
+}

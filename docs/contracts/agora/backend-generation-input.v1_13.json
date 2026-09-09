@@ -4,13 +4,13 @@
   "generated": true,
   "backend": {
     "repo": "ajoe734/pantheon",
-    "runtime_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
-    "contract_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980"
+    "runtime_commit": "879ac6c8262d05cd734b391a24a5deb42331b9e1",
+    "contract_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec"
   },
   "contract": {
     "bundle_index": {
       "path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
-      "sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948"
+      "sha256": "f621c694f5e74d15b81d5cf016dd2684e364b8fac849047263acdf69d94943c9"
     },
     "openapi": {
       "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
@@ -18,7 +18,7 @@
     },
     "capability_manifest": {
       "path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
-      "sha256": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
+      "sha256": "e17b120832bc92ed81d2edd7de3b11267ecb2fa82cfc4986cf2ac467a053f613"
     }
   },
   "frontend_generation": {
@@ -42,7 +42,11 @@
   "source_files": [
     {
       "path": "docs/contracts/agora/generate_backend_contract.py",
-      "sha256": "a86facb081dcacf314b144732bcda0883f6916db969d0f5fee283ce00b10b313"
+      "sha256": "6d8bf6501bf57771d30204a077d1dc2d63a9a5c777b54d206fa6b606baa3f3b3"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1.openapi.yaml",
+      "sha256": "4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f"
     },
     {
       "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
@@ -61,20 +65,152 @@
       "sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087"
     },
     {
+      "path": "services/control-plane/openapi/agora_v1_2.openapi.yaml",
+      "sha256": "5a8de5667869e17a662f34433e397a4140d68f038b1a76145d0d123d65774e66"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_3.openapi.yaml",
+      "sha256": "3997d0149e026d895cf32f70ee91f1f1021dcaab8be0dddc72e65971975cfd9b"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_4.openapi.yaml",
+      "sha256": "c911512fd3b9ff0c537c8137378aaa31578311a2275c77518eaedfceed55e409"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_5.openapi.yaml",
+      "sha256": "bb61d901a4ff3778630390b8fbe3db0a38e45278d7ab6fbd199dc39b8b005a1e"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_7.openapi.yaml",
+      "sha256": "4f5a1254d035891859436c62bf7edaf84797e5e4d0ff1076c539f08963a5b86e"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_8.openapi.yaml",
+      "sha256": "e0b7108922e76f51900f631477a5f87874f7aaf94630640b5d57d32e7f3feea3"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_9.openapi.yaml",
+      "sha256": "bcac37d2cb674abe24f4e7d73b37302347bf4e2af14b6ce6c674acbe74798f86"
+    },
+    {
+      "path": "services/control-plane/specs/agora/agora_user_scope.schema.json",
+      "sha256": "ae660aa7719ded37ca8b41bfc6ac287d1eae0bb85a8389b08d069c528a934dee"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.json",
+      "sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_1.json",
+      "sha256": "5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee"
+    },
+    {
       "path": "services/control-plane/specs/agora/bundle_index.v1_10.json",
-      "sha256": "b8469492d1f97f99924de9d5f220eaa3ee430c94c8db2fe130a6d0261b33c775"
+      "sha256": "1bc2f33761d29fcfa6971a4aa2985f93b9aee975cd69fa93a8b26cce168715e8"
     },
     {
       "path": "services/control-plane/specs/agora/bundle_index.v1_11.json",
-      "sha256": "202f97b5099806849511c69349f9c77e08f2c3420294dbe92ec6b1c2b07679a0"
+      "sha256": "4d9e452705a60b5ec639d8185625b0ddca62f3e9f70a363c201eaa988d0a3340"
     },
     {
       "path": "services/control-plane/specs/agora/bundle_index.v1_12.json",
-      "sha256": "25ca80c94a622a0845266cbecab617f96fc47daa8a08736a166d1d88c9dec7c6"
+      "sha256": "1237581dadc5be89cb204570082cdc1168b4f7d3d46ea6a8a2aa94e05f08fec9"
     },
     {
       "path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
-      "sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948"
+      "sha256": "f621c694f5e74d15b81d5cf016dd2684e364b8fac849047263acdf69d94943c9"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_2.json",
+      "sha256": "4ba5fc1a0858f3ca7370a2a54c11affe98ee0e11cfd3eb99c4ade734b52c75e3"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_3.json",
+      "sha256": "23c95383a69b378c3bb124b372895d4db5baa3e7aac82cc14575eff517708ef6"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_4.json",
+      "sha256": "0c89b44ba462867f88639a472aa453dff75cf2fed96ecff86201cdddf1765bee"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_5.json",
+      "sha256": "516fa8de1b320615ffea0aeef4e39d6277417f7d6faf9ad7788f0445c344ca98"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_6.json",
+      "sha256": "bc71b8c13828d62ab8fce9f5fac1ec28e4fad3c4699c1c1090e53f63c7e377d5"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_7.json",
+      "sha256": "f63a9cd19dece691afbffade13899082f4c463472d59db9592a852408befbd8b"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_8.json",
+      "sha256": "4f2a78b7e42472980cfd0e8b6c37a5aa1bf6c1d5112e54560b200f409c4895ce"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_9.json",
+      "sha256": "9e0f5592ecc8ccc0f1646569671ebba340c0fe3507b2dfb61acc47f0b719ea31"
+    },
+    {
+      "path": "services/control-plane/specs/agora/candidate_pool.schema.json",
+      "sha256": "679077c2f567502883f0b7735332645df30cccd6752a978379c5eeecd058e3b9"
+    },
+    {
+      "path": "services/control-plane/specs/agora/capability_manifest.json",
+      "sha256": "5988cac6d8ca38fc0c51922086c1cc2564b1bb31b2b36ee276e6d363249e9e3e"
+    },
+    {
+      "path": "services/control-plane/specs/agora/dashboard_recipe.schema.json",
+      "sha256": "5b9c33653eb8c85b001b5f6f6a802e83e58276a25f6c00e0a030a7094c78a8f6"
+    },
+    {
+      "path": "services/control-plane/specs/agora/personalization_event.schema.json",
+      "sha256": "df7991d19943650a61d58a065182fe4bda20f967b4098a36f36b1ab4b33bcb21"
+    },
+    {
+      "path": "services/control-plane/specs/agora/research_plan.schema.json",
+      "sha256": "55010d81198a4eef6934cde9392e19d79d014bf3f7ef6d31901b37627bd040d4"
+    },
+    {
+      "path": "services/control-plane/specs/agora/research_run_summary.schema.json",
+      "sha256": "669530ad2aed09133e84344aec7768e375c9cc505728b136d76041366184328b"
+    },
+    {
+      "path": "services/control-plane/specs/agora/servant_profile.schema.json",
+      "sha256": "71b114fa03fe0d54f72c785855760482d5c1ea5500a039a7c0593c490d58f930"
+    },
+    {
+      "path": "services/control-plane/specs/agora/shadow_decision.schema.json",
+      "sha256": "1414c77ddebb5102b81a10fb57db32520c607daba76cb3736f7eb20eb751b0b2"
+    },
+    {
+      "path": "services/control-plane/specs/agora/strategy_completeness.schema.json",
+      "sha256": "13a8c0e28a6434b93b221a4d33f8022f87ee6ca4df99627728800117474ce2fa"
+    },
+    {
+      "path": "services/control-plane/specs/agora/strategy_workshop.schema.json",
+      "sha256": "d8d1662790f35d61fdaff0580ca488011dd90f4b4007d78e9fb77a5065396aec"
+    },
+    {
+      "path": "services/control-plane/specs/agora/trading_event.schema.json",
+      "sha256": "14bd9e788c855c30a1803a767e66a38efc6f7505bfddf59d3095499d113f02f4"
+    },
+    {
+      "path": "services/control-plane/specs/agora/trading_intent.schema.json",
+      "sha256": "588a0508e6b00206be1361e6337b440b7710df0075d6272adb4e85040be4f7ad"
+    },
+    {
+      "path": "services/control-plane/specs/agora/trading_room_workspace.schema.json",
+      "sha256": "c810e4aa01303fa877a90f6062fd5f64f5078a7144bacb433bf2089cdd5ace0e"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v10/capability_manifest_v1_9.json",
+      "sha256": "db88915b6af58e9805963a83a35c2df79f9850534734cda0f8e947a32aed4cf7"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v10/persona_interaction_daily.schema.json",
+      "sha256": "629c9cb145085b3cf4d00bfd2222fb096e06b46143fdb6001a2a23d95a2fd605"
     },
     {
       "path": "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json",
@@ -106,11 +242,163 @@
     },
     {
       "path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
-      "sha256": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
+      "sha256": "e17b120832bc92ed81d2edd7de3b11267ecb2fa82cfc4986cf2ac467a053f613"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
+      "sha256": "6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v2/chart_spec_v1.schema.json",
+      "sha256": "0bcd0fa5fc21d7c021d54803780e310cfd9234b3ea15c044fa0b5cdfffed0967"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v2/compatibility_manifest.schema.json",
+      "sha256": "84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json",
+      "sha256": "34c7e0fab793ec79776e9ddd5cca98683cacc6b8bba328e02a8c4c5eba45c13a"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v2/widget_spec_v2.schema.json",
+      "sha256": "d360a17a9762d69e6a5e2c87921117bb85ee34d972fd8034f8904df6facb993f"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json",
+      "sha256": "de7bffc221ecebf268c9a3a5da4787c5aaaa5088ecb8bc4502cc1ed0a4722b33"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/private_content_ref.schema.json",
+      "sha256": "f51648d6534142046ed256649e29357038ba420894b09bb9dab92e75fd7a8403"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/strategy_ref_contract.schema.json",
+      "sha256": "1e456372c394d2d256fdcaaee1fd2f1e4ab4829ffbf18e3432dc78e242d497e0"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/workshop_event.schema.json",
+      "sha256": "cea5fe3c9360fd50710ef7f68d84b155d7720ea27c52617cd298604dd6c5c5f3"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/workshop_persistence.schema.json",
+      "sha256": "fb62e17f64311e5090577dd3b9b43be599faee12aee9ac9241660d99a095fa3b"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json",
+      "sha256": "a4dc2d5e464d952ab633757f396426459b84ca84d150cbcbe960b8006ba758ca"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v3/workshop_version_link.schema.json",
+      "sha256": "70e4ce55ce55a4417bb869f27ce35e05408a05a909ea08941a2b3ad5b16b7313"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/capability_manifest_v1_3.json",
+      "sha256": "d21ac91558f9205732d6cffffe1fca86efad59bf1824e8dabe95fb4b585ca041"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json",
+      "sha256": "d16723d9de8c469905859e62d9904561ce96c51ebce9992cd8927a35e79092db"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/research_plan_execution.schema.json",
+      "sha256": "cc97bc9e119473c4ae9d2656f9629843645e73d09ab7ba2fa46bbd190c1cbe4c"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/research_run_projection.schema.json",
+      "sha256": "305bac84f1075bc3448238bf6157bcc1f7d39b1e18501cdef7dd39035f66c887"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/strategy_readiness.schema.json",
+      "sha256": "5ab691bb8c5fa866355092d44f2a6a197eb3c77c1dff814e7fa5e65cb2fbb816"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/trading_decision_event.schema.json",
+      "sha256": "fe6c8eb40900eda247b30c00ea3eb4a7fe9ec2edc65643e7850722a2adf2b3ea"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/trading_room_aggregate.schema.json",
+      "sha256": "c10babb6f20f4155d8f5be76b438d520e13716d6bb01f4612431b29e45027874"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/version_compare.schema.json",
+      "sha256": "732829b704f8c24fca36e1a0c2e9b14dbe714de19b460cfe5bf56f7133cdcba2"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/version_patch_proposal.schema.json",
+      "sha256": "5d7b4ca34becee0c5e6d2f2d8a741859f26afe68fbe36e843d870257c3e8da8c"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/workshop_card.schema.json",
+      "sha256": "f32f550250bfafd87801f5287856330e929255d9c86f0c71de49ccb84e716061"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v4/workshop_stream_event.schema.json",
+      "sha256": "37c21e77aae56a0d5031bbc56d16e86541b5b79422b54821a0503772c307e4de"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v5/candidate_discussion.schema.json",
+      "sha256": "69b1b81b120dec2a6f90b289c0130ef45197cbd4240ac578bce78c42d9f62eaa"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v5/candidate_member_review.schema.json",
+      "sha256": "560df54cefc05154a17cb00ae49611758484174bd18e52ee477ab261a0ba18a3"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v5/candidate_monitoring_status.schema.json",
+      "sha256": "64ec4637bcd16f5c13f839a96d04c9209e076fd8dc4162a3e5631138c7c3f344"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v5/candidate_score_result.schema.json",
+      "sha256": "c28d2c45d955106e07f9ce529bb7792d822d333ae5fbd498500e379acfb50363"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v5/capability_manifest_v1_4.json",
+      "sha256": "58141ebdd0a7fab9a35b6cd912e40b2b00800d2bbc82bee31a334e894cd2d564"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v6/capability_manifest_v1_5.json",
+      "sha256": "712ec646ec032cd0fbcc4cdc4f94df34a7ccfecfe5bf54e7f069df7b056c7f97"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v7/capability_manifest_v1_6.json",
+      "sha256": "cc55b8dc8d41ff5a4287ab19cd83df482377e7ead072f124242b903575bda1f0"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v7/governed_action_authority_request.schema.json",
+      "sha256": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v7/persona_opinion_consultation_event.schema.json",
+      "sha256": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v7/winner_branch_completeness.schema.json",
+      "sha256": "8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v8/capability_manifest_v1_7.json",
+      "sha256": "3ce6b5a2203b2c8b65c0262ed29642ff017f2d7748fa59306a256f474ac8139d"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v8/pint_ooda_live_routes.schema.json",
+      "sha256": "45d9e6e07ba6a2fb1980027d8b0bc0dbae0810ea5181e52ede7c24a9b09ae750"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v8/trading_room_workspace_v1_7.schema.json",
+      "sha256": "74bef9743d0b77f90aacba8164ff2b9daeb9b4609c21e5bc15ac86ba7dc4d10f"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v9/capability_manifest_v1_8.json",
+      "sha256": "42ecfda2a35ca54ef65481a8898297ad6bc9fe08a159b48bb1a5257ca1c7bacb"
     },
     {
       "path": "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json",
       "sha256": "602828f57d03b168c2ea5f6375ab0b141d39635f70ee5140db21f5d7a253fc06"
+    },
+    {
+      "path": "services/control-plane/specs/agora/widget_spec.schema.json",
+      "sha256": "0749275943dc155afa08dbb8736c336d613daf18b99b42f6c10aec15d2eabedb"
     }
   ],
   "compatibility": {
@@ -128,5 +416,5 @@
       "generated_types_sha256"
     ]
   },
-  "generated_at": "2026-08-27T07:19:29Z"
+  "generated_at": "2026-09-09T02:43:05Z"
 }

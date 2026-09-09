@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import threading
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
@@ -59,6 +60,16 @@ from services.governance.human_gate.decision_model import HumanGateDecisionError
 from services.governance.promotion_readiness.signoff_api import (
     SignoffAPI,
     SignoffApiError,
+)
+from services.governance.paper_approval_scope import (
+    PaperApprovalDenied,
+    PaperCandidateUnavailable,
+    configured_paper_registry_reader,
+    require_paper_owned_decision,
+    resolve_dev_paper_grant,
+    validate_paper_decide_body,
+    validate_paper_proposal,
+    verify_paper_candidate_for_decision,
 )
 
 # ---------------------------------------------------------------------------
@@ -1030,7 +1041,8 @@ def record_freeze_order(
         body["created_at"] = _utc_now()
         body["issued_at"] = body["created_at"]
 
-    with _freeze_order_lock:
+    lock_cm = getattr(freeze_order_store, "lock", None)
+    with _freeze_order_lock, (lock_cm() if callable(lock_cm) else nullcontext()):
         existing = freeze_order_store.get(freeze_order_id)
         is_transition = False
         if existing:
@@ -1161,7 +1173,8 @@ def record_rollback(
         body["initiated_at"] = body["created_at"]
         body["requested_at"] = body["created_at"]
 
-    with _rollback_lock:
+    lock_cm = getattr(rollback_store, "lock", None)
+    with _rollback_lock, (lock_cm() if callable(lock_cm) else nullcontext()):
         existing = rollback_store.get(rollback_id)
         is_transition = False
         if existing:
@@ -1294,8 +1307,26 @@ def _approval_principal(authorization: Optional[str]) -> AuthContext:
         raise HTTPException(401, 'Invalid approval claims') from exc
 
 
+def _dev_paper_grant(ctx: AuthContext):
+    """Dedicated dev paper principal admission; None for every other subject.
+
+    The dedicated subject never reaches generic role handling: it is either
+    admitted with its exact tenant/scope/role bundle or rejected here.
+    """
+    try:
+        return resolve_dev_paper_grant(ctx)
+    except PaperApprovalDenied as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+def _paper_registry_reader():
+    """Exact Registry owner reader for the dev paper candidate recheck."""
+    return configured_paper_registry_reader()
+
+
 def _approval_reader(authorization: Optional[str]) -> AuthContext:
     ctx = _approval_principal(authorization)
+    _dev_paper_grant(ctx)
     from services.governance.write_authority import WRITE_AUTHORITY_MATRIX
     roles = {role for values in WRITE_AUTHORITY_MATRIX.values() for role in values}
     if not ctx.roles.intersection(roles | {'approval_reader', 'approval_proposer'}):
@@ -1313,6 +1344,7 @@ def _tenant_approval(decision_id: str, ctx: AuthContext) -> ApprovalDecision:
 def _approval_command(operation, decision_id, body, authorization, idempotency_key):
     from services.governance.pg_store import ApprovalCommandConflict, ApprovalCommandNotFound
     ctx = _approval_principal(authorization)
+    grant = _dev_paper_grant(ctx)
     if not isinstance(idempotency_key, str) or not idempotency_key.strip():
         raise HTTPException(422, 'Idempotency-Key required')
     declared_role = getattr(body, 'actor_role', None)
@@ -1328,24 +1360,51 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             raise HTTPException(409, 'Proposal expected_version must be zero')
     elif role not in ctx.roles or body.actor_id != ctx.actor_id:
         raise HTTPException(403, 'Body actor and role must match verified principal')
+    now = datetime.now(timezone.utc)
+    if grant is not None:
+        if operation == 'revoke':
+            raise HTTPException(403, 'Dev paper principal may not revoke decisions')
+        if operation == 'propose':
+            try:
+                validate_paper_proposal(body.model_dump(mode='json'), grant=grant, now=now)
+            except PaperApprovalDenied as exc:
+                raise HTTPException(exc.status_code, str(exc)) from exc
     command = {
         'operation': operation, 'decision_id': decision_id,
         'tenant_id': ctx.claims['tenant_id'], 'actor_id': ctx.actor_id, 'actor_role': role,
         'expected_version': body.expected_version, 'idempotency_key': idempotency_key,
         'body': body.model_dump(mode='json'),
     }
+    if grant is not None:
+        # The owner-stamped scope is part of the command identity, so a replay
+        # under a different scope can never match the original receipt.
+        command['authorization_scope'] = grant.authorization_scope
     def mutate(decision):
         if operation == 'propose':
             if decision is not None:
                 raise ApprovalCommandConflict('Approval decision already exists')
             fields = body.model_dump(mode='json', exclude={'expected_version', 'decision_id'})
-            proposed = ApprovalDecision.create_proposed(decision_id=decision_id, **fields)
+            proposed = ApprovalDecision.create_proposed(
+                decision_id=decision_id,
+                authorization_scope=grant.authorization_scope if grant is not None else None,
+                **fields,
+            )
             errors = proposed.validate()
             if errors:
                 raise ValueError('; '.join(errors))
             return proposed
         if decision is None:
             raise ApprovalCommandNotFound('Approval decision not found')
+        if grant is not None:
+            # Owner reads run inside the CAS mutate callback: after auth/claim
+            # admission and after the durable replay short-circuit, so an
+            # original receipt is replayed exactly while a fresh transition
+            # always rechecks the actual candidate.
+            current = decision.to_dict()
+            require_paper_owned_decision(current, grant=grant, now=now)
+            if operation == 'decide':
+                validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+            verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
         if operation == 'review':
             decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
         elif operation == 'revoke':
@@ -1366,6 +1425,10 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         raise HTTPException(404, str(exc)) from exc
     except ApprovalCommandConflict as exc:
         raise HTTPException(409, str(exc)) from exc
+    except PaperApprovalDenied as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    except PaperCandidateUnavailable as exc:
+        raise HTTPException(503, 'Registry candidate read unavailable') from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

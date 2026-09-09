@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-DEPENDENCY-CONTRACT-INACTIVE-WORKSPACE-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "scope": "Allow a governed dependency revision to proceed when the only remaining runtime fence is a retained worker_worktrees lease that is provably inactive allocation/provenance metadata, without weakening any other existing dependency-contract fence",
+  "source_base": "9c22995341e4f9ff896cc550ca2e219aea7ad4e1",
+  "source_contracts": [
+    {
+      "path": "/tmp/dependency_inactive_workspace_review.md",
+      "sha256": "d28691c77555dec6d1767b42248c05d88ea98171e8486a0b22afd6e7cf165631"
+    },
+    {
+      "path": "/tmp/dependency_inactive_workspace_probe.json",
+      "sha256": "f913523467dec84ecfa69d7d7cf3b8e3fc85d74f4af4469ae19e9cb9e8feca1b"
+    }
+  ],
+  "observed_baseline": {
+    "affected_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+    "generation": 17,
+    "status": "blocked",
+    "runtime_sha": "9c22995341e4f9ff896cc550ca2e219aea7ad4e1",
+    "reason": "The existing scripts/ai_status.py:5064 _dependency_contract_runtime_fence unconditionally raised DependencyContractBusy('affected task has a worktree lease') for any retained worker_worktrees.leases record naming an affected task, even though the probe found no active worker, no unsettled queue event, no off-lock reservation, and an already-settled/held worker_recovery pointer for that same task.",
+    "probe_reference": "/tmp/dependency_inactive_workspace_probe.json probes[0] (\"actual inactive BFF retained allocation\", verdict busy, reason \"affected task has a worktree lease\")"
+  },
+  "implementation": {
+    "helper": "_dependency_contract_inactive_worktree_lease(task_id, task, lease, queue_events) in scripts/ai_status.py",
+    "distinction": "A retained lease for an affected task no longer fences the revision by mere presence. It must pass every correlated signal: exact task_id/workspace_task_id identity match, every lease identity field (branch, path, status_root, source_root, repository_id, base_ref, base_sha, last_used_at) present as a nonblank string, a last_queue_event_id that resolves to an existing queue event whose status is exactly 'completed', and the task's own worker_recovery must already pass the existing _dependency_contract_validate_worker_recovery settled/held contract unchanged.",
+    "fail_closed_default": "Any missing/blank identity field, an identity mismatch, an unresolved or non-completed queue-event correlation, or a task-side worker_recovery that is pending/reassigned/malformed/unknown/future-generation still raises DependencyContractBusy('affected task has a worktree lease') or the existing pending-recovery reason, exactly as before this change",
+    "preserved_fences": "Active-worker, queue-intent, off-lock phase reservation, malformed-runtime-record, and privileged/catalog checks are untouched; the worker and queue loops still run and can still raise before the worktree loop is reached for the same task",
+    "no_mutation_of_runtime": "The dependency-contract command still never writes runtime_state; only the canonical task row's depends_on/dependency_tracks/generation/contract_revision/last_update change on commit",
+    "no_new_mechanism": "No lease-release command, new API, scheduler, or task-state authority was added; scripts/ai_status.py and scripts/test_ai_status.py are the only granted implementation files touched"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k DependencyContractBatchTests",
+      "exit_code": 0,
+      "tests": "22 tests collected (20 passed, 2 pre-existing unrelated failures), 91 subtests passed",
+      "note": "test_existing_final_spawn_boundary_reloads_revised_task_generation and test_existing_offlock_phase_refuses_revision_then_stale_queue_cannot_launch fail on an unmodified scripts/ai_status.py + scripts/test_ai_status.py baseline too (test_supervisor.config_fixture does not exist in this checkout); reproduced by git stash of this task's diff and rerunning the identical two tests, confirming the failures are pre-existing and out of this task's granted scope (test_supervisor.py is not a granted artifact)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+      "exit_code": 0,
+      "tests": "482 collected: 480 passed, 2 pre-existing unrelated failures, 283 subtests passed",
+      "note": "Full existing regression file run, including all real CLI/TaskStore, concurrency/process-loss, settled-recovery, and malformed-runtime DependencyContractBatchTests cases plus every other suite in the file"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py",
+      "exit_code": 0
+    }
+  ],
+  "new_regression_cases": [
+    {
+      "name": "test_provably_inactive_worktree_lease_allows_dependency_revision",
+      "asserts": "A retained worktree lease with complete, self-consistent identity fields, a last_queue_event_id resolving to a completed queue event, and a task with an already-settled held worker_recovery no longer fences the dependency revision; the revision commits, the task's status/waiting_for/next/owner/reviewer/worker_recovery are preserved verbatim, the runtime worker_worktrees record itself is never mutated, and an exact replay of the same request is idempotent"
+    },
+    {
+      "name": "test_ambiguous_or_active_worktree_lease_signals_remain_busy",
+      "asserts": "Every ambiguous or active signal still fails closed with exit 75 and no canonical/runtime mutation: blank or missing lease identity fields (each of the 8 fields individually), a workspace_task_id identity mismatch, an unsettled (non-completed) correlated queue event, a missing/dangling last_queue_event_id, a real active worker for the task even with an otherwise well-formed lease, a real off-lock phase reservation for the task even with an otherwise well-formed lease, and a task-side worker_recovery that is still pending even though the lease itself is well-formed and correlated"
+    }
+  ],
+  "delivery": {
+    "status": "ready_for_independent_exact_head_review",
+    "independent_review": "pending",
+    "merge_commit": null,
+    "binding_location": "Canonical task delivery_binding at governed owner handoff; review/merge records are not fabricated in this pre-review manifest."
+  },
+  "out_of_scope_confirmed_unchanged": [
+    "supervisor.py, worker_workspace.py, worker_runner.py, test_supervisor.py: not touched",
+    "docs/operations/auto-worker-readiness.md: not touched (owned by OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001)",
+    "cleanup scanner bwrap parent-mount false positive: not touched, documented as a separate observation only",
+    "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 canonical task row, hold, checkpoint, and worker_worktrees lease: never mutated by this task; this change only alters what the dependency-contract admission API accepts for a future, separately authorized edge"
+  ],
+  "validated_file_sha256": {
+    "scripts/ai_status.py": "f79d1e9b93f3eb2d3f63273d162db7ac86d3549ca34195184ddbec366822cd86",
+    "scripts/test_ai_status.py": "b28c06808fb21f001b79856ac278f67885c27b3d6c936be949fad0c91ad5267f"
+  }
+}

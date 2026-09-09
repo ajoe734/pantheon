@@ -360,6 +360,720 @@ class GithubCliEnvTests(unittest.TestCase):
 
         self.assertEqual(env["GH_CONFIG_DIR"], str(Path("~/custom-gh").expanduser()))
 
+    def test_preserve_github_cli_auth_env_unset_git_config_count(self) -> None:
+        env = {}
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_ASKPASS"], "")
+        self.assertEqual(env["SSH_ASKPASS"], "")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_zero_git_config_count(self) -> None:
+        env = {"GIT_CONFIG_COUNT": "0"}
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_ASKPASS"], "")
+        self.assertEqual(env["SSH_ASKPASS"], "")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_populated_with_noncredential_entries(self) -> None:
+        env = {
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Alice",
+            "GIT_CONFIG_KEY_1": "init.defaultBranch",
+            "GIT_CONFIG_VALUE_1": "main",
+        }
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "3")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "user.name")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "Alice")
+        self.assertEqual(env["GIT_CONFIG_KEY_1"], "init.defaultBranch")
+        self.assertEqual(env["GIT_CONFIG_VALUE_1"], "main")
+        self.assertEqual(env["GIT_CONFIG_KEY_2"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_2"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_explicit_and_xdg_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            xdg = root / "xdg"
+            gh_dir = xdg / "gh"
+            gh_dir.mkdir(parents=True)
+
+            env = {}
+            common.preserve_github_cli_auth_env(env, {"XDG_CONFIG_HOME": str(xdg)})
+            self.assertEqual(env["GH_CONFIG_DIR"], str(gh_dir))
+
+        env2 = {}
+        common.preserve_github_cli_auth_env(env2, {"GH_CONFIG_DIR": "~/explicit-source-gh"})
+        self.assertEqual(env2["GH_CONFIG_DIR"], str(Path("~/explicit-source-gh").expanduser()))
+
+    def test_preserve_github_cli_auth_env_repeated_preparation_stable(self) -> None:
+        env = {}
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+        snapshot = dict(env)
+
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+        self.assertEqual(env, snapshot)
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+
+    def test_preserve_github_cli_auth_env_existing_github_helper_preserved(self) -> None:
+        # Explicit GitHub helper
+        env1 = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_0": "!custom-gh-helper",
+        }
+        common.preserve_github_cli_auth_env(env1, {"HOME": "/tmp/test"})
+        self.assertEqual(env1["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env1["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env1["GIT_CONFIG_VALUE_0"], "!custom-gh-helper")
+
+        # Explicit GitHub empty reset
+        env2 = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_0": "",
+        }
+        common.preserve_github_cli_auth_env(env2, {"HOME": "/tmp/test"})
+        self.assertEqual(env2["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env2["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env2["GIT_CONFIG_VALUE_0"], "")
+
+        # Explicit generic helper
+        env3 = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "!custom-generic-helper",
+        }
+        common.preserve_github_cli_auth_env(env3, {"HOME": "/tmp/test"})
+        self.assertEqual(env3["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env3["GIT_CONFIG_KEY_0"], "credential.helper")
+        self.assertEqual(env3["GIT_CONFIG_VALUE_0"], "!custom-generic-helper")
+
+        # Explicit generic empty reset
+        env4 = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "",
+        }
+        common.preserve_github_cli_auth_env(env4, {"HOME": "/tmp/test"})
+        self.assertEqual(env4["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env4["GIT_CONFIG_KEY_0"], "credential.helper")
+        self.assertEqual(env4["GIT_CONFIG_VALUE_0"], "")
+
+    def test_preserve_github_cli_auth_env_unrelated_host_helper_preserved(self) -> None:
+        env = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.https://gitlab.com.helper",
+            "GIT_CONFIG_VALUE_0": "gitlab-helper",
+        }
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://gitlab.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "gitlab-helper")
+        self.assertEqual(env["GIT_CONFIG_KEY_1"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_1"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_prompt_free_background_route(self) -> None:
+        # 1. Inherited GIT_ASKPASS and SSH_ASKPASS neutralized to empty
+        env = {}
+        inherited = {
+            "GIT_ASKPASS": "/usr/lib/ssh/ssh-askpass",
+            "SSH_ASKPASS": "/usr/lib/ssh/ssh-askpass",
+            "HOME": "/tmp/test",
+        }
+        common.preserve_github_cli_auth_env(env, inherited)
+        self.assertEqual(env["GIT_ASKPASS"], "")
+        self.assertEqual(env["SSH_ASKPASS"], "")
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+
+        # 2. Supported PAT askpass policy preserved
+        env_pat = {
+            "PANTHEON_WORKER_GIT_ASKPASS": "/secure/pat-askpass",
+            "GIT_ASKPASS": "/secure/pat-askpass",
+        }
+        common.preserve_github_cli_auth_env(env_pat, {"HOME": "/tmp/test"})
+        self.assertEqual(env_pat["GIT_ASKPASS"], "/secure/pat-askpass")
+
+        # 3. Caller explicit core.askPass respected
+        env_core = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.askPass",
+            "GIT_CONFIG_VALUE_0": "/custom/askpass",
+        }
+        common.preserve_github_cli_auth_env(env_core, {"HOME": "/tmp/test"})
+        self.assertNotIn("GIT_ASKPASS", env_core)
+
+    def test_preserve_github_cli_auth_env_malformed_indexed_config_rejected(self) -> None:
+        # non-integer count
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({"GIT_CONFIG_COUNT": "secret_abc_123"})
+        self.assertNotIn("secret_abc_123", str(cm.exception))
+        self.assertIn("non-negative integer", str(cm.exception))
+
+        # negative count
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({"GIT_CONFIG_COUNT": "-1"})
+
+        # count with a trailing newline: a stripped-copy check would accept this,
+        # but real Git parses the raw env value and rejects the embedded newline.
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1\n",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            })
+        self.assertIn("non-negative integer", str(cm.exception))
+
+        # count using a non-ASCII decimal digit (U+0661 ARABIC-INDIC DIGIT ONE):
+        # str.isdigit() and int() both accept it, but real Git only understands
+        # ASCII digits.
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "١",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            })
+
+        # count using a non-ASCII digit with no int() equivalent (U+00B2
+        # SUPERSCRIPT TWO): str.isdigit() is True but int() raises ValueError;
+        # that raw exception must not escape preparation uncaught.
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "²",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            })
+
+        # Real Git execution regressions proving each malformed count, if it had
+        # reached Git unrejected, would exit 128 rather than silently working.
+        for malformed_count in ("1\n", "١", "²"):
+            real_git_count_proc = subprocess.run(
+                ["git", "config", "--list"],
+                capture_output=True,
+                text=True,
+                env={
+                    "PATH": os.environ.get("PATH", ""),
+                    "GIT_CONFIG_COUNT": malformed_count,
+                    "GIT_CONFIG_KEY_0": "credential.helper",
+                    "GIT_CONFIG_VALUE_0": "",
+                },
+            )
+            self.assertEqual(real_git_count_proc.returncode, 128)
+
+        # missing key
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_VALUE_0": "super_secret_token",
+            })
+        self.assertNotIn("super_secret_token", str(cm.exception))
+        self.assertIn("missing GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # blank key
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "  ",
+                "GIT_CONFIG_VALUE_0": "val",
+            })
+
+        # malformed key syntax - no section dot (Requirement 2)
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "synthetic-invalid-sensitive-key",
+                "GIT_CONFIG_VALUE_0": "synthetic-value",
+            })
+        self.assertNotIn("synthetic-invalid-sensitive-key", str(cm.exception))
+        self.assertNotIn("synthetic-value", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # malformed key syntax - invalid characters (underscores in section or variable)
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "user.name_with_underscore",
+                "GIT_CONFIG_VALUE_0": "val",
+            })
+        self.assertNotIn("user.name_with_underscore", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "user_section.name",
+                "GIT_CONFIG_VALUE_0": "val",
+            })
+        self.assertNotIn("user_section.name", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # missing value
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "user.name",
+            })
+
+        # invalid value syntax (null byte)
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "user.name",
+                "GIT_CONFIG_VALUE_0": "val\0sensitive",
+            })
+        self.assertNotIn("sensitive", str(cm.exception))
+        self.assertIn("invalid value syntax in GIT_CONFIG_VALUE_0", str(cm.exception))
+
+        # stray key without count
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({"GIT_CONFIG_KEY_0": "user.name"})
+        self.assertIn("GIT_CONFIG_COUNT is unset", str(cm.exception))
+
+        # Real Git execution regression proving real Git prints raw invalid key on exit 128
+        real_git_proc = subprocess.run(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "synthetic-invalid-sensitive-key",
+                "GIT_CONFIG_VALUE_0": "synthetic-value",
+            },
+        )
+        self.assertEqual(real_git_proc.returncode, 128)
+        self.assertIn("synthetic-invalid-sensitive-key", real_git_proc.stderr)
+        self.assertIn("key does not contain a section", real_git_proc.stderr)
+
+        # malformed key syntax - leading whitespace must be rejected by preparation
+        # itself, not merely by a stripped copy used only for validation, or real
+        # Git ends up invoked with the raw whitespace-prefixed key and exits 128.
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": " user.name",
+                "GIT_CONFIG_VALUE_0": "synthetic-sensitive-value",
+            })
+        self.assertNotIn("synthetic-sensitive-value", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # malformed key syntax - trailing newline must be rejected the same way
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.https://synthetic-sensitive.example/.extraheader\n",
+                "GIT_CONFIG_VALUE_0": "synthetic-sensitive-value",
+            })
+        self.assertNotIn("synthetic-sensitive-value", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # Real Git execution regressions proving the whitespace/newline-malformed key
+        # never reaches Git as a raw indexed config value once preparation rejects it.
+        real_git_ws_proc = subprocess.run(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": " user.name",
+                "GIT_CONFIG_VALUE_0": "synthetic-value",
+            },
+        )
+        self.assertEqual(real_git_ws_proc.returncode, 128)
+
+        real_git_nl_proc = subprocess.run(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.https://synthetic-sensitive.example/.extraheader\n",
+                "GIT_CONFIG_VALUE_0": "synthetic-value",
+            },
+        )
+        self.assertEqual(real_git_nl_proc.returncode, 128)
+
+    def test_git_credential_real_subprocess_consumption_and_prompt_free_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            mock_gh = bin_dir / "gh"
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gh-user\"\n"
+                "  echo \"password=synthetic-gh-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            mock_gh.chmod(0o755)
+
+            mock_gitlab = bin_dir / "git-credential-gitlab"
+            mock_gitlab.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gitlab-user\"\n"
+                "  echo \"password=synthetic-gitlab-pass\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            mock_gitlab.chmod(0o755)
+
+            env = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "credential.https://gitlab.com.helper",
+                "GIT_CONFIG_VALUE_0": "gitlab",
+            }
+            common.preserve_github_cli_auth_env(env, {"HOME": str(tmp)})
+
+            # 1. GitHub credential fill invokes the synthetic gh helper
+            proc_gh = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_gh.returncode, 0, proc_gh.stderr)
+            self.assertIn("username=synthetic-gh-user", proc_gh.stdout)
+            self.assertIn("password=synthetic-gh-token", proc_gh.stdout)
+
+            # 2. Unrelated host (gitlab.com) still invokes its preserved helper
+            proc_gl = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=gitlab.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_gl.returncode, 0, proc_gl.stderr)
+            self.assertIn("username=synthetic-gitlab-user", proc_gl.stdout)
+            self.assertIn("password=synthetic-gitlab-pass", proc_gl.stdout)
+
+            # 3. Requirement 1: Inherited GIT_ASKPASS/SSH_ASKPASS/core.askPass neutralized; prompt-free failure (exit 128), no hang
+            mock_gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            marker_file = tmp / "askpass_prompt_marker.txt"
+            failing_askpass = bin_dir / "askpass-test"
+            failing_askpass.write_text(
+                f"#!/bin/sh\necho prompted >> '{marker_file}'\nexit 1\n",
+                encoding="utf-8",
+            )
+            failing_askpass.chmod(0o755)
+
+            inherited_env = {
+                "HOME": str(tmp),
+                "GIT_ASKPASS": str(failing_askpass),
+                "SSH_ASKPASS": str(failing_askpass),
+            }
+            env_with_inherited = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+            }
+            common.preserve_github_cli_auth_env(env_with_inherited, inherited_env)
+
+            proc_fail = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_with_inherited,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_fail.returncode, 128)
+            self.assertIn("terminal prompts disabled", proc_fail.stderr)
+            self.assertFalse(marker_file.exists(), "Inherited GIT_ASKPASS program must not be executed")
+            self.assertNotIn("synthetic-gh-token", proc_fail.stderr)
+
+            # 4. Requirement 1: Explicit supported credential policy (PANTHEON_WORKER_GIT_ASKPASS) respected
+            # even when both the PAT askpass AND the gh helper would independently succeed:
+            # the explicit credential choice must win, not be silently overridden by
+            # automatic gh credential-helper routing.
+            supported_askpass = bin_dir / "worker-pat-askpass"
+            supported_askpass.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  *Username*|*username*) echo \"worker-pat-user\" ;;\n"
+                "  *) echo \"worker-pat-token\" ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            supported_askpass.chmod(0o755)
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gh-user\"\n"
+                "  echo \"password=synthetic-gh-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            env_supported = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "PANTHEON_WORKER_GIT_ASKPASS": str(supported_askpass),
+                "GIT_ASKPASS": str(supported_askpass),
+            }
+            common.preserve_github_cli_auth_env(env_supported, {"HOME": str(tmp)})
+            self.assertEqual(env_supported["GIT_ASKPASS"], str(supported_askpass))
+            self.assertNotIn(
+                "GIT_CONFIG_COUNT",
+                env_supported,
+                "must not auto-inject a gh credential helper when an explicit "
+                "supported askpass is configured",
+            )
+            proc_supp = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_supported,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_supp.returncode, 0, proc_supp.stderr)
+            self.assertIn("username=worker-pat-user", proc_supp.stdout)
+            self.assertIn("password=worker-pat-token", proc_supp.stdout)
+            self.assertNotIn("synthetic-gh-user", proc_supp.stdout)
+            self.assertNotIn("synthetic-gh-token", proc_supp.stdout)
+
+            # 4b. Same explicit policy still wins when the gh helper is unusable (fallback case).
+            mock_gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            env_supported_gh_down = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "PANTHEON_WORKER_GIT_ASKPASS": str(supported_askpass),
+                "GIT_ASKPASS": str(supported_askpass),
+            }
+            common.preserve_github_cli_auth_env(env_supported_gh_down, {"HOME": str(tmp)})
+            proc_supp_gh_down = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_supported_gh_down,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_supp_gh_down.returncode, 0, proc_supp_gh_down.stderr)
+            self.assertIn("username=worker-pat-user", proc_supp_gh_down.stdout)
+            self.assertIn("password=worker-pat-token", proc_supp_gh_down.stdout)
+
+            # 5. Requirement 3: Explicit generic credential.helper empty reset preserved and prevents gh from supplying credentials
+            # Restore working synthetic gh
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=gh-leak-user\"\n"
+                "  echo \"password=gh-leak-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            env_reset = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            }
+            common.preserve_github_cli_auth_env(env_reset, {"HOME": str(tmp)})
+            self.assertEqual(env_reset["GIT_CONFIG_COUNT"], "1")
+            self.assertEqual(env_reset["GIT_CONFIG_KEY_0"], "credential.helper")
+            self.assertEqual(env_reset["GIT_CONFIG_VALUE_0"], "")
+
+            proc_reset = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_reset,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_reset.returncode, 128)
+            self.assertIn("terminal prompts disabled", proc_reset.stderr)
+            self.assertNotIn("gh-leak-user", proc_reset.stdout)
+
+            # 6. Requirement 3: Explicit GitHub-specific empty reset preserved
+            env_gh_reset = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            }
+            common.preserve_github_cli_auth_env(env_gh_reset, {"HOME": str(tmp)})
+            self.assertEqual(env_gh_reset["GIT_CONFIG_COUNT"], "1")
+            proc_gh_reset = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_gh_reset,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_gh_reset.returncode, 128)
+            self.assertIn("terminal prompts disabled", proc_gh_reset.stderr)
+
+            # 7. Requirement 3: Explicit generic helper precedence preserved
+            mock_generic_helper = bin_dir / "custom-generic-helper"
+            mock_generic_helper.write_text(
+                "#!/bin/sh\n"
+                "echo \"username=custom-generic-user\"\n"
+                "echo \"password=custom-generic-token\"\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            mock_generic_helper.chmod(0o755)
+            env_generic_helper = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "!custom-generic-helper",
+            }
+            common.preserve_github_cli_auth_env(env_generic_helper, {"HOME": str(tmp)})
+            self.assertEqual(env_generic_helper["GIT_CONFIG_COUNT"], "1")
+            proc_gen = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_generic_helper,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_gen.returncode, 0, proc_gen.stderr)
+            self.assertIn("username=custom-generic-user", proc_gen.stdout)
+            self.assertIn("password=custom-generic-token", proc_gen.stdout)
+            self.assertNotIn("gh-leak-user", proc_gen.stdout)
+
+            # 8. Requirement 3: Explicit GitHub-specific custom helper preserved
+            mock_custom_gh = bin_dir / "custom-gh-helper"
+            mock_custom_gh.write_text(
+                "#!/bin/sh\n"
+                "echo \"username=custom-github-user\"\n"
+                "echo \"password=custom-github-token\"\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            mock_custom_gh.chmod(0o755)
+            env_custom_gh = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+                "GIT_CONFIG_VALUE_0": "!custom-gh-helper",
+            }
+            common.preserve_github_cli_auth_env(env_custom_gh, {"HOME": str(tmp)})
+            self.assertEqual(env_custom_gh["GIT_CONFIG_COUNT"], "1")
+            proc_cgh = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_custom_gh,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_cgh.returncode, 0, proc_cgh.stderr)
+            self.assertIn("username=custom-github-user", proc_cgh.stdout)
+            self.assertIn("password=custom-github-token", proc_cgh.stdout)
+            self.assertNotIn("gh-leak-user", proc_cgh.stdout)
+
+            # 9. Requirement 1: An explicit indexed core.askPass entry is a deliberate
+            # credential choice too, distinct from PANTHEON_WORKER_GIT_ASKPASS. With no
+            # credential.helper configured, real `git credential fill` falls back to
+            # core.askPass for the identity. A working synthetic gh helper must not be
+            # auto-appended and silently switch the resolved identity from the explicit
+            # askpass to gh.
+            explicit_core_askpass = bin_dir / "explicit-core-askpass"
+            explicit_core_askpass.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  *sername*) echo \"synthetic-explicit-user\" ;;\n"
+                "  *) echo \"synthetic-explicit-pass\" ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            explicit_core_askpass.chmod(0o755)
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gh\"\n"
+                "  echo \"password=synthetic-gh-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            env_core_askpass = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.askPass",
+                "GIT_CONFIG_VALUE_0": str(explicit_core_askpass),
+            }
+
+            # Identity before preparation: the explicit core.askPass fallback.
+            proc_before = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_core_askpass,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_before.returncode, 0, proc_before.stderr)
+            self.assertIn("username=synthetic-explicit-user", proc_before.stdout)
+
+            common.preserve_github_cli_auth_env(env_core_askpass, {"HOME": str(tmp)})
+            self.assertEqual(
+                env_core_askpass["GIT_CONFIG_COUNT"],
+                "1",
+                "must not auto-append a gh credential helper when an explicit "
+                "indexed core.askPass entry is already configured",
+            )
+            self.assertNotIn("GIT_ASKPASS", env_core_askpass)
+
+            # Identity after preparation must still be the explicit core.askPass choice.
+            proc_after = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_core_askpass,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_after.returncode, 0, proc_after.stderr)
+            self.assertIn("username=synthetic-explicit-user", proc_after.stdout)
+            self.assertNotIn("synthetic-gh", proc_after.stdout)
+
 
 class ClaudeAuthTests(unittest.TestCase):
     def test_claude_auth_ready_accepts_long_lived_oauth_token_env(self) -> None:

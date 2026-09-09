@@ -173,10 +173,13 @@ def resolve_agora_user_scope(
         )
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
-    default_tenant = _first_nonblank(
+    env_default_tenant = _first_nonblank(
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
+    )
+    default_tenant = _first_nonblank(
+        env_default_tenant,
         *_claim_strings(claims, _TENANT_CLAIM_PATHS),
         "pantheon-dev",
     )
@@ -315,3 +318,56 @@ def filter_agora_user_records(
         for record in records
         if isinstance(record, dict) and agora_record_matches_user_scope(record, scope)
     ]
+
+
+def resolve_canonical_agora_scope(
+    identity: Any,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> tuple[str, str]:
+    """Consistently resolve canonical (tenant_id, user_id) for Agora callers.
+
+    Precedence:
+    1. If identity is present, resolve and validate via resolve_agora_user_scope.
+       Authorization errors (such as denied tenant) are propagated fail-closed.
+       Caller-supplied tenant_id or user_id cannot elevate access beyond authorized scope.
+    2. If identity is None, fallback to clean_tenant / clean_user or env defaults.
+    """
+    clean_tenant = str(tenant_id or "").strip()
+    clean_user = str(user_id or "").strip()
+
+    if identity is not None:
+        now_fn = utc_now or (
+            lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
+        scope = resolve_agora_user_scope(
+            identity,
+            utc_now=now_fn,
+            requested_tenant_id=clean_tenant or None,
+        )
+        resolved_tenant = str(scope.tenant_id or "").strip()
+        resolved_user = str(scope.user_id or "").strip()
+        if clean_user and clean_user != resolved_user:
+            roles = set(getattr(identity, "roles", []) or [])
+            operator_id = str(getattr(identity, "operator_id", "") or "").strip()
+            if clean_user != operator_id and not ({"admin", "system"} & roles):
+                raise AgoraScopeResolutionError(
+                    f"User scope {clean_user!r} denied for operator {operator_id!r}",
+                    reason="AGORA_SCOPE_USER_DENIED",
+                    status_code=403,
+                    details={"requestedUserId": clean_user, "authorizedUserId": resolved_user},
+                )
+            resolved_user = clean_user
+        return resolved_tenant, resolved_user
+
+    if not clean_tenant:
+        clean_tenant = _first_nonblank(
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "pantheon-dev",
+        )
+    return clean_tenant, clean_user
+

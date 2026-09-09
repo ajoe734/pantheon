@@ -26,6 +26,7 @@ from common import (
     load_json,
     normalize_agent_id,
     run_command,
+    runtime_log_path,
     to_bool,
     utc_now,
     write_json,
@@ -1002,6 +1003,25 @@ def _share_auth_probe_across_credential_group(
     return record
 
 
+def _read_and_discard_native_probe_log(path: Path) -> str:
+    """Read one probe's bound native CLI log, then remove the transient file.
+
+    The probe runs every few minutes; leaving one small log file behind per
+    invocation would otherwise accumulate indefinitely in the runtime sidecar
+    directory.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return text
+
+
 def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tuple[bool, str | None, str]:
     """Decide whether an `agy --prompt` smoke probe proves non-interactive auth.
 
@@ -1120,6 +1140,14 @@ def _antigravity_auth_probe(
             command.extend(["--model", probe_model])
         if print_timeout:
             command.extend(["--print-timeout", print_timeout])
+        # `agy --prompt` can authenticate and then hit quota with a clean exit
+        # and empty stdout/stderr, which `_antigravity_probe_ready` would
+        # otherwise read as a silent not-logged-in failure. The CLI's own
+        # `--log-file` still records the native error; bind one to this exact
+        # probe invocation so that evidence reaches classification.
+        native_log_path = runtime_log_path(f"{provider_id}-probe-native", provider_id, config=config)
+        native_log_path.parent.mkdir(parents=True, exist_ok=True)
+        command.extend(["--log-file", str(native_log_path)])
         command.extend(["--prompt", prompt])
         try:
             result = run_command(command, timeout=timeout, env=env)
@@ -1144,8 +1172,10 @@ def _antigravity_auth_probe(
                 metadata=probe_metadata,
             )
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        native_text = _read_and_discard_native_probe_log(native_log_path)
+        combined = "\n".join(part for part in (output, native_text) if part)
         ready, error, status = _antigravity_probe_ready(
-            result.returncode, (result.stdout or "").strip(), output
+            result.returncode, (result.stdout or "").strip(), combined
         )
         return _auth_probe_record(
             provider_id,
