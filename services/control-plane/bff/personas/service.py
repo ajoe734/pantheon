@@ -732,6 +732,17 @@ class _PersonaOwnerHttpTransport:
     def _service_jwt(self, owner: str) -> str:
         """Mint a short-lived, tenant-bound service JWT for strict owners."""
 
+        if owner == "governance":
+            # Product approval authority is issued by the authorized dev delivery
+            # lane, never self-granted by adding a role to this generic BFF JWT.
+            from services.service_token_file import configured_service_token
+            token = configured_service_token("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN")
+            if not token:
+                raise RuntimeError("Scoped Persona Governance principal is required")
+            if self.tenant_id != "tenant-dev":
+                raise RuntimeError("Persona paper Governance principal is tenant-dev only")
+            return token
+
         secret_env = {
             "capital": "PANTHEON_CAPITAL_JWT_SECRET",
             "registry": "PANTHEON_REGISTRY_JWT_SECRET",
@@ -789,7 +800,10 @@ class _PersonaOwnerHttpTransport:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "X-Tenant-Id": tenant_id,
-            "X-Pantheon-Service": PERSONA_OWNER_SERVICE_ACTOR_ID,
+            "X-Pantheon-Service": (
+                os.getenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner")
+                if owner == "governance" else PERSONA_OWNER_SERVICE_ACTOR_ID
+            ),
         }
         idempotency_key = str(
             (payload or {}).get("idempotency_key")
@@ -853,10 +867,18 @@ class _PersonaOwnerHttpTransport:
         return value
 
     def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        headers = self._headers(owner, payload)
+        if owner == "governance":
+            # Governance forbids idempotency fields in its body. Bind the header
+            # to the exact operation, tenant and CAS payload across safe replay.
+            headers["Idempotency-Key"] = "persona-governance-" + _stable_json_hash({
+                "method": "POST", "path": path, "tenant_id": self.tenant_id,
+                "payload": dict(payload),
+            })
         request = urllib_request.Request(
             self._url(owner, path),
             data=json.dumps(dict(payload)).encode("utf-8"),
-            headers=self._headers(owner, payload),
+            headers=headers,
             method="POST",
         )
         with urllib_request.urlopen(
@@ -1346,6 +1368,9 @@ def _reconcile_persona_provisioning_compensation(
         # Compensation writes go to the same strict owners as forward
         # coordination, so it must present the same authenticated principal.
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
     )
     try:
         reconciled = coordinator.reconcile_failure_compensation(record)
@@ -4014,6 +4039,9 @@ def _coordinate_persona_create(
         # Owner mutations are authenticated as this BFF service principal; the
         # requesting human stays audit metadata inside each owner payload.
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
     )
     try:
         active = coordinator.coordinate(active)
