@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-DEPENDENCY-RECOVERY-SETTLEMENT-001",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "scope": "Allow governed dependency revisions after recovery has settled without clearing task holds",
+  "source_base": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+  "source_contracts": [
+    {
+      "path": "/tmp/dependency_recovery_contract_review.md",
+      "sha256": "02a851b1f9644ebd692058d6b026709a3f4b6aaac4923c7421de794d1b029582"
+    },
+    {
+      "path": "/tmp/dependency_recovery_contract_probe.py",
+      "sha256": "07b4bba83ca4e2486d554729b18ddd17dbfb5c0e0c0f4b18e8ae09bdc0b426de"
+    }
+  ],
+  "implementation": {
+    "ingress": "dependency-contract <absolute-request.json>; explicit local Human/Ops only, with no auto-worker markers",
+    "cas": "Existing task_mutation_cas_digest over each complete current task row",
+    "recovery_admission": "Generation-aware task_has_active_worker_recovery semantics with explicit shape, receipt identity, recognized status, and generation guards; settled terminal held recovery or obsolete prior-generation recovery pointers allow dependency revision while preserving task holds, waiting_for, next, provenance, and complete recovery receipts",
+    "fail_closed_guards": "Current pending/reassigned recovery, unknown recovery status, missing receipt identity, malformed pointer, invalid generation, or future generation fail closed with DependencyContractBusy (exit 75)",
+    "runtime_fences": "Active workers, queue intents, worktree leases, and off-lock phase reservations remain busy fences",
+    "transaction": "Existing runtime-admission lock, canonical TaskStore transaction and buffered activity outbox; one atomic append for the complete batch"
+  },
+  "validation": [
+    {
+      "command": "python3 -B /tmp/dependency_recovery_contract_probe.py --command-root /tmp/pantheon-worker-worktrees/pantheon/ops-dependency-recovery-settlement-001 --expect-fixed",
+      "exit_code": 0,
+      "note": "Detached pure-memory probe verified all 17 cases match expect-fixed outcomes."
+    },
+    {
+      "command": "python3 -B /tmp/dependency_recovery_contract_probe.py --expect-bug",
+      "exit_code": 0,
+      "note": "Baseline reproduction confirmed on promoted command runtime."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests -v",
+      "exit_code": 0,
+      "tests": 20,
+      "note": "Extended DependencyContractBatchTests with settled held recovery, recovery variants, and fail-closed active/malformed cases."
+    },
+    {
+      "command": "python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests scripts.test_ai_status.DependencyTrackCommandTests scripts.test_ai_status.TaskMetadataTests scripts.test_status_command_runtime_pin -v",
+      "exit_code": 0,
+      "tests": 74
+    },
+    {
+      "command": "python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k DurableQueueContractTests -q",
+      "exit_code": 0,
+      "tests": 20
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_recovery_contract_boundaries.py",
+      "exit_code": 0,
+      "tests": 23
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py",
+      "exit_code": 0,
+      "tests": 24
+    },
+    {
+      "command": "PATH=\"/tmp/pantheon-worker-worktrees/pantheon/ops-dependency-recovery-settlement-001/.venv-pantheon/bin:$PATH\" scripts/run-acceptance.sh smoke",
+      "exit_code": 0,
+      "note": "Full smoke acceptance passed cleanly with provisioned distribution."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "delivery": {
+    "status": "ready_for_independent_exact_head_review",
+    "independent_review": "pending",
+    "merge_commit": null,
+    "binding_location": "Canonical task delivery_binding at governed owner handoff; review/merge records are not fabricated in this pre-review manifest."
+  },
+  "validated_file_sha256": {
+    "scripts/ai_status.py": "b455a78cbb9d4a483b52e5c8ed4de190d28ce38ba9f1880bf722d394a1f18ac1",
+    "scripts/test_ai_status.py": "793dc866802d0bcfe720a01692f49b7ac533df763358b005040aa43a96b43357",
+    "docs/operations/auto-worker-readiness.md": "694cae3ab2986e3dc823d9f546b995b09b51831754707602f2512ea0b8d56c43"
+  }
+}
