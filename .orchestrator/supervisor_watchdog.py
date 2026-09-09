@@ -104,7 +104,27 @@ def resolve_repo_path(value: str | Path | None, default: str) -> Path:
     return raw
 
 
+def validated_fleet_worker_cap(config: Mapping[str, Any]) -> int:
+    """Resolve the sole fleet ceiling; retired watchdog policy is never ignored."""
+    dispatcher = config.get("ready_dispatcher")
+    if not isinstance(dispatcher, dict):
+        raise ValueError("ready_dispatcher must be an object with max_concurrent_workers")
+    cap = dispatcher.get("max_concurrent_workers")
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 0:
+        raise ValueError("ready_dispatcher.max_concurrent_workers must be an integer >= 0")
+    watchdog = config.get("watchdog", {})
+    if not isinstance(watchdog, dict):
+        raise ValueError("watchdog must be an object")
+    if "max_active_workers" in watchdog:
+        raise ValueError(
+            "watchdog.max_active_workers is retired; remove it and use "
+            "ready_dispatcher.max_concurrent_workers"
+        )
+    return cap
+
+
 def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
+    fleet_cap = validated_fleet_worker_cap(config)
     supervisor_settings = config.get("supervisor", {}) if isinstance(config.get("supervisor"), dict) else {}
     settings = dict(config.get("watchdog", {}) if isinstance(config.get("watchdog"), dict) else {})
     settings.setdefault("enabled", True)
@@ -122,7 +142,7 @@ def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("max_disk_used_percent", 95.0)
     settings.setdefault("min_memory_available_mb", 512)
     settings.setdefault("max_load_1m", max(4.0, float(os.cpu_count() or 1) * 4.0))
-    settings.setdefault("max_active_workers", 12)
+    settings["max_active_workers"] = fleet_cap
     settings.setdefault("contention_deadline_seconds", 2.0)
     settings.setdefault("intentional_restart_ttl_seconds", 300)
     return settings

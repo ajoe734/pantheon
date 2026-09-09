@@ -42,6 +42,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.state_file = self.root / "state.json"
         self.activity_log = self.root / "activity-log.jsonl"
         self.config = {
+            "ready_dispatcher": {"max_concurrent_workers": 13},
             "paths": {
                 "state_file": str(self.state_file),
                 "activity_log": str(self.activity_log),
@@ -61,7 +62,6 @@ class SupervisorWatchdogTests(unittest.TestCase):
                 "max_disk_used_percent": 95.0,
                 "min_memory_available_mb": 512,
                 "max_load_1m": 24.0,
-                "max_active_workers": 12,
             },
         }
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +75,34 @@ class SupervisorWatchdogTests(unittest.TestCase):
             else:
                 state[key] = value
         self.state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    def test_fleet_cap_boundary_and_zero(self) -> None:
+        for cap in (13, 0):
+            self.config["ready_dispatcher"]["max_concurrent_workers"] = cap
+            settings = supervisor_watchdog.watchdog_settings(self.config)
+            self.assertEqual(settings["max_active_workers"], cap)
+            for count, expected in ((cap, []), (cap + 1, ["active_worker_count_above_threshold"])):
+                snapshot = {**self.ok_resource(), "active_worker_count": count}
+                self.assertEqual(
+                    supervisor_watchdog.resource_pressure_reasons(snapshot, settings),
+                    expected,
+                )
+
+    def test_fleet_cap_rejects_missing_malformed_and_retired_config(self) -> None:
+        for value in (None, True, False, "13", "", 13.0, 13.5, -1, [], {}):
+            with self.subTest(value=value):
+                self.config["ready_dispatcher"]["max_concurrent_workers"] = value
+                with self.assertRaisesRegex(ValueError, "max_concurrent_workers"):
+                    supervisor_watchdog.watchdog_settings(self.config)
+        del self.config["ready_dispatcher"]["max_concurrent_workers"]
+        with self.assertRaisesRegex(ValueError, "max_concurrent_workers"):
+            supervisor_watchdog.watchdog_settings(self.config)
+        self.config["ready_dispatcher"]["max_concurrent_workers"] = 13
+        for value in (12, 13, 14, None, True, "13", [], {}):
+            with self.subTest(legacy=value):
+                self.config["watchdog"]["max_active_workers"] = value
+                with self.assertRaisesRegex(ValueError, "max_active_workers is retired"):
+                    supervisor_watchdog.run_watchdog(self.config, restart=True, dry_run=True)
 
     def write_pid(self, pid: int) -> None:
         (self.state_file.parent / "supervisor.pid").write_text(f"{pid}\n", encoding="utf-8")
@@ -1842,6 +1870,7 @@ class SupervisorRootCoherenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config = {
+                "ready_dispatcher": {"max_concurrent_workers": 13},
                 "paths": {
                     "state_file": str(root / "state.json"),
                     "activity_log": str(root / "activity-log.jsonl"),
