@@ -5,7 +5,7 @@
   "backend": {
     "repo": "ajoe734/pantheon",
     "runtime_commit": "879ac6c8262d05cd734b391a24a5deb42331b9e1",
-    "contract_commit": "d4d53a1da7264d8284d1326fe80edd1884b73958"
+    "contract_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec"
   },
   "contract": {
     "bundle_index": {
@@ -42,7 +42,7 @@
   "source_files": [
     {
       "path": "docs/contracts/agora/generate_backend_contract.py",
-      "sha256": "e9b810f259913d507e3b12248dd32e774ffbd56b553a722cdae6228aae6c6822"
+      "sha256": "6d8bf6501bf57771d30204a077d1dc2d63a9a5c777b54d206fa6b606baa3f3b3"
     },
     {
       "path": "services/control-plane/openapi/agora_v1.openapi.yaml",
@@ -416,5 +416,5 @@
       "generated_types_sha256"
     ]
   },
-  "generated_at": "2026-09-09T02:21:15Z"
+  "generated_at": "2026-09-09T02:43:05Z"
 }

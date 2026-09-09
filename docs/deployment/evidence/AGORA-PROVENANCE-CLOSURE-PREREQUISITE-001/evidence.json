@@ -1,12 +1,12 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001",
-  "base_ref": "dev@15e2907b5b5c90772d131f478ef8d91a92e20235",
+  "base_ref": "dev@15e2907b5dd0af53a2d6b773f1744d7c955336a7",
   "depends_on": "AGORA-CHAIN-001 (done)",
   "normative_plan": "EXECUTION_PLAN.md in /tmp/pantheon-agora-producer-intake-20260909/EXECUTION_PLAN.md; SOURCE_REVIEW.md in /tmp/pantheon-agora-producer-intake-20260909/SOURCE_REVIEW.md",
   "identities": {
     "backend_runtime_commit": "879ac6c8262d05cd734b391a24a5deb42331b9e1",
-    "backend_contract_anchor_commit": "d4d53a1da7264d8284d1326fe80edd1884b73958",
+    "backend_contract_anchor_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec",
     "bundle_index_v1_13_sha256": "f621c694f5e74d15b81d5cf016dd2684e364b8fac849047263acdf69d94943c9",
     "openapi_v1_13_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
     "capability_manifest_v1_13_sha256": "e17b120832bc92ed81d2edd7de3b11267ecb2fa82cfc4986cf2ac467a053f613"
@@ -32,7 +32,7 @@
       "services/control-plane/specs/agora/bundle_index.v1_13.json",
       "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json"
     ],
-    "provenance_architecture": "Repaired transitive derivation closure across the entire 14-index Agora bundle extension chain (bundle_index.json [v1.0] through bundle_index.v1_13.json) covering 90 distinct files (89 spec/OpenAPI/bundle files plus generator). Updated bundle_index.v1_4.json parent hash to point to actual v1_3 hash (23c95383...), refreshed downstream parent hashes through v1_13, propagated capability manifest source_contracts, and enforced fail-closed validation on stale hashes, cyclic references, out-of-root paths, missing files, and exact-byte contract identity mismatches. Generated backend handoff is bound to authentic AGORA-CHAIN-001 runtime commit (879ac6c8262d05cd734b391a24a5deb42331b9e1) and source anchor commit A (d4d53a1da7264d8284d1326fe80edd1884b73958)."
+    "provenance_architecture": "Repaired transitive derivation closure across the entire 14-index Agora bundle extension chain (bundle_index.json [v1.0] through bundle_index.v1_13.json) covering 90 distinct files (89 spec/OpenAPI/bundle files plus generator). Updated bundle_index.v1_4.json parent hash to point to actual v1_3 hash (23c95383...), refreshed downstream parent hashes through v1_13, propagated capability manifest source_contracts, and enforced fail-closed validation on stale hashes, cyclic references, out-of-root paths, missing files, duplicate source entries, malformed source entries, traversal failures, and exact-byte contract identity mismatches. Generated backend handoff is bound to authentic AGORA-CHAIN-001 runtime commit (879ac6c8262d05cd734b391a24a5deb42331b9e1) and source anchor commit A2 (77df37d54f9da6f6091bc150fce03ca711b494ec)."
   },
   "verification": {
     "commands": [
@@ -49,7 +49,17 @@
       {
         "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py",
         "exit_code": 0,
-        "result": "15 passed in 15.57s"
+        "result": "17 passed, 1 skipped in 29.43s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py scripts/test_agora_v1_12_candidate_bundle.py",
+        "exit_code": 1,
+        "result": "97 passed, 3 failed in 69.11s (scripts/test_agora_v1_7_bundle.py::test_v1_7_bundle_extends_frozen_v1_6_exact_bytes due to sibling test frozen hash assertion on v1_6; and 2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 /tmp/agora_producer_pre_review_probe.py",
+        "exit_code": 0,
+        "result": "exit 0; valid handoff reasons empty, duplicate input rejected, traversal failure on malformed index rejected, stale parent hash in git fixture rejected, base commit exists"
       }
     ]
   }
