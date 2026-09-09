@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Retrieval admission diagnostics (unaccepted candidate)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "evaluated_at", "accepted", "disposition", "chosen_backend", "unresolved", "legacy_manifest", "local_probe"],
+  "properties": {
+    "schema_version": {"const": "retrieval_admission.v2"},
+    "task_id": {"const": "SIMPLIFY-RETRIEVAL-MEMORY-001"},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "accepted": {"const": false},
+    "disposition": {"const": "candidate_withdrawn_pending_valid_evaluation"},
+    "chosen_backend": {"type": "null"},
+    "unresolved": {
+      "type": "object",
+      "required": ["owner_authorization", "read_role", "holdout", "comparison", "consumer_lifecycle", "performance", "privacy"],
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "legacy_manifest": {
+      "type": "object",
+      "required": ["path", "accepted", "reason"],
+      "properties": {"path": {"type": "string"}, "accepted": {"const": false}, "reason": {"type": "string"}}
+    },
+    "local_probe": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["accepted"], "properties": {"accepted": {"const": false}}}
+      ]
+    }
+  }
+}

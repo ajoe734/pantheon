@@ -326,7 +326,7 @@ def test_citation_not_required_but_bundle_missing_raises_policy_error() -> None:
 
     original_get_bundle = repo.get_bundle
 
-    def get_bundle_post_filter(bundle_id: str):
+    def get_bundle_post_filter(bundle_id: str, *, tenant_id=None):
         # Return bundle during pre-ranking citation check (called in ranking phase too),
         # but simulate missing during result construction by counting calls.
         if not hasattr(get_bundle_post_filter, "_call_count"):

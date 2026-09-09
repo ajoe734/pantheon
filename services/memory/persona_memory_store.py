@@ -136,6 +136,7 @@ class PersonaMemoryEntry:
     superseded_by: Optional[str] = None
     relevance_scope: str = PersonaRelevanceScope.PERSONA_PRIVATE.value
     reuse_count: int = 0
+    tenant_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         try:

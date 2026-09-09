@@ -62,6 +62,10 @@
       "description": "Governed metadata preserved with the source record. Known normalization, ACL, PIT, and governance keys are declared here; adapters may add provider-specific keys.",
       "properties": {
         "body": { "type": "string" },
+        "tenant_id": {
+          "type": ["string", "null"],
+          "description": "Admitted tenant identifier for tenant-scoped source isolation."
+        },
         "excerpt": { "type": "string" },
         "citation_label": { "type": "string" },
         "canonical_url": { "type": ["string", "null"] },
