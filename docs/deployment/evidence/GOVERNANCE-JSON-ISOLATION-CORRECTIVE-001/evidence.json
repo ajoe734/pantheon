@@ -1,24 +1,27 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
-  "worker": "Antigravity2",
+  "worker": "Antigravity",
   "reviewer": "Codex",
   "governing_spec": {
     "document": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/reaudit-task-intake-20260909/SA_SD.md",
     "section": "## GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 — Close non-journal governance JSON store lost updates",
     "finding": "F09 · Governance JSON store 會遺失第二實例未看到的資料"
   },
+  "source_baseline": "c0c035b5f32436b96f10cd10c91834861d555144",
   "predecessors": [
     {
       "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
       "status": "done",
-      "satisfied": true
+      "satisfied": true,
+      "merge_commit": "0565b5f1615078a57c93eab2c7897b0afedb36ee",
+      "reviewed_source_commit": "66038e61c57bc47e1aaee6aa5d3a1942b3766a32"
     }
   ],
   "scorecard_status": {
     "two_instance_lost_update_prevention": {
       "status": "satisfied",
-      "implementation": "services/governance/record_store.py: JsonGovernanceRecordStore upgraded with re-entrant POSIX file locking (_FileLock using fcntl.flock), fresh disk reload on read and write (_refresh()), and atomic file replacement (_save() with unique temporary file .tmp.<pid>.<uuid>, fsync, and os.replace). Multiple instances pointing to the same file coordinate safely without lost updates."
+      "implementation": "services/governance/record_store.py: JsonGovernanceRecordStore upgraded with re-entrant POSIX file locking (_FileLock using fcntl.flock), fresh disk reload on read and write (_refresh()), and atomic file replacement (_save() with unique temporary file .tmp.<pid>.<uuid>, fsync, and os.replace). Multiple instances pointing to the same file coordinate safely without lost updates, including nested re-entrant scopes across independent store instances."
     },
     "multiprocess_concurrency": {
       "status": "satisfied",
@@ -38,65 +41,154 @@
     },
     "failed_write_restart_durability": {
       "status": "satisfied",
-      "implementation": "services/governance/record_store.py: Atomic durable replacement using temporary file, os.fsync on file and parent directory, and os.replace. Filesystem errors during save restore in-memory state and preserve previous on-disk data without corruption. Readers never observe uncommitted state."
+      "implementation": "services/governance/record_store.py: Atomic durable replacement using temporary file, os.fsync on file and parent directory, and os.replace. Pre-replacement filesystem errors during save restore in-memory state and preserve previous on-disk data without corruption. Post-replacement directory fsync errors raise without masking. Readers never observe uncommitted state."
     },
     "four_mounted_consumers_isolation": {
       "status": "satisfied",
-      "implementation": "services/governance/main.py: freeze_orders and rollbacks write endpoints coordinated via store.lock() and in-process lock during entire read-modify-write transition. human_gate_decisions backed by GovernanceHumanGateDecisionStore enforces insert_if_absent on creation and CAS put_if_matches on signatures. consultation_handoffs backed by consultation_handoff_store enforces insert_if_absent idempotency across independent instances."
+      "backend_call_site_inventory": {
+        "freeze_orders": {
+          "backend": "json (JsonGovernanceRecordStore)",
+          "store_path": "data/governance/freeze_orders.json",
+          "flock_path": "data/governance/.freeze_orders.flock",
+          "mounted_handlers": [
+            "POST /api/v1/governance/freeze (main.record_freeze_order)"
+          ],
+          "command_locks": [
+            "store.lock() (POSIX file lock + in-process store lock)",
+            "_freeze_command_lock (in-process asyncio command lock at main.py:1044)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_freeze_orders_multiprocess",
+            "services/governance/test_record_store_isolation.py::test_mounted_freeze_orders_command_isolation_multiprocess",
+            "services/governance/test_freeze_rollback_store.py::test_freeze_and_rollback_stores_multi_instance_isolation",
+            "services/governance/test_freeze_rollback_store.py::test_mounted_freeze_and_rollback_command_isolation_interleaved"
+          ]
+        },
+        "rollbacks": {
+          "backend": "json (JsonGovernanceRecordStore)",
+          "store_path": "data/governance/rollbacks.json",
+          "flock_path": "data/governance/.rollbacks.flock",
+          "mounted_handlers": [
+            "POST /api/v1/governance/rollbacks (main.record_rollback)"
+          ],
+          "command_locks": [
+            "store.lock() (POSIX file lock + in-process store lock)",
+            "_rollback_command_lock (in-process asyncio command lock at main.py:1176)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_rollbacks_multiprocess",
+            "services/governance/test_record_store_isolation.py::test_mounted_rollbacks_command_isolation_multiprocess",
+            "services/governance/test_freeze_rollback_store.py::test_freeze_and_rollback_stores_multi_instance_isolation",
+            "services/governance/test_freeze_rollback_store.py::test_mounted_freeze_and_rollback_command_isolation_interleaved"
+          ]
+        },
+        "human_gate_decisions": {
+          "backend": "json (JsonGovernanceRecordStore via GovernanceHumanGateDecisionStore)",
+          "store_path": "data/governance/human_gate_decisions.json",
+          "flock_path": "data/governance/.human_gate_decisions.flock",
+          "mounted_handlers": [
+            "POST /api/v1/governance/human-gates (main.create_human_gate)",
+            "POST /api/v1/governance/human-gates/{gate_id}/sign (main.sign_human_gate)",
+            "POST /api/v1/governance/human-gates/{gate_id}/revoke (main.revoke_human_gate)"
+          ],
+          "concurrency_control": [
+            "insert_if_absent on creation (rejects duplicate gate_id with HTTP 409 conflict)",
+            "put_if_matches CAS on signatures/revocations (rejects concurrent mismatch with HTTP 409 conflict, enabling client retry)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_human_gates_multi_instance",
+            "services/governance/test_record_store_isolation.py::test_mounted_human_gates_command_isolation_multiprocess",
+            "services/governance/test_human_gate_api.py::test_human_gate_multi_instance_isolation",
+            "services/governance/test_human_gate_api.py::test_mounted_human_gate_interleaved_conflict_isolation"
+          ]
+        },
+        "consultation_handoffs": {
+          "backend": "json (JsonGovernanceRecordStore via ConsultationHandoffStore)",
+          "store_path": "data/governance/consultation_handoffs.json",
+          "flock_path": "data/governance/.consultation_handoffs.flock",
+          "mounted_handlers": [
+            "POST /api/v1/governance/consultation-handoffs (main.create_consultation_handoff)"
+          ],
+          "concurrency_control": [
+            "insert_if_absent idempotency (exact replay returns 200 with matching payload, duplicate mismatch returns HTTP 409 conflict)"
+          ],
+          "tests": [
+            "services/governance/test_record_store_isolation.py::test_mounted_consumer_consultation_handoff_multi_instance",
+            "services/governance/test_consultation_handoff.py::test_create_consultation_handoff_success",
+            "services/governance/test_consultation_handoff.py::test_create_consultation_handoff_idempotency_duplicate_success",
+            "services/governance/test_consultation_handoff.py::test_create_consultation_handoff_conflict_rejected"
+          ],
+          "coverage_note": "Consultation handoff HTTP route tests cover sequential operations, idempotent replays, and conflict rejection. Controlled multi-instance concurrent insertion semantics are verified by test_mounted_consumer_consultation_handoff_multi_instance."
+        }
+      }
     }
   },
   "verification_results": {
+    "execution_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. GOVERNANCE_DATA_DIR=/tmp/governance-final-review-test-run GOVERNANCE_STORE_BACKEND=json GOVERNANCE_AUDIT_BACKEND=jsonl PANTHEON_PERSISTENCE_POSTURE=dev .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/governance/test_record_store_isolation.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/governance/test_human_gate_api.py services/governance/test_decision_journal.py services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+    "exit_code": 0,
     "suites": [
       {
         "name": "services/governance/test_record_store_isolation.py",
-        "runner": ".venv/bin/python -m pytest",
-        "tests": 12,
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_record_store_isolation.py",
+        "tests": 16,
         "failures": 0,
         "errors": 0,
+        "exit_code": 0,
         "status": "PASSED"
       },
       {
         "name": "services/governance/test_freeze_rollback_store.py",
-        "runner": ".venv/bin/python -m pytest",
-        "tests": 9,
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_freeze_rollback_store.py",
+        "tests": 10,
         "failures": 0,
         "errors": 0,
+        "exit_code": 0,
         "status": "PASSED"
       },
       {
         "name": "services/governance/test_consultation_handoff.py",
-        "runner": ".venv/bin/python -m pytest",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_consultation_handoff.py",
         "tests": 5,
         "failures": 0,
         "errors": 0,
+        "exit_code": 0,
         "status": "PASSED"
       },
       {
         "name": "services/governance/test_human_gate_api.py",
-        "runner": ".venv/bin/python -m pytest",
-        "tests": 3,
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_human_gate_api.py",
+        "tests": 4,
         "failures": 0,
         "errors": 0,
+        "exit_code": 0,
         "status": "PASSED"
       },
       {
         "name": "services/governance/test_decision_journal.py",
-        "runner": ".venv/bin/python -m pytest",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_decision_journal.py",
         "tests": 63,
         "failures": 0,
         "errors": 0,
+        "exit_code": 0,
         "status": "PASSED"
       },
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-        "runner": ".venv/bin/python -m pytest",
+        "runner": ".venv-pantheon/bin/python3 -m pytest",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/governance/test_decision_journal_write_owner.py",
         "tests": 38,
         "failures": 0,
         "errors": 0,
+        "exit_code": 0,
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 130
+    "total_tests_passed": 136
   },
   "artifacts": [
     "services/governance/record_store.py",

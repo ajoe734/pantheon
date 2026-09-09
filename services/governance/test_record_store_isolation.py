@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from services.governance import main
@@ -23,6 +25,7 @@ from services.governance.human_gate.decision_model import HumanGateDecision
 from services.governance.human_gate_store import GovernanceHumanGateDecisionStore
 from services.governance.promotion_readiness.signoff_api import SignoffAPI, SignoffApiError
 from services.governance.record_store import JsonGovernanceRecordStore
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +113,322 @@ def _mp_consumer_rollback_worker(
         )
     except Exception as exc:
         error_queue.put(f"Rollback worker {worker_id} error: {exc}")
+
+
+def _jwt_headers(actor_id: str, role: str, *, mfa: bool = False) -> str:
+    claims = {"sub": actor_id, "roles": [role]}
+    if mfa:
+        claims["amr"] = ["pwd", "mfa"]
+    token = encode_jwt_hs256(claims, secret="isolation-test-secret")
+    return f"Bearer {token}"
+
+
+def _mp_mounted_freeze_worker(
+    path_str: str,
+    worker_id: int,
+    shared_freeze_id: str,
+    barrier: Any,
+    error_queue: Any,
+) -> None:
+    try:
+        os.environ["PANTHEON_GOVERNANCE_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_GOVERNANCE_JWT_SECRET"] = "isolation-test-secret"
+        store = JsonGovernanceRecordStore(path_str, id_fields=("freeze_order_id", "id"))
+        main.freeze_order_store = store
+
+        # Phase 1: Independent distinct freeze orders
+        barrier.wait(timeout=10)
+        own_id = f"freeze-mounted-{worker_id}"
+        resp = main.record_freeze_order(
+            body={
+                "freeze_order_id": own_id,
+                "scope": "persona",
+                "target_id": f"persona-mounted-{worker_id}",
+                "status": "requested",
+                "actor": "operator",
+                "source_command_id": f"cmd-mount-req-{worker_id}",
+            },
+            authorization=_jwt_headers(f"op-{worker_id}", "operator"),
+            x_mfa_token=None,
+        )
+        assert resp["status"] == "requested"
+
+        # Phase 2: Controlled interleaving transitions on shared freeze order
+        barrier.wait(timeout=10)
+        if worker_id == 0:
+            res_init = main.record_freeze_order(
+                body={
+                    "freeze_order_id": shared_freeze_id,
+                    "scope": "portfolio",
+                    "target_id": "portfolio-main",
+                    "status": "requested",
+                    "actor": "operator",
+                    "source_command_id": "cmd-shared-init",
+                },
+                authorization=_jwt_headers("op-0", "operator"),
+                x_mfa_token=None,
+            )
+            assert res_init["status"] == "requested"
+
+        barrier.wait(timeout=10)
+        if worker_id == 1:
+            res_act = main.record_freeze_order(
+                body={
+                    "freeze_order_id": shared_freeze_id,
+                    "status": "active",
+                    "actor": "governance_reviewer",
+                    "source_command_id": "cmd-shared-act",
+                    "transition_actor": "governance_reviewer",
+                    "transition_source_command_id": "cmd-shared-act",
+                },
+                authorization=_jwt_headers("rev-1", "governance_reviewer"),
+                x_mfa_token=None,
+            )
+            assert res_act["status"] == "active"
+
+        barrier.wait(timeout=10)
+        if worker_id == 2:
+            res_rel = main.record_freeze_order(
+                body={
+                    "freeze_order_id": shared_freeze_id,
+                    "status": "released",
+                    "actor": "admin",
+                    "source_command_id": "cmd-shared-rel",
+                    "transition_actor": "admin",
+                    "transition_source_command_id": "cmd-shared-rel",
+                },
+                authorization=_jwt_headers("admin-2", "admin"),
+                x_mfa_token=None,
+            )
+            assert res_rel["status"] == "released"
+
+        barrier.wait(timeout=10)
+        # All workers verify that transition from terminal state raises 400
+        try:
+            main.record_freeze_order(
+                body={
+                    "freeze_order_id": shared_freeze_id,
+                    "status": "active",
+                    "actor": "operator",
+                    "source_command_id": f"cmd-terminal-reactivate-{worker_id}",
+                    "transition_actor": "operator",
+                    "transition_source_command_id": f"cmd-terminal-reactivate-{worker_id}",
+                },
+                authorization=_jwt_headers(f"op-{worker_id}", "operator"),
+                x_mfa_token=None,
+            )
+            error_queue.put(f"Worker {worker_id} expected terminal transition to fail")
+        except HTTPException as exc:
+            assert exc.status_code == 400
+            assert "Cannot transition from terminal freeze order status" in str(exc.detail)
+    except Exception as exc:
+        error_queue.put(f"Mounted freeze worker {worker_id} error: {exc}")
+
+
+def _mp_mounted_rollback_worker(
+    path_str: str,
+    worker_id: int,
+    shared_rb_id: str,
+    barrier: Any,
+    error_queue: Any,
+) -> None:
+    try:
+        os.environ["PANTHEON_GOVERNANCE_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_GOVERNANCE_JWT_SECRET"] = "isolation-test-secret"
+        store = JsonGovernanceRecordStore(path_str, id_fields=("rollback_id", "id"))
+        main.rollback_store = store
+
+        # Phase 1: Independent distinct rollback records
+        barrier.wait(timeout=10)
+        own_id = f"rollback-mounted-{worker_id}"
+        resp = main.record_rollback(
+            body={
+                "rollback_id": own_id,
+                "runtime_id": f"runtime-mounted-{worker_id}",
+                "action_type": "replace",
+                "status": "initiated",
+                "actor": "operator",
+                "source_command_id": f"cmd-rb-mount-init-{worker_id}",
+            },
+            authorization=_jwt_headers(f"op-{worker_id}", "operator"),
+            x_mfa_token=None,
+        )
+        assert resp["status"] == "initiated"
+
+        # Phase 2: Controlled interleaving transitions on shared rollback record
+        barrier.wait(timeout=10)
+        if worker_id == 0:
+            res_init = main.record_rollback(
+                body={
+                    "rollback_id": shared_rb_id,
+                    "runtime_id": "runtime-shared-rt",
+                    "action_type": "replace",
+                    "status": "initiated",
+                    "actor": "operator",
+                    "source_command_id": "cmd-shared-rb-init",
+                },
+                authorization=_jwt_headers("op-0", "operator"),
+                x_mfa_token=None,
+            )
+            assert res_init["status"] == "initiated"
+
+        barrier.wait(timeout=10)
+        if worker_id == 1:
+            res_appr = main.record_rollback(
+                body={
+                    "rollback_id": shared_rb_id,
+                    "status": "approved",
+                    "actor": "approver",
+                    "source_command_id": "cmd-shared-rb-appr",
+                    "transition_actor": "approver",
+                    "transition_source_command_id": "cmd-shared-rb-appr",
+                },
+                authorization=_jwt_headers("appr-1", "approver"),
+                x_mfa_token=None,
+            )
+            assert res_appr["status"] == "approved"
+
+        barrier.wait(timeout=10)
+        if worker_id == 2:
+            res_comp = main.record_rollback(
+                body={
+                    "rollback_id": shared_rb_id,
+                    "status": "completed",
+                    "actor": "operator",
+                    "source_command_id": "cmd-shared-rb-comp",
+                    "transition_actor": "operator",
+                    "transition_source_command_id": "cmd-shared-rb-comp",
+                },
+                authorization=_jwt_headers("op-2", "operator"),
+                x_mfa_token=None,
+            )
+            assert res_comp["status"] == "completed"
+
+        barrier.wait(timeout=10)
+        # All workers verify that transition from terminal status 'completed' raises 400
+        try:
+            main.record_rollback(
+                body={
+                    "rollback_id": shared_rb_id,
+                    "status": "approved",
+                    "actor": "operator",
+                    "source_command_id": f"cmd-terminal-rb-mod-{worker_id}",
+                    "transition_actor": "operator",
+                    "transition_source_command_id": f"cmd-terminal-rb-mod-{worker_id}",
+                },
+                authorization=_jwt_headers(f"op-{worker_id}", "operator"),
+                x_mfa_token=None,
+            )
+            error_queue.put(f"Worker {worker_id} expected terminal rollback transition to fail")
+        except HTTPException as exc:
+            assert exc.status_code == 400
+            assert "Cannot transition from terminal rollback status" in str(exc.detail)
+    except Exception as exc:
+        error_queue.put(f"Mounted rollback worker {worker_id} error: {exc}")
+
+
+def _mp_mounted_human_gate_worker(
+    path_str: str,
+    worker_id: int,
+    shared_decision_id: str,
+    barrier: Any,
+    result_queue: Any,
+) -> None:
+    try:
+        os.environ["PANTHEON_GOVERNANCE_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_GOVERNANCE_JWT_SECRET"] = "isolation-test-secret"
+        store = JsonGovernanceRecordStore(path_str, id_fields=("decision_id",))
+        api = SignoffAPI(store=GovernanceHumanGateDecisionStore(store))
+        main.human_gate_record_store = store
+        main.human_gate_api = api
+
+        evidence_keys = sorted(main._PROMOTION_HUMAN_GATE_EVIDENCE["canary"])
+        payload = {
+            "decision_id": shared_decision_id,
+            "target_type": "runtime_binding_promotion",
+            "target_id": "plan-canary-mp",
+            "target_environment": "dev",
+            "required_roles": ["approver", "operator", "risk_owner"],
+            "evidence_reviewed": [
+                {
+                    "key": k,
+                    "evidence_hash": "sha256:" + f"{idx:064x}",
+                    "source_ref": f"evidence://{k}",
+                    "status": "passed",
+                }
+                for idx, k in enumerate(evidence_keys, start=1)
+            ],
+            "can_proceed_input": {
+                "readiness_packet_ref": "packet://mp-canary",
+                "readiness_packet_can_proceed": True,
+                "required_evidence": evidence_keys,
+                "missing_evidence": [],
+                "blocking_reasons": [],
+                "unsafe_true_flags": [],
+                "gate_results_blocking": [],
+            },
+            "metadata": {"target_stage": "canary", "source_binding_id": "rb-mp-001"},
+        }
+
+        # Step 1: Duplicate creation under barrier
+        barrier.wait(timeout=10)
+        create_status = None
+        try:
+            main.create_human_gate(
+                body=payload,
+                authorization=_jwt_headers(f"creator-{worker_id}", "approver"),
+                x_mfa_token=None,
+            )
+            create_status = 201
+        except HTTPException as exc:
+            create_status = exc.status_code
+
+        # Step 2: Concurrent signatures with CAS conflict handling
+        barrier.wait(timeout=10)
+        role = "approver" if worker_id == 0 else "operator"
+        cas_conflict_observed = False
+        sign_success = False
+        for attempt in range(5):
+            try:
+                main.sign_human_gate(
+                    decision_id=shared_decision_id,
+                    body={"role": role},
+                    authorization=_jwt_headers(f"signer-{worker_id}", role, mfa=True),
+                    x_mfa_token=None,
+                )
+                sign_success = True
+                break
+            except HTTPException as exc:
+                if exc.status_code == 409 and "concurrently" in str(exc.detail):
+                    cas_conflict_observed = True
+                    time.sleep(0.02)
+                    continue
+                raise
+
+        # Step 3: Duplicate signature by same actor -> 409
+        barrier.wait(timeout=10)
+        dup_rejected = False
+        if worker_id == 0:
+            try:
+                main.sign_human_gate(
+                    decision_id=shared_decision_id,
+                    body={"role": role},
+                    authorization=_jwt_headers(f"signer-{worker_id}", role, mfa=True),
+                    x_mfa_token=None,
+                )
+            except HTTPException as exc:
+                if exc.status_code == 409 and "one authenticated actor" in str(exc.detail):
+                    dup_rejected = True
+
+        result_queue.put({
+            "worker_id": worker_id,
+            "create_status": create_status,
+            "cas_conflict_observed": cas_conflict_observed,
+            "sign_success": sign_success,
+            "dup_rejected": dup_rejected,
+        })
+    except Exception as exc:
+        result_queue.put({"worker_id": worker_id, "error": str(exc)})
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +693,26 @@ def test_coordinating_journal_store_subclass_does_not_deadlock(tmp_path: Path) -
     assert canonical["decision"] == "approved"
 
 
+def test_reentrant_nested_instances_preserve_inner_writes(tmp_path: Path) -> None:
+    """Closes P2: re-entrant operations through independent same-file instances preserve inner writes."""
+    path = tmp_path / "records.json"
+    a = JsonGovernanceRecordStore(path, id_fields=("id",))
+    b = JsonGovernanceRecordStore(path, id_fields=("id",))
+    a.put({"id": "seed"})
+
+    with a.lock():
+        b.put({"id": "inner-committed"})
+        assert b.get("inner-committed") == {"id": "inner-committed"}
+        a.put({"id": "outer-committed"})
+
+    final = JsonGovernanceRecordStore(path, id_fields=("id",)).list_all()
+    record_ids = {row["id"] for row in final}
+    assert "inner-committed" in record_ids
+    assert "outer-committed" in record_ids
+    assert "seed" in record_ids
+    assert len(final) == 3
+
+
 # ---------------------------------------------------------------------------
 # Mounted Consumer Isolation Tests
 # ---------------------------------------------------------------------------
@@ -555,3 +894,141 @@ def test_mounted_consumer_consultation_handoff_multi_instance(
     assert res2.status_code == 200
     assert res2.json()["acknowledged"] is True
     assert res2.json()["idempotent"] is True
+
+
+def test_mounted_freeze_orders_command_isolation_multiprocess(tmp_path: Path) -> None:
+    """Mounted freeze_orders endpoint exercises command locks, legal transitions, terminal rejection, and audit preservation across processes."""
+    store_file = tmp_path / "mounted_freeze_orders.json"
+    process_count = 3
+    barrier = mp.Barrier(process_count)
+    error_queue = mp.Queue()
+    shared_freeze_id = "freeze-mounted-shared-001"
+
+    processes = []
+    for wid in range(process_count):
+        p = mp.Process(
+            target=_mp_mounted_freeze_worker,
+            args=(str(store_file), wid, shared_freeze_id, barrier, error_queue),
+        )
+        processes.append(p)
+        p.start()
+
+    for p in processes:
+        p.join(timeout=20)
+        assert p.exitcode == 0
+
+    errors = []
+    while not error_queue.empty():
+        errors.append(error_queue.get())
+    assert not errors, f"Mounted freeze workers had errors: {errors}"
+
+    reader = JsonGovernanceRecordStore(
+        store_file, id_fields=("freeze_order_id", "id")
+    )
+    records = reader.list_all()
+    # 3 distinct orders + 1 shared order
+    assert len(records) == process_count + 1
+
+    # Verify shared order terminal status and retained audit fields
+    shared = reader.get(shared_freeze_id)
+    assert shared is not None
+    assert shared["status"] == "released"
+    assert shared["scope"] == "portfolio"
+    assert shared["target_id"] == "portfolio-main"
+    assert shared["actor"] == "operator"
+    assert shared["source_command_id"] == "cmd-shared-init"
+    assert shared["transition_actor"] == "admin"
+    assert shared["transition_source_command_id"] == "cmd-shared-rel"
+
+
+def test_mounted_rollbacks_command_isolation_multiprocess(tmp_path: Path) -> None:
+    """Mounted rollbacks endpoint exercises command locks, legal transitions, terminal rejection, and audit preservation across processes."""
+    store_file = tmp_path / "mounted_rollbacks.json"
+    process_count = 3
+    barrier = mp.Barrier(process_count)
+    error_queue = mp.Queue()
+    shared_rb_id = "rollback-mounted-shared-001"
+
+    processes = []
+    for wid in range(process_count):
+        p = mp.Process(
+            target=_mp_mounted_rollback_worker,
+            args=(str(store_file), wid, shared_rb_id, barrier, error_queue),
+        )
+        processes.append(p)
+        p.start()
+
+    for p in processes:
+        p.join(timeout=20)
+        assert p.exitcode == 0
+
+    errors = []
+    while not error_queue.empty():
+        errors.append(error_queue.get())
+    assert not errors, f"Mounted rollback workers had errors: {errors}"
+
+    reader = JsonGovernanceRecordStore(
+        store_file, id_fields=("rollback_id", "id")
+    )
+    records = reader.list_all()
+    # 3 distinct rollbacks + 1 shared rollback
+    assert len(records) == process_count + 1
+
+    shared = reader.get(shared_rb_id)
+    assert shared is not None
+    assert shared["status"] == "completed"
+    assert shared["runtime_id"] == "runtime-shared-rt"
+    assert shared["action_type"] == "replace"
+    assert shared["actor"] == "operator"
+    assert shared["source_command_id"] == "cmd-shared-rb-init"
+    assert shared["transition_actor"] == "operator"
+    assert shared["transition_source_command_id"] == "cmd-shared-rb-comp"
+
+
+def test_mounted_human_gates_command_isolation_multiprocess(tmp_path: Path) -> None:
+    """Mounted human_gate endpoints prove duplicate conflict, concurrent CAS signatures, and duplicate actor rejection across processes."""
+    store_file = tmp_path / "mounted_human_gates.json"
+    barrier = mp.Barrier(2)
+    result_queue = mp.Queue()
+    shared_decision_id = "hgd-mounted-mp-001"
+
+    p0 = mp.Process(
+        target=_mp_mounted_human_gate_worker,
+        args=(str(store_file), 0, shared_decision_id, barrier, result_queue),
+    )
+    p1 = mp.Process(
+        target=_mp_mounted_human_gate_worker,
+        args=(str(store_file), 1, shared_decision_id, barrier, result_queue),
+    )
+    p0.start()
+    p1.start()
+    p0.join(timeout=20)
+    p1.join(timeout=20)
+    assert p0.exitcode == 0
+    assert p1.exitcode == 0
+
+    results = {}
+    while not result_queue.empty():
+        res = result_queue.get()
+        assert "error" not in res, f"Worker error: {res}"
+        results[res["worker_id"]] = res
+
+    # Exactly one worker succeeded creation (201), the other received duplicate rejection (409)
+    create_statuses = {results[0]["create_status"], results[1]["create_status"]}
+    assert create_statuses == {201, 409}
+
+    # Both workers succeeded signing
+    assert results[0]["sign_success"] is True
+    assert results[1]["sign_success"] is True
+
+    # Duplicate signature by same actor was rejected with 409
+    assert results[0]["dup_rejected"] is True
+
+    # Durable reread from independent reader confirms both signatures survived
+    reader = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+    record = reader.get(shared_decision_id)
+    assert record is not None
+    signatures = record.get("signatures", [])
+    assert len(signatures) == 2
+    roles_signed = {s["role"] for s in signatures}
+    assert roles_signed == {"approver", "operator"}

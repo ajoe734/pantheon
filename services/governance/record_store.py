@@ -115,6 +115,7 @@ class JsonGovernanceRecordStore:
         if self._lock._is_owned():
             # Current thread already holds self._lock (e.g. from an outer store.lock()
             # or a coordinating subclass method); coordination is already active.
+            self._refresh()
             yield
         else:
             with self._file_lock(), self._lock:
