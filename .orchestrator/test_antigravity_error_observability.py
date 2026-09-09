@@ -322,6 +322,8 @@ class AntigravityAuthProbeNativeLogBindingTests(unittest.TestCase):
             (0, " \n", "", authenticated, "empty_output"),
             (0, "OK", "OK", startup, "not_logged_in"),
             (0, "OK", "OK", authenticated + "not authenticated\n", "not_logged_in"),
+            (0, "OK", "OK", authenticated + "not authenticated successfully\n", "not_logged_in"),
+            (0, "OK", "OK", startup + "not authenticated; authenticated successfully\n", "not_logged_in"),
             (0, "OK", "OK\nnot authenticated", authenticated, "not_logged_in"),
             (1, "OK", "failed", authenticated, "exit_1"),
             (0, "OK", "OK", authenticated + "Individual quota reached\n", "quota_reached"),

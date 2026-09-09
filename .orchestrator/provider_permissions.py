@@ -1051,9 +1051,12 @@ def _antigravity_probe_ready(
     if returncode != 0:
         return False, _compact_auth_error(full_output), f"exit_{returncode}"
     auth_failures = ("not logged into antigravity", "not authenticated")
-    native_lowered = native_log.lower()
-    last_native_failure = max(native_lowered.rfind(marker) for marker in auth_failures)
-    native_auth_failed = last_native_failure > native_lowered.rfind("authenticated successfully")
+    native_auth_failed = False
+    for event in native_log.lower().splitlines():
+        if any(marker in event for marker in auth_failures):
+            native_auth_failed = True
+        elif "authenticated successfully" in event:
+            native_auth_failed = False
     if any(marker in combined.lower() for marker in auth_failures) or native_auth_failed:
         return (
             False,
