@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
-  "base_ref": "dev@7ab59e582e369580b138693c52c32265f474bdc9",
+  "base_ref": "dev@17bc3c5588da9613586ddd83b5893ee8278f9756",
   "anchor_commit": "78aba767f043ac88764286a5c1b320c89db5679f",
   "rebaseline": {
     "anchored_by": "fd36f0112f4bc0088374c0166047be66253a0f09",
