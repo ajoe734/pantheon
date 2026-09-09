@@ -4539,14 +4539,62 @@ def provider_stream_event_is_meaningful(payload: Mapping[str, Any]) -> bool:
     Streamed tool calls and text deltas show that a model is alive, but do not
     establish that the task moved forward.  Treating each of them as work
     progress lets an agent indefinitely renew a lease by repeatedly reading
-    the same files.  Source/commit observations cover durable work; a terminal
-    provider result covers completion or failure.
+    the same files.  Source/commit observations cover durable work.  The sole
+    step-update exception is a completed validation command with a terminal
+    test result: it is bounded, produces reviewable evidence, and gives an
+    active worker time to act on that result before its next source commit.
     """
     event_type = str(payload.get("type") or "").strip().lower()
     if event_type == "init":
         return False
     if event_type == "step_update":
-        return False
+        step = payload.get("step_update")
+        if not isinstance(step, Mapping):
+            return False
+        if str(step.get("type") or step.get("step_type") or "").strip().lower() != "tool":
+            return False
+        if str(step.get("state") or "").strip().lower() != "done":
+            return False
+        if str(step.get("tool_name") or "").strip().lower() not in {
+            "run_command",
+            "execute_command",
+            "shell",
+            "bash",
+        }:
+            return False
+        tool_info = step.get("tool_info")
+        if not isinstance(tool_info, Mapping):
+            return False
+        parameters = tool_info.get("parameters")
+        command = " ".join(
+            str(parameters.get(key) or "")
+            for key in ("CommandLine", "command", "cmd")
+        ) if isinstance(parameters, Mapping) else ""
+        output = str(tool_info.get("output") or "")
+        command_lower = command.lower()
+        output_lower = output.lower()
+        validation_markers = (
+            "pytest",
+            "unittest",
+            "npm test",
+            "npm run test",
+            "pnpm test",
+            "yarn test",
+            "cargo test",
+            "go test",
+            "mvn test",
+            "gradle test",
+        )
+        terminal_result_markers = (
+            " passed",
+            " failed",
+            " error",
+            "test session",
+            "[100%]",
+        )
+        return any(marker in command_lower for marker in validation_markers) and any(
+            marker in output_lower for marker in terminal_result_markers
+        )
     if event_type == "user":
         return False
     return bool(event_type)

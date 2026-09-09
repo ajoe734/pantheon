@@ -16555,6 +16555,12 @@ class TestSentinelTimestampOverflow(unittest.TestCase):
 
 
 class TestStaleArchiveResurrectionContract(unittest.TestCase):
+    @staticmethod
+    def _disable_test_repo_maintenance(root: Path) -> None:
+        """Keep disposable fixture repositories from spawning background Git jobs."""
+        subprocess.run(["git", "config", "gc.auto", "0"], cwd=root, check=True)
+        subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=root, check=True)
+
     def setUp(self) -> None:
         _setup_test_isolation(self)
         self.addCleanup(_teardown_test_isolation, self)
@@ -16586,6 +16592,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.addCleanup(self._task_state_env.stop)
 
         subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
+        self._disable_test_repo_maintenance(self.root)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
         dummy_file = self.root / "dummy.txt"
@@ -16598,6 +16605,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             shutil.rmtree(root)
         root.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        self._disable_test_repo_maintenance(root)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
         subprocess.run(["git", "remote", "add", "origin", remote], cwd=root, check=True)
@@ -16654,6 +16662,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             shutil.rmtree(evidence_root)
         evidence_root.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=evidence_root, check=True, capture_output=True)
+        self._disable_test_repo_maintenance(evidence_root)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=evidence_root, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=evidence_root, check=True)
         subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=evidence_root, check=True)
