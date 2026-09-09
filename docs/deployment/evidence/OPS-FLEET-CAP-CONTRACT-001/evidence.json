@@ -1,0 +1,127 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-FLEET-CAP-CONTRACT-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "eeab814edf54a3c3672d37fc7880a2601c33da8b",
+  "source_commit": "3bb3aad39461a04d0dee13f62077969c95448443",
+  "anchor_commit": "735ed9a4f27681a9e7266d623fd2837a0c14f943",
+  "identity_note": "All tested source bytes are committed in source_commit. The following commit adds only this manifest; the exact PR head and manifest blob must be frozen by the governed owner handoff.",
+  "implementation": {
+    "authority": "ready_dispatcher.max_concurrent_workers is the required nonnegative JSON integer fleet ceiling. watchdog_settings derives its effective max_active_workers value through validated_fleet_worker_cap. Supervisor startup, candidate live renderer and drift CLI call the same validator.",
+    "migration": "watchdog.max_active_workers is retired without a compatibility window. Any occurrence, including equal, divergent, null or malformed values, is rejected. Its absence is required; absence or malformation of the authoritative dispatcher cap is rejected. Incumbent policy is discarded by the renderer after candidate validation.",
+    "drift": "Validate both shapes even when equally invalid. Invalid capacity prevents --fix writes and returns exit 1. Divergent valid dispatcher caps remain ordinary actionable drift.",
+    "unchanged": "Primary configured fleet cap 13; illustrative example cap 2. No changes to account/provider limits, auth, models, ownership/review bindings, resource capacity, live workers, state, leases, task/account caps, health or admission."
+  },
+  "config_proof": {
+    ".orchestrator/config.json": {
+      "base_sha256": "b88949c732fc4aea1c24eb029899c880abf4600c22f3fcae3933df2c212e85a6",
+      "candidate_sha256": "373214924ddaf207c308388fe0a9db158eb3a195d25ed2eef97ca4a8a8c9cc26",
+      "fleet_cap": 13,
+      "effective_watchdog_cap": 13,
+      "retired_field_present": false
+    },
+    ".orchestrator/config.example.json": {
+      "base_sha256": "fe51564881e0feb7588e5c0e41c3889b73053ccd38335ee1dc04c1b12048cf74",
+      "candidate_sha256": "1102a4a2247ab32c2d43bb3beb1c675d1c61cb9f96d82d776820aaea73d29856",
+      "fleet_cap": 2,
+      "effective_watchdog_cap": 2,
+      "retired_field_present": false
+    }
+  },
+  "boundary_proof": {
+    "primary_cap": 13,
+    "effective_watchdog_cap": 13,
+    "pressure_reasons": {
+      "13": [],
+      "14": [
+        "active_worker_count_above_threshold"
+      ]
+    },
+    "dry_run_decisions": {
+      "13": {
+        "decision": "restart_supervisor",
+        "reason": "dry_run:missing_pid"
+      },
+      "14": {
+        "decision": "suppress_restart",
+        "reason": "resource_pressure:active_worker_count_above_threshold"
+      }
+    },
+    "tests": [
+      "SupervisorWatchdogTests.test_fleet_cap_boundary_and_zero",
+      "SupervisorWatchdogTests.test_fleet_boundary_keeps_legal_restart_and_suppresses_overflow"
+    ],
+    "scope": "Isolated temporary runtime fixtures with healthy disk/memory/load. No live restart or worker mutation; existing scanning/state/pressure tests also pass."
+  },
+  "validation": {
+    "checks": [
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor_watchdog.py .orchestrator/test_supervisor.py::RuntimeConfigurationContractTests scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py",
+        "exit_code": 0,
+        "result": "passed",
+        "terminal_output": "174 passed, 39 subtests passed in 45.98s",
+        "log_sha256": "be394597c5df19e6e49fb18deacd4ad778deb08333c0233227910b966ef4b8c1"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor.py::SharedPlannerContractTests .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests .orchestrator/test_supervisor.py::ExecutionResourceAdmissionTests .orchestrator/test_supervisor.py::WorkerLeaseApprovalWaitProgressTests .orchestrator/test_supervisor.py::DurableQueueContractTests",
+        "exit_code": 0,
+        "result": "passed",
+        "terminal_output": "112 passed, 7 subtests passed in 16.55s",
+        "log_sha256": "b6406ca054cccf0a7f94558bf0ff8532db4d579bc009ccbeb0d1a08d1bbbc855"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "sha256sum .orchestrator/config.json .orchestrator/config.example.json",
+        "exit_code": 0,
+        "result": "hashes recorded in config_proof"
+      }
+    ],
+    "provisioning": {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/ops-dependency-contract-venv/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Task-scoped .venv-pantheon; editable import identity verified from foreign cwd."
+    },
+    "intermediate_nonpassing_results": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "exit_code": 1,
+        "reason": "Default system Python lacked pytest; resolved with explicit dependency interpreter and isolated task environment."
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor_watchdog.py .orchestrator/test_supervisor.py::RuntimeConfigurationContractTests scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py",
+        "exit_code": 2,
+        "reason": "New full-decision test initially had invalid with syntax; corrected before final passing batch. No acceptance claimed from this collection failure."
+      }
+    ],
+    "initial_passing_batch": "173 tests and 37 subtests passed before adding the full-decision regression. Final accepted batch supersedes that result."
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity",
+    "instructions": "Review the frozen PR head, retired-field migration, shared validator, 13/14 restart behavior, source/config hashes and terminal test results."
+  },
+  "live_activation": {
+    "status": "not_performed",
+    "source_merge_is_live_activation": false,
+    "runtime_promotion": "pending independent review and supervisor integration; coordinator must use the governed exact-runtime promotion flow, preserving existing worker leases. This worker does not edit incumbent config or launch/restart live processes.",
+    "required_postmerge_evidence": [
+      "Merged exact reviewed head and merge commit",
+      "Promoted immutable runtime SHA and rendered live-config hash",
+      "Supervisor runtime health for the promoted identity",
+      "Watchdog dry-run against the promoted config and effective ceiling 13"
+    ],
+    "closeout": "Do not mark done based on source tests or merge alone. Record postmerge activation evidence through the existing accepted delivery/coordination flow without replacing the frozen review manifest."
+  }
+}
