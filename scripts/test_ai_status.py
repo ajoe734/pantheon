@@ -287,6 +287,203 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._snapshot(), before)
                 self.state['tasks'][1].pop(field)
 
+    def test_settled_held_recovery_allows_dependency_revision_and_preserves_holds(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['generation'] = 10
+        dep['waiting_for'] = 'Human/Ops'
+        dep['next'] = 'The direct owner retains its current source handoff'
+        dep['owner'] = 'Codex'
+        dep['reviewer'] = 'Claude'
+        dep['acceptance'] = ['Preserve the admitted source acceptance']
+        dep['artifacts'] = ['package.json', 'vite.config.ts']
+        dep['dev_bridge'] = {
+            'task_spec_hash': 'a' * 64,
+            'task_spec': {'depends_on': list(dep['depends_on'])},
+            'documents': [{'path': 'immutable.md'}],
+            'work_class': 'ci',
+        }
+        held_pointer = {
+            'status': 'held',
+            'receipt_id': 'lost-lease-probe-settled',
+            'task_generation': 8,
+            'fence_generation': 9,
+            'replacement_generation': None,
+        }
+        dep['worker_recovery'] = deepcopy(held_pointer)
+        self.state['worker_recovery_receipts'] = {
+            held_pointer['receipt_id']: {
+                **deepcopy(held_pointer),
+                'task_id': 'DEP',
+                'resolved_reason': 'Historical settled receipt',
+            }
+        }
+        self._seed()
+
+        batch = self._request()
+        before = self._snapshot()
+        code, result = self._run(batch)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['status'], 'committed')
+
+        after = self._snapshot()
+        self.assertEqual(after['event_count'], before['event_count'] + 1)
+        updated = ai_status.get_task(after['state'], 'DEP')
+        self.assertEqual(updated['generation'], 11)
+        self.assertEqual(updated['status'], 'blocked')
+        self.assertEqual(updated['waiting_for'], 'Human/Ops')
+        self.assertEqual(updated['next'], 'The direct owner retains its current source handoff')
+        self.assertEqual(updated['owner'], 'Codex')
+        self.assertEqual(updated['reviewer'], 'Claude')
+        self.assertEqual(updated['acceptance'], ['Preserve the admitted source acceptance'])
+        self.assertEqual(updated['artifacts'], ['package.json', 'vite.config.ts'])
+        self.assertEqual(updated['dev_bridge'], dep['dev_bridge'])
+        self.assertEqual(updated['worker_recovery'], held_pointer)
+        self.assertEqual(
+            after['state']['worker_recovery_receipts'],
+            before['state']['worker_recovery_receipts'],
+        )
+
+        replay_code, replay_result = self._run(batch)
+        self.assertEqual(replay_code, 0)
+        self.assertEqual(replay_result['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_settled_recovery_variants_and_rejected_active_or_malformed_pointers(self):
+        base_held = {
+            'status': 'held',
+            'receipt_id': 'lost-lease-probe-settled',
+            'task_generation': 8,
+            'fence_generation': 9,
+            'replacement_generation': None,
+        }
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['generation'] = 10
+        dep['waiting_for'] = 'Human/Ops'
+        dep['next'] = 'The direct owner retains its current source handoff'
+        dep['owner'] = 'Codex'
+        dep['reviewer'] = 'Claude'
+        dep['acceptance'] = ['Preserve the admitted source acceptance']
+        dep['artifacts'] = ['package.json', 'vite.config.ts']
+
+        # 1. Valid older/settled recovery variants that must succeed
+        valid_variants = [
+            ('resolved', {**base_held, 'status': 'resolved'}),
+            ('materialized', {**base_held, 'status': 'materialized', 'replacement_generation': 9}),
+            ('obsolete_pending', {**base_held, 'status': 'pending'}),
+            ('obsolete_reassigned', {**base_held, 'status': 'reassigned', 'replacement_generation': 9}),
+        ]
+        for name, pointer in valid_variants:
+            with self.subTest(valid_variant=name):
+                dep['generation'] = 10
+                dep['depends_on'] = ['STRICT', 'PROTOCOL', 'COVERAGE']
+                dep['worker_recovery'] = deepcopy(pointer)
+                self._seed()
+                batch = self._request()
+                before = self._snapshot()
+                code, result = self._run(batch)
+                self.assertEqual(code, 0)
+                self.assertEqual(result['status'], 'committed')
+                after = self._snapshot()
+                self.assertEqual(after['event_count'], before['event_count'] + 1)
+                updated = ai_status.get_task(after['state'], 'DEP')
+                self.assertEqual(updated['generation'], 11)
+                self.assertEqual(updated['worker_recovery'], pointer)
+
+        # 2. Active, malformed, unknown, or future recovery pointers that must fail closed
+        dep['generation'] = 10
+        dep['depends_on'] = ['STRICT', 'PROTOCOL', 'COVERAGE']
+        dep['worker_recovery'] = deepcopy(base_held)
+        self._seed()
+
+        rejected_pointers = [
+            ('current_pending', {**base_held, 'status': 'pending', 'fence_generation': 10}),
+            ('current_reassigned', {**base_held, 'status': 'reassigned', 'replacement_generation': 10}),
+            ('unknown_status', {**base_held, 'status': 'unknown'}),
+            ('malformed_pointer', 'not-a-pointer'),
+            ('missing_receipt_identity', {**base_held, 'receipt_id': ''}),
+            ('invalid_generation', {**base_held, 'fence_generation': 'invalid'}),
+            ('future_generation', {**base_held, 'fence_generation': 11}),
+            ('pending_missing_fence', {k: v for k, v in {**base_held, 'status': 'pending'}.items() if k != 'fence_generation'}),
+            ('pending_missing_task_generation', {k: v for k, v in {**base_held, 'status': 'pending'}.items() if k != 'task_generation'}),
+            ('reassigned_missing_replacement', {k: v for k, v in {**base_held, 'status': 'reassigned'}.items() if k != 'replacement_generation'}),
+            ('reassigned_missing_fence', {k: v for k, v in {**base_held, 'status': 'reassigned', 'replacement_generation': 9}.items() if k != 'fence_generation'}),
+            ('reassigned_missing_task_generation', {k: v for k, v in {**base_held, 'status': 'reassigned', 'replacement_generation': 9}.items() if k != 'task_generation'}),
+            ('pending_float_fence_9_5', {**base_held, 'status': 'pending', 'fence_generation': 9.5}),
+            ('pending_float_fence_10_5', {**base_held, 'status': 'pending', 'fence_generation': 10.5}),
+            ('reassigned_float_replacement_9_5', {**base_held, 'status': 'reassigned', 'replacement_generation': 9.5}),
+            ('reassigned_float_replacement_10_5', {**base_held, 'status': 'reassigned', 'replacement_generation': 10.5}),
+            ('held_float_fence_9_5', {**base_held, 'fence_generation': 9.5}),
+            ('held_float_fence_10_5', {**base_held, 'fence_generation': 10.5}),
+            ('held_float_task_generation', {**base_held, 'task_generation': 8.5}),
+            ('held_missing_fence', {k: v for k, v in base_held.items() if k != 'fence_generation'}),
+            ('held_invalid_fence_string', {**base_held, 'fence_generation': 'bad'}),
+            ('held_nonstring_receipt_integer', {**base_held, 'receipt_id': 123}),
+            ('held_nonstring_receipt_list', {**base_held, 'receipt_id': ['bogus']}),
+            ('obsolete_pending_nonstring_receipt', {**base_held, 'status': 'pending', 'receipt_id': 123}),
+            ('current_pending_nonstring_receipt', {**base_held, 'status': 'pending', 'fence_generation': 10, 'receipt_id': 123}),
+        ]
+        for name, pointer in rejected_pointers:
+            with self.subTest(rejected_pointer=name):
+                current = ai_status.load_state()
+                ai_status.get_task(current, 'DEP')['worker_recovery'] = deepcopy(pointer)
+                ai_status.append_state_commit(self.journal, current, source=f'pointer-{name}')
+                before = self._snapshot()
+                batch = self._request()
+                code, _ = self._run(batch)
+                self.assertEqual(code, 75)
+                self.assertEqual(self._snapshot(), before)
+
+        # 3. Active runtime conditions and stale CAS remain rejected even with valid held recovery
+        current = ai_status.load_state()
+        ai_status.get_task(current, 'DEP')['worker_recovery'] = deepcopy(base_held)
+        ai_status.append_state_commit(self.journal, current, source='settled-held-runtime-tests')
+
+        # 3a. Active worker
+        runtime_worker = deepcopy(self.runtime)
+        runtime_worker['workers']['run-test'] = {'task_id': 'DEP', 'status': 'running', 'queue_event_id': 'evt'}
+        runtime_worker['queue']['events']['evt'] = {'status': 'pending', 'intent': {'task_id': 'DEP'}}
+        self.runtime_module.save_runtime_state(self.config, runtime_worker)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # 3b. Queued launch
+        runtime_queue = deepcopy(self.runtime)
+        runtime_queue['queue']['events']['evt'] = {'status': 'pending', 'intent': {'task_id': 'DEP'}}
+        self.runtime_module.save_runtime_state(self.config, runtime_queue)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # 3c. Worktree lease
+        runtime_lease = deepcopy(self.runtime)
+        runtime_lease['worker_worktrees'] = {'leases': {'lease': {'task_id': 'DEP'}}}
+        self.runtime_module.save_runtime_state(self.config, runtime_lease)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # 3d. Off-lock phase reservation
+        runtime_phase = deepcopy(self.runtime)
+        runtime_phase['supervisor']['runtime_phase_reservations'] = {'process_queue': {'token': 'off-lock'}}
+        self.runtime_module.save_runtime_state(self.config, runtime_phase)
+        before = self._snapshot()
+        self.assertEqual(self._run(self._request())[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # Reset clean runtime
+        self.runtime_module.save_runtime_state(self.config, self.runtime)
+
+        # 3e. Stale CAS
+        stale_batch = self._request()
+        stale_batch['tasks'][0]['expected_sha256'] = '0' * 64
+        before = self._snapshot()
+        with self.assertRaisesRegex(SystemExit, 'CAS failed'):
+            self._run(stale_batch)
+        self.assertEqual(self._snapshot(), before)
+
     def test_worker_and_nonoperator_ingress_rejected(self):
         for env in [{'AI_NAME':'Codex'}, {'ORCH_RUN_ID':'worker'}, {ai_status.LOCAL_HUMAN_OPS_ENV:'0'}, {'PANTHEON_WORKTREE_ROOT':'/worker'}]:
             with self.subTest(env=env), mock.patch.dict(os.environ, env):
