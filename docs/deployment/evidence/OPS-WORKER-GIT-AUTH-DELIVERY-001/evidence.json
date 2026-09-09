@@ -63,7 +63,7 @@
     "case_2_missing_git_credential_helper": "Provider alias HOME isolation broke Git credential helper inheritance, and gh auth setup-git could not write read-only HOME/.gitconfig or .git/config, causing Git to interactively prompt for credentials and hang."
   },
   "implementation": {
-    "common": "Extended preserve_github_cli_auth_env to configure GIT_TERMINAL_PROMPT=0 and per-process Git config (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>) for credential.https://github.com.helper = !gh auth git-credential while preserving existing caller entries, explicit GH_CONFIG_DIR, and other-host helpers.",
+    "common": "Extended preserve_github_cli_auth_env to configure GIT_TERMINAL_PROMPT=0, prompt-free GIT_ASKPASS/SSH_ASKPASS, validated indexed git config keys with redacted errors, and per-process Git config (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>) for credential.https://github.com.helper = !gh auth git-credential while preserving explicit supported credential policies, caller helper choices including resets, explicit GH_CONFIG_DIR, and other-host helpers.",
     "task_finalize": "Updated line 172 to 'git push origin $TASK_BRANCH' without -u, eliminating writes to shared .git/config while retaining explicit origin push target and failure propagation.",
     "docs": "Updated docs/operations/worker-atomic-state-mounts.md with architecture and runbook details for git credential propagation, protected config delivery, and promotion boundary."
   },
@@ -76,8 +76,8 @@
       "interpreter": "/usr/bin/python3"
     },
     "checksums": {
-      ".orchestrator/common.py": "b6eb0f6d3439b5ed82459683316ccfbd1114abe32efb85238cc3deaf111a4276",
-      ".orchestrator/test_common.py": "0106af7c571668b55a2db52e8f8cbf9e827466e7b2b38d121f012ea4be155efa",
+      ".orchestrator/common.py": "24e6cca9af9bce8f50b62b87272fdd52936863dd33171073c3f95489e9e637ab",
+      ".orchestrator/test_common.py": "5f6b60b4bd39a78bed4354dea317c900c4479237e501a8abc52d5c157b848a5a",
       ".orchestrator/test_adapter_delivery_policy.py": "e4b4227c37352465205177e7d37ff87f8f453bc7a734549ac853cd004ee95966",
       ".orchestrator/test_worker_runner_heartbeat.py": "34154d05283a3ab97e3fa4c0ecaf6d2a4c55c89d9609f3f2a9128a2f3a06cf7e",
       "scripts/git/task_finalize.sh": "f8cac348ed4f8e73afaeab48551903054e15d3a3fa2c5c341561442d0e0396ac",
@@ -87,7 +87,7 @@
     "test_runs": [
       {
         "command": "PYTHONPATH=.orchestrator python3 -m unittest test_common.py",
-        "result": "115 passed",
+        "result": "116 passed",
         "exit_status": 0
       },
       {
