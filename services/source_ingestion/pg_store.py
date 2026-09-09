@@ -50,6 +50,20 @@ def _quote_pg(identifier: str) -> str:
     return ".".join(f'"{part}"' for part in parts)
 
 
+def _scoped_record_id(tenant_id: str | None, record_id: str) -> str:
+    """Collision-safe conflict key for the shared (record_type, record_id) unique index.
+
+    Untenanted (legacy) records keep their bare ``record_id`` unchanged so existing
+    rows stay reachable. Tenanted records get a netstring-style length prefix, which
+    guarantees two distinct ``(tenant_id, record_id)`` pairs can never alias to the
+    same key — plain ``f"{tenant_id}:{record_id}"`` concatenation cannot make that
+    guarantee when either part may itself contain a colon.
+    """
+    if tenant_id is None:
+        return record_id
+    return f"t{len(tenant_id)}:{tenant_id}:{record_id}"
+
+
 class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
     """Postgres-backed source evidence store for source-ingest.
 
@@ -134,7 +148,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                     InMemoryEvidenceRepository.add_knowledge_object(self, obj)
 
     def _upsert(self, record_type: str, record_id: str, payload: Dict[str, Any], tenant_id: str | None = None) -> None:
-        scoped_id = f"{tenant_id}:{record_id}" if tenant_id else record_id
+        scoped_id = _scoped_record_id(tenant_id, record_id)
         with self._connect() as conn:
             conn.execute(
                 f"""

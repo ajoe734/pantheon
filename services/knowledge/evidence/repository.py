@@ -118,46 +118,36 @@ class InMemoryEvidenceRepository:
 
     def get_source_record(self, source_id: str, tenant_id: str | None = None) -> SourceRecord | None:
         if tenant_id is not None:
-            scoped = self._source_records_by_tenant.get((tenant_id, source_id))
-            if scoped is not None:
-                return scoped
+            return self._source_records_by_tenant.get((tenant_id, source_id))
         return self._source_records.get(source_id)
 
     def get_source_record_by_dedupe_key(self, source_dedupe_key: str, tenant_id: str | None = None) -> SourceRecord | None:
         if tenant_id is not None:
             source_id = self._source_dedupe_by_tenant.get((tenant_id, source_dedupe_key))
-            if source_id:
-                return self._source_records_by_tenant.get((tenant_id, source_id))
+            return self._source_records_by_tenant.get((tenant_id, source_id)) if source_id else None
         source_id = self._source_dedupe_index.get(source_dedupe_key)
         return self._source_records.get(source_id) if source_id else None
 
     def get_evidence_item(self, evidence_item_id: str, tenant_id: str | None = None) -> EvidenceItem | None:
         if tenant_id is not None:
-            scoped = self._evidence_items_by_tenant.get((tenant_id, evidence_item_id))
-            if scoped is not None:
-                return scoped
+            return self._evidence_items_by_tenant.get((tenant_id, evidence_item_id))
         return self._evidence_items.get(evidence_item_id)
 
     def get_evidence_item_by_dedupe_key(self, evidence_dedupe_key: str, tenant_id: str | None = None) -> EvidenceItem | None:
         if tenant_id is not None:
             item_id = self._evidence_dedupe_by_tenant.get((tenant_id, evidence_dedupe_key))
-            if item_id:
-                return self._evidence_items_by_tenant.get((tenant_id, item_id))
+            return self._evidence_items_by_tenant.get((tenant_id, item_id)) if item_id else None
         item_id = self._evidence_dedupe_index.get(evidence_dedupe_key)
         return self._evidence_items.get(item_id) if item_id else None
 
     def get_bundle(self, evidence_bundle_id: str, tenant_id: str | None = None) -> EvidenceBundle | None:
         if tenant_id is not None:
-            scoped = self._bundles_by_tenant.get((tenant_id, evidence_bundle_id))
-            if scoped is not None:
-                return scoped
+            return self._bundles_by_tenant.get((tenant_id, evidence_bundle_id))
         return self._bundles.get(evidence_bundle_id)
 
     def get_knowledge_object(self, knowledge_object_id: str, tenant_id: str | None = None) -> KnowledgeObject | None:
         if tenant_id is not None:
-            scoped = self._knowledge_objects_by_tenant.get((tenant_id, knowledge_object_id))
-            if scoped is not None:
-                return scoped
+            return self._knowledge_objects_by_tenant.get((tenant_id, knowledge_object_id))
         return self._knowledge_objects.get(knowledge_object_id)
 
     def list_knowledge_objects(self, tenant_id: str | None = None) -> List[KnowledgeObject]:
