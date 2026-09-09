@@ -53,7 +53,7 @@ def _load_inventory() -> Dict[str, Any]:
 
 def test_inventory_file_is_present_and_well_formed() -> None:
     data = _load_inventory()
-    assert data["task_id"] == "BFF-TEST-ARCH-001"
+    assert data["task_id"] in {"BFF-TEST-ARCH-001", "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"}
     assert "version" in data
     assert "composition_allowlist" in data
     assert "migrated_suites" in data
@@ -159,10 +159,101 @@ def test_no_global_monkeypatching_in_migrated_suites() -> None:
     assert not offenders, f"Migrated suites must not patch global read_store:\n{msg}"
 
 
+def _scan_ast_main_importers(paths: Sequence[Path]) -> List[str]:
+    importers: List[str] = []
+    for file_path in paths:
+        if not file_path.is_file():
+            continue
+        try:
+            tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "main" or alias.name.endswith(".main"):
+                        try:
+                            rel = str(file_path.relative_to(BFF_DIR))
+                        except ValueError:
+                            rel = str(file_path)
+                        importers.append(rel)
+                        break
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and (
+                    node.module == "main"
+                    or node.module.endswith(".main")
+                    or (node.module.startswith("services.control_plane.bff") and any(a.name == "main" for a in node.names))
+                ):
+                    try:
+                        rel = str(file_path.relative_to(BFF_DIR))
+                    except ValueError:
+                        rel = str(file_path)
+                    importers.append(rel)
+                    break
+    return sorted(set(importers))
+
+
 def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
     data = _load_inventory()
     baseline = data["audited_baseline_main_importers"]
     current = data["current_main_importers"]
 
-    assert current <= 211, f"Expected current main importers <= 211, got {current}"
+    # 1. Check inventory metadata bounds
+    assert current <= 205, f"Expected current main importers <= 205, got {current}"
     assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
+
+    # 2. Live AST scan across cataloged suites
+    catalog_paths = [BFF_DIR / entry["file"] for entry in data["tests"]]
+    catalog_importers = _scan_ast_main_importers(catalog_paths)
+    assert len(catalog_importers) == current, (
+        f"Inventory current_main_importers ({current}) does not match live AST count ({len(catalog_importers)})"
+    )
+    assert len(catalog_importers) <= 205, (
+        f"Live AST scan found {len(catalog_importers)} cataloged main importers, expected <= 205"
+    )
+
+    # 3. Live AST scan across all test files, helpers, fixtures, conftest, and smoke suites
+    all_test_files: List[Path] = []
+    for p in BFF_DIR.glob("**/*.py"):
+        if ".venv" in p.parts or "__pycache__" in p.parts:
+            continue
+        if (
+            p.name.startswith("test_")
+            or p.name.endswith("_test.py")
+            or "tests" in p.parts
+            or "fixtures" in p.name
+            or p.name == "conftest.py"
+            or "smoke" in p.name
+        ):
+            all_test_files.append(p)
+
+    ast_importers = _scan_ast_main_importers(all_test_files)
+    # Migrated suites must NEVER be in AST importers
+    for migrated in data["migrated_suites"]:
+        assert migrated not in ast_importers, (
+            f"Migrated suite {migrated} was detected importing main via live AST scan!"
+        )
+
+
+def test_conftest_and_fixtures_do_not_mutate_sys_path() -> None:
+    """Ensure conftest.py and shared fixtures do not mutate sys.path."""
+    target_files = [
+        BFF_DIR / "tests" / "conftest.py",
+        BFF_DIR / "tests" / "knowledge_read_port_fixtures.py",
+    ]
+    offenders: List[str] = []
+    for file_path in target_files:
+        if not file_path.is_file():
+            continue
+        tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr in ("insert", "append"):
+                    val = func.value
+                    if isinstance(val, ast.Attribute) and val.attr == "path":
+                        if isinstance(val.value, ast.Name) and val.value.id == "sys":
+                            offenders.append(f"{file_path.name}:{node.lineno}: sys.path.{func.attr}")
+
+    msg = "\n".join(f"  {o}" for o in offenders)
+    assert not offenders, f"Conftest/fixture files must not mutate sys.path:\n{msg}"

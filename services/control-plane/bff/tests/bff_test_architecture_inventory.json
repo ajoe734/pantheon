@@ -1,11 +1,11 @@
 {
-  "task_id": "BFF-TEST-ARCH-001",
-  "version": "1.0",
-  "description": "Architectural classification of BFF test suites and composition allowlist",
+  "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "version": "2.0",
+  "description": "Architectural classification of BFF test suites and composition decoupling",
   "total_test_files": 341,
   "audited_baseline_main_importers": 218,
-  "current_main_importers": 211,
-  "migrated_in_task_count": 5,
+  "current_main_importers": 205,
+  "migrated_in_task_count": 11,
   "composition_allowlist": [
     "tests/test_bff_main_composition.py",
     "test_action_catalog.py",
@@ -25,7 +25,13 @@
     "test_cw02_debate_transcript_contract.py",
     "test_cw04_redteam_memo_contract.py",
     "tests/test_governance_router.py",
-    "tests/test_operations_consultation_ports.py"
+    "tests/test_operations_consultation_ports.py",
+    "test_ask_001_sessions_contract.py",
+    "test_ask_003_committee_lifecycle.py",
+    "test_ask_004_memo_publish_contract.py",
+    "test_consultation_surfaces.py",
+    "test_settings_contract.py",
+    "test_pkt001_deployment_review_console_contract.py"
   ],
   "layer_summary": {
     "composition": 11,
@@ -36,8 +42,8 @@
   },
   "main_by_layer": {
     "composition": 7,
-    "router": 79,
-    "application": 115,
+    "router": 75,
+    "application": 113,
     "adapter": 4,
     "hosted": 6
   },
@@ -282,23 +288,23 @@
     {
       "file": "test_ask_001_sessions_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated to standalone router/app composition with instance-bound store/idempotency isolation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
     },
     {
       "file": "test_ask_003_committee_lifecycle.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated to standalone router/app composition with instance-bound store/idempotency isolation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
     },
     {
       "file": "test_ask_004_memo_publish_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated to standalone router/app composition with instance-bound store/idempotency isolation (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
     },
     {
       "file": "test_aud_002_audit_action_write_engine.py",
@@ -562,9 +568,9 @@
     {
       "file": "test_consultation_surfaces.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated to standalone governance router composition with per-client store (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
     },
     {
       "file": "test_current_twelve_owner_truth.py",
@@ -996,9 +1002,9 @@
     {
       "file": "test_pkt001_deployment_review_console_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated to standalone deployment router composition via DeploymentReadSurfaceAdapter (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
     },
     {
       "file": "test_pkt001_governance_review_queue_contract.py",
@@ -1269,9 +1275,9 @@
     {
       "file": "test_settings_contract.py",
       "layer": "router",
-      "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Migrated to standalone settings router composition (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)"
     },
     {
       "file": "test_source_connector_service_client.py",
