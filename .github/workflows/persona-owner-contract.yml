@@ -53,6 +53,10 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/gov_approval_test
     steps:
       - uses: actions/checkout@v6
+      - name: Fetch immutable lease controller for compensation fixtures
+        run: |
+          git fetch --no-tags --depth=1 origin 9e564718da8c39199a4c311f1a667b74226e3428
+          git cat-file -e 9e564718da8c39199a4c311f1a667b74226e3428^{commit}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
