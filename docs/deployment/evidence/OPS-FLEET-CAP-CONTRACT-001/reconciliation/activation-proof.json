@@ -1,0 +1,358 @@
+{
+  "scope": "Historical readback and postpromotion acceptance; not a live authority or new approval.",
+  "verification": {
+    "observed_at": "2026-09-09T23:38:28.261911+00:00",
+    "current_status": "blocked",
+    "current_generation": 4,
+    "manifest_blob": "447d8215b7030a8bf4bec3737470ac96bfbffd97",
+    "manifest_sha256": "b480e8ff4f9d6aa88e3bcc805610f86511de741a148c6025057b4ed1a042cba6",
+    "head_and_merge_manifest_identical": true,
+    "head_ancestor_origin_dev": true,
+    "merge_ancestor_origin_dev": true,
+    "runtime_contains_merge": true,
+    "activation_artifacts_sha256": {
+      "/tmp/fleet_cap_activation_readonly/postpromotion-acceptance.md": "327d13e574f661a5422466a163210fe2b002cc4cd7321724c8515babe0c2edb8",
+      "/tmp/fleet_cap_activation_readonly/postpromotion-effective-cap.json": "05a2881c68bf377e4bab644039d14c0170cd326fbe1f7315230ccbbce06e9f63",
+      "/tmp/fleet_cap_activation_readonly/postpromotion-drift.json": "e685a547047666c03668a10a961cae428a894008e6ea3e09551f2a0dc6a2fb4a",
+      "/tmp/fleet_cap_activation_readonly/postpromotion-watchdog.json": "2a099b20ad5466f1bcacd451843a9f7a9b5e63c75ced16bb8c38bc5afaff0a77",
+      "/tmp/fleet_cap_activation_readonly/postpromotion-host-identity.json": "c2461726789dafc044cbe1ba71311341f9c66071145b2220ea4269e28df8a008",
+      "/tmp/fleet_cap_activation_readonly/postpromotion-commands.json": "90659bc5bce68fc2f4aa7734c1766973887bf6e90b0470d9f83efbd770869ede"
+    }
+  },
+  "watchdog": {
+    "decision": "observe_only",
+    "heartbeat_age_seconds": 6.0,
+    "intentional_restart": false,
+    "lock_held": true,
+    "log_path": null,
+    "new_pid": null,
+    "pid": 812478,
+    "reason": "supervisor_healthy",
+    "resource": {
+      "active_worker_count": 0,
+      "active_worker_count_source": "live_worker_runner_pid_identity",
+      "active_worker_live_count": 0,
+      "active_worker_runtime_state_count": 0,
+      "active_worker_scan_error": null,
+      "disk_free_gb": 108.778,
+      "disk_used_percent": 54.89,
+      "load_1m": 4.61,
+      "memory_available_mb": 34751.6,
+      "state_parent_writable": true
+    },
+    "restart_count_hour": 0,
+    "restart_count_window": 0,
+    "supervisor_root": {
+      "active_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/17bc3c5588da9613586ddd83b5893ee8278f9756",
+      "active_root_error": null,
+      "expected_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/17bc3c5588da9613586ddd83b5893ee8278f9756",
+      "expected_root_error": null,
+      "split_from_expected": false,
+      "split_from_worker_runners": false,
+      "worker_runner_root_error": null,
+      "worker_runner_roots": []
+    }
+  },
+  "effective_cap": {
+    "runtime_sha": "17bc3c5588da9613586ddd83b5893ee8278f9756",
+    "watchdog_module": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/17bc3c5588da9613586ddd83b5893ee8278f9756/.orchestrator/supervisor_watchdog.py",
+    "live_config_sha256": "a9ed96eb9e8d15397e2f2f62aab150193ac45e1586a4928aadf05ab2d8878d97",
+    "dispatcher_cap": 13,
+    "effective_watchdog_cap": 13,
+    "retired_config_field_present": false,
+    "synthetic_healthy_resource_boundary": {
+      "13": [],
+      "14": [
+        "active_worker_count_above_threshold"
+      ]
+    },
+    "boundary_scope": "Pure function fixtures; no live worker count was altered and this is not a substitute for live watchdog health output."
+  },
+  "drift": {
+    "drift": [],
+    "intentional": [],
+    "missing": [
+      {
+        "path": "agents.claude.worker_slots",
+        "repo": null,
+        "live": null
+      },
+      {
+        "path": "agents.claude2.worker_slots",
+        "repo": null,
+        "live": null
+      },
+      {
+        "path": "agents.antigravity.worker_slots",
+        "repo": null,
+        "live": null
+      },
+      {
+        "path": "agents.antigravity2.worker_slots",
+        "repo": null,
+        "live": null
+      },
+      {
+        "path": "agents.copilot.worker_slots",
+        "repo": null,
+        "live": null
+      }
+    ],
+    "fleet_capacity_errors": [],
+    "repository_source_drift": [],
+    "repository_integration_drift": [],
+    "dev_root_behind": null,
+    "fixed": [],
+    "exit_code": 0
+  },
+  "host_identity": {
+    "config_sha256": "a9ed96eb9e8d15397e2f2f62aab150193ac45e1586a4928aadf05ab2d8878d97",
+    "supervisor_state": {
+      "pid": 812478,
+      "started_at": "2026-09-09T23:26:32Z",
+      "last_heartbeat_at": "2026-09-09T23:27:32Z",
+      "lifecycle": "running",
+      "last_successful_loop_at": "2026-09-09T23:27:05Z",
+      "last_loop_started_at": "2026-09-09T23:27:32Z",
+      "last_loop_finished_at": "2026-09-09T23:27:05Z",
+      "last_loop_duration_ms": 33000,
+      "last_loop_error": null,
+      "command_runtime_health": {
+        "healthy": true,
+        "checked_at": "2026-09-09T23:27:34Z",
+        "reason": "healthy",
+        "error": null,
+        "runtime": {
+          "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/17bc3c5588da9613586ddd83b5893ee8278f9756",
+          "source_sha": "17bc3c5588da9613586ddd83b5893ee8278f9756",
+          "remote": "ajoe734/pantheon",
+          "base_ref": "origin/dev"
+        }
+      },
+      "task_state_projection": {
+        "mode": "authoritative",
+        "ok": true,
+        "event_log": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/task-state/task-state-events-v2.jsonl",
+        "last_checked_at": "2026-09-09T23:26:48Z",
+        "last_success_at": "2026-09-09T23:26:48Z",
+        "last_error": null,
+        "caught_up": true,
+        "repaired": false,
+        "event_count": 7625,
+        "last_event_id": "task-state-f3c1268536166588b45fc469b615b8c6b7cc2690d4f7bdeeafafd93037879745",
+        "projected_state_sha256": "c66363eabc2953b1fe573b25ae0950ff64ff389cc31f7de40d53d4d0a1d881b6",
+        "expected_state_sha256": "c66363eabc2953b1fe573b25ae0950ff64ff389cc31f7de40d53d4d0a1d881b6",
+        "nonterminal_task_count": 43,
+        "resumed_from_head": true,
+        "replayed_tail_events": 0,
+        "archive_anchor_sha256": null
+      },
+      "last_cycle_metrics": {
+        "schema_version": 1,
+        "cycle_elapsed_seconds": 33.246,
+        "phase_elapsed": {
+          "materialize_auto_integrator_unblock_requests": {
+            "count": 1,
+            "elapsed_seconds": 0.0,
+            "max_seconds": 0.0
+          },
+          "prune_stale_approvals": {
+            "count": 1,
+            "elapsed_seconds": 0.078,
+            "max_seconds": 0.078
+          },
+          "poll_workers_before_plan_reserved": {
+            "count": 1,
+            "elapsed_seconds": 0.74,
+            "max_seconds": 0.74
+          },
+          "reconcile_review_requeue_materializations_before_plan": {
+            "count": 1,
+            "elapsed_seconds": 0.161,
+            "max_seconds": 0.161
+          },
+          "inspect_command_runtime_health": {
+            "count": 1,
+            "elapsed_seconds": 0.771,
+            "max_seconds": 0.771
+          },
+          "record_command_runtime_health_reserved": {
+            "count": 1,
+            "elapsed_seconds": 0.586,
+            "max_seconds": 0.586
+          },
+          "load_dispatch_status_snapshot": {
+            "count": 1,
+            "elapsed_seconds": 0.096,
+            "max_seconds": 0.096
+          },
+          "scan_live_worker_pids": {
+            "count": 1,
+            "elapsed_seconds": 0.056,
+            "max_seconds": 0.056
+          },
+          "load_planning_runtime_snapshot": {
+            "count": 1,
+            "elapsed_seconds": 0.079,
+            "max_seconds": 0.079
+          },
+          "build_dispatch_plan": {
+            "count": 1,
+            "elapsed_seconds": 1.642,
+            "max_seconds": 1.642
+          },
+          "dispatch_plan_transaction": {
+            "count": 1,
+            "elapsed_seconds": 0.081,
+            "max_seconds": 0.081
+          },
+          "reconcile_review_requeue_materializations_after_reserve": {
+            "count": 1,
+            "elapsed_seconds": 0.171,
+            "max_seconds": 0.171
+          },
+          "process_queue_reserved": {
+            "count": 1,
+            "elapsed_seconds": 0.611,
+            "max_seconds": 0.611
+          },
+          "load_maintenance_runtime_snapshot": {
+            "count": 1,
+            "elapsed_seconds": 0.077,
+            "max_seconds": 0.077
+          },
+          "drain_assistant_dev_packet_inbox": {
+            "count": 1,
+            "elapsed_seconds": 0.903,
+            "max_seconds": 0.903
+          },
+          "continue_or_skip_empty": {
+            "count": 1,
+            "elapsed_seconds": 0.003,
+            "max_seconds": 0.003
+          },
+          "probe_delivery_health:antigravity": {
+            "count": 1,
+            "elapsed_seconds": 3.217,
+            "max_seconds": 3.217
+          },
+          "probe_delivery_health:claude2": {
+            "count": 1,
+            "elapsed_seconds": 0.625,
+            "max_seconds": 0.625
+          },
+          "probe_delivery_health:claude": {
+            "count": 1,
+            "elapsed_seconds": 0.659,
+            "max_seconds": 0.659
+          },
+          "probe_delivery_health:codex1_3": {
+            "count": 1,
+            "elapsed_seconds": 5.074,
+            "max_seconds": 5.074
+          },
+          "prefetch_task_state_projection": {
+            "count": 1,
+            "elapsed_seconds": 0.109,
+            "max_seconds": 0.109
+          },
+          "apply_post_dispatch_maintenance": {
+            "count": 1,
+            "elapsed_seconds": 16.055,
+            "max_seconds": 16.055
+          },
+          "prune_worktrees_reserved": {
+            "count": 1,
+            "elapsed_seconds": 0.526,
+            "max_seconds": 0.526
+          },
+          "reconcile_queue_records_post_io": {
+            "count": 1,
+            "elapsed_seconds": 0.0,
+            "max_seconds": 0.0
+          },
+          "reconcile_queue_intents_post_io": {
+            "count": 1,
+            "elapsed_seconds": 0.099,
+            "max_seconds": 0.099
+          },
+          "trim_worker_history": {
+            "count": 1,
+            "elapsed_seconds": 0.0,
+            "max_seconds": 0.0
+          },
+          "trim_seen_events": {
+            "count": 1,
+            "elapsed_seconds": 0.0,
+            "max_seconds": 0.0
+          },
+          "trim_terminal_queue_records": {
+            "count": 1,
+            "elapsed_seconds": 0.001,
+            "max_seconds": 0.001
+          },
+          "finalize_runtime_cycle": {
+            "count": 1,
+            "elapsed_seconds": 0.378,
+            "max_seconds": 0.378
+          },
+          "load_postlock_runtime_snapshot": {
+            "count": 1,
+            "elapsed_seconds": 0.083,
+            "max_seconds": 0.083
+          },
+          "log_runtime_summary": {
+            "count": 1,
+            "elapsed_seconds": 0.001,
+            "max_seconds": 0.001
+          }
+        },
+        "batch_counts": {
+          "dispatch_status_mutations": 0,
+          "runtime_activity_events": 0
+        },
+        "cadence": {
+          "scheduled_deadline": 684136.973686,
+          "start_overshoot_seconds": 0.0,
+          "skipped_deadlines_before_start": 0
+        },
+        "runtime_lock_hold_seconds": 0.377
+      },
+      "cycle_elapsed_seconds": 33.246,
+      "cycle_elapsed_peak_seconds": 309.229,
+      "runtime_lock_hold_seconds": 0.273,
+      "runtime_lock_hold_peak_seconds": 13.335,
+      "runtime_lock_hold_exceeded": false,
+      "cadence_next_deadline_monotonic": 684196.973686,
+      "cadence_overshoot_seconds": 0.0,
+      "cadence_overshoot_peak_seconds": 0.371,
+      "cadence_skipped_deadlines": 1,
+      "scheduler_cycle_elapsed_seconds": 33.354,
+      "scheduler_cycle_elapsed_peak_seconds": 309.338,
+      "runtime_phase_reservations": {}
+    },
+    "actual_supervisors": [
+      {
+        "pid": 812478,
+        "start_ticks": 68413627,
+        "cwd": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/17bc3c5588da9613586ddd83b5893ee8278f9756",
+        "script": [
+          "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/17bc3c5588da9613586ddd83b5893ee8278f9756/.orchestrator/supervisor.py"
+        ]
+      }
+    ]
+  },
+  "integration_receipt": {
+    "head_sha": "ac30c1ee7823d8e4c65d8f48d9fe5ca208f603c4",
+    "merge_commit_sha": "677365cb1aff86e74ec30b290255db05c6036e2f",
+    "observation": "performed_merge",
+    "observed_at": "2026-09-09T16:55:54Z",
+    "pr": 5726,
+    "repository": "ajoe734/pantheon",
+    "result": "landed",
+    "source": "canonical_auto_integrator",
+    "target_branch": "dev",
+    "task_generation": 2,
+    "version": 1
+  }
+}
