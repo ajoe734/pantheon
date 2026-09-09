@@ -1075,6 +1075,7 @@ def summarize_decision(
 
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    validated_fleet_worker_cap(config)
     lock_manager = runtime_state_lock(
         config,
         shared=False,
@@ -1377,6 +1378,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
+    validated_fleet_worker_cap(config)
     if (args.record_intent_pid is None) != (args.record_intent_target is None):
         raise SystemExit("--record-intent-pid and --record-intent-target must be provided together")
     if args.record_intent_pid is not None:

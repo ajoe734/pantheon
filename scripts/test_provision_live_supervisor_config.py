@@ -804,3 +804,43 @@ def test_cli_creates_one_v2_config_without_merging_an_incumbent(
     assert payload["config_created"] is True
     installed = json.loads(live_path.read_text(encoding="utf-8"))
     assert installed["task_state_store"]["mode"] == "authoritative"
+
+
+@pytest.mark.parametrize("section,key,value", [
+    ("ready_dispatcher", "max_concurrent_workers", value)
+    for value in (None, True, False, "13", "", 13.0, 13.5, -1, [], {})
+] + [
+    ("watchdog", "max_active_workers", value)
+    for value in (12, 13, 14, None, True, "13", [], {})
+])
+def test_build_live_config_rejects_invalid_fleet_contract(tmp_path, section, key, value):
+    config = json.loads((Path(__file__).resolve().parents[1] / ".orchestrator/config.json").read_text())
+    config[section][key] = value
+    with pytest.raises(ValueError, match=key):
+        provision.build_live_config(
+            config, existing_live_config=None, command_root=tmp_path,
+            status_root=tmp_path, live_config_path=tmp_path / "live.json",
+            python_executable=Path(sys.executable),
+        )
+
+
+def test_build_live_config_retires_incumbent_watchdog_cap(tmp_path):
+    command, status = _roots(tmp_path)
+    config = json.loads((command / ".orchestrator/config.json").read_text())
+    rendered = provision.build_live_config(
+        config, existing_live_config={"watchdog": {"max_active_workers": 12}},
+        command_root=command, status_root=status,
+        live_config_path=tmp_path / "runtime/live.json",
+        python_executable=Path(sys.executable),
+    )
+    from supervisor_watchdog import watchdog_settings
+    assert rendered["ready_dispatcher"]["max_concurrent_workers"] == 13
+    assert "max_active_workers" not in rendered["watchdog"]
+    assert watchdog_settings(rendered)["max_active_workers"] == 13
+    del config["ready_dispatcher"]["max_concurrent_workers"]
+    with pytest.raises(ValueError, match="max_concurrent_workers"):
+        provision.build_live_config(
+            config, existing_live_config=rendered, command_root=command,
+            status_root=status, live_config_path=tmp_path / "runtime/live.json",
+            python_executable=Path(sys.executable),
+        )

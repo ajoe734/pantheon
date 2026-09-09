@@ -104,6 +104,23 @@ class SupervisorWatchdogTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "max_active_workers is retired"):
                     supervisor_watchdog.run_watchdog(self.config, restart=True, dry_run=True)
 
+    def test_fleet_boundary_keeps_legal_restart_and_suppresses_overflow(self) -> None:
+        for count, decision, reason in (
+            (13, "restart_supervisor", "dry_run:missing_pid"),
+            (14, "suppress_restart", "resource_pressure:active_worker_count_above_threshold"),
+        ):
+            with (
+                self.subTest(count=count),
+                mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value={
+                    **self.ok_resource(), "active_worker_count": count,
+                }),
+                mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+            ):
+                result = supervisor_watchdog.run_watchdog(self.config, restart=True, dry_run=True)
+                self.assertEqual(result["decision"], decision)
+                self.assertEqual(result["reason"], reason)
+                start.assert_not_called()
+
     def write_pid(self, pid: int) -> None:
         (self.state_file.parent / "supervisor.pid").write_text(f"{pid}\n", encoding="utf-8")
 
