@@ -151,6 +151,8 @@ from .paper_eligibility_proof import (
 )
 from .emergency_containment_policy import validate_emergency_containment
 from .session_lifecycle_store import SessionLifecycleStore
+from .auth import policy as auth_policy
+from .auth.policy import create_auth_dependencies
 from .management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from .agora_audit_store import AgoraAuditStore
 from .management_nl_command_idempotency import (
@@ -232,20 +234,11 @@ except ImportError:
         PersonaRuntimeProfile = None  # type: ignore[assignment,misc]
 log = logging.getLogger(__name__)
 def _bool_from_env(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-_BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
-_BFF_STUB_LEGACY_BARE_TOKENS_ENV = "PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"
-_BFF_STUB_CAPABILITY_ROLES = frozenset({"admin", "operator"})
-_PRODUCTION_STRICT_ENVIRONMENTS = {
-    "canary",
-    "live",
-    "prod",
-    "production",
-    "staging-live",
-}
+    return auth_policy.bool_from_env(name, default=default)
+_BFF_AUTH_STUB_ENV = auth_policy._BFF_AUTH_STUB_ENV
+_BFF_STUB_LEGACY_BARE_TOKENS_ENV = auth_policy._BFF_STUB_LEGACY_BARE_TOKENS_ENV
+_BFF_STUB_CAPABILITY_ROLES = auth_policy._BFF_STUB_CAPABILITY_ROLES
+_PRODUCTION_STRICT_ENVIRONMENTS = auth_policy._PRODUCTION_STRICT_ENVIRONMENTS
 _DEFAULT_LOVABLE_CORS_ORIGINS = [
     # Pantheon-owned self-hosted dev frontend (execute-plans). This replaced the
     # Lovable-hosted dev FE; it is the current dev acceptance origin. Dev-only:
@@ -322,21 +315,10 @@ def _dedupe_origins(origins: List[str]) -> List[str]:
             deduped.append(cleaned)
             seen.add(cleaned)
     return deduped
-_BFF_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
-def _bff_auth_mode() -> str:
-    raw = os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
-    if raw not in _BFF_VALID_AUTH_MODES:
-        return "strict"
-    return raw
-def _is_production_strict_mode() -> bool:
-    env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
-    deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
-    return _bff_auth_mode() == "strict" and (
-        env_name in _PRODUCTION_STRICT_ENVIRONMENTS
-        or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-    )
-def _bff_auth_stub_enabled() -> bool:
-    return _bool_from_env(_BFF_AUTH_STUB_ENV) and _bff_auth_mode() != "strict"
+_BFF_VALID_AUTH_MODES = auth_policy._BFF_VALID_AUTH_MODES
+_bff_auth_mode = auth_policy.bff_auth_mode
+_is_production_strict_mode = auth_policy.is_production_strict_mode
+_bff_auth_stub_enabled = auth_policy.bff_auth_stub_enabled
 def _cors_origins_from_env() -> List[str]:
     raw = os.getenv("PANTHEON_BFF_CORS_ORIGINS", "")
     origins = _dedupe_origins(raw.split(",")) if raw.strip() else list(_DEFAULT_LOVABLE_CORS_ORIGINS)
@@ -493,6 +475,25 @@ def _pack_d_error_response(
         content=jsonable_encoder(content),
         headers=response_headers,
     )
+
+
+def _pack_d_direct_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    details: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    return _pack_d_error_response(
+        status_code=status_code,
+        code=code,
+        message=message,
+        correlation_id=str(uuid.uuid4()),
+        details=details,
+        extra=extra,
+    )
+
 
 def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
     response_headers = dict(headers)
@@ -875,102 +876,12 @@ register_fastapi_health_routes(
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
 
-
-_ERROR_CODE_BY_STATUS = {
-    400: ErrorCode.VALIDATION_FAILED.value,
-    401: ErrorCode.AUTH_REQUIRED.value,
-    403: ErrorCode.FORBIDDEN.value,
-    404: ErrorCode.RESOURCE_NOT_FOUND.value,
-    409: ErrorCode.RESOURCE_CONFLICT.value,
-    413: ErrorCode.REQUEST_TOO_LARGE.value,
-    422: ErrorCode.VALIDATION_FAILED.value,
-    428: ErrorCode.PRECONDITION_FAILED.value,
-    429: ErrorCode.RATE_LIMITED.value,
-    500: ErrorCode.INTERNAL_ERROR.value,
-    502: ErrorCode.UPSTREAM_ERROR.value,
-    503: ErrorCode.DEPENDENCY_UNAVAILABLE.value,
-    504: ErrorCode.UPSTREAM_TIMEOUT.value,
-}
-_LEGACY_ERROR_CODE_ALIASES = {
-    "INVALID_REQUEST": ErrorCode.VALIDATION_FAILED.value,
-    "INVALID_PARAMS": ErrorCode.VALIDATION_FAILED.value,
-    "MFA_VALIDATION_FAILED": ErrorCode.VALIDATION_FAILED.value,
-    "INVALID_TOKEN": ErrorCode.AUTH_REQUIRED.value,
-    "AUTH_TOKEN_FORMAT": ErrorCode.AUTH_REQUIRED.value,
-    "AUTH_JWT_EXPIRED": ErrorCode.AUTH_EXPIRED.value,
-    "INSUFFICIENT_ROLE": ErrorCode.FORBIDDEN.value,
-    "PERMISSION_DENIED": ErrorCode.FORBIDDEN.value,
-    "CAPABILITY_MISSING": ErrorCode.FORBIDDEN.value,
-    "OBJECT_NOT_FOUND": ErrorCode.RESOURCE_NOT_FOUND.value,
-    "NOT_FOUND": ErrorCode.RESOURCE_NOT_FOUND.value,
-    "INVALID_STATE": ErrorCode.OPERATION_NOT_ALLOWED.value,
-    "HIGH_RISK_QUERY_REFUSED": ErrorCode.OPERATION_NOT_ALLOWED.value,
-    "CONCURRENT_MODIFICATION": ErrorCode.RESOURCE_CONFLICT.value,
-    "STATE_CONFLICT": ErrorCode.RESOURCE_CONFLICT.value,
-    "DOWNSTREAM_UNAVAILABLE": ErrorCode.DEPENDENCY_UNAVAILABLE.value,
-    "DOWNSTREAM_TIMEOUT": ErrorCode.UPSTREAM_TIMEOUT.value,
-    "COMMAND_TIMEOUT": ErrorCode.UPSTREAM_TIMEOUT.value,
-    "DOWNSTREAM_ERROR": ErrorCode.UPSTREAM_ERROR.value,
-    "PRECONDITION_NOT_MET": ErrorCode.PRECONDITION_FAILED.value,
-    "CONFIRM_TOKEN_REQUIRED": ErrorCode.CONFIRMATION_REQUIRED.value,
-    "APPROVAL_REQUIRED": ErrorCode.HUMAN_GATE_PENDING.value,
-    "TWO_MAN_REQUIRED": ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value,
-    "MFA_REQUIRED": ErrorCode.AUTH_REQUIRED.value,
-    "SSE_REPLAY_UNAVAILABLE": ErrorCode.RESOURCE_CONFLICT.value,
-}
-_PACK_D_D21_ERROR_BEHAVIOR: Dict[str, Dict[str, bool]] = {
-    ErrorCode.RESOURCE_NOT_FOUND.value: {"retryable": False, "userActionable": True},
-    ErrorCode.AUTH_REQUIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.AUTH_EXPIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.FORBIDDEN.value: {"retryable": False, "userActionable": False},
-    ErrorCode.RATE_LIMITED.value: {"retryable": True, "userActionable": True},
-    ErrorCode.VALIDATION_FAILED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.BUSINESS_RULE_VIOLATION.value: {"retryable": False, "userActionable": True},
-    ErrorCode.IDEMPOTENCY_CONFLICT.value: {"retryable": False, "userActionable": True},
-    ErrorCode.PRECONDITION_FAILED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.CONFIRMATION_REQUIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.HUMAN_GATE_PENDING.value: {"retryable": False, "userActionable": True},
-    ErrorCode.HUMAN_GATE_REJECTED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.HUMAN_GATE_EXPIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.RESOURCE_CONFLICT.value: {"retryable": False, "userActionable": True},
-    ErrorCode.OPERATION_NOT_ALLOWED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.DEPENDENCY_UNAVAILABLE.value: {"retryable": True, "userActionable": True},
-    ErrorCode.UPSTREAM_TIMEOUT.value: {"retryable": True, "userActionable": True},
-    ErrorCode.UPSTREAM_ERROR.value: {"retryable": True, "userActionable": True},
-    ErrorCode.INTERNAL_ERROR.value: {"retryable": False, "userActionable": False},
-    ErrorCode.NOT_IMPLEMENTED.value: {"retryable": False, "userActionable": False},
-    ErrorCode.MAINTENANCE_MODE.value: {"retryable": True, "userActionable": True},
-    ErrorCode.KILL_SWITCH_ACTIVE.value: {"retryable": False, "userActionable": False},
-    ErrorCode.SAFE_MODE_ACTIVE.value: {"retryable": False, "userActionable": False},
-    ErrorCode.DEGRADED_READ_ONLY.value: {"retryable": False, "userActionable": False},
-    ErrorCode.REQUEST_TOO_LARGE.value: {"retryable": False, "userActionable": True},
-}
-def _status_error_code(status_code: int) -> str:
-    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.VALIDATION_FAILED.value)
-def _canonical_error_code_value(code: Any, *, status_code: Optional[int] = None) -> str:
-    raw = str(getattr(code, "value", code) or "").strip()
-    if not raw and status_code is not None:
-        return _status_error_code(status_code)
-    candidate = _LEGACY_ERROR_CODE_ALIASES.get(raw, raw)
-    try:
-        return ErrorCode(candidate).value
-    except ValueError:
-        if status_code is not None:
-            return _status_error_code(status_code)
-        return ErrorCode.INTERNAL_ERROR.value
-def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> Dict[str, Any]:
-    code_value = _canonical_error_code_value(code, status_code=status_code)
-    behavior = _PACK_D_D21_ERROR_BEHAVIOR.get(
-        code_value,
-        _PACK_D_D21_ERROR_BEHAVIOR[ErrorCode.INTERNAL_ERROR.value],
-    )
-    return {
-        "code": code_value,
-        "i18nKey": f"errors.{code_value}",
-        "retryable": behavior["retryable"],
-        "userActionable": behavior["userActionable"],
-    }
+_ERROR_CODE_BY_STATUS = auth_policy._ERROR_CODE_BY_STATUS
+_LEGACY_ERROR_CODE_ALIASES = auth_policy._LEGACY_ERROR_CODE_ALIASES
+_PACK_D_D21_ERROR_BEHAVIOR = auth_policy._PACK_D_D21_ERROR_BEHAVIOR
+_status_error_code = auth_policy.status_error_code
+_canonical_error_code_value = auth_policy.canonical_error_code_value
+_pack_d_error_metadata = auth_policy.pack_d_error_metadata
 
 
 from .bootstrap.dependencies import AppDependencies
@@ -1025,388 +936,18 @@ def _retryable_terminal_capital_command(record: Dict[str, Any]) -> bool:
         and record["error"].get("retryable") is True
     )
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
-_DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
-    "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
-    "operator": {"roles": ("operator",), "subject_suffix": "operator"},
-    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
-    "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
-    "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
-    "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
-}
-def _dev_login_forbidden_environment() -> bool:
-    env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
-    deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
-    return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-def _dev_login_bool_env(name: str, *, default: bool) -> bool:
-    return _bool_from_env(name, default=default)
-def _dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
-    """Build the configured dev-login identity profiles from environment.
+_DEV_LOGIN_IDENTITY_DEFS = auth_policy._DEV_LOGIN_IDENTITY_DEFS
+_dev_login_forbidden_environment = auth_policy.dev_login_forbidden_environment
+_dev_login_bool_env = auth_policy.dev_login_bool_env
+_dev_login_identity_registry = auth_policy.dev_login_identity_registry
+_dev_login_enabled = auth_policy.dev_login_enabled
 
-    Each identity requires its own dedicated ``PANTHEON_BFF_DEV_LOGIN_<NAME>_
-    CLIENT_ID``/``_CLIENT_SECRET`` pair so distinct actors (e.g. operator A
-    vs. operator B) never share a credential or a subject. Only the
-    ``operator`` identity falls back to the legacy shared
-    ``PANTHEON_BFF_DEV_LOGIN_CLIENT_ID``/``PANTHEON_BFF_OIDC_CLIENT_ID``
-    credential for backward compatibility; unconfigured identities are simply
-    absent from the registry (dev-login as that identity is unavailable, it
-    does not fall back to a shared credential).
-    """
-    registry: Dict[str, Dict[str, Any]] = {}
-    for name, base in _DEV_LOGIN_IDENTITY_DEFS.items():
-        env_prefix = f"PANTHEON_BFF_DEV_LOGIN_{name.upper()}"
-        client_id = os.getenv(f"{env_prefix}_CLIENT_ID", "").strip()
-        client_secret = os.getenv(f"{env_prefix}_CLIENT_SECRET", "").strip()
-        if not (client_id and client_secret) and name == "operator":
-            client_id = _first_nonblank(
-                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
-                os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
-            )
-            client_secret = _first_nonblank(
-                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
-                os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
-            )
-        if not (client_id and client_secret):
-            continue
-
-        tenant_id = _first_nonblank(
-            os.getenv(f"{env_prefix}_TENANT_ID"),
-            os.getenv("PANTHEON_BFF_TENANT_ID"),
-            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-            os.getenv("PANTHEON_TENANT_ID"),
-            "tenant-dev",
-        )
-        allowed_tenants = _env_csv(f"{env_prefix}_ALLOWED_TENANTS") or [tenant_id]
-        if tenant_id not in allowed_tenants:
-            allowed_tenants = [tenant_id] + list(allowed_tenants)
-
-        mfa_verified = _dev_login_bool_env(f"{env_prefix}_MFA_VERIFIED", default=False)
-
-        registry[name] = {
-            "identity": name,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "roles": sorted(base["roles"]),
-            "subject": f"pantheon-dev-{base['subject_suffix']}",
-            "tenant_id": tenant_id,
-            "allowed_tenants": allowed_tenants,
-            "mfa_verified": mfa_verified,
-        }
-    return registry
-def _dev_login_enabled() -> bool:
-    if _dev_login_forbidden_environment():
-        return False
-    return bool(_dev_login_identity_registry())
-def _extract_identity(
-    authorization: Optional[str],
-    mfa_token: Optional[str] = None,
-    session_cookie: Optional[str] = None,
-) -> OperatorIdentity:
-    if _bff_auth_stub_enabled():
-        if authorization and authorization.startswith("Bearer "):
-            raw = authorization[len("Bearer "):].strip()
-            if raw.count(".") == 2:
-                try:
-                    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
-                except Exception:
-                    pass
-        if not authorization and session_cookie:
-            try:
-                identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
-                return identity.model_copy(update={"token_kind": "cookie"})
-            except Exception:
-                pass
-        return _extract_identity_stub(authorization)
-    # Cookie session: treat cookie value as a bearer token when no Authorization header present.
-    if not authorization and session_cookie:
-        identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
-        identity = identity.model_copy(update={"token_kind": "cookie"})
-        return identity
-    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
-def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
-    """Legacy colon-format stub for PANTHEON_BFF_AUTH_STUB=true only."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise _bff_error(
-            status_code=401,
-            code=ErrorCode.AUTH_REQUIRED,
-            message="Missing or invalid Authorization header",
-            reason="Token is absent or not a Bearer token",
-            suggestion="Re-authenticate and include a valid Bearer token",
-        )
-    token = authorization[len("Bearer "):].strip()
-    if not token:
-        raise _bff_error(
-            status_code=401,
-            code=ErrorCode.AUTH_REQUIRED,
-            message="Missing or invalid Authorization header",
-            reason="Token is absent or not a Bearer token",
-            suggestion="Re-authenticate and include a valid Bearer token",
-        )
-    if ":" not in token:
-        allowed_bare_tokens = set(_env_csv(_BFF_STUB_LEGACY_BARE_TOKENS_ENV))
-        if token not in allowed_bare_tokens:
-            raise _bff_error(
-                status_code=403,
-                code=ErrorCode.FORBIDDEN,
-                message="Stub bearer token must include explicit roles",
-                reason="AUTH_STUB_TOKEN_NO_ROLES",
-                suggestion="Use Bearer <operator_id>:<comma_roles> for dev stub auth",
-            )
-        lowered = token.lower()
-        inferred_roles = ["operator"]
-        if lowered.startswith("admin_"):
-            inferred_roles = ["admin"]
-        elif lowered.startswith("analyst_"):
-            inferred_roles = ["analyst"]
-        elif lowered.startswith("viewer_"):
-            inferred_roles = ["viewer"]
-        capabilities = _stub_identity_capabilities([], inferred_roles)
-        return OperatorIdentity(
-            operator_id=token,
-            roles=inferred_roles,
-            mfa_verified="mfa" in lowered,
-            claims={"sub": token, "roles": inferred_roles, "capabilities": capabilities},
-            token_kind="stub",
-        )
-    parts = token.split(":")
-    operator_id = parts[0] if parts else "unknown"
-    roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
-
-    mfa_verified = False
-    tenant_ids = None
-    token_capabilities = []
-
-    if len(parts) > 2:
-        if parts[2] == "mfa":
-            mfa_verified = True
-            if len(parts) > 3 and parts[3]:
-                token_capabilities = parts[3].split(",")
-            if len(parts) > 4 and parts[4]:
-                tenant_ids = parts[4].split(",")
-        else:
-            tenant_ids = parts[2].split(",")
-            if len(parts) > 3 and parts[3]:
-                token_capabilities = parts[3].split(",")
-
-    capabilities = _stub_identity_capabilities(token_capabilities, roles)
-    claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
-    if tenant_ids:
-        claims["tenant_ids"] = tenant_ids
-        claims["tenantIds"] = tenant_ids
-
-    return OperatorIdentity(
-        operator_id=operator_id,
-        roles=roles,
-        mfa_verified=mfa_verified,
-        claims=claims,
-        token_kind="stub",
-    )
-def _stub_identity_capabilities(
-    token_capabilities: List[str],
-    roles: List[str],
-) -> List[str]:
-    normalized_roles = {str(role or "").strip().lower() for role in roles}
-    if not normalized_roles.intersection(_BFF_STUB_CAPABILITY_ROLES):
-        return []
-    return _dedupe_nonblank_strings(
-        [
-            *token_capabilities,
-            *_env_csv("PANTHEON_BFF_STUB_CAPABILITIES"),
-        ]
-    )
-def _with_structured_identity_capabilities(identity: OperatorIdentity) -> OperatorIdentity:
-    if identity.token_kind != "structured":
-        return identity
-    claims = dict(identity.claims or {})
-    raw_capabilities = claims.get("capabilities") or claims.get("capability") or []
-    if isinstance(raw_capabilities, str):
-        token_capabilities = _split_claim_string(raw_capabilities)
-    elif isinstance(raw_capabilities, list):
-        token_capabilities = [str(cap) for cap in raw_capabilities]
-    else:
-        token_capabilities = []
-    capabilities = _stub_identity_capabilities(token_capabilities, identity.roles)
-    if capabilities:
-        claims["capabilities"] = capabilities
-    else:
-        claims.pop("capabilities", None)
-        claims.pop("capability", None)
-    try:
-        return identity.model_copy(update={"claims": claims})
-    except AttributeError:
-        return OperatorIdentity(
-            operator_id=identity.operator_id,
-            roles=identity.roles,
-            mfa_verified=identity.mfa_verified,
-            claims=claims,
-            token_kind=identity.token_kind,
-        )
-def _extract_identity_jwt(
-    authorization: Optional[str],
-    mfa_token: Optional[str] = None,
-) -> OperatorIdentity:
-    """JWT/RBAC auth facade for production. Validates issuer, audience, expiry, subject."""
-    try:
-        from services.runtime_auth_inbound import AuthError, validate_request_auth
-    except ImportError:
-        from runtime_auth_inbound import AuthError, validate_request_auth  # type: ignore[no-redef]
-
-    bff_env = {
-        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_BFF_AUTH_MODE", "strict"),
-        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_BFF_JWT_SECRET", ""),
-        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_BFF_JWT_ISSUER", ""),
-        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_BFF_JWT_AUDIENCE", ""),
-        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_BFF_DEFAULT_ROLE", "operator"),
-        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_BFF_MFA_REQUIRED", "false"),
-        # OIDC/JWKS optional path — active only when JWKS_URI is set.
-        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_BFF_JWKS_URI", ""),
-        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", ""),
-        "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_BFF_OIDC_ISSUER", ""),
-        "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_BFF_OIDC_AUDIENCE", ""),
-        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_BFF_ROLE_CLAIMS", ""),
-        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("PANTHEON_BFF_ROLE_MAP", ""),
-        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", ""),
-        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_BFF_MFA_CLAIMS", ""),
-        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_BFF_MFA_VALUES", ""),
-        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": os.getenv(
-            "PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED",
-            "false",
-        ),
-    }
-    # External browser JWTs use the configured OIDC/JWKS verifier, while the
-    # server-side dev-login exchange deliberately issues a short-lived HS256
-    # BFF token.  Select the verifier from the signed token algorithm family so
-    # enabling product OIDC does not disable governed CI/dev-login sessions.
-    # This is only routing: issuer, audience and signature are still validated
-    # by ``validate_request_auth`` before any claim is trusted.
-    try:
-        raw_token = str(authorization or "").split(None, 1)[1]
-        header_segment = raw_token.split(".", 1)[0]
-        header_segment += "=" * (-len(header_segment) % 4)
-        unverified_alg = str(
-            json.loads(base64.urlsafe_b64decode(header_segment).decode("utf-8")).get("alg")
-            or ""
-        ).upper()
-    except Exception:
-        unverified_alg = ""
-    if unverified_alg == "HS256":
-        bff_env["PANTHEON_RUNTIME_JWKS_URI"] = ""
-        bff_env["PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"] = ""
-        bff_env["PANTHEON_RUNTIME_ROLE_CLAIMS"] = "roles,role"
-        bff_env["PANTHEON_RUNTIME_ROLE_MAP"] = ""
-        bff_env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] = "passthrough"
-        # Server-issued dev-login tokens are not browser identity tokens and do
-        # not carry an email address. Keep the browser-only verification policy
-        # on the asymmetric GCP Identity Platform path.
-        bff_env["PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED"] = "false"
-
-    mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
-    try:
-        ctx = validate_request_auth(
-            authorization=authorization or "",
-            mfa_header=mfa_token or "",
-            mfa_required=mfa_required,
-            env=bff_env,
-        )
-    except AuthError as exc:
-        if exc.status_code == 403:
-            code = ErrorCode.FORBIDDEN
-        elif exc.code == "AUTH_JWT_EXPIRED":
-            code = ErrorCode.AUTH_EXPIRED
-        elif exc.code in ("MFA_REQUIRED", "MFA_VALIDATION_FAILED"):
-            code = ErrorCode.AUTH_REQUIRED
-        else:
-            code = ErrorCode.AUTH_REQUIRED
-        # Sanitize codes that would leak server config details.
-        _opaque_codes = {
-            "AUTH_JWT_SECRET_MISSING",
-            "JWKS_FETCH_FAILED",
-            "JWKS_NO_MATCHING_KEY",
-            "JWKS_INVALID_KEY",
-            "JWKS_LIBRARY_UNAVAILABLE",
-            "OIDC_DISCOVERY_FAILED",
-        }
-        if exc.code in _opaque_codes:
-            effective_status = 401
-            effective_message = "JWT bearer token cannot be verified"
-            effective_reason = "AUTH_TOKEN_UNVERIFIED"
-        else:
-            effective_status = exc.status_code
-            effective_message = exc.message
-            effective_reason = exc.code
-        raise _bff_error(
-            status_code=effective_status,
-            code=code,
-            message=effective_message,
-            reason=effective_reason,
-            suggestion=(
-                "Re-authenticate with a valid JWT bearer token"
-                if effective_status == 401
-                else None
-            ),
-        )
-    if not str(ctx.claims.get("sub") or "").strip():
-        raise _bff_error(
-            status_code=401,
-            code=ErrorCode.AUTH_REQUIRED,
-            message="JWT subject claim is required",
-            reason="AUTH_JWT_SUBJECT_MISSING",
-            suggestion="Re-authenticate with a valid JWT bearer token",
-        )
-    identity = OperatorIdentity(
-        operator_id=ctx.actor_id,
-        roles=sorted(ctx.roles),
-        mfa_verified=ctx.mfa_verified,
-        claims=dict(ctx.claims),
-        token_kind=ctx.token_kind,
-    )
-    return _with_structured_identity_capabilities(identity)
-def _bff_error(
-    status_code: int,
-    code: ErrorCode,
-    message: str,
-    reason: str,
-    precondition_failed: Optional[str] = None,
-    suggestion: Optional[str] = None,
-    details_extra: Optional[Dict[str, Any]] = None,
-    correlation_id: Optional[str] = None,
-    foundation_error: Optional[ErrorEnvelope] = None,
-    policy_decision: Optional[PolicyDecision] = None,
-    audit_action: Optional[AuditAction] = None,
-) -> HTTPException:
-    metadata = _pack_d_error_metadata(code, status_code=status_code)
-    body = BffErrorEnvelope(
-        error=BffErrorPayload(
-            code=ErrorCode(metadata["code"]),
-            i18nKey=metadata["i18nKey"],
-            message=message,
-            retryable=metadata["retryable"],
-            userActionable=metadata["userActionable"],
-            details=ErrorDetail(
-                reason=reason,
-                precondition_failed=precondition_failed,
-                suggestion=suggestion,
-            ),
-        )
-    )
-    detail = body.model_dump()
-    error_payload = detail.get("error") if isinstance(detail.get("error"), dict) else {}
-    error_details = error_payload.get("details") if isinstance(error_payload.get("details"), dict) else None
-    if error_details is not None:
-        if details_extra:
-            for key, value in details_extra.items():
-                if value is not None:
-                    error_details[key] = value
-        clean_correlation_id = str(correlation_id or "").strip()
-        if clean_correlation_id:
-            error_details["correlationId"] = clean_correlation_id
-            detail["correlationId"] = clean_correlation_id
-    if foundation_error is not None:
-        detail["foundation_error"] = foundation_error.to_dict()
-    if policy_decision is not None:
-        detail["policy_decision"] = policy_decision.to_dict()
-    if audit_action is not None:
-        detail["audit_action"] = audit_action.to_dict()
-    return HTTPException(status_code=status_code, detail=detail)
+_extract_identity = auth_policy.extract_identity
+_extract_identity_stub = auth_policy.extract_identity_stub
+_stub_identity_capabilities = auth_policy.stub_identity_capabilities
+_with_structured_identity_capabilities = auth_policy.with_structured_identity_capabilities
+_extract_identity_jwt = auth_policy.extract_identity_jwt
+_bff_error = auth_policy.bff_error
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
@@ -5372,129 +4913,17 @@ _VALIDATORS = {
     CommandType.APPROVED_APPLY: _validate_approved_apply,
     CommandType.EMERGENCY_CONTAINMENT: _validate_emergency_containment,
 }
-_READ_ROLES = {"viewer", "view_only", "operator", "approver", "admin", "reviewer"}
-_WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
-def _require_read_role(identity: OperatorIdentity) -> None:
-    if not _READ_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Read access requires viewer-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with viewer, operator, approver, admin, or reviewer role",
-        )
-def _require_operator_role(identity: OperatorIdentity) -> None:
-    if not _WRITE_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Operator command access requires operator-level role",
-            "Operator does not hold the required command role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
-        )
-_ROLE_CAPABILITY_MAP = {
-    "admin": list(EVIDENCE_CAPABILITY_MAP.values()),
-    "approver": [
-        "approval.read",
-        "postmortem.read",
-        "policy.read",
-    ],
-    "operator": [
-        "runtime.read",
-        "risk.incident.read",
-        "risk.alert.read",
-        "artifact.read",
-    ],
-    "reviewer": [
-        "approval.read",
-        "strategy.view",
-        "persona.view",
-    ],
-    "analyst": [
-        "metric.read",
-        "job.read",
-        "audit.read",
-    ],
-    "viewer": [
-        "metric.read",
-        "strategy.view",
-        "persona.view",
-    ],
-}
-def _capabilities_for_identity(identity: OperatorIdentity) -> List[str]:
-    """Derive a best-effort capability set from operator roles.
-
-    This is a fallback for deployments where explicit capability claims
-    are not provided by upstream auth. It is intentionally permissive for
-    admin and conservative for other roles.
-    """
-    caps: List[str] = []
-    for role in identity.roles:
-        mapped = _ROLE_CAPABILITY_MAP.get(role)
-        if mapped:
-            caps.extend(mapped)
-    # Deduplicate while preserving order
-    seen = set()
-    result: List[str] = []
-    for c in caps:
-        if c not in seen:
-            seen.add(c)
-            result.append(c)
-    return result
-def _dedupe_nonblank_strings(values: List[Any]) -> List[str]:
-    result: List[str] = []
-    seen = set()
-    for value in values:
-        clean = str(value or "").strip()
-        if clean and clean not in seen:
-            seen.add(clean)
-            result.append(clean)
-    return result
-def _split_claim_string(value: str) -> List[str]:
-    clean = value.strip()
-    if not clean:
-        return []
-    separator_pattern = r"[\s,]+" if "," not in clean else r"\s*,\s*"
-    return [part.strip() for part in re.split(separator_pattern, clean) if part.strip()]
-def _claim_path_value(claims: Dict[str, Any], path: str) -> Any:
-    current: Any = claims
-    for part in path.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
-    return current
-def _claim_value_as_strings(value: Any) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return _split_claim_string(value)
-    if isinstance(value, dict):
-        for key in ("id", "tenant_id", "tenantId", "value", "name"):
-            if value.get(key):
-                return [str(value[key]).strip()]
-        return []
-    if isinstance(value, (list, tuple, set)):
-        collected: List[Any] = []
-        for item in value:
-            collected.extend(_claim_value_as_strings(item))
-        return _dedupe_nonblank_strings(collected)
-    return [str(value).strip()]
-def _identity_claim_strings(identity: OperatorIdentity, paths: List[str]) -> List[str]:
-    values: List[Any] = []
-    claims = identity.claims if isinstance(identity.claims, dict) else {}
-    for path in paths:
-        values.extend(_claim_value_as_strings(_claim_path_value(claims, path)))
-    return _dedupe_nonblank_strings(values)
-def _first_nonblank(*values: Any) -> Optional[str]:
-    for value in values:
-        clean = str(value or "").strip()
-        if clean:
-            return clean
-    return None
-def _env_csv(name: str) -> List[str]:
-    return _dedupe_nonblank_strings(_split_claim_string(os.getenv(name, "")))
+_READ_ROLES = auth_policy._READ_ROLES
+_WRITE_ROLES = auth_policy._WRITE_ROLES
+_require_read_role = auth_policy.require_read_role
+_require_operator_role = auth_policy.require_operator_role
+_ROLE_CAPABILITY_MAP = auth_policy._ROLE_CAPABILITY_MAP
+_capabilities_for_identity = auth_policy.capabilities_for_identity
+_dedupe_nonblank_strings = auth_policy.dedupe_nonblank_strings
+_split_claim_string = auth_policy.split_claim_string
+_identity_claim_strings = auth_policy.identity_claim_strings
+_first_nonblank = auth_policy.first_nonblank
+_env_csv = auth_policy.env_csv
 def _parse_rfc3339(value: Any) -> Optional[datetime]:
     """Best-effort RFC3339/ISO-8601 parse; None on empty or unparseable input.
 
@@ -5508,104 +4937,21 @@ def _parse_rfc3339(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
-def _sem_session_id(identity: OperatorIdentity) -> str:
-    claims = identity.claims if isinstance(identity.claims, dict) else {}
-    return _first_nonblank(
-        claims.get("sid"),
-        claims.get("session_id"),
-        claims.get("jti"),
-        os.getenv("PANTHEON_SESSION_ID"),
-        f"bff-session-{identity.operator_id}",
-    )
-def _bff_me_tenant_payload(
-    identity: OperatorIdentity,
-    *,
-    requested_tenant: Optional[str],
-) -> Dict[str, Any]:
-    claim_default = _first_nonblank(
-        *_identity_claim_strings(
-            identity,
-            [
-                "tenant_id",
-                "tenantId",
-                "tenant.id",
-                "tid",
-                "org_id",
-                "organization.id",
-                "tenant_ids",
-                "tenantIds",
-            ],
-        )
-    )
-    default_tenant = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        claim_default,
-        "pantheon-dev",
-    )
-    claim_allowed = _identity_claim_strings(
-        identity,
-        [
-            "allowed_tenants",
-            "allowedTenants",
-            "tenant_ids",
-            "tenantIds",
-            "tenants",
-            "tenant_id",
-            "tenantId",
-            "tenant.id",
-            "tid",
-            "org_id",
-        ],
-    )
-    allowed_tenants = claim_allowed or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    effective_tenant = _first_nonblank(requested_tenant, default_tenant) or "pantheon-dev"
-    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
-            precondition_failed="tenant_scope",
-            suggestion="Switch to an allowed tenant or request access from an administrator",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": allowed_tenants,
-            },
-        )
-    return {
-        "id": effective_tenant,
-        "requested_id": str(requested_tenant or "").strip() or None,
-        "default_id": default_tenant,
-        "allowed_ids": allowed_tenants,
-        "scope": "global" if "*" in allowed_tenants else "tenant",
-    }
-def _sem_session_key(identity: OperatorIdentity) -> str:
-    return f"operator:{identity.operator_id}:session:{_sem_session_id(identity)}"
-def _sem_legacy_operator_session_key(identity: OperatorIdentity) -> str:
-    return f"operator:{identity.operator_id}"
+_bff_me_tenant_payload = auth_policy.bff_me_tenant_payload
+_sem_session_id = auth_policy.get_session_id
+_sem_session_key = auth_policy.get_session_key
+_sem_legacy_operator_session_key = auth_policy.get_legacy_session_key
+
 def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
-    state = session_lifecycle_store.get_session(_sem_session_key(identity))
-    if state:
-        return state
-    return session_lifecycle_store.get_session(_sem_legacy_operator_session_key(identity))
+    return auth_policy.get_session_state(identity, session_lifecycle_store)
+
 def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
-    state = _sem_session_state(identity)
-    if state.get("state") != "logged_out":
-        return
-    raise _bff_error(
-        401,
-        ErrorCode.AUTH_REQUIRED,
-        "Session has been logged out",
-        "SESSION_LOGGED_OUT",
-        precondition_failed="session_state",
-        suggestion="Re-authenticate before calling BFF session endpoints",
-        details_extra={
-            "sessionState": "logged_out",
-            "loggedOutAt": state.get("logged_out_at"),
-        },
+    return auth_policy.raise_if_session_logged_out(
+        identity,
+        store=session_lifecycle_store,
+        error_factory=_bff_error,
     )
+_raise_if_session_logged_out._canonical_guard = True
 def _read_surface_state() -> str:
     return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
 def _meta_staleness() -> Optional[Dict[str, Any]]:
@@ -20278,38 +19624,7 @@ def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
         payload["commandId"] = latest_record.get("command_id")
         payload["command_id"] = latest_record.get("command_id")
     return payload
-def _bff_source_commit() -> str:
-    commit = os.environ.get("BFF_COMMIT") or os.environ.get("GIT_SHA")
-    if not commit or commit == "unknown":
-        git_dir = "/workspace/status-root/.git"
-        if os.path.exists(git_dir):
-            try:
-                head_path = os.path.join(git_dir, "HEAD")
-                if os.path.exists(head_path):
-                    with open(head_path, "r") as f:
-                        ref = f.read().strip()
-                    if ref.startswith("ref: "):
-                        ref_path = os.path.join(git_dir, ref[5:])
-                        if os.path.exists(ref_path):
-                            with open(ref_path, "r") as f:
-                                commit = f.read().strip()
-                        else:
-                            packed_path = os.path.join(git_dir, "packed-refs")
-                            if os.path.exists(packed_path):
-                                ref_name = ref[5:]
-                                with open(packed_path, "r") as f:
-                                    for line in f:
-                                        if line.startswith("#") or not line.strip():
-                                            continue
-                                        parts = line.strip().split()
-                                        if len(parts) == 2 and parts[1] == ref_name:
-                                            commit = parts[0]
-                                            break
-                    else:
-                        commit = ref
-            except Exception:
-                pass
-    return str(commit or "unknown")
+_bff_source_commit = auth_policy.bff_source_commit
 async def sem_bff_version():
     commit = _bff_source_commit()
     image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
@@ -23134,12 +22449,12 @@ def _resolve_agora_interaction_context_ref(
     )
 from .auth.router import create_auth_router
 from .auth.service import AuthFacadeService
-from .auth.handlers import AuthDependencies, create_auth_handlers
+from .auth.handlers import AuthDependencies, create_auth_dependencies, create_auth_handlers
 
 # Auth routes are owned by ``auth.router``; bind the concrete handlers here at
 # the composition root so an unassembled facade cannot silently ship a 503 for
 # every session request.  Provider readiness remains cache-only and advisory.
-auth_deps = AuthDependencies(
+auth_deps = create_auth_dependencies(
     bff_error=_bff_error,
     dev_login_forbidden_environment=_dev_login_forbidden_environment,
     dev_login_identity_registry=_dev_login_identity_registry,
