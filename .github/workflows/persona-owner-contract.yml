@@ -14,6 +14,7 @@ on:
       - services/service_token_file.py
       - services/dev-paper-principal-issuer/**
       - scripts/*dev_paper_principal*.py
+      - scripts/test_governance_runtime_image.py
       - docker-compose.yml
       - docker-compose.control.yml
       - scripts/deploy_nonprod_vm.sh
@@ -58,6 +59,13 @@ jobs:
           python3 -m pip install -r requirements.txt -r services/control-plane/bff/requirements.txt
           python3 -m pip install "PyYAML>=6,<7"
           python3 scripts/dev/provision_python_distribution.py --mode current --allow-system-interpreter
+      - name: Verify shipped Governance image candidate validators
+        run: |
+          docker build -f services/governance/Dockerfile -t pantheon-governance-contract:ci .
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --entrypoint python pantheon-governance-contract:ci \
+            -m unittest -v scripts.test_governance_runtime_image
       - name: Verify real owners, paper scope, renewal and durable receipt reload
         run: |
           python3 -m pytest -q \
