@@ -64,19 +64,45 @@ def _generated_tree(root: Path) -> dict[str, bytes]:
     return {path: (root / path).read_bytes() for path in GENERATED_BUNDLE_PATHS}
 
 
+def _materialize_clean_source_root(root: Path, source_files: list[Path]) -> None:
+    for rel in source_files:
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((ROOT / rel).read_bytes())
+
+
 def test_bundle_generation_is_byte_deterministic_across_two_clean_roots(
     tmp_path: Path,
 ) -> None:
-    first = tmp_path / "first"
-    second = tmp_path / "second"
+    module = _module()
+    source_files = module._derivation_files()
 
-    first_run = _run("bundle", "--output-root", str(first))
-    second_run = _run("bundle", "--output-root", str(second))
+    first_root = tmp_path / "clean-root-a"
+    second_root = tmp_path / "clean-root-b"
+    _materialize_clean_source_root(first_root, source_files)
+    _materialize_clean_source_root(second_root, source_files)
+
+    first_run = subprocess.run(
+        ["python3", str(first_root / module.GENERATOR_PATH), "bundle", "--output-root", str(first_root)],
+        cwd=first_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    second_run = subprocess.run(
+        ["python3", str(second_root / module.GENERATOR_PATH), "bundle", "--output-root", str(second_root)],
+        cwd=second_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
 
     assert first_run.returncode == 0, first_run.stderr
     assert second_run.returncode == 0, second_run.stderr
-    assert _generated_tree(first) == _generated_tree(second)
-    assert _generated_tree(first) == _generated_tree(ROOT)
+    assert _generated_tree(first_root) == _generated_tree(second_root)
+    assert _generated_tree(first_root) == _generated_tree(ROOT)
 
 
 def test_v1_13_bundle_hashes_exact_parent_manifest_and_openapi_bytes() -> None:

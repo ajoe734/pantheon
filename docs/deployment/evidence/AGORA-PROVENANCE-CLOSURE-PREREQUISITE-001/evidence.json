@@ -66,6 +66,21 @@
         "command": ".venv-pantheon/bin/python3 /tmp/agora_producer_pre_review_probe.py",
         "exit_code": 0,
         "result": "exit 0; valid handoff reasons empty, duplicate input rejected, traversal failure on malformed index rejected, stale parent hash in git fixture rejected, base commit exists"
+      },
+      {
+        "command": "Reviewer requeue at PR 5715 head 6ccb1998f5ca81a4d1322fb75ffa7d1f0581b63e: test_bundle_generation_is_byte_deterministic_across_two_clean_roots previously invoked the single shared SCRIPT/ROOT twice with two output dirs, not two independent clean source roots. Rewrote the test to materialize two separate tmp_path directory trees (clean-root-a, clean-root-b), each populated by copying every file in module._derivation_files() (the full 90-file transitive derivation closure, including the generator itself at its own relative path) from ROOT, then invoked each tree's own copy of generate_backend_contract.py as an independent subprocess (its own __file__-derived REPO_ROOT) against its own --output-root.",
+        "exit_code": 0,
+        "result": "n/a (verification narrative; see following pytest command for outcome)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py -q",
+        "exit_code": 0,
+        "result": "18 passed in 20.59s; includes the corrected test_bundle_generation_is_byte_deterministic_across_two_clean_roots proving two independently materialized clean source roots produce byte-identical derived bundle/manifest/openapi output, and that output matches the checked-in ROOT bytes"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py scripts/test_agora_v1_12_candidate_bundle.py",
+        "exit_code": 1,
+        "result": "103 passed, 2 failed in 87.28s (same 2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base 15e2907b5, unchanged and unrelated to this task's provenance scope; no new failures introduced by the two-clean-source-roots repair)"
       }
     ]
   }
