@@ -236,6 +236,50 @@ def test_backend_derivation_closure_rejects_missing_legacy_inputs_counterexample
     assert module.validate_backend_derivation_closure(ROOT, payload, contract_commit) == []
 
 
+def test_backend_derivation_closure_rejects_duplicate_source_files() -> None:
+    module = _module()
+    payload = json.loads(HANDOFF.read_text(encoding="utf-8"))
+    contract_commit = payload["backend"]["contract_commit"]
+    dup_payload = dict(payload)
+    dup_payload["source_files"] = list(payload["source_files"]) + [dict(payload["source_files"][0])]
+    reasons = module.validate_backend_derivation_closure(ROOT, dup_payload, contract_commit)
+    assert "backend-source-files-duplicate" in reasons
+
+
+def test_backend_derivation_closure_rejects_malformed_source_file_entry() -> None:
+    module = _module()
+    payload = json.loads(HANDOFF.read_text(encoding="utf-8"))
+    contract_commit = payload["backend"]["contract_commit"]
+
+    malformed_payload = dict(payload)
+    malformed_payload["source_files"] = list(payload["source_files"]) + [{"path": "bad", "sha256": "not-a-valid-sha"}]
+    reasons = module.validate_backend_derivation_closure(ROOT, malformed_payload, contract_commit)
+    assert "backend-source-files-invalid" in reasons
+
+    malformed_payload2 = dict(payload)
+    malformed_payload2["source_files"] = list(payload["source_files"]) + ["not-a-dict"]
+    reasons2 = module.validate_backend_derivation_closure(ROOT, malformed_payload2, contract_commit)
+    assert "backend-source-files-invalid" in reasons2
+
+
+def test_backend_derivation_closure_propagates_traversal_failure_and_stale_parent_hash(tmp_path: Path) -> None:
+    module = _module()
+    payload = json.loads(HANDOFF.read_text(encoding="utf-8"))
+    contract_commit = payload["backend"]["contract_commit"]
+
+    v1_4_path = tmp_path / "services/control-plane/specs/agora/bundle_index.v1_4.json"
+    v1_4_path.parent.mkdir(parents=True, exist_ok=True)
+    v1_4_path.write_text("{ invalid JSON", encoding="utf-8")
+    reasons = module.validate_backend_derivation_closure(tmp_path, payload, contract_commit)
+    assert "backend-bundle-chain-invalid" in reasons or "backend-derivation-closure-traversal-failed" in reasons
+
+    v1_4_data = json.loads((ROOT / "services/control-plane/specs/agora/bundle_index.v1_4.json").read_text(encoding="utf-8"))
+    v1_4_data["extends"]["bundle_index_sha256"] = "0" * 64
+    v1_4_path.write_text(json.dumps(v1_4_data), encoding="utf-8")
+    reasons_stale = module.validate_backend_derivation_closure(tmp_path, payload, contract_commit)
+    assert "backend-bundle-chain-stale-parent-hash" in reasons_stale
+
+
 def test_validate_contract_identity_rejects_changed_consumed_bytes_at_old_commit() -> None:
     module = _module()
     with pytest.raises(module.ContractError, match="exact-byte mismatch"):

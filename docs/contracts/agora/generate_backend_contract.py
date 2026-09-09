@@ -960,18 +960,43 @@ def validate_backend_derivation_closure(
     contract_commit: str,
 ) -> list[str]:
     reasons: list[str] = []
-    source_files = backend_handoff.get("source_files") or []
+    source_files = backend_handoff.get("source_files")
     if not isinstance(source_files, list) or not source_files:
         return ["backend-source-files-missing"]
+
+    try:
+        _validate_bundle_chain(root=repo_root)
+    except (ContractError, Exception) as exc:
+        msg = str(exc)
+        if "stale parent hash" in msg:
+            reasons.append("backend-bundle-chain-stale-parent-hash")
+        reasons.append("backend-bundle-chain-invalid")
+
     try:
         expected_paths = {p.as_posix() for p in _derivation_files(root=repo_root)}
-    except Exception:
+    except (ContractError, Exception):
         expected_paths = set()
+        reasons.append("backend-derivation-closure-traversal-failed")
+
     provided_paths = set()
     for entry in source_files:
-        if not isinstance(entry, dict) or "path" not in entry or "sha256" not in entry:
-            return ["backend-source-files-invalid"]
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("path"), str)
+            or not entry["path"].strip()
+            or not isinstance(entry.get("sha256"), str)
+            or not SHA256_RE.fullmatch(entry["sha256"])
+        ):
+            reasons.append("backend-source-files-invalid")
+            continue
         rel_path = entry["path"]
+        path_obj = Path(rel_path)
+        if path_obj.is_absolute() or ".." in path_obj.parts:
+            reasons.append("backend-source-files-invalid")
+            continue
+        if rel_path in provided_paths:
+            reasons.append("backend-source-files-duplicate")
+            continue
         provided_paths.add(rel_path)
         expected_sha = entry["sha256"]
         try:
@@ -981,11 +1006,13 @@ def validate_backend_derivation_closure(
             continue
         if _sha256_bytes(raw) != expected_sha:
             reasons.append("backend-source-file-hash-mismatch")
+
     if expected_paths:
         if expected_paths - provided_paths:
             reasons.append("backend-source-files-incomplete")
         if provided_paths - expected_paths:
             reasons.append("backend-source-files-extraneous")
+
     return sorted(set(reasons))
 
 

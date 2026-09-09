@@ -717,3 +717,71 @@ def test_handoff_blocking_reasons_verifies_derivation_closure(tmp_path: Path) ->
         frontend_dev_ref="HEAD",
     )
     assert "backend-source-files-missing" in reasons
+
+
+def test_handoff_blocking_reasons_rejects_duplicate_source_files(tmp_path: Path) -> None:
+    module = _load_module()
+    head = _git(ROOT, "rev-parse", "HEAD")
+    raw_backend = json.loads((ROOT / module.BACKEND_HANDOFF_PATH).read_text(encoding="utf-8"))
+    backend_handoff = dict(raw_backend)
+    backend_handoff["source_files"] = list(raw_backend["source_files"]) + [dict(raw_backend["source_files"][0])]
+
+    frontend_handoff = {
+        "contract_family": module.CONTRACT_FAMILY,
+        "frontend": {
+            "runtime_commit": head,
+            "generated_from_contract_commit": backend_handoff["backend"]["contract_commit"],
+            "bundle_index_sha256": backend_handoff["contract"]["bundle_index"]["sha256"],
+            "openapi_sha256": backend_handoff["contract"]["openapi"]["sha256"],
+            "generated_types_sha256": "0" * 64,
+        },
+        "generation_metadata": {
+            "expected_output_paths": list(module.DEFAULT_GENERATED_TYPE_PATHS),
+            "file_hash_algorithm": "sha256-exact-git-bytes-v1",
+            "generated_types_hash_algorithm": "sha256-path-tab-filehash-lf-v1",
+        },
+    }
+    reasons = module.handoff_blocking_reasons(
+        backend_handoff,
+        frontend_handoff,
+        frontend_root=ROOT,
+        backend_handoff_commit=head,
+        frontend_handoff_commit=head,
+        backend_dev_ref="HEAD",
+        frontend_dev_ref="HEAD",
+    )
+    assert "backend-source-files-duplicate" in reasons
+
+
+def test_handoff_blocking_reasons_rejects_malformed_source_file_entry(tmp_path: Path) -> None:
+    module = _load_module()
+    head = _git(ROOT, "rev-parse", "HEAD")
+    raw_backend = json.loads((ROOT / module.BACKEND_HANDOFF_PATH).read_text(encoding="utf-8"))
+    backend_handoff = dict(raw_backend)
+    backend_handoff["source_files"] = list(raw_backend["source_files"]) + [{"path": "bad", "sha256": "not-a-sha"}]
+
+    frontend_handoff = {
+        "contract_family": module.CONTRACT_FAMILY,
+        "frontend": {
+            "runtime_commit": head,
+            "generated_from_contract_commit": backend_handoff["backend"]["contract_commit"],
+            "bundle_index_sha256": backend_handoff["contract"]["bundle_index"]["sha256"],
+            "openapi_sha256": backend_handoff["contract"]["openapi"]["sha256"],
+            "generated_types_sha256": "0" * 64,
+        },
+        "generation_metadata": {
+            "expected_output_paths": list(module.DEFAULT_GENERATED_TYPE_PATHS),
+            "file_hash_algorithm": "sha256-exact-git-bytes-v1",
+            "generated_types_hash_algorithm": "sha256-path-tab-filehash-lf-v1",
+        },
+    }
+    reasons = module.handoff_blocking_reasons(
+        backend_handoff,
+        frontend_handoff,
+        frontend_root=ROOT,
+        backend_handoff_commit=head,
+        frontend_handoff_commit=head,
+        backend_dev_ref="HEAD",
+        frontend_dev_ref="HEAD",
+    )
+    assert "backend-source-files-invalid" in reasons
