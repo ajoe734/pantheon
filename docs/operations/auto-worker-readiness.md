@@ -86,11 +86,16 @@ and fail closed. No grant is derived or signed by this command.
 
 The existing runtime-admission → canonical TaskStore → activity-outbox lock
 order covers all rows. Active workers (including approval waits), queue
-intents, worktree leases, pending review/recovery and off-lock phase
-reservations return `status: busy`, exit 75, without clearing any authority.
-Even a phase with an unrelated current receipt may plan another task before
-returning, so revision waits for that existing phase to settle. Retry against
-fresh observed state; a timeout or busy result is not a successful revision.
+intents, worktree leases, active pending/reassigned worker recovery, pending
+review/finalization, and off-lock phase reservations return `status: busy`,
+exit 75, without clearing any authority. A valid terminal held pointer or an
+obsolete recovery pointer superseded by the current assignment generation allows
+governed dependency revisions while preserving task holds, waiting_for, next,
+provenance, and complete recovery receipts. Malformed, unknown, or
+future-generation recovery evidence fails closed. Even a phase with an
+unrelated current receipt may plan another task before returning, so revision
+waits for that existing phase to settle. Retry against fresh observed state; a
+timeout or busy result is not a successful revision.
 
 All prospective dependency IDs resolve against active tasks or durable terminal
 facts. Validation covers the full graph, including unchanged intermediate

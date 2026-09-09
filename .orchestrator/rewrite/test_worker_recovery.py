@@ -110,6 +110,96 @@ class WorkerRecoveryModuleTests(unittest.TestCase):
         self.assertLessEqual(len(receipts), worker_recovery.MAX_WORKER_RECOVERY_RECEIPTS)
         self.assertIn("r1", receipts)
 
+    def test_fence_predicates_share_strict_current_generation_semantics(self) -> None:
+        for status in ("pending", "reassigned", "materialized", "held", "resolved"):
+            for authority in (None, "", True, False, 0, -1, 2.5, "bad", "2", 1, 2, 3):
+                with self.subTest(status=status, authority=authority):
+                    task = {"generation": 2, "worker_recovery": {
+                        "receipt_id": "r1", "status": status,
+                        "fence_generation": authority,
+                        "replacement_generation": authority,
+                    }}
+                    malformed = type(authority) is not int or authority < 1
+                    current = malformed or authority == 2
+                    self.assertEqual(
+                        worker_recovery.task_has_active_worker_recovery(task),
+                        status in {"pending", "reassigned"} and current,
+                    )
+                    self.assertEqual(
+                        worker_recovery.task_has_pending_worker_recovery(task),
+                        status == "pending" and current,
+                    )
+
+    def test_fence_ignores_unrelated_generation_but_blocks_invalid_task_epoch(self) -> None:
+        for status, field, unrelated in (
+            ("pending", "fence_generation", "replacement_generation"),
+            ("reassigned", "replacement_generation", "fence_generation"),
+        ):
+            for generation in (None, True, 0, -1, "2", 2.1, "bad", 2, 3):
+                with self.subTest(status=status, generation=generation):
+                    task = {"generation": generation, "worker_recovery": {
+                        "receipt_id": "r1", "status": status,
+                        field: 2, unrelated: "invalid but irrelevant",
+                    }}
+                    self.assertEqual(
+                        worker_recovery.task_has_active_worker_recovery(task),
+                        generation != 3,
+                    )
+        for pointer in (None, {}, {"receipt_id": "", "status": "pending"},
+                        {"receipt_id": "   ", "status": "pending"}):
+            self.assertFalse(worker_recovery.task_has_active_worker_recovery(
+                {"generation": 2, "worker_recovery": pointer}))
+
+    def test_prune_preserves_live_continuation_not_terminal_or_foreign_history(self) -> None:
+        for receipt_status in ("pending", "reassigned", "materialized", "held", "resolved"):
+            for terminal, foreign in ((False, False), (True, False), (False, True)):
+                with self.subTest(status=receipt_status, terminal=terminal, foreign=foreign):
+                    receipts = {
+                        f"r{i:03}": {
+                            "receipt_id": f"r{i:03}", "task_id": f"T{i}",
+                            "status": receipt_status, "detected_at": f"{i:04}",
+                        }
+                        for i in range(worker_recovery.MAX_WORKER_RECOVERY_RECEIPTS + 1)
+                    }
+                    receipts["r000"]["previous"] = {"continuation": {
+                        "source": {"pr": 7, "head_sha": "a" * 40},
+                        "rejection": {"reason": "Repair acceptance", "actor": "Codex"},
+                    }}
+                    task = {
+                        "id": "FOREIGN" if foreign else "T0", "generation": 3,
+                        "status": "done" if terminal else "in_progress",
+                        "worker_recovery": {"receipt_id": "r000", "status": receipt_status},
+                    }
+                    state = {"tasks": [task], "worker_recovery_receipts": receipts}
+                    before = worker_recovery.capture_worker_recovery_continuation(state, task)
+                    worker_recovery._prune_worker_recovery_receipts(state, current_receipt_id="r128")
+                    keep = not terminal and not foreign
+                    self.assertEqual("r000" in receipts, keep)
+                    self.assertEqual("worker_recovery" in task, keep)
+                    self.assertEqual(len(receipts), worker_recovery.MAX_WORKER_RECOVERY_RECEIPTS)
+                    if keep:
+                        self.assertEqual(worker_recovery.capture_worker_recovery_continuation(state, task), before)
+                        self.assertEqual(before["source"]["head_sha"], "a" * 40)
+                        self.assertEqual(before["rejection"]["reason"], "Repair acceptance")
+                        self.assertNotIn("r001", receipts)
+
+    def test_prune_never_discards_current_live_context_to_enforce_history_limit(self) -> None:
+        receipts = {f"r{i}": {
+            "receipt_id": f"r{i}", "task_id": f"T{i}", "status": "materialized",
+            "detected_at": f"{i:04}",
+        } for i in range(worker_recovery.MAX_WORKER_RECOVERY_RECEIPTS + 1)}
+        tasks = [{"id": receipt["task_id"], "status": "blocked", "worker_recovery": {
+            "receipt_id": key, "status": "materialized",
+        }} for key, receipt in receipts.items()]
+        state = {"tasks": tasks, "worker_recovery_receipts": receipts}
+        before = deepcopy(state)
+        worker_recovery._prune_worker_recovery_receipts(state, current_receipt_id="r128")
+        self.assertEqual(state, before)
+        tasks[0]["status"] = "done"
+        worker_recovery._prune_worker_recovery_receipts(state, current_receipt_id="r128")
+        self.assertNotIn("r0", receipts)
+        self.assertEqual(len(receipts), worker_recovery.MAX_WORKER_RECOVERY_RECEIPTS)
+
     def test_entry_points_are_exported(self) -> None:
         for name in (
             "build_lost_lease_receipt",
@@ -315,6 +405,38 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertNotIn("DO-NOT-COPY", request.message)
                 self.assertEqual(request.context_files, [".orchestrator/task-briefs/task-1.md"])
         self.assertEqual(self._request(status).message, self._request(status).message)
+
+    def test_materialized_context_survives_history_pruning_and_next_canonical_loss(self):
+        self._fence()
+        status = self._reassign()
+        task = status["tasks"][0]
+        receipt_id = task["worker_recovery"]["receipt_id"]
+        self.assertTrue(self.sup.mark_worker_recovery_materialized(
+            self.config, receipt_id=receipt_id, task_id=task["id"],
+            task_generation=task["generation"], queue_event_id="replacement-q",
+            worker_run_id="replacement-worker",
+        ))
+        status = self.sup.load_status(self.config)
+        task = status["tasks"][0]
+        receipt = status["worker_recovery_receipts"][receipt_id]
+        before = deepcopy(receipt["previous"]["continuation"])
+        receipt["detected_at"] = "2000-01-01T00:00:00Z"
+        task.pop("github_review_bridge", None)
+        for index in range(worker_recovery.MAX_WORKER_RECOVERY_RECEIPTS):
+            status["worker_recovery_receipts"][f"other-{index}"] = {
+                "receipt_id": f"other-{index}", "task_id": f"OTHER-{index}",
+                "status": "resolved", "detected_at": "2026-09-09T01:00:00Z",
+            }
+        worker_recovery._prune_worker_recovery_receipts(status, current_receipt_id="other-127")
+        self.assertIn(receipt_id, status["worker_recovery_receipts"])
+        self.sup.write_status(self.config, status, source="test-retention")
+        self._fence("next-lost-worker")
+        updated = self._reassign()
+        current = worker_recovery._canonical_worker_recovery_receipt(updated, updated["tasks"][0])
+        self.assertEqual(current["previous"]["continuation"]["source"], before["source"])
+        self.assertEqual(current["previous"]["continuation"]["rejection"], before["rejection"])
+        self.assertNotIn("DO-NOT-COPY", self._request(updated).message)
+        self.assertIn("head_sha=" + "1" * 40, self._request(updated).message)
 
     def test_stale_or_forged_pointer_cannot_inject_continuation(self):
         self._fence()
