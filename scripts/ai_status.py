@@ -111,8 +111,10 @@ from runtime_state import (
 from rewrite.task_state_store import (
     append_state_commit,
     load_snapshot,
+    review_decision_task_digest,
     snapshot_transaction,
 )
+from rewrite.worker_recovery import task_has_active_worker_recovery
 from rewrite import task_machine, task_state_store
 from rewrite.task_contract import (
     OpenPullRequestDiscovery,
@@ -252,6 +254,9 @@ ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
 WORKER_RECOVERY_TASK_KEY = "worker_recovery"
+RECOGNIZED_WORKER_RECOVERY_STATUSES = frozenset(
+    {"pending", "held", "resolved", "reassigned", "materialized"}
+)
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -2655,33 +2660,6 @@ def task_assignment_generation(task: Mapping[str, Any] | None) -> int:
             f"Task {task.get('id') or '?'} has invalid assignment generation"
         )
     return value
-
-
-def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
-    """Fail closed while supervisor-owned lost-lease recovery is unresolved."""
-
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping):
-        return False
-    receipt_id = str(pointer.get("receipt_id") or "").strip()
-    status = str(pointer.get("status") or "").strip()
-    if not receipt_id or status not in {"pending", "reassigned"}:
-        return False
-    generation_key = (
-        "fence_generation" if status == "pending" else "replacement_generation"
-    )
-    raw_authority_generation = pointer.get(generation_key)
-    if (
-        raw_authority_generation in (None, "")
-        or isinstance(raw_authority_generation, bool)
-    ):
-        return True
-    try:
-        authority_generation = int(raw_authority_generation)
-        current_generation = task_assignment_generation(task)
-    except (TypeError, ValueError, RuntimeError):
-        return True
-    return authority_generation == current_generation
 
 
 def validate_bound_status_command_task_authority(
@@ -5136,6 +5114,54 @@ def _dependency_contract_reachability(tasks: Mapping[str, Mapping[str, Any]], *,
     return result
 
 
+def _dependency_contract_validate_worker_recovery(
+    task_id: str, task: Mapping[str, Any]
+) -> None:
+    recovery = task.get(WORKER_RECOVERY_TASK_KEY)
+    if recovery in (None, {}, []):
+        return
+    if not isinstance(recovery, Mapping):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    receipt_id = recovery.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id.strip():
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = recovery.get("status")
+    if not isinstance(status, str) or status.strip() not in RECOGNIZED_WORKER_RECOVERY_STATUSES:
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = status.strip()
+    try:
+        current_generation = task_assignment_generation(task)
+    except (TypeError, ValueError, RuntimeError):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    required_generation_keys = {"task_generation", "fence_generation"}
+    if status == "reassigned":
+        required_generation_keys.add("replacement_generation")
+    for req_key in required_generation_keys:
+        if req_key not in recovery:
+            raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    all_gen_keys = {"task_generation", "fence_generation", "replacement_generation"}.union(
+        k for k in recovery if "generation" in k
+    )
+    for gen_key in all_gen_keys:
+        if gen_key not in recovery:
+            continue
+        raw_gen = recovery.get(gen_key)
+        if gen_key in required_generation_keys:
+            if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+            if raw_gen < 0 or raw_gen > current_generation:
+                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+        else:
+            if raw_gen is not None:
+                if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+                if raw_gen < 0 or raw_gen > current_generation:
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    if task_has_active_worker_recovery(task):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+
+
+
 def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:
     """Validate detached prospective rows before one canonical/outbox commit."""
     if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
@@ -5172,7 +5198,8 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
         for field in ("review_decision_intent", "review_decision_intent_recovery", "review_decision_resume", "review_requeue_intent", "worker_recovery", "finalize_intent"):
             value = task.get(field)
             if value not in (None, {}, []):
-                if field == "worker_recovery" and isinstance(value, Mapping) and value.get("status") in {"materialized", "resolved"}:
+                if field == "worker_recovery":
+                    _dependency_contract_validate_worker_recovery(task_id, task)
                     continue
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
         if execution_authorization.task_privileged_by_source(task) or any(
@@ -8488,17 +8515,6 @@ def task_mutation_cas_digest(task: Mapping[str, Any]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def review_decision_task_digest(task: Mapping[str, Any]) -> str:
-    """Digest business task truth while excluding the intent and UI markers."""
-
-    candidate = deepcopy(dict(task))
-    candidate.pop(REVIEW_DECISION_INTENT_KEY, None)
-    candidate.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
-    candidate.pop("status_write_pending", None)
-    candidate.pop("status_write_pending_count", None)
-    return task_mutation_cas_digest(candidate)
 
 
 def validate_review_decision_intent(value: Any) -> dict[str, Any]:
