@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
-  "base_ref": "dev@c0c035b5f",
+  "base_ref": "dev@15e2907b5dd0af53a2d6b773f1744d7c955336a7",
   "depends_on": "BFF-TEST-ARCH-001 (done, satisfied=true), JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001 (done, satisfied=true)",
   "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section C",
   "results": {
