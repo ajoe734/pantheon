@@ -252,6 +252,9 @@ ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
 WORKER_RECOVERY_TASK_KEY = "worker_recovery"
+RECOGNIZED_WORKER_RECOVERY_STATUSES = frozenset(
+    {"pending", "held", "resolved", "reassigned", "materialized"}
+)
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -5136,6 +5139,54 @@ def _dependency_contract_reachability(tasks: Mapping[str, Mapping[str, Any]], *,
     return result
 
 
+def _dependency_contract_validate_worker_recovery(
+    task_id: str, task: Mapping[str, Any]
+) -> None:
+    recovery = task.get(WORKER_RECOVERY_TASK_KEY)
+    if recovery in (None, {}, []):
+        return
+    if not isinstance(recovery, Mapping):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    receipt_id = recovery.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id.strip():
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = recovery.get("status")
+    if not isinstance(status, str) or status.strip() not in RECOGNIZED_WORKER_RECOVERY_STATUSES:
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = status.strip()
+    try:
+        current_generation = task_assignment_generation(task)
+    except (TypeError, ValueError, RuntimeError):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    required_generation_keys = {"task_generation", "fence_generation"}
+    if status == "reassigned":
+        required_generation_keys.add("replacement_generation")
+    for req_key in required_generation_keys:
+        if req_key not in recovery:
+            raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    all_gen_keys = {"task_generation", "fence_generation", "replacement_generation"}.union(
+        k for k in recovery if "generation" in k
+    )
+    for gen_key in all_gen_keys:
+        if gen_key not in recovery:
+            continue
+        raw_gen = recovery.get(gen_key)
+        if gen_key in required_generation_keys:
+            if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+            if raw_gen < 0 or raw_gen > current_generation:
+                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+        else:
+            if raw_gen is not None:
+                if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+                if raw_gen < 0 or raw_gen > current_generation:
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    if task_has_active_worker_recovery(task):
+        raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+
+
+
 def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:
     """Validate detached prospective rows before one canonical/outbox commit."""
     if os.environ.get("AI_NAME") != "Human/Ops" or not local_human_ops_requested() or any(
@@ -5172,7 +5223,8 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
         for field in ("review_decision_intent", "review_decision_intent_recovery", "review_decision_resume", "review_requeue_intent", "worker_recovery", "finalize_intent"):
             value = task.get(field)
             if value not in (None, {}, []):
-                if field == "worker_recovery" and isinstance(value, Mapping) and value.get("status") in {"materialized", "resolved"}:
+                if field == "worker_recovery":
+                    _dependency_contract_validate_worker_recovery(task_id, task)
                     continue
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
         if execution_authorization.task_privileged_by_source(task) or any(
