@@ -30,7 +30,8 @@
       "services/control-plane/specs/agora/bundle_index.v1_11.json",
       "services/control-plane/specs/agora/bundle_index.v1_12.json",
       "services/control-plane/specs/agora/bundle_index.v1_13.json",
-      "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json"
+      "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
+      "scripts/test_agora_v1_7_bundle.py"
     ],
     "provenance_architecture": "Repaired transitive derivation closure across the entire 14-index Agora bundle extension chain (bundle_index.json [v1.0] through bundle_index.v1_13.json) covering 90 distinct files (89 spec/OpenAPI/bundle files plus generator). Updated bundle_index.v1_4.json parent hash to point to actual v1_3 hash (23c95383...), refreshed downstream parent hashes through v1_13, propagated capability manifest source_contracts, and enforced fail-closed validation on stale hashes, cyclic references, out-of-root paths, missing files, duplicate source entries, malformed source entries, traversal failures, and exact-byte contract identity mismatches. Generated backend handoff is bound to authentic AGORA-CHAIN-001 runtime commit (879ac6c8262d05cd734b391a24a5deb42331b9e1) and source anchor commit A2 (77df37d54f9da6f6091bc150fce03ca711b494ec)."
   },
@@ -54,7 +55,12 @@
       {
         "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py scripts/test_agora_v1_12_candidate_bundle.py",
         "exit_code": 1,
-        "result": "102 passed, 3 failed in 104.11s (scripts/test_agora_v1_7_bundle.py::test_v1_7_bundle_extends_frozen_v1_6_exact_bytes due to sibling test frozen hash assertion on v1_6; and 2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base)"
+        "result": "103 passed, 2 failed in 101.31s (2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base 15e2907b5, unrelated to this task's provenance scope)"
+      },
+      {
+        "command": "qualified single-file amendment (per /tmp/agora_v17_freeze_artifact_amendment_review.md): rebaselined the frozen scripts/test_agora_v1_7_bundle.py full-byte v1.6 digest literal from 13f1297b75477e691d47229cb35d77c031a9104c63a087298356a861ed2e2ee0 to the verified corrected bc71b8c13828d62ab8fce9f5fac1ec28e4fad3c4699c1c1090e53f63c7e377d5, matching the already-authorized deterministic ancestor-hash repair; no other assertion in that file changed",
+        "exit_code": 0,
+        "result": "test_v1_7_bundle_extends_frozen_v1_6_exact_bytes now passes against the corrected v1.6 bytes; test_openapi_manifest_and_live_decorators_have_exact_route_parity remains the same pre-existing, out-of-scope route-parity failure"
       },
       {
         "command": ".venv-pantheon/bin/python3 /tmp/agora_producer_pre_review_probe.py",
