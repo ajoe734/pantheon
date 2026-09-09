@@ -134,6 +134,10 @@
       "minimum": 0,
       "default": 0,
       "description": "How many times a retrieval query has surfaced this entry, incremented by the retrieval facade. Used to rank high-value institutional knowledge."
+    },
+    "tenant_id": {
+      "type": ["string", "null"],
+      "description": "Optional tenant identifier for multi-tenant memory isolation."
     }
   },
   "additionalProperties": false

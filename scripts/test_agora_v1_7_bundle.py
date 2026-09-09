@@ -85,8 +85,13 @@ def _manifest_routes() -> set[str]:
 def test_v1_7_bundle_extends_frozen_v1_6_exact_bytes() -> None:
     bundle = json.loads((AGORA_SPECS / "bundle_index.v1_7.json").read_text(encoding="utf-8"))
 
+    # Rebaselined by AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001: the v1.4->v1.3
+    # extends.bundle_index_sha256 edge was stale and is now corrected by the
+    # deterministic generator's ancestor-hash repair, which changes this
+    # frozen parent's full-file bytes. This is the sole authorized digest
+    # rebaseline; every other assertion below stays pinned to exact bytes.
     assert _sha256(AGORA_SPECS / "bundle_index.v1_6.json") == (
-        "13f1297b75477e691d47229cb35d77c031a9104c63a087298356a861ed2e2ee0"
+        "bc71b8c13828d62ab8fce9f5fac1ec28e4fad3c4699c1c1090e53f63c7e377d5"
     )
     assert bundle["extends"] == {
         "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_6.json",

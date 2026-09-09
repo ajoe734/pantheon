@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -253,14 +254,27 @@ def load_handoffs(
     return backend, backend_sha, frontend, frontend_sha
 
 
+def _load_backend_generator(repo_root: Path | None = None) -> Any:
+    root = repo_root or REPO_ROOT
+    target = root / "docs" / "contracts" / "agora" / "generate_backend_contract.py"
+    spec = importlib.util.spec_from_file_location("generate_backend_contract", target)
+    if spec is None or spec.loader is None:
+        raise ManifestError(f"unable to load backend contract generator from {target}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def working_tree_binding_reasons(
     *,
     frontend_root: Path,
     backend_handoff_sha: str,
     frontend_handoff_sha: str,
     backend_handoff: dict[str, Any],
+    backend_root: Path | None = None,
 ) -> list[str]:
     reasons: list[str] = []
+    b_root = backend_root or REPO_ROOT
     backend_contract = _mapping(backend_handoff, "contract")
     expected_contract_hashes = (
         (BUNDLE_PATH, _mapping(backend_contract, "bundle_index").get("sha256"), "backend-bundle"),
@@ -272,10 +286,24 @@ def working_tree_binding_reasons(
         ),
     )
     for rel_path, expected, label in expected_contract_hashes:
-        if sha256_file(require_local_file(rel_path)) != expected:
+        local_file = b_root / rel_path
+        if not local_file.is_file() or sha256_file(local_file) != expected:
             reasons.append(f"{label}-working-tree-hash-mismatch")
-    if sha256_file(require_local_file(BACKEND_HANDOFF_PATH)) != backend_handoff_sha:
+    handoff_file = b_root / BACKEND_HANDOFF_PATH
+    if not handoff_file.is_file() or sha256_file(handoff_file) != backend_handoff_sha:
         reasons.append("backend-handoff-working-tree-hash-mismatch")
+    source_files = backend_handoff.get("source_files")
+    if isinstance(source_files, list):
+        for entry in source_files:
+            if isinstance(entry, dict) and "path" in entry and "sha256" in entry:
+                try:
+                    local_file = b_root / entry["path"]
+                    if not local_file.is_file() or sha256_file(local_file) != entry["sha256"]:
+                        reasons.append("backend-source-file-working-tree-hash-mismatch")
+                        break
+                except (ManifestError, Exception):
+                    reasons.append("backend-source-file-working-tree-hash-mismatch")
+                    break
     frontend_handoff_path = frontend_root / FRONTEND_HANDOFF_PATH
     if not frontend_handoff_path.is_file():
         reasons.append("frontend-handoff-working-tree-missing")
@@ -293,8 +321,10 @@ def handoff_blocking_reasons(
     frontend_handoff_commit: str,
     backend_dev_ref: str,
     frontend_dev_ref: str,
+    backend_root: Path | None = None,
 ) -> list[str]:
     reasons: list[str] = []
+    b_root = backend_root or REPO_ROOT
     if backend_handoff.get("contract_family") != CONTRACT_FAMILY:
         reasons.append("backend-contract-family-mismatch")
     if frontend_handoff.get("contract_family") != CONTRACT_FAMILY:
@@ -334,9 +364,9 @@ def handoff_blocking_reasons(
     backend_contract = str(backend.get("contract_commit") or "")
     frontend_runtime = str(frontend.get("runtime_commit") or "")
     identity_commits = (
-        ("backend-runtime", REPO_ROOT, backend_runtime, backend_dev_ref),
-        ("backend-contract", REPO_ROOT, backend_contract, backend_dev_ref),
-        ("backend-handoff", REPO_ROOT, backend_handoff_commit, backend_dev_ref),
+        ("backend-runtime", b_root, backend_runtime, backend_dev_ref),
+        ("backend-contract", b_root, backend_contract, backend_dev_ref),
+        ("backend-handoff", b_root, backend_handoff_commit, backend_dev_ref),
         ("frontend-runtime", frontend_root, frontend_runtime, frontend_dev_ref),
         ("frontend-handoff", frontend_root, frontend_handoff_commit, frontend_dev_ref),
     )
@@ -347,9 +377,9 @@ def handoff_blocking_reasons(
             reasons.append(f"{label}-commit-not-reachable-from-dev")
 
     expected_git_hashes = (
-        ("backend-bundle", REPO_ROOT, backend_contract, BUNDLE_PATH, bundle.get("sha256")),
-        ("backend-openapi", REPO_ROOT, backend_contract, OPENAPI_PATH, openapi.get("sha256")),
-        ("backend-capability", REPO_ROOT, backend_contract, CAPABILITY_PATH, capability.get("sha256")),
+        ("backend-bundle", b_root, backend_contract, BUNDLE_PATH, bundle.get("sha256")),
+        ("backend-openapi", b_root, backend_contract, OPENAPI_PATH, openapi.get("sha256")),
+        ("backend-capability", b_root, backend_contract, CAPABILITY_PATH, capability.get("sha256")),
     )
     for label, repo_root, commit, rel_path, expected in expected_git_hashes:
         try:
@@ -359,6 +389,22 @@ def handoff_blocking_reasons(
             continue
         if actual != expected:
             reasons.append(f"{label}-hash-mismatch")
+
+    if (
+        COMMIT_RE.fullmatch(backend_contract)
+        and backend_contract != ZERO_COMMIT
+        and commit_is_reachable(b_root, backend_contract, backend_dev_ref)
+    ):
+        try:
+            generator = _load_backend_generator(b_root)
+            closure_reasons = generator.validate_backend_derivation_closure(
+                b_root,
+                backend_handoff,
+                backend_contract,
+            )
+            reasons.extend(closure_reasons)
+        except Exception:
+            reasons.append("backend-derivation-closure-validation-failed")
 
     try:
         actual_types = sha256_git_generated_types(

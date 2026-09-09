@@ -68,8 +68,8 @@ class KeywordIndexAdapter:
     def documents_for(self, knowledge_objects: Iterable[KnowledgeObject]) -> list[SearchIndexDocument]:
         documents: list[SearchIndexDocument] = []
         for knowledge_object in knowledge_objects:
-            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id)
-            bundle = self.repository.get_bundle(knowledge_object.evidence_bundle_id)
+            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id, tenant_id=knowledge_object.tenant_id)
+            bundle = self.repository.get_bundle(knowledge_object.evidence_bundle_id, tenant_id=knowledge_object.tenant_id)
             metadata = dict(knowledge_object.metadata)
             search_parts = [
                 knowledge_object.title,

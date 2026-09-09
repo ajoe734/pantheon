@@ -484,6 +484,128 @@ class DependencyContractBatchTests(unittest.TestCase):
             self._run(stale_batch)
         self.assertEqual(self._snapshot(), before)
 
+    def _held_worker_recovery_pointer(self):
+        return {
+            'status': 'held', 'receipt_id': 'lost-lease-probe-settled',
+            'task_generation': 0, 'fence_generation': 1, 'replacement_generation': None,
+        }
+
+    def _inactive_lease_fixture(self, task_id='DEP', event_id='evt-lease', event_status='completed', **overrides):
+        lease = {
+            'task_id': task_id,
+            'workspace_task_id': task_id,
+            'branch': f'task/{task_id}',
+            'path': f'/tmp/pantheon-worker-worktrees/pantheon/{task_id.lower()}',
+            'status_root': str(self._test_root),
+            'source_root': str(self._test_root),
+            'repository_id': 'pantheon',
+            'base_ref': 'origin/dev',
+            'base_sha': 'a' * 40,
+            'last_used_at': '2026-09-09T03:13:31Z',
+            'last_queue_event_id': event_id,
+            'recovery_receipt_id': 'lost-lease-probe-settled',
+        }
+        lease.update(overrides)
+        runtime = deepcopy(self.runtime)
+        if event_id:
+            runtime['queue']['events'][event_id] = {'status': event_status, 'intent': {'task_id': task_id}}
+        runtime['worker_worktrees'] = {'leases': {'lease': lease}}
+        return runtime, lease
+
+    def test_provably_inactive_worktree_lease_allows_dependency_revision(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['waiting_for'] = 'Human/Ops'
+        held_pointer = self._held_worker_recovery_pointer()
+        dep['worker_recovery'] = deepcopy(held_pointer)
+        self._seed()
+        runtime, lease = self._inactive_lease_fixture()
+        self.runtime_module.save_runtime_state(self.config, runtime)
+
+        batch = self._request()
+        before = self._snapshot()
+        code, result = self._run(batch)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['status'], 'committed')
+
+        after = self._snapshot()
+        updated = ai_status.get_task(after['state'], 'DEP')
+        self.assertEqual(updated['status'], 'blocked')
+        self.assertEqual(updated['waiting_for'], 'Human/Ops')
+        self.assertEqual(updated['worker_recovery'], held_pointer)
+        # The retained lease/workspace metadata itself is never mutated by
+        # the dependency command; only the canonical task row changes.
+        current_runtime = self.runtime_module.load_runtime_state(self.config)
+        self.assertEqual(current_runtime['worker_worktrees'], runtime['worker_worktrees'])
+
+        replay_code, replay_result = self._run(batch)
+        self.assertEqual(replay_code, 0)
+        self.assertEqual(replay_result['status'], 'replayed')
+        self.assertEqual(self._snapshot(), after)
+
+    def test_ambiguous_or_active_worktree_lease_signals_remain_busy(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'blocked'
+        dep['waiting_for'] = 'Human/Ops'
+        dep['worker_recovery'] = deepcopy(self._held_worker_recovery_pointer())
+        self._seed()
+        batch = self._request()
+
+        runtimes = []
+        # Missing/blank identity fields must not prove inactivity.
+        for field in ('branch', 'path', 'status_root', 'source_root', 'repository_id', 'base_ref', 'base_sha', 'last_used_at'):
+            runtime, _ = self._inactive_lease_fixture(**{field: ''})
+            runtimes.append(runtime)
+        for field in ('branch', 'path', 'status_root', 'source_root', 'repository_id', 'base_ref', 'base_sha', 'last_used_at'):
+            runtime, _ = self._inactive_lease_fixture()
+            del runtime['worker_worktrees']['leases']['lease'][field]
+            runtimes.append(runtime)
+        # Mismatched or missing correlated identity.
+        runtime, _ = self._inactive_lease_fixture(workspace_task_id='OTHER-TASK')
+        runtimes.append(runtime)
+        # An unsettled or unresolvable queue-event correlation is not proof.
+        runtime, _ = self._inactive_lease_fixture(event_status='pending')
+        runtimes.append(runtime)
+        runtime, _ = self._inactive_lease_fixture(event_id='')
+        runtimes.append(runtime)
+        runtime, lease = self._inactive_lease_fixture()
+        lease['last_queue_event_id'] = 'evt-does-not-exist'
+        runtimes.append(runtime)
+
+        for runtime in runtimes:
+            with self.subTest(runtime=runtime):
+                self.runtime_module.save_runtime_state(self.config, runtime)
+                before = self._snapshot()
+                self.assertEqual(self._run(batch)[0], 75)
+                self.assertEqual(self._snapshot(), before)
+
+        # A well-formed, correlated lease is still busy when a real active
+        # worker, queued intent, or off-lock reservation exists for the task.
+        runtime, _ = self._inactive_lease_fixture()
+        runtime['workers']['run-test'] = {'task_id': 'DEP', 'status': 'running', 'queue_event_id': 'evt-lease'}
+        self.runtime_module.save_runtime_state(self.config, runtime)
+        before = self._snapshot()
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        runtime, _ = self._inactive_lease_fixture()
+        runtime['supervisor']['runtime_phase_reservations'] = {'process_queue': {'token': 'off-lock', 'launch_receipt': {'task_id': 'DEP'}}}
+        self.runtime_module.save_runtime_state(self.config, runtime)
+        before = self._snapshot()
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
+        # An unsettled task-side worker_recovery still fences even though the
+        # lease itself is otherwise well-formed and correlated.
+        runtime, _ = self._inactive_lease_fixture()
+        self.runtime_module.save_runtime_state(self.config, runtime)
+        current = ai_status.load_state()
+        ai_status.get_task(current, 'DEP')['worker_recovery'] = {'status': 'pending', 'receipt_id': 'still-pending'}
+        ai_status.append_state_commit(self.journal, current, source='pending-recovery-with-lease')
+        before = self._snapshot()
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
     def test_worker_and_nonoperator_ingress_rejected(self):
         for env in [{'AI_NAME':'Codex'}, {'ORCH_RUN_ID':'worker'}, {ai_status.LOCAL_HUMAN_OPS_ENV:'0'}, {'PANTHEON_WORKTREE_ROOT':'/worker'}]:
             with self.subTest(env=env), mock.patch.dict(os.environ, env):

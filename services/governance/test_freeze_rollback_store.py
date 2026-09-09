@@ -1,6 +1,7 @@
 """EVOCHAIN-004 contract tests for governance freeze/rollback read stores."""
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from services.governance import main
@@ -376,3 +377,247 @@ def test_rollback_status_transitions(tmp_path, monkeypatch) -> None:
         headers={"Authorization": "Bearer op-test:operator"},
     )
     assert resp4.status_code == 400
+
+
+def test_freeze_and_rollback_stores_multi_instance_isolation(tmp_path, monkeypatch) -> None:
+    """Closes F09: verify independent instances of freeze and rollback stores coordinate without lost updates."""
+    freeze_path = tmp_path / "freeze_orders.json"
+    rollback_path = tmp_path / "rollbacks.json"
+
+    freeze_store_a = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    freeze_store_b = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    rollback_store_a = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+    rollback_store_b = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+
+    # Instance A writes freeze 1
+    freeze_store_a.put(
+        {
+            "freeze_order_id": "freeze-iso-1",
+            "scope": "persona",
+            "target_id": "p-1",
+            "status": "active",
+            "actor": "admin",
+            "identity": "admin-1",
+            "source_command_id": "cmd-1",
+        }
+    )
+
+    # Instance B writes freeze 2
+    freeze_store_b.put(
+        {
+            "freeze_order_id": "freeze-iso-2",
+            "scope": "persona",
+            "target_id": "p-2",
+            "status": "requested",
+            "actor": "operator",
+            "identity": "op-2",
+            "source_command_id": "cmd-2",
+        }
+    )
+
+    # Instance A writes rollback 1
+    rollback_store_a.put(
+        {
+            "rollback_id": "rb-iso-1",
+            "runtime_id": "rt-1",
+            "action_type": "replace",
+            "status": "completed",
+            "actor": "operator",
+            "identity": "op-1",
+            "source_command_id": "cmd-3",
+        }
+    )
+
+    # Instance B writes rollback 2
+    rollback_store_b.put(
+        {
+            "rollback_id": "rb-iso-2",
+            "runtime_id": "rt-2",
+            "action_type": "pause",
+            "status": "initiated",
+            "actor": "operator",
+            "identity": "op-2",
+            "source_command_id": "cmd-4",
+        }
+    )
+
+    # Both instances observe both freeze orders and rollbacks
+    assert freeze_store_a.get("freeze-iso-2") is not None
+    assert freeze_store_b.get("freeze-iso-1") is not None
+    assert len(freeze_store_a.list_all()) == 2
+    assert len(freeze_store_b.list_all()) == 2
+
+    assert rollback_store_a.get("rb-iso-2") is not None
+    assert rollback_store_b.get("rb-iso-1") is not None
+    assert len(rollback_store_a.list_all()) == 2
+    assert len(rollback_store_b.list_all()) == 2
+
+    # Fresh instance verification
+    fresh_freezes = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    fresh_rollbacks = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+    assert {r["freeze_order_id"] for r in fresh_freezes.list_all()} == {"freeze-iso-1", "freeze-iso-2"}
+    assert {r["rollback_id"] for r in fresh_rollbacks.list_all()} == {"rb-iso-1", "rb-iso-2"}
+
+
+def test_mounted_freeze_and_rollback_command_isolation_interleaved(tmp_path, monkeypatch) -> None:
+    """Mounted handlers exercise command locks, legal transitions, and terminal conflict rejection across independent store instances."""
+    freeze_path = tmp_path / "mounted_freeze.json"
+    rollback_path = tmp_path / "mounted_rollback.json"
+
+    freeze_a = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    freeze_b = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    rb_a = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+    rb_b = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+
+    # 1. Freeze order controlled interleaving across instances
+    monkeypatch.setattr(main, "freeze_order_store", freeze_a)
+    f_create = main.record_freeze_order(
+        body={
+            "freeze_order_id": "freeze-mount-intl-1",
+            "scope": "persona",
+            "target_id": "persona-gamma",
+            "status": "requested",
+            "actor": "operator",
+            "source_command_id": "cmd-f-init",
+        },
+        authorization="Bearer op-test:operator",
+        x_mfa_token=None,
+    )
+    assert f_create["status"] == "requested"
+
+    # Instance B reads and transitions to active
+    monkeypatch.setattr(main, "freeze_order_store", freeze_b)
+    f_act = main.record_freeze_order(
+        body={
+            "freeze_order_id": "freeze-mount-intl-1",
+            "status": "active",
+            "actor": "governance_reviewer",
+            "source_command_id": "cmd-f-act",
+            "transition_actor": "governance_reviewer",
+            "transition_source_command_id": "cmd-f-act",
+        },
+        authorization="Bearer rev-test:governance_reviewer",
+        x_mfa_token=None,
+    )
+    assert f_act["status"] == "active"
+
+    # Instance A reads and transitions to released (terminal)
+    monkeypatch.setattr(main, "freeze_order_store", freeze_a)
+    f_rel = main.record_freeze_order(
+        body={
+            "freeze_order_id": "freeze-mount-intl-1",
+            "status": "released",
+            "actor": "admin",
+            "source_command_id": "cmd-f-rel",
+            "transition_actor": "admin",
+            "transition_source_command_id": "cmd-f-rel",
+        },
+        authorization="Bearer admin-test:admin",
+        x_mfa_token=None,
+    )
+    assert f_rel["status"] == "released"
+
+    # Instance B attempts transition from terminal status 'released' -> 400 rejection
+    monkeypatch.setattr(main, "freeze_order_store", freeze_b)
+    with pytest.raises(main.HTTPException) as exc_info:
+        main.record_freeze_order(
+            body={
+                "freeze_order_id": "freeze-mount-intl-1",
+                "status": "active",
+                "actor": "operator",
+                "source_command_id": "cmd-f-reopen",
+                "transition_actor": "operator",
+                "transition_source_command_id": "cmd-f-reopen",
+            },
+            authorization="Bearer op-test:operator",
+            x_mfa_token=None,
+        )
+    assert exc_info.value.status_code == 400
+    assert "Cannot transition from terminal freeze order status 'released'" in str(exc_info.value.detail)
+
+    # 2. Rollback record controlled interleaving across instances
+    monkeypatch.setattr(main, "rollback_store", rb_a)
+    rb_create = main.record_rollback(
+        body={
+            "rollback_id": "rb-mount-intl-1",
+            "runtime_id": "runtime-intl-1",
+            "action_type": "replace",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-rb-init",
+        },
+        authorization="Bearer op-test:operator",
+        x_mfa_token=None,
+    )
+    assert rb_create["status"] == "initiated"
+
+    # Instance B transitions to approved
+    monkeypatch.setattr(main, "rollback_store", rb_b)
+    rb_appr = main.record_rollback(
+        body={
+            "rollback_id": "rb-mount-intl-1",
+            "status": "approved",
+            "actor": "approver",
+            "source_command_id": "cmd-rb-appr",
+            "transition_actor": "approver",
+            "transition_source_command_id": "cmd-rb-appr",
+        },
+        authorization="Bearer appr-test:approver",
+        x_mfa_token=None,
+    )
+    assert rb_appr["status"] == "approved"
+
+    # Instance A transitions to completed (terminal)
+    monkeypatch.setattr(main, "rollback_store", rb_a)
+    rb_comp = main.record_rollback(
+        body={
+            "rollback_id": "rb-mount-intl-1",
+            "status": "completed",
+            "actor": "operator",
+            "source_command_id": "cmd-rb-comp",
+            "transition_actor": "operator",
+            "transition_source_command_id": "cmd-rb-comp",
+        },
+        authorization="Bearer op-test:operator",
+        x_mfa_token=None,
+    )
+    assert rb_comp["status"] == "completed"
+
+    # Instance B attempts transition from terminal status 'completed' -> 400 rejection
+    monkeypatch.setattr(main, "rollback_store", rb_b)
+    with pytest.raises(main.HTTPException) as exc_rb_info:
+        main.record_rollback(
+            body={
+                "rollback_id": "rb-mount-intl-1",
+                "status": "approved",
+                "actor": "operator",
+                "source_command_id": "cmd-rb-reopen",
+                "transition_actor": "operator",
+                "transition_source_command_id": "cmd-rb-reopen",
+            },
+            authorization="Bearer op-test:operator",
+            x_mfa_token=None,
+        )
+    assert exc_rb_info.value.status_code == 400
+    assert "Cannot transition from terminal rollback status 'completed'" in str(exc_rb_info.value.detail)
+
+    # 3. Durable rereads from fresh instance C verify all original and transition audit fields
+    freeze_c = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    final_freeze = freeze_c.get("freeze-mount-intl-1")
+    assert final_freeze["status"] == "released"
+    assert final_freeze["scope"] == "persona"
+    assert final_freeze["target_id"] == "persona-gamma"
+    assert final_freeze["actor"] == "operator"
+    assert final_freeze["source_command_id"] == "cmd-f-init"
+    assert final_freeze["transition_actor"] == "admin"
+    assert final_freeze["transition_source_command_id"] == "cmd-f-rel"
+
+    rb_c = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+    final_rb = rb_c.get("rb-mount-intl-1")
+    assert final_rb["status"] == "completed"
+    assert final_rb["runtime_id"] == "runtime-intl-1"
+    assert final_rb["action_type"] == "replace"
+    assert final_rb["actor"] == "operator"
+    assert final_rb["source_command_id"] == "cmd-rb-init"
+    assert final_rb["transition_actor"] == "operator"
+    assert final_rb["transition_source_command_id"] == "cmd-rb-comp"

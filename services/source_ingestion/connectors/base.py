@@ -510,6 +510,11 @@ class SourceRecord:
     def is_rejected(self) -> bool:
         return self.status == SourceRecordStatus.REJECTED
 
+    @property
+    def tenant_id(self) -> str | None:
+        val = self.metadata.get("tenant_id")
+        return str(val).strip() if val is not None and str(val).strip() else None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,

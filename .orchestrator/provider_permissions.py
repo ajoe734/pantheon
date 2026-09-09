@@ -26,6 +26,7 @@ from common import (
     load_json,
     normalize_agent_id,
     run_command,
+    runtime_log_path,
     to_bool,
     utc_now,
     write_json,
@@ -1002,7 +1003,28 @@ def _share_auth_probe_across_credential_group(
     return record
 
 
-def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tuple[bool, str | None, str]:
+def _read_and_discard_native_probe_log(path: Path) -> str:
+    """Read one probe's bound native CLI log, then remove the transient file.
+
+    The probe runs every few minutes; leaving one small log file behind per
+    invocation would otherwise accumulate indefinitely in the runtime sidecar
+    directory.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return text
+
+
+def _antigravity_probe_ready(
+    returncode: int, stdout: str, combined: str, *, native_log: str = ""
+) -> tuple[bool, str | None, str]:
     """Decide whether an `agy --prompt` smoke probe proves non-interactive auth.
 
     The Antigravity CLI exits 0 in print mode even when its OAuth token is
@@ -1010,9 +1032,12 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
     "You are not logged into Antigravity" notice only reaches the CLI's own
     log file (never the probe's stdout/stderr). A clean exit code therefore is
     not sufficient. Require a non-zero exit to fail, an exhausted-quota or
-    not-logged-in marker to fail, and non-empty stdout before declaring ready.
+    terminal not-logged-in marker to fail, and non-empty stdout before
+    declaring ready. Native startup notices may precede successful silent
+    authentication; keep their ordering separate from process output.
     """
-    lowered = combined.lower()
+    full_output = "\n".join(part for part in (combined, native_log) if part)
+    lowered = full_output.lower()
     # Quota exhaustion must be classified before the exit-code check: the CLI
     # exits 1 on a quota error, and "quota_reached" (a per-model condition the
     # rotation layer can route around) must not be reported as a generic
@@ -1024,18 +1049,25 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
             "quota_reached",
         )
     if returncode != 0:
-        return False, _compact_auth_error(combined), f"exit_{returncode}"
-    if "not logged into antigravity" in lowered or "not authenticated" in lowered:
+        return False, _compact_auth_error(full_output), f"exit_{returncode}"
+    auth_failures = ("not logged into antigravity", "not authenticated")
+    native_auth_failed = False
+    for event in native_log.lower().splitlines():
+        if any(marker in event for marker in auth_failures):
+            native_auth_failed = True
+        elif "authenticated successfully" in event:
+            native_auth_failed = False
+    if any(marker in combined.lower() for marker in auth_failures) or native_auth_failed:
         return (
             False,
             "Antigravity CLI is not logged in (silent print-mode failure).",
             "not_logged_in",
         )
-    if not stdout:
+    if not stdout.strip():
         return (
             False,
-            "Antigravity auth probe exited 0 but returned no output "
-            "(silent not-logged-in print-mode failure).",
+            "Antigravity auth probe exited 0 but returned no model output; "
+            "readiness is unproven.",
             "empty_output",
         )
     return True, None, "ready"
@@ -1120,6 +1152,14 @@ def _antigravity_auth_probe(
             command.extend(["--model", probe_model])
         if print_timeout:
             command.extend(["--print-timeout", print_timeout])
+        # `agy --prompt` can authenticate and then hit quota with a clean exit
+        # and empty stdout/stderr, which `_antigravity_probe_ready` would
+        # otherwise read as a silent not-logged-in failure. The CLI's own
+        # `--log-file` still records the native error; bind one to this exact
+        # probe invocation so that evidence reaches classification.
+        native_log_path = runtime_log_path(f"{provider_id}-probe-native", provider_id, config=config)
+        native_log_path.parent.mkdir(parents=True, exist_ok=True)
+        command.extend(["--log-file", str(native_log_path)])
         command.extend(["--prompt", prompt])
         try:
             result = run_command(command, timeout=timeout, env=env)
@@ -1144,8 +1184,9 @@ def _antigravity_auth_probe(
                 metadata=probe_metadata,
             )
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        native_text = _read_and_discard_native_probe_log(native_log_path)
         ready, error, status = _antigravity_probe_ready(
-            result.returncode, (result.stdout or "").strip(), output
+            result.returncode, (result.stdout or "").strip(), output, native_log=native_text
         )
         return _auth_probe_record(
             provider_id,

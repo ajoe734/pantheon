@@ -187,6 +187,15 @@ class AntigravityAdapter(BaseAdapter):
 
         run_id = new_runtime_id(provider_id)
         log_path = runtime_log_path(provider_id, request.agent_id, config=self.config)
+        # `agy --output-format stream-json` only surfaces opaque `error_message`
+        # step updates on stdout when a request fails mid-turn (the CLI keeps
+        # retrying internally), so the actual provider-native error body (for
+        # example a RESOURCE_EXHAUSTED/429 quota error) never reaches the
+        # worker's stdout log. The CLI's own `--log-file` still records it;
+        # bind one to this exact invocation so failure observation can read it.
+        native_log_path = runtime_log_path(f"{provider_id}-native", request.agent_id, config=self.config)
+        native_log_path.parent.mkdir(parents=True, exist_ok=True)
+        command.extend(["--log-file", str(native_log_path)])
         runtime_paths = worker_runtime_paths(self.config, run_id)
         process, _ = spawn_background_process(
             command,
@@ -213,5 +222,6 @@ class AntigravityAdapter(BaseAdapter):
             metadata={
                 "heartbeat_path": str(runtime_paths["heartbeat_path"]),
                 "runner_status_path": str(runtime_paths["status_path"]),
+                "native_log_path": str(native_log_path),
             },
         )
