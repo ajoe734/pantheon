@@ -452,5 +452,57 @@
         "seconds": 16.98
       }
     ]
+  },
+  "continuation_acceptance_closure_checkpoint": {
+    "task_id": "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001",
+    "date": "2026-09-09",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "dev_base_sha": "fd6341a8a309fe65bb6d0c0e5b7c73fa9348b61e",
+    "changes": [
+      "Removed candidate PG hybrid mode synthetic fallback to lexical FTS and postgres-rrf-v1 in services/search/pg_retrieval.py when embedding engine is not ready, enforcing fail-closed SearchCapabilityUnavailableError for both semantic and hybrid retrieval per Requirement 8.",
+      "Added regression test test_hybrid_and_semantic_fail_closed_when_embedding_unavailable in services/search/tests/test_pg_retrieval.py.",
+      "Installed pinned services/search/requirements.lock dependencies (fastembed==0.8.0, qdrant-client==1.19.0, onnxruntime==1.29.0, pgvector==0.5.0) into checkout-scoped .venv-pantheon.",
+      "Preserved backend-contract.json activation_allowed=false, chosen_backend=null, accepted=false, maintaining existing sole runtime until full real-embedding holdout, nonowner/nonbypass SQL role and 1000-replay gates are met.",
+      "Re-executed all test batches post-repair (236 total tests passed: 214 core regression, 7 pg_retrieval, 12 isolation/qdrant, 3 search_retrieval)."
+    ],
+    "completed_batches": [
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search .venv-pantheon/bin/python3 -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/tests/test_service_activation_contract.py services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 214,
+        "subtests_passed": 2,
+        "seconds": 49.68
+      },
+      {
+        "command": "SEARCH_RETRIEVAL_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search .venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_pg_retrieval.py",
+        "exit_code": 0,
+        "passed": 7,
+        "seconds": 10.32
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_local_retrieval_isolation.py services/search/tests/test_qdrant_backend.py",
+        "exit_code": 0,
+        "passed": 12,
+        "subtests_passed": 4,
+        "seconds": 33.49
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory/test_search_retrieval.py",
+        "exit_code": 0,
+        "passed": 3,
+        "seconds": 19.91
+      },
+      {
+        "command": "PANTHEON_SEARCH_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search .venv-pantheon/bin/python3 services/search/evaluation/run_retrieval_eval.py --probe-local --samples 12",
+        "exit_code": 2,
+        "report_evaluated_at": "2026-09-09T23:37:57.362278+00:00",
+        "corpus_count_observed": 10156,
+        "embedding_and_search_p95_ms": 620.67,
+        "cold_model_load_seconds": 6.251,
+        "external_inference_calls_observed": null,
+        "note": "Local diagnostic probe executed against isolated test Postgres container. Evaluator exits 2 and marks accepted=false per schema contract."
+      }
+    ]
   }
 }
