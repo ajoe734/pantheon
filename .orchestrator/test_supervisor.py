@@ -87,13 +87,14 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "runtime_state_lock", return_value=nullcontext()),
             mock.patch.object(supervisor, "load_runtime_state", return_value=state),
             mock.patch.object(supervisor, "save_runtime_state") as save_state,
-            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts") as refresh,
         ):
             applied = supervisor.apply_auto_commit_archive_result(config, action, result)
 
         self.assertFalse(applied)
         save_state.assert_called_once_with(config, state)
-        refresh.assert_not_called()
+        self.assertEqual(state["auto_commit_archive"]["last_run_at"], result["finished_at"])
+        self.assertNotIn("pending_token", state["auto_commit_archive"])
+        self.assertNotIn("pending_since", state["auto_commit_archive"])
 
     def test_stall_trace_handler_registers_sigusr2(self) -> None:
         with mock.patch.object(supervisor.faulthandler, "register") as register:
@@ -104,76 +105,6 @@ class V2StartupCacheTests(unittest.TestCase):
             file=sys.stderr,
             all_threads=True,
         )
-
-    def test_dashboard_refresh_uses_scoped_canonical_task_state_identity(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            status_root = root / "status"
-            scripts_dir = status_root / "scripts"
-            runtime_dir = root / "runtime"
-            scripts_dir.mkdir(parents=True)
-            runtime_dir.mkdir()
-            config = config_fixture(status_root)
-            config["task_state_store"] = {
-                "mode": "authoritative",
-                "event_log": str(runtime_dir / "tasks.jsonl"),
-            }
-            expected_env = supervisor.task_state_store_runtime_env(config)
-            observed_env: dict[str, str | None] = {}
-            state = {"tasks": [{"id": "TASK-1", "status": "in_progress"}]}
-            fake_ai_status = mock.Mock()
-
-            def load_state() -> dict[str, object]:
-                observed_env.update(
-                    {name: os.environ.get(name) for name in expected_env}
-                )
-                common.canonical_task_state_identity_from_environment(
-                    status_root=status_root,
-                    event_log=runtime_dir / "tasks.jsonl",
-                )
-                return state
-
-            fake_ai_status.load_state.side_effect = load_state
-            original_env = {name: os.environ.get(name) for name in expected_env}
-
-            with mock.patch.object(
-                supervisor.importlib,
-                "import_module",
-                return_value=fake_ai_status,
-            ):
-                supervisor.refresh_dashboard_runtime_artifacts(config)
-
-            self.assertEqual(observed_env, expected_env)
-            fake_ai_status.write_dashboard_bundle.assert_called_once_with(state)
-            fake_ai_status.sync_docs_site.assert_called_once_with(state)
-            self.assertEqual(
-                {name: os.environ.get(name) for name in expected_env},
-                original_env,
-            )
-
-    def test_dashboard_refresh_fails_closed_before_projection_on_bad_binding(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            status_root = Path(directory)
-            (status_root / "scripts").mkdir()
-            config = config_fixture(status_root)
-            fake_ai_status = mock.Mock()
-
-            with (
-                mock.patch.object(
-                    supervisor.importlib,
-                    "import_module",
-                    return_value=fake_ai_status,
-                ) as import_module,
-                mock.patch.object(supervisor, "console_log") as console_log,
-            ):
-                supervisor.refresh_dashboard_runtime_artifacts(config)
-
-            import_module.assert_not_called()
-            fake_ai_status.load_state.assert_not_called()
-            self.assertIn(
-                "authoritative task-state store configuration is required",
-                console_log.call_args.args[0],
-            )
 
     def test_bridge_allowlist_uses_explicit_live_registry_contract_names(self) -> None:
         config = config_fixture()
@@ -7394,6 +7325,8 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             for index in range(supervisor.MAX_WORKER_RECOVERY_RECEIPTS)
         }
         receipts[keep_id] = {
+            "receipt_id": keep_id,
+            "task_id": "TASK-1",
             "status": "reassigned",
             "detected_at": "2026-08-28T00:00:00Z",
         }
