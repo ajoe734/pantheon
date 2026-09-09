@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import redact_evidence_refs as _canonical_redact_evidence_refs
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -332,6 +333,7 @@ def _seeded_client(*, service_backed_memo_store: bool = False):
                 get_read_store=lambda: store,
                 extract_identity=_extract_identity,
                 require_read_role=_require_read_role,
+                redact_evidence_refs=_canonical_redact_evidence_refs,
             )
         )
         client = TestClient(app)

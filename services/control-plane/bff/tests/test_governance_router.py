@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import redact_evidence_refs
 
 
 EXPECTED_ROUTES = {
@@ -245,6 +246,7 @@ class MockGovernanceStore:
 def build_client(store: Optional[MockGovernanceStore] = None, **router_kwargs: Any) -> TestClient:
     store = store or MockGovernanceStore()
     app = FastAPI()
+    router_kwargs.setdefault("redact_evidence_refs", redact_evidence_refs)
     app.include_router(create_governance_router(get_read_store=lambda: store, **router_kwargs))
     return TestClient(app)
 
