@@ -2455,6 +2455,71 @@ EOF
         self.assertFalse(record["ready"])
         self.assertEqual(run_command.call_count, 1)
 
+    def test_antigravity_probe_binds_a_distinct_log_file_per_call(self) -> None:
+        # Regression for OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001: each probe
+        # invocation must bind its own native `--log-file` so a leftover file
+        # from an earlier, unrelated probe can never be misread as evidence
+        # for the current one (a "stale or mismatched" native log).
+        config = {"providers": {"antigravity": {"antigravity": {"cli": "agy"}}}}
+        ok = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
+        run_command = mock.Mock(return_value=ok)
+        p1, p2 = self._probe_patches(run_command)
+        with p1, p2:
+            provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+            provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+        first_command = run_command.call_args_list[0].args[0]
+        second_command = run_command.call_args_list[1].args[0]
+        first_log = first_command[first_command.index("--log-file") + 1]
+        second_log = second_command[second_command.index("--log-file") + 1]
+        self.assertNotEqual(first_log, second_log)
+
+    def test_antigravity_probe_timeout_does_not_read_a_native_log(self) -> None:
+        # A timed-out probe process may not have produced any native log yet;
+        # the timeout path must not attempt to read one, and must not raise.
+        config = {"providers": {"antigravity": {"antigravity": {"cli": "agy"}}}}
+        run_command = mock.Mock(side_effect=subprocess.TimeoutExpired(cmd=["agy"], timeout=45))
+        p1, p2 = self._probe_patches(run_command)
+        with p1, p2:
+            record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+        self.assertFalse(record["ready"])
+        self.assertEqual(record["status"], "probe_timeout")
+
+    def test_antigravity_auth_probe_rotates_using_native_log_only_quota_evidence(self) -> None:
+        # The primary model's quota failure can also surface only in the
+        # native CLI log with empty stdout/stderr; rotation to the fallback
+        # model must still occur from that evidence alone.
+        import model_rotation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            silent = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="", stderr="")
+            ok = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
+
+            def fake_run_command(command, **kwargs):
+                if fake_run_command.calls == 0:
+                    log_path = Path(command[command.index("--log-file") + 1])
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    log_path.write_text(
+                        "code=429 RESOURCE_EXHAUSTED Individual quota reached\n", encoding="utf-8"
+                    )
+                    fake_run_command.calls += 1
+                    return silent
+                fake_run_command.calls += 1
+                return ok
+
+            fake_run_command.calls = 0
+            run_command = mock.Mock(side_effect=fake_run_command)
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
+                record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+            self.assertTrue(record["ready"])
+            self.assertEqual(run_command.call_count, 2)
+            self.assertEqual(record["metadata"]["rotation_slot"], model_rotation.SLOT_FALLBACK)
+            self.assertTrue(
+                model_rotation.slot_cooling(config, "antigravity", model_rotation.SLOT_PRIMARY)
+            )
+
 class ProviderProbeGateTest(unittest.TestCase):
     """Exact endpoint probes never inherit capability-report health cache."""
 

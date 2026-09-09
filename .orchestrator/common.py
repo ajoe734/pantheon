@@ -1102,13 +1102,131 @@ def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
     return Path(os.path.expanduser(home)) / ".config" / "gh"
 
 
+def is_valid_git_config_key(key: str) -> bool:
+    if not key or not isinstance(key, str):
+        return False
+    if "\n" in key or "\r" in key or "\0" in key:
+        return False
+    if key != key.strip():
+        return False
+    dot = key.rfind(".")
+    if dot < 0:
+        return False
+    var = key[dot + 1 :]
+    if not var or not (
+        var[0].isascii()
+        and var[0].isalpha()
+        and all(c.isascii() and (c.isalnum() or c == "-") for c in var)
+    ):
+        return False
+    first_dot = key.find(".")
+    section = key[:first_dot]
+    if not section or not all(c.isascii() and (c.isalnum() or c == "-") for c in section):
+        return False
+    return True
+
+
 def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, str] | None = None) -> None:
-    if env.get("GH_CONFIG_DIR"):
-        env["GH_CONFIG_DIR"] = os.path.expanduser(str(env["GH_CONFIG_DIR"]))
-        return
-    config_dir = github_cli_config_dir(source_env)
-    if config_dir.exists():
-        env["GH_CONFIG_DIR"] = str(config_dir)
+    if str(env.get("GH_CONFIG_DIR") or "").strip():
+        env["GH_CONFIG_DIR"] = os.path.expanduser(str(env["GH_CONFIG_DIR"]).strip())
+    elif source_env is not None and str(source_env.get("GH_CONFIG_DIR") or "").strip():
+        env["GH_CONFIG_DIR"] = os.path.expanduser(str(source_env["GH_CONFIG_DIR"]).strip())
+    else:
+        config_dir = github_cli_config_dir(source_env)
+        if config_dir.exists():
+            env["GH_CONFIG_DIR"] = str(config_dir)
+
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    # Background workers must be prompt-free for askpass mechanisms as well.
+    # Preserve explicit supported credential policy (e.g. PANTHEON_WORKER_GIT_ASKPASS)
+    # while preventing inherited interactive askpass programs from hanging or prompting.
+    supported_askpass = (
+        str(env.get("PANTHEON_WORKER_GIT_ASKPASS") or "").strip()
+        or (str(source_env.get("PANTHEON_WORKER_GIT_ASKPASS") or "").strip() if source_env else "")
+    )
+    current_askpass = str(env.get("GIT_ASKPASS") or "").strip()
+    if supported_askpass and (current_askpass == supported_askpass or not current_askpass):
+        env["GIT_ASKPASS"] = supported_askpass
+        env["PANTHEON_WORKER_GIT_ASKPASS"] = supported_askpass
+    else:
+        env["GIT_ASKPASS"] = ""
+
+    env["SSH_ASKPASS"] = ""
+
+    raw_count = env.get("GIT_CONFIG_COUNT")
+    existing_entries: list[tuple[str, str]] = []
+    if raw_count is not None:
+        raw_count_str = str(raw_count)
+        # Validate the exact value that will be emitted to real Git, not a
+        # stripped copy used only for validation: a trailing newline or a
+        # non-ASCII decimal digit (e.g. U+0661 ARABIC-INDIC DIGIT ONE) can
+        # satisfy a lenient check while real `git config --list` rejects the
+        # raw env value and exits 128.
+        if not raw_count_str or not raw_count_str.isascii() or not raw_count_str.isdigit():
+            raise ValueError(
+                "Malformed git configuration: GIT_CONFIG_COUNT must be a non-negative integer, got <redacted>"
+            )
+        count = int(raw_count_str)
+        for i in range(count):
+            key_var = f"GIT_CONFIG_KEY_{i}"
+            val_var = f"GIT_CONFIG_VALUE_{i}"
+            if key_var not in env:
+                raise ValueError(
+                    f"Malformed git configuration: missing {key_var} for GIT_CONFIG_COUNT={count}"
+                )
+            key_val = str(env[key_var])
+            if not key_val.strip():
+                raise ValueError(
+                    f"Malformed git configuration: {key_var} cannot be blank"
+                )
+            if not is_valid_git_config_key(key_val):
+                raise ValueError(
+                    f"Malformed git configuration: invalid key syntax in {key_var} for GIT_CONFIG_COUNT={count}"
+                )
+            if val_var not in env:
+                raise ValueError(
+                    f"Malformed git configuration: missing {val_var} for GIT_CONFIG_COUNT={count}"
+                )
+            val = str(env[val_var])
+            if "\0" in val:
+                raise ValueError(
+                    f"Malformed git configuration: invalid value syntax in {val_var} for GIT_CONFIG_COUNT={count}"
+                )
+            existing_entries.append((key_val, val))
+    else:
+        stray = [k for k in env if k.startswith("GIT_CONFIG_KEY_") or k.startswith("GIT_CONFIG_VALUE_")]
+        if stray:
+            stray_name = sorted(stray)[0]
+            raise ValueError(
+                f"Malformed git configuration: found {stray_name} but GIT_CONFIG_COUNT is unset"
+            )
+
+    has_explicit_core_askpass = any(k.lower().strip() == "core.askpass" for k, _ in existing_entries)
+    if has_explicit_core_askpass and not supported_askpass:
+        # If caller explicitly configured core.askPass and no supported PAT askpass was set,
+        # remove GIT_ASKPASS so Git honors the caller's explicit core.askPass setting.
+        env.pop("GIT_ASKPASS", None)
+
+    has_github_helper = False
+    for k, v in existing_entries:
+        k_lower = k.lower().strip()
+        if k_lower in ("credential.https://github.com.helper", "credential.https://github.com/.helper"):
+            has_github_helper = True
+            break
+        if k_lower == "credential.helper":
+            has_github_helper = True
+            break
+
+    # An explicit supported askpass (e.g. a PAT-based PANTHEON_WORKER_GIT_ASKPASS)
+    # or an explicit indexed core.askPass entry is a deliberate credential
+    # choice; do not silently override it by routing Git to the gh credential
+    # helper instead.
+    if not has_github_helper and not supported_askpass and not has_explicit_core_askpass:
+        new_index = len(existing_entries)
+        env[f"GIT_CONFIG_KEY_{new_index}"] = "credential.https://github.com.helper"
+        env[f"GIT_CONFIG_VALUE_{new_index}"] = "!gh auth git-credential"
+        env["GIT_CONFIG_COUNT"] = str(new_index + 1)
 
 
 def is_github_cli_auth_failure(reason: str | None) -> bool:

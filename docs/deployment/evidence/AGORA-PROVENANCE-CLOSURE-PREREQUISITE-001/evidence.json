@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001",
+  "base_ref": "dev@15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+  "depends_on": "AGORA-CHAIN-001 (done)",
+  "normative_plan": "EXECUTION_PLAN.md in /tmp/pantheon-agora-producer-intake-20260909/EXECUTION_PLAN.md; SOURCE_REVIEW.md in /tmp/pantheon-agora-producer-intake-20260909/SOURCE_REVIEW.md",
+  "identities": {
+    "backend_runtime_commit": "879ac6c8262d05cd734b391a24a5deb42331b9e1",
+    "backend_contract_anchor_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec",
+    "bundle_index_v1_13_sha256": "f621c694f5e74d15b81d5cf016dd2684e364b8fac849047263acdf69d94943c9",
+    "openapi_v1_13_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
+    "capability_manifest_v1_13_sha256": "e17b120832bc92ed81d2edd7de3b11267ecb2fa82cfc4986cf2ac467a053f613"
+  },
+  "implementation": {
+    "files_modified": [
+      "docs/contracts/agora/README.md",
+      "docs/contracts/agora/backend-generation-input.v1_13.json",
+      "docs/contracts/agora/generate_backend_contract.py",
+      "docs/contracts/agora/test_generate_backend_contract.py",
+      "docs/deployment/evidence/AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001/evidence.json",
+      "scripts/agora_compat_manifest.py",
+      "scripts/test_agora_compat_manifest.py",
+      "services/control-plane/specs/agora/bundle_index.v1_4.json",
+      "services/control-plane/specs/agora/bundle_index.v1_5.json",
+      "services/control-plane/specs/agora/bundle_index.v1_6.json",
+      "services/control-plane/specs/agora/bundle_index.v1_7.json",
+      "services/control-plane/specs/agora/bundle_index.v1_8.json",
+      "services/control-plane/specs/agora/bundle_index.v1_9.json",
+      "services/control-plane/specs/agora/bundle_index.v1_10.json",
+      "services/control-plane/specs/agora/bundle_index.v1_11.json",
+      "services/control-plane/specs/agora/bundle_index.v1_12.json",
+      "services/control-plane/specs/agora/bundle_index.v1_13.json",
+      "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
+      "scripts/test_agora_v1_7_bundle.py"
+    ],
+    "provenance_architecture": "Repaired transitive derivation closure across the entire 14-index Agora bundle extension chain (bundle_index.json [v1.0] through bundle_index.v1_13.json) covering 90 distinct files (89 spec/OpenAPI/bundle files plus generator). Updated bundle_index.v1_4.json parent hash to point to actual v1_3 hash (23c95383...), refreshed downstream parent hashes through v1_13, propagated capability manifest source_contracts, and enforced fail-closed validation on stale hashes, cyclic references, out-of-root paths, missing files, duplicate source entries, malformed source entries, traversal failures, and exact-byte contract identity mismatches. Generated backend handoff is bound to authentic AGORA-CHAIN-001 runtime commit (879ac6c8262d05cd734b391a24a5deb42331b9e1) and source anchor commit A2 (77df37d54f9da6f6091bc150fce03ca711b494ec)."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 docs/contracts/agora/generate_backend_contract.py bundle --check",
+        "exit_code": 0,
+        "result": "verified agora.v1.13 bundle"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 docs/contracts/agora/generate_backend_contract.py verify",
+        "exit_code": 0,
+        "result": "verified docs/contracts/agora/backend-generation-input.v1_13.json"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py",
+        "exit_code": 0,
+        "result": "17 passed, 1 skipped in 29.43s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py scripts/test_agora_v1_12_candidate_bundle.py",
+        "exit_code": 1,
+        "result": "103 passed, 2 failed in 101.31s (2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base 15e2907b5, unrelated to this task's provenance scope)"
+      },
+      {
+        "command": "qualified single-file amendment (per /tmp/agora_v17_freeze_artifact_amendment_review.md): rebaselined the frozen scripts/test_agora_v1_7_bundle.py full-byte v1.6 digest literal from 13f1297b75477e691d47229cb35d77c031a9104c63a087298356a861ed2e2ee0 to the verified corrected bc71b8c13828d62ab8fce9f5fac1ec28e4fad3c4699c1c1090e53f63c7e377d5, matching the already-authorized deterministic ancestor-hash repair; no other assertion in that file changed",
+        "exit_code": 0,
+        "result": "test_v1_7_bundle_extends_frozen_v1_6_exact_bytes now passes against the corrected v1.6 bytes; test_openapi_manifest_and_live_decorators_have_exact_route_parity remains the same pre-existing, out-of-scope route-parity failure"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 /tmp/agora_producer_pre_review_probe.py",
+        "exit_code": 0,
+        "result": "exit 0; valid handoff reasons empty, duplicate input rejected, traversal failure on malformed index rejected, stale parent hash in git fixture rejected, base commit exists"
+      },
+      {
+        "command": "Reviewer requeue at PR 5715 head 6ccb1998f5ca81a4d1322fb75ffa7d1f0581b63e: test_bundle_generation_is_byte_deterministic_across_two_clean_roots previously invoked the single shared SCRIPT/ROOT twice with two output dirs, not two independent clean source roots. Rewrote the test to materialize two separate tmp_path directory trees (clean-root-a, clean-root-b), each populated by copying every file in module._derivation_files() (the full 90-file transitive derivation closure, including the generator itself at its own relative path) from ROOT, then invoked each tree's own copy of generate_backend_contract.py as an independent subprocess (its own __file__-derived REPO_ROOT) against its own --output-root.",
+        "exit_code": 0,
+        "result": "n/a (verification narrative; see following pytest command for outcome)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py -q",
+        "exit_code": 0,
+        "result": "18 passed in 20.59s; includes the corrected test_bundle_generation_is_byte_deterministic_across_two_clean_roots proving two independently materialized clean source roots produce byte-identical derived bundle/manifest/openapi output, and that output matches the checked-in ROOT bytes"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py scripts/test_agora_v1_12_candidate_bundle.py",
+        "exit_code": 1,
+        "result": "103 passed, 2 failed in 87.28s (same 2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base 15e2907b5, unchanged and unrelated to this task's provenance scope; no new failures introduced by the two-clean-source-roots repair)"
+      }
+    ]
+  }
+}

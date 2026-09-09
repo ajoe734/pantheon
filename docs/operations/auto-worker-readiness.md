@@ -19,6 +19,30 @@ The retired `disabled_agents`, `max_tasks_per_agent`,
 `max_tasks_per_agent_by_agent`, provider account aliases, and
 `max_concurrent_per_quota_group` fields are invalid in a running V2 config.
 
+## Antigravity native invocation-log evidence
+
+`agy --output-format stream-json` only emits opaque `step_update`/
+`error_message` records on stdout when a request fails mid-turn (the CLI
+keeps retrying internally), and `agy --prompt` auth/quota probes can also
+authenticate and then hit quota with a clean exit and empty stdout/stderr. In
+both cases no error text reaches the worker log or probe output that
+`detect_worker_failure`/`_antigravity_probe_ready` scan.
+
+The dispatch adapter (`.orchestrator/adapters/antigravity.py`) and the auth
+probe (`.orchestrator/provider_permissions.py`) now bind an explicit
+`--log-file <path>` to each exact invocation using the CLI's own
+`--log-file` flag. If the worker's stdout stream never carries an
+authoritative failure envelope, `detect_worker_failure` falls back to
+scanning that bound native log (newest line first, so a later actual
+failure supersedes an earlier not-logged-in startup notice) for a
+provider-native quota/auth marker; the probe merges the same native log text
+into its stdout/stderr classification before deciding readiness. Neither
+path introduces a new classifier, cooldown store, or recovery authority: the
+existing `classify_worker_failure` terminal-quota markers and the existing
+rotation/cooldown logic in `_antigravity_auth_probe` consume the recovered
+text unchanged. The probe deletes its own bound native log after reading it
+each cycle so transient probe logs do not accumulate.
+
 ## Dispatch semantics
 
 The planner consumes one canonical task snapshot, one runtime lease/queue

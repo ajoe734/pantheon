@@ -6,9 +6,13 @@ production follow the existing governance Postgres posture.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import stat
 import threading
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Protocol, Sequence
 
@@ -47,41 +51,115 @@ def _record_id(record: Dict[str, Any], id_fields: Sequence[str]) -> str:
     raise ValueError(f"record requires one of: {', '.join(id_fields)}")
 
 
+_HELD_FLOCKS = threading.local()
+
+
+class _FileLock:
+    """Re-entrant cross-process and thread-safe POSIX file lock."""
+
+    def __init__(self, lock_path: Path) -> None:
+        self.lock_path = lock_path.resolve()
+
+    def __enter__(self) -> _FileLock:
+        held = getattr(_HELD_FLOCKS, "held", None)
+        if held is None:
+            held = {}
+            _HELD_FLOCKS.held = held
+        key = str(self.lock_path)
+        if key not in held:
+            self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o666)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            held[key] = [1, fd]
+        else:
+            held[key][0] += 1
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        held = getattr(_HELD_FLOCKS, "held", {})
+        key = str(self.lock_path)
+        if key in held:
+            held[key][0] -= 1
+            if held[key][0] <= 0:
+                _, fd = held.pop(key)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
 class JsonGovernanceRecordStore:
-    """Small atomic JSON owner store for dev and local recovery posture."""
+    """Atomic file-locked and multi-instance coordinating JSON owner store for dev and local recovery posture."""
 
     def __init__(self, storage_path: str | Path, *, id_fields: Sequence[str]) -> None:
         self.storage_path = Path(storage_path)
         self.id_fields = tuple(id_fields)
         if not self.id_fields:
             raise ValueError("id_fields must not be empty")
+        self._flock_path = self.storage_path.with_name(f".{self.storage_path.name}.flock")
         self._lock = threading.RLock()
         self._records: Dict[str, Dict[str, Any]] = {}
         if self.storage_path.exists():
             self._load()
 
+    def _file_lock(self) -> _FileLock:
+        return _FileLock(self._flock_path)
+
+    def lock(self) -> Any:
+        """Public context manager for multi-step coordinated operations."""
+        return self._coordinate()
+
+    @contextmanager
+    def _coordinate(self):
+        if self._lock._is_owned():
+            # Current thread already holds self._lock (e.g. from an outer store.lock()
+            # or a coordinating subclass method); coordination is already active.
+            self._refresh()
+            yield
+        else:
+            with self._file_lock(), self._lock:
+                self._refresh()
+                yield
+
+    def _refresh(self) -> None:
+        if self.storage_path.exists():
+            self._load()
+        else:
+            self._records = {}
+
     def put(self, record: Dict[str, Any]) -> None:
         if not isinstance(record, dict):
             raise TypeError("record must be a dictionary")
         record_id = _record_id(record, self.id_fields)
-        with self._lock:
+        with self._coordinate():
+            previous = self._records.get(record_id)
             self._records[record_id] = _copy_record(record)
-            self._save()
+            try:
+                self._save()
+            except Exception:
+                if previous is not None:
+                    self._records[record_id] = previous
+                else:
+                    self._records.pop(record_id, None)
+                raise
 
     def get(self, record_id: str) -> Dict[str, Any] | None:
-        with self._lock:
+        with self._coordinate():
             record = self._records.get(str(record_id))
             return _copy_record(record) if record is not None else None
 
     def list_all(self) -> list[Dict[str, Any]]:
-        with self._lock:
+        with self._coordinate():
             return [_copy_record(record) for record in self._records.values()]
 
     def insert_if_absent(
         self, record: Dict[str, Any]
     ) -> tuple[bool, Dict[str, Any]]:
+        if not isinstance(record, dict):
+            raise TypeError("record must be a dictionary")
         record_id = _record_id(record, self.id_fields)
-        with self._lock:
+        with self._coordinate():
             existing = self._records.get(record_id)
             if existing is not None:
                 return False, _copy_record(existing)
@@ -98,11 +176,13 @@ class JsonGovernanceRecordStore:
         expected_record: Dict[str, Any],
         record: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]:
+        if not isinstance(expected_record, dict) or not isinstance(record, dict):
+            raise TypeError("records must be dictionaries")
         expected_id = _record_id(expected_record, self.id_fields)
         record_id = _record_id(record, self.id_fields)
         if expected_id != record_id:
             raise ValueError("compare_and_set record identities must match")
-        with self._lock:
+        with self._coordinate():
             current = self._records.get(record_id)
             if current != expected_record:
                 return False, _copy_record(current) if current is not None else None
@@ -110,13 +190,17 @@ class JsonGovernanceRecordStore:
             try:
                 self._save()
             except Exception:
-                self._records[record_id] = current
+                if current is not None:
+                    self._records[record_id] = current
+                else:
+                    self._records.pop(record_id, None)
                 raise
             return True, _copy_record(record)
 
     def _load(self) -> None:
         text = self.storage_path.read_text(encoding="utf-8").strip()
         if not text:
+            self._records = {}
             return
         payload = json.loads(text)
         if isinstance(payload, dict):
@@ -138,10 +222,57 @@ class JsonGovernanceRecordStore:
 
     def _save(self) -> None:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = self.storage_path.with_name(f".{self.storage_path.name}.tmp")
         payload = json.dumps(self._records, indent=2, sort_keys=True) + "\n"
-        temporary_path.write_text(payload, encoding="utf-8")
-        os.replace(temporary_path, self.storage_path)
+        existing_mode = self._existing_mode()
+        # Pass 0o666 for a brand-new record file so the kernel applies the
+        # ambient umask atomically as part of creation; this never reads or
+        # mutates the process-global umask, so it cannot race with an
+        # unrelated thread's file creation in this process.
+        temporary_path = self.storage_path.with_name(
+            f".{self.storage_path.name}.{uuid.uuid4().hex}.tmp"
+        )
+        fd = os.open(
+            str(temporary_path),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            existing_mode if existing_mode is not None else 0o666,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                if existing_mode is not None:
+                    # Replacing an existing file: the creation mode above may
+                    # have been narrowed by the ambient umask, so restore the
+                    # established mode explicitly before the durability
+                    # fsync below, keeping the final mode inside that fsync.
+                    os.fchmod(handle.fileno(), existing_mode)
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self.storage_path)
+            dir_fd = os.open(self.storage_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            if temporary_path.exists():
+                try:
+                    temporary_path.unlink()
+                except OSError:
+                    pass
+
+    def _existing_mode(self) -> int | None:
+        """Mode of the currently published record file, if any.
+
+        Used to preserve an already-established readable posture (for
+        example a readonly consumer mounting the governance data
+        directory) when replacing an existing record file. ``None`` means
+        this is a brand-new record file, which should instead get the
+        umask-controlled default an ordinary ``open()`` would produce.
+        """
+        try:
+            return stat.S_IMODE(os.stat(self.storage_path).st_mode)
+        except FileNotFoundError:
+            return None
 
 
 class PostgresGovernanceRecordStore:

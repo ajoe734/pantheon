@@ -374,6 +374,10 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["HOME"], str(root / ".claude2"))
         self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!gh auth git-credential")
         self.assertEqual(env["ORCH_PROVIDER"], "claude2")
         self.assertIn("--permission-mode", result.command)
 
@@ -754,6 +758,10 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(env["ANTIGRAVITY_HOME"], str(root / "agy2-home"))
         self.assertEqual(env["HOME"], str(root / "agy2-home"))
         self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!gh auth git-credential")
         self.assertEqual(env["GEMINI_API_KEY"], "agy-key")
         self.assertEqual(env["ORCH_TASK_ID"], "T-AGY2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
@@ -859,6 +867,103 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "copilot_local")
+
+
+    def test_provider_alias_environments_enable_git_credential_helper_without_mutation(self) -> None:
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gh_config = root / ".config" / "gh"
+            gh_config.mkdir(parents=True)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            mock_gh = bin_dir / "gh"
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=adapter-test-user\"\n"
+                "  echo \"password=adapter-test-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            mock_gh.chmod(0o755)
+
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "claude2": {"id": "claude2", "provider": "claude2", "adapter": "claude_cli"},
+                    "antigravity2": {"id": "antigravity2", "provider": "antigravity2", "adapter": "antigravity"},
+                },
+                "providers": {
+                    "claude2": {
+                        "claude": {"cli": "claude", "home": str(root / ".claude2")},
+                    },
+                    "antigravity2": {
+                        "antigravity": {"cli": "agy", "home": str(root / "agy2-home")},
+                    },
+                },
+            }
+
+            # 1. Claude CLI adapter environment
+            claude_adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+            fake_proc = mock.Mock(pid=1001)
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch("adapters.claude_cli._configured_claude_cli", return_value="claude"),
+                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_proc, root / "claude.log")) as claude_spawn,
+            ):
+                os.environ.pop("GH_CONFIG_DIR", None)
+                req = DeliveryRequest(agent_id="claude2", provider="claude2", delivery_mode="claude_cli", message="wake")
+                self.assertTrue(claude_adapter.deliver(req).ok)
+
+            claude_env = claude_spawn.call_args.kwargs["env"]
+            claude_env["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+            claude_env["GIT_CONFIG_GLOBAL"] = os.devnull
+            claude_env["GIT_CONFIG_SYSTEM"] = os.devnull
+
+            proc_c = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=claude_env,
+            )
+            self.assertEqual(proc_c.returncode, 0, proc_c.stderr)
+            self.assertIn("username=adapter-test-user", proc_c.stdout)
+            # Verify no .gitconfig was created in alias home
+            self.assertFalse((root / ".claude2" / ".gitconfig").exists())
+
+            # 2. Antigravity adapter environment
+            agy_adapter = AntigravityAdapter(config=config, provider_capabilities={})
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch("adapters.antigravity.command_exists", return_value="agy"),
+                mock.patch("adapters.antigravity._auth_ready", return_value=True),
+                mock.patch("adapters.antigravity.spawn_background_process", return_value=(fake_proc, root / "agy.log")) as agy_spawn,
+            ):
+                os.environ.pop("GH_CONFIG_DIR", None)
+                req = DeliveryRequest(agent_id="antigravity2", provider="antigravity2", delivery_mode="antigravity", message="wake")
+                self.assertTrue(agy_adapter.deliver(req).ok)
+
+            agy_env = agy_spawn.call_args.kwargs["env"]
+            agy_env["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+            agy_env["GIT_CONFIG_GLOBAL"] = os.devnull
+            agy_env["GIT_CONFIG_SYSTEM"] = os.devnull
+
+            proc_a = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=agy_env,
+            )
+            self.assertEqual(proc_a.returncode, 0, proc_a.stderr)
+            self.assertIn("username=adapter-test-user", proc_a.stdout)
+            # Verify no .gitconfig was created in alias home
+            self.assertFalse((root / "agy2-home" / ".gitconfig").exists())
 
 
 if __name__ == "__main__":
