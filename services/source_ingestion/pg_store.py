@@ -101,12 +101,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             )
 
     def reload(self) -> None:
-        self._source_records.clear()
-        self._source_dedupe_index.clear()
-        self._evidence_items.clear()
-        self._evidence_dedupe_index.clear()
-        self._bundles.clear()
-        self._knowledge_objects.clear()
+        self.clear()
         with self._connect() as conn:
             cursor = conn.execute(
                 f"SELECT record_type, payload FROM {self.table} ORDER BY append_id ASC"
@@ -138,7 +133,8 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 elif isinstance(obj, KnowledgeObject):
                     InMemoryEvidenceRepository.add_knowledge_object(self, obj)
 
-    def _upsert(self, record_type: str, record_id: str, payload: Dict[str, Any]) -> None:
+    def _upsert(self, record_type: str, record_id: str, payload: Dict[str, Any], tenant_id: str | None = None) -> None:
+        scoped_id = f"{tenant_id}:{record_id}" if tenant_id else record_id
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -148,7 +144,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 DO UPDATE SET payload = EXCLUDED.payload
                 """,
                 (
-                    record_id,
+                    scoped_id,
                     record_type,
                     json.dumps(payload, ensure_ascii=True, sort_keys=True),
                 ),
@@ -157,23 +153,23 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         stored = super().add_source_record(source)
         if stored.source_id == source.source_id:
-            self._upsert("source_record", stored.source_id, stored.to_dict())
+            self._upsert("source_record", stored.source_id, stored.to_dict(), tenant_id=stored.tenant_id)
         return stored
 
     def add_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
         stored = super().add_evidence_item(item)
         if stored.evidence_item_id == item.evidence_item_id:
-            self._upsert("evidence_item", stored.evidence_item_id, stored.to_dict())
+            self._upsert("evidence_item", stored.evidence_item_id, stored.to_dict(), tenant_id=stored.tenant_id)
         return stored
 
     def add_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
         stored = super().add_bundle(bundle)
-        self._upsert("evidence_bundle", stored.evidence_bundle_id, stored.to_dict())
+        self._upsert("evidence_bundle", stored.evidence_bundle_id, stored.to_dict(), tenant_id=stored.tenant_id)
         return stored
 
     def add_knowledge_object(self, knowledge_object: KnowledgeObject) -> KnowledgeObject:
         stored = super().add_knowledge_object(knowledge_object)
-        self._upsert("knowledge_object", stored.knowledge_object_id, stored.to_dict())
+        self._upsert("knowledge_object", stored.knowledge_object_id, stored.to_dict(), tenant_id=stored.tenant_id)
         return stored
 
 

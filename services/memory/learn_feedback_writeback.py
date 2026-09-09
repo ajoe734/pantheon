@@ -233,8 +233,10 @@ def _normalize_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     contradicts = _string_list(payload.get("contradicts") or [], "contradicts")
     expires_at = str(payload.get("expires_at")).strip() if payload.get("expires_at") else None
     trace_id = str(payload.get("trace_id") or source_event_id).strip()
+    tenant_id = str(payload.get("tenant_id")).strip() if payload.get("tenant_id") else None
 
     return {
+        "tenant_id": tenant_id,
         "source_event_type": source_event_type,
         "source_event_id": source_event_id,
         "write_authority": write_authority,
@@ -358,6 +360,7 @@ def _build_persona_entries(normalized: Mapping[str, Any]) -> List[PersonaMemoryE
                 written_at=normalized["written_at"],
                 write_authority=normalized["write_authority"],
                 relevance_scope=PersonaRelevanceScope.PERSONA_AND_COMMITTEE.value,
+                tenant_id=normalized.get("tenant_id"),
             )
         )
     return entries
@@ -413,6 +416,7 @@ def _build_institutional_entry(normalized: Mapping[str, Any]) -> InstitutionalMe
         scope_filter=normalized["scope_filter"],
         expires_at=normalized.get("expires_at"),
         contributing_persona_ids=normalized["institutional_persona_ids"],
+        tenant_id=normalized.get("tenant_id"),
     )
 
 

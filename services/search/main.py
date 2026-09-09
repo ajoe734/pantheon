@@ -338,6 +338,7 @@ def create_app(
     durable_index_only: bool | None = None,
     vector_embedding_backend: Any | None = None,
     alpha_engine: StructuredAlphaEngine | None = None,
+    retrieval_backend: Any | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.2.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
@@ -347,7 +348,12 @@ def create_app(
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
-    pipeline = IncrementalIndexPipeline(durable_repository, pipeline_store, freshness_sla_seconds=sla_seconds)
+    pipeline = IncrementalIndexPipeline(
+        durable_repository,
+        pipeline_store,
+        freshness_sla_seconds=sla_seconds,
+        retrieval_backend=retrieval_backend,
+    )
 
     # Initialize retrievers
     kw_retriever = KeywordRetriever()
@@ -369,6 +375,7 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
+            retrieval_backend=retrieval_backend,
         )
 
     def _materialize_index_state(

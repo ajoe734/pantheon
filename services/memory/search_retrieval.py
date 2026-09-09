@@ -63,7 +63,7 @@ def project_institutional_entry(entry: InstitutionalMemoryEntry) -> RetrievalInd
     return RetrievalIndexRecord(
         id=entry.entry_id,
         record_kind="institutional_memory",
-        tenant_id="default",
+        tenant_id=entry.tenant_id or "default",
         persona_id=None,
         workspace_id=None,
         environment_scope=["paper", "live"],
@@ -86,6 +86,7 @@ def project_institutional_entry(entry: InstitutionalMemoryEntry) -> RetrievalInd
         relevance_score=float(entry.reuse_count),
         metadata={
             "entry_id": entry.entry_id,
+            "tenant_id": entry.tenant_id,
             "knowledge_type": entry.knowledge_type,
             "source_event_type": entry.source_event_type,
             "source_event_id": entry.source_event_id,
@@ -107,7 +108,7 @@ def project_persona_entry(entry: PersonaMemoryEntry) -> RetrievalIndexRecord:
     return RetrievalIndexRecord(
         id=entry.memory_id,
         record_kind="persona_memory",
-        tenant_id="default",
+        tenant_id=entry.tenant_id or "default",
         persona_id=entry.persona_id,
         workspace_id=None,
         environment_scope=["paper", "live"],
@@ -130,6 +131,7 @@ def project_persona_entry(entry: PersonaMemoryEntry) -> RetrievalIndexRecord:
         relevance_score=float(entry.reuse_count),
         metadata={
             "memory_id": entry.memory_id,
+            "tenant_id": entry.tenant_id,
             "persona_id": entry.persona_id,
             "memory_type": entry.memory_type,
             "relevance_scope": entry.relevance_scope,
@@ -148,6 +150,7 @@ def retrieve_institutional_with_backend(
     backend: Optional[PostgresRetrievalBackend] = None,
     *,
     query: str = "",
+    tenant_id: Optional[str] = None,
     knowledge_type: Optional[str] = None,
     scope: Optional[str] = None,
     scope_filter: Optional[str] = None,
@@ -170,6 +173,7 @@ def retrieve_institutional_with_backend(
         )
 
     context = SearchAccessContext(
+        tenant_id=tenant_id or "default",
         persona_id=None,
         workspace_id=None,
         environment="paper",
@@ -199,6 +203,8 @@ def retrieve_institutional_with_backend(
 
         entry = store.get(cand.id)
         if entry is None or not entry.is_active or entry.is_expired():
+            continue
+        if tenant_id and entry.tenant_id and entry.tenant_id != tenant_id:
             continue
 
         if scope and entry.scope != scope:
@@ -236,6 +242,7 @@ def retrieve_persona_with_backend(
     backend: Optional[PostgresRetrievalBackend] = None,
     *,
     query: str = "",
+    tenant_id: Optional[str] = None,
     memory_type: Optional[str] = None,
     relevance_scope: Optional[str] = None,
     tags: Optional[Iterable[str]] = None,
@@ -259,6 +266,7 @@ def retrieve_persona_with_backend(
         )
 
     context = SearchAccessContext(
+        tenant_id=tenant_id or "default",
         persona_id=persona_id,
         workspace_id="workspace-default",
         environment="paper",
@@ -288,6 +296,8 @@ def retrieve_persona_with_backend(
 
         entry = store.get(cand.id)
         if entry is None or not entry.is_active:
+            continue
+        if tenant_id and entry.tenant_id and entry.tenant_id != tenant_id:
             continue
         if entry.persona_id != persona_id:
             # Revalidation guard against cross-persona leakage

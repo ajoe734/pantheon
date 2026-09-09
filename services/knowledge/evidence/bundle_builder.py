@@ -83,6 +83,15 @@ class EvidenceBundleBuilder:
         effective_available_time = available_time
         if effective_available_time is None and collected_available_times:
             effective_available_time = _iso(max(collected_available_times))
+
+        meta = dict(metadata or {})
+        if "tenant_id" not in meta:
+            tenant_ids = {s.tenant_id for s in source_records if s.tenant_id} | {i.tenant_id for i in evidence_items if i.tenant_id}
+            if len(tenant_ids) == 1:
+                meta["tenant_id"] = next(iter(tenant_ids))
+            elif len(tenant_ids) > 1:
+                raise EvidenceValidationError(f"Multiple tenants in bundle: {tenant_ids}")
+
         bundle = EvidenceBundle(
             evidence_bundle_id=evidence_bundle_id or f"evbundle-{uuid4().hex[:12]}",
             source_ids=[source.source_id for source in source_records],
@@ -96,7 +105,7 @@ class EvidenceBundleBuilder:
             available_time=effective_available_time,
             entitlement_tags=sorted(collected_entitlements),
             trace_refs=trace_refs,
-            metadata=metadata or {},
+            metadata=meta,
         )
         return self.repository.add_bundle(bundle)
 
@@ -114,6 +123,12 @@ class EvidenceBundleBuilder:
         keywords: Iterable[str] = (),
         metadata: dict | None = None,
     ) -> KnowledgeObject:
+        meta = dict(metadata or {})
+        if "tenant_id" not in meta:
+            tenant_id = source_record.tenant_id or evidence_item.tenant_id or evidence_bundle.tenant_id
+            if tenant_id:
+                meta["tenant_id"] = tenant_id
+
         knowledge_object = KnowledgeObject(
             knowledge_object_id=knowledge_object_id,
             source_id=source_record.source_id,
@@ -125,7 +140,7 @@ class EvidenceBundleBuilder:
             license_scope=evidence_bundle.license_scope,
             access_scope=list(access_scope) if access_scope is not None else evidence_bundle.access_scope,
             keywords=list(keywords),
-            metadata=metadata or {},
+            metadata=meta,
         )
         return self.repository.add_knowledge_object(knowledge_object)
 

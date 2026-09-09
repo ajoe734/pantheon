@@ -104,6 +104,7 @@ class InstitutionalMemoryEntry:
     archived_at: Optional[str] = None
     archived_reason: Optional[str] = None
     reuse_count: int = 0
+    tenant_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         try:
