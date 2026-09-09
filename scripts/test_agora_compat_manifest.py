@@ -184,10 +184,11 @@ def test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair(
     assert manifest["contract_family"] == "agora.v1.13"
     assert manifest["compatibility_status"] == "accepted"
     assert manifest["blocking_reasons"] == []
-    assert manifest["backend"]["runtime_commit"] == "6e08b040eebd2c317a9b44741d8badbf878e26ad"
-    assert manifest["backend"]["contract_commit"] == "9e909de182f9f2379d23e8e6b81eefec29ffbce7"
-    assert manifest["backend"]["bundle_index_sha256"] == "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870"
-    assert manifest["backend"]["openapi_sha256"] == "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+    backend_handoff = json.loads(BACKEND_HANDOFF.read_text(encoding="utf-8"))
+    assert manifest["backend"]["runtime_commit"] == backend_handoff["backend"]["runtime_commit"]
+    assert manifest["backend"]["contract_commit"] == backend_handoff["backend"]["contract_commit"]
+    assert manifest["backend"]["bundle_index_sha256"] == backend_handoff["contract"]["bundle_index"]["sha256"]
+    assert manifest["backend"]["openapi_sha256"] == backend_handoff["contract"]["openapi"]["sha256"]
     assert manifest["frontend"]["runtime_commit"] == frontend["runtime_commit"]
     assert manifest["frontend"]["generated_types_sha256"] != "0" * 64
     assert manifest["source_handoffs"]["backend"]["sha256"] == _sha256(BACKEND_HANDOFF)
@@ -636,3 +637,151 @@ def test_canonical_json_sha256_matches_cross_repo_fixture() -> None:
     module = _load_module()
     fixture = json.loads(CANONICAL_HASH_FIXTURE.read_text(encoding="utf-8"))
     assert module.canonical_json_sha256(fixture["payload"]) == fixture["expected_sha256"]
+
+
+def test_working_tree_binding_rejects_drifted_backend_source_file(tmp_path: Path) -> None:
+    module = _load_module()
+    handoff = {
+        "contract": {
+            "bundle_index": {"sha256": module.sha256_file(ROOT / module.BUNDLE_PATH)},
+            "openapi": {"sha256": module.sha256_file(ROOT / module.OPENAPI_PATH)},
+            "capability_manifest": {"sha256": module.sha256_file(ROOT / module.CAPABILITY_PATH)},
+        },
+        "source_files": [
+            {
+                "path": "docs/contracts/agora/generate_backend_contract.py",
+                "sha256": "0" * 64,
+            }
+        ],
+    }
+    dummy_fe_handoff = tmp_path / "fe-handoff.json"
+    dummy_fe_handoff.write_text("{}", encoding="utf-8")
+    fe_sha = module.sha256_file(dummy_fe_handoff)
+
+    reasons = module.working_tree_binding_reasons(
+        frontend_root=tmp_path,
+        backend_handoff_sha=module.sha256_file(ROOT / module.BACKEND_HANDOFF_PATH),
+        frontend_handoff_sha=fe_sha,
+        backend_handoff=handoff,
+    )
+    assert "backend-source-file-working-tree-hash-mismatch" in reasons
+
+
+def test_handoff_blocking_reasons_verifies_derivation_closure(tmp_path: Path) -> None:
+    module = _load_module()
+    head = _git(ROOT, "rev-parse", "HEAD")
+    backend_handoff = {
+        "contract_family": module.CONTRACT_FAMILY,
+        "backend": {
+            "runtime_commit": head,
+            "contract_commit": head,
+        },
+        "contract": {
+            "bundle_index": {
+                "path": module.BUNDLE_PATH,
+                "sha256": module.sha256_bytes(module.git_bytes(ROOT, head, module.BUNDLE_PATH)),
+            },
+            "openapi": {
+                "path": module.OPENAPI_PATH,
+                "sha256": module.sha256_bytes(module.git_bytes(ROOT, head, module.OPENAPI_PATH)),
+            },
+            "capability_manifest": {
+                "path": module.CAPABILITY_PATH,
+                "sha256": module.sha256_bytes(module.git_bytes(ROOT, head, module.CAPABILITY_PATH)),
+            },
+        },
+        "source_files": [],
+    }
+    frontend_handoff = {
+        "contract_family": module.CONTRACT_FAMILY,
+        "frontend": {
+            "runtime_commit": head,
+            "generated_from_contract_commit": head,
+            "bundle_index_sha256": backend_handoff["contract"]["bundle_index"]["sha256"],
+            "openapi_sha256": backend_handoff["contract"]["openapi"]["sha256"],
+            "generated_types_sha256": "0" * 64,
+        },
+        "generation_metadata": {
+            "expected_output_paths": list(module.DEFAULT_GENERATED_TYPE_PATHS),
+            "file_hash_algorithm": "sha256-exact-git-bytes-v1",
+            "generated_types_hash_algorithm": "sha256-path-tab-filehash-lf-v1",
+        },
+    }
+    reasons = module.handoff_blocking_reasons(
+        backend_handoff,
+        frontend_handoff,
+        frontend_root=ROOT,
+        backend_handoff_commit=head,
+        frontend_handoff_commit=head,
+        backend_dev_ref="HEAD",
+        frontend_dev_ref="HEAD",
+    )
+    assert "backend-source-files-missing" in reasons
+
+
+def test_handoff_blocking_reasons_rejects_duplicate_source_files(tmp_path: Path) -> None:
+    module = _load_module()
+    head = _git(ROOT, "rev-parse", "HEAD")
+    raw_backend = json.loads((ROOT / module.BACKEND_HANDOFF_PATH).read_text(encoding="utf-8"))
+    backend_handoff = dict(raw_backend)
+    backend_handoff["source_files"] = list(raw_backend["source_files"]) + [dict(raw_backend["source_files"][0])]
+
+    frontend_handoff = {
+        "contract_family": module.CONTRACT_FAMILY,
+        "frontend": {
+            "runtime_commit": head,
+            "generated_from_contract_commit": backend_handoff["backend"]["contract_commit"],
+            "bundle_index_sha256": backend_handoff["contract"]["bundle_index"]["sha256"],
+            "openapi_sha256": backend_handoff["contract"]["openapi"]["sha256"],
+            "generated_types_sha256": "0" * 64,
+        },
+        "generation_metadata": {
+            "expected_output_paths": list(module.DEFAULT_GENERATED_TYPE_PATHS),
+            "file_hash_algorithm": "sha256-exact-git-bytes-v1",
+            "generated_types_hash_algorithm": "sha256-path-tab-filehash-lf-v1",
+        },
+    }
+    reasons = module.handoff_blocking_reasons(
+        backend_handoff,
+        frontend_handoff,
+        frontend_root=ROOT,
+        backend_handoff_commit=head,
+        frontend_handoff_commit=head,
+        backend_dev_ref="HEAD",
+        frontend_dev_ref="HEAD",
+    )
+    assert "backend-source-files-duplicate" in reasons
+
+
+def test_handoff_blocking_reasons_rejects_malformed_source_file_entry(tmp_path: Path) -> None:
+    module = _load_module()
+    head = _git(ROOT, "rev-parse", "HEAD")
+    raw_backend = json.loads((ROOT / module.BACKEND_HANDOFF_PATH).read_text(encoding="utf-8"))
+    backend_handoff = dict(raw_backend)
+    backend_handoff["source_files"] = list(raw_backend["source_files"]) + [{"path": "bad", "sha256": "not-a-sha"}]
+
+    frontend_handoff = {
+        "contract_family": module.CONTRACT_FAMILY,
+        "frontend": {
+            "runtime_commit": head,
+            "generated_from_contract_commit": backend_handoff["backend"]["contract_commit"],
+            "bundle_index_sha256": backend_handoff["contract"]["bundle_index"]["sha256"],
+            "openapi_sha256": backend_handoff["contract"]["openapi"]["sha256"],
+            "generated_types_sha256": "0" * 64,
+        },
+        "generation_metadata": {
+            "expected_output_paths": list(module.DEFAULT_GENERATED_TYPE_PATHS),
+            "file_hash_algorithm": "sha256-exact-git-bytes-v1",
+            "generated_types_hash_algorithm": "sha256-path-tab-filehash-lf-v1",
+        },
+    }
+    reasons = module.handoff_blocking_reasons(
+        backend_handoff,
+        frontend_handoff,
+        frontend_root=ROOT,
+        backend_handoff_commit=head,
+        frontend_handoff_commit=head,
+        backend_dev_ref="HEAD",
+        frontend_dev_ref="HEAD",
+    )
+    assert "backend-source-files-invalid" in reasons
