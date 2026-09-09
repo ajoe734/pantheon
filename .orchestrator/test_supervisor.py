@@ -11328,6 +11328,40 @@ class ProviderStreamLifecycleTests(unittest.TestCase):
         self.assertFalse(supervisor.provider_stream_event_is_meaningful(tool_step or {}))
         self.assertFalse(supervisor.provider_stream_event_is_meaningful(text_step or {}))
 
+    def test_completed_validation_step_extends_work_lease(self) -> None:
+        validation_step = supervisor.normalize_provider_stream_event(
+            {
+                "event": "step_update",
+                "step_update": {
+                    "type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "tool_info": {
+                        "parameters": {"CommandLine": "python -m pytest -q tests/governance"},
+                        "output": "......... [100%]\\n9 passed in 1.22s",
+                    },
+                },
+            }
+        )
+        self.assertTrue(supervisor.provider_stream_event_is_meaningful(validation_step or {}))
+
+    def test_completed_search_command_does_not_extend_work_lease(self) -> None:
+        search_step = supervisor.normalize_provider_stream_event(
+            {
+                "event": "step_update",
+                "step_update": {
+                    "type": "tool",
+                    "state": "DONE",
+                    "tool_name": "run_command",
+                    "tool_info": {
+                        "parameters": {"CommandLine": "rg decision_journal services"},
+                        "output": "services/governance/decision_journal.py:18:class DecisionJournal",
+                    },
+                },
+            }
+        )
+        self.assertFalse(supervisor.provider_stream_event_is_meaningful(search_step or {}))
+
     def test_antigravity_stream_progress_and_result_are_normalized_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "agy.log"
