@@ -10,10 +10,16 @@ from fastapi.testclient import TestClient
 from services.control_plane.bff.deployment.adapters import DeploymentReadSurfaceAdapter
 from services.control_plane.bff.deployment.router import create_deployment_router
 from services.control_plane.bff.governance.service import page_slice, split_csv, stable_json_hash
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
+_FIXED_OPERATOR = OperatorIdentity(
+    operator_id="op-2",
+    roles=["operator", "viewer"],
+    claims={},
+)
 
 
 def _surface_degradation_reason(
@@ -35,8 +41,8 @@ def _surface_degradation_reason(
 
 
 def _make_client(store: Any) -> TestClient:
-    def _extract_identity(auth: Optional[str]) -> Any:
-        return {"roles": ["operator", "viewer"]}
+    def _extract_identity(auth: Optional[str]) -> OperatorIdentity:
+        return _FIXED_OPERATOR
 
     def _require_role(_identity: Any) -> None:
         return None

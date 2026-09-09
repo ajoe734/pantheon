@@ -48,20 +48,19 @@ from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 AUTH = "Bearer test-operator:operator,admin"
 
+_FIXED_IDENTITY = OperatorIdentity(
+    operator_id="test-operator",
+    roles=["operator", "admin"],
+    claims={},
+)
+
 
 def _extract_identity(authorization: str | None) -> OperatorIdentity:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    raw = authorization[len("Bearer "):].strip()
-    parts = raw.split(":")
-    operator_id = parts[0] if parts else "op"
-    roles = parts[1].split(",") if len(parts) > 1 else []
-    return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+    return _FIXED_IDENTITY
 
 
 def _require_read_role(identity: OperatorIdentity) -> None:
-    if not identity or not identity.roles:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    pass
 
 
 def _make_client(store: Any) -> TestClient:

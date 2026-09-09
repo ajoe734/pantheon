@@ -15,6 +15,7 @@ import copy
 import os
 import sys
 import tempfile
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -373,26 +374,6 @@ _FIXED_OPERATOR = OperatorIdentity(
 )
 
 
-def _recording_authorization(identity: OperatorIdentity) -> None:
-    """Recording authorization callback: verifies boundary invocation without copying role policy."""
-    pass
-
-
-def _require_read_role(identity: OperatorIdentity) -> None:
-    """Recording authorization callback: boundary proof without copying role policy."""
-    pass
-
-
-def _require_write_role(identity: OperatorIdentity) -> None:
-    """Recording authorization callback: boundary proof without copying role policy."""
-    pass
-
-
-def _default_extract_identity(auth: Optional[str]) -> OperatorIdentity:
-    """Fixed typed operator identity callback for success cases."""
-    return _FIXED_OPERATOR
-
-
 def _bff_error(
     status_code: int,
     code: Any,
@@ -433,10 +414,10 @@ def _client(
         active_store = store if store is not None else _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
         active_cmd = command_store if command_store is not None else CommandStore(os.path.join(td, "commands.jsonl"))
         active_idem = idempotency_store if idempotency_store is not None else {}
-        active_extract = extract_identity if extract_identity is not None else _default_extract_identity
-        active_read = require_read_role if require_read_role is not None else _recording_authorization
-        active_write = require_write_role if require_write_role is not None else _recording_authorization
-        active_op = require_operator_role if require_operator_role is not None else _recording_authorization
+        active_extract = extract_identity if extract_identity is not None else Mock(return_value=_FIXED_OPERATOR)
+        active_read = require_read_role if require_read_role is not None else Mock(return_value=None)
+        active_write = require_write_role if require_write_role is not None else Mock(return_value=None)
+        active_op = require_operator_role if require_operator_role is not None else Mock(return_value=None)
 
         app = FastAPI(title="Agora Memo Publish Contract")
 
@@ -474,7 +455,12 @@ def _client(
                 redact_evidence_refs=_canonical_redact_evidence_refs,
             )
         )
-        yield TestClient(app, raise_server_exceptions=False)
+        client = TestClient(app, raise_server_exceptions=False)
+        client.extract_identity = active_extract
+        client.require_read_role = active_read
+        client.require_write_role = active_write
+        client.require_operator_role = active_op
+        yield client
 
 
 # --------------------------------------------------------------------------- #
@@ -491,6 +477,7 @@ def test_ask_004_list_memos_returns_envelope() -> None:
         assert "page_info" in body
         assert "meta" in body
         assert "agora_committee_session_memos" in body["meta"]["surfaces"]
+        client.require_read_role.assert_called_with(_FIXED_OPERATOR)
 
 
 def test_ask_004_list_memos_empty_for_new_session() -> None:
@@ -515,10 +502,15 @@ def test_ask_004_list_memos_404_for_ask_session() -> None:
 
 def test_ask_004_list_memos_requires_auth() -> None:
     extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
-    with _client(seeded=True, extract_identity=extract_mock) as client:
+    real_store = _CommitteeMemoReadStore(_SEED_SESSIONS)
+    store_spy = Mock(wraps=real_store)
+    with _client(store=store_spy, extract_identity=extract_mock) as client:
         resp = client.get("/bff/agora/committee/sessions/committee-memo-001/memos")
         assert resp.status_code == 401, resp.text
         extract_mock.assert_called_once_with(None)
+        client.require_read_role.assert_not_called()
+        store_spy.get_agora_session.assert_not_called()
+        store_spy.list_committee_session_memos.assert_not_called()
 
 
 def test_ask_004_list_memos_shows_submitted_memos() -> None:
@@ -548,6 +540,7 @@ def test_ask_004_submit_memo_returns_201() -> None:
             headers={**AUTH, "Idempotency-Key": _idem()},
         )
         assert resp.status_code == 201, resp.text
+        client.require_write_role.assert_called_with(_FIXED_OPERATOR)
 
 
 def test_ask_004_submit_memo_response_shape() -> None:
@@ -611,13 +604,20 @@ def test_ask_004_submit_memo_404_for_ask_session() -> None:
 
 def test_ask_004_submit_memo_requires_auth() -> None:
     extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
-    with _client(seeded=True, extract_identity=extract_mock) as client:
+    real_store = _CommitteeMemoReadStore(_SEED_SESSIONS)
+    store_spy = Mock(wraps=real_store)
+    with _client(store=store_spy, extract_identity=extract_mock) as client:
         resp = client.post(
             "/bff/agora/committee/sessions/committee-memo-001/memos",
             json={"summary": "No auth"},
         )
         assert resp.status_code == 401, resp.text
         extract_mock.assert_called_once_with(None)
+        client.require_write_role.assert_not_called()
+        store_spy.get_agora_session.assert_not_called()
+        store_spy.get_consult_memo.assert_not_called()
+        store_spy.submit_committee_session_memo.assert_not_called()
+        assert len(real_store._data["consult_memos"]) == 0
 
 
 def test_ask_004_submit_memo_idempotency_replays() -> None:
@@ -684,6 +684,7 @@ def test_ask_004_memo_detail_returns_200() -> None:
             headers=AUTH,
         )
         assert resp.status_code == 200, resp.text
+        client.require_read_role.assert_called_with(_FIXED_OPERATOR)
 
 
 def test_ask_004_memo_detail_shape() -> None:
@@ -749,12 +750,17 @@ def test_ask_004_memo_detail_404_for_wrong_session() -> None:
 
 def test_ask_004_memo_detail_requires_auth() -> None:
     extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
-    with _client(seeded=True, extract_identity=extract_mock) as client:
+    real_store = _CommitteeMemoReadStore(_SEED_SESSIONS)
+    store_spy = Mock(wraps=real_store)
+    with _client(store=store_spy, extract_identity=extract_mock) as client:
         resp = client.get(
             "/bff/agora/committee/sessions/committee-memo-001/memos/memo-any",
         )
         assert resp.status_code == 401, resp.text
         extract_mock.assert_called_once_with(None)
+        client.require_read_role.assert_not_called()
+        store_spy.get_agora_session.assert_not_called()
+        store_spy.get_committee_session_memo.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -775,6 +781,7 @@ def test_ask_004_publish_memo_returns_200() -> None:
             headers={**AUTH, "Idempotency-Key": _idem()},
         )
         assert resp.status_code == 200, resp.text
+        client.require_write_role.assert_called_with(_FIXED_OPERATOR)
 
 
 def test_ask_004_publish_memo_sets_status_published() -> None:
@@ -896,13 +903,19 @@ def test_ask_004_publish_memo_404_for_wrong_session() -> None:
 
 def test_ask_004_publish_memo_requires_auth() -> None:
     extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
-    with _client(seeded=True, extract_identity=extract_mock) as client:
+    real_store = _CommitteeMemoReadStore(_SEED_SESSIONS)
+    store_spy = Mock(wraps=real_store)
+    with _client(store=store_spy, extract_identity=extract_mock) as client:
         resp = client.post(
             "/bff/agora/committee/sessions/committee-memo-001/memos/memo-any/publish",
             json={},
         )
         assert resp.status_code == 401, resp.text
         extract_mock.assert_called_once_with(None)
+        client.require_write_role.assert_not_called()
+        store_spy.get_agora_session.assert_not_called()
+        store_spy.get_committee_session_memo.assert_not_called()
+        store_spy.publish_committee_session_memo.assert_not_called()
 
 
 def test_ask_004_publish_memo_idempotency_replays() -> None:
@@ -1022,8 +1035,12 @@ def test_ask_004_concurrent_clients_isolation_and_replay() -> None:
     """Concurrent client operations maintain thread-safe instance-bound isolation and replay."""
     from concurrent.futures import ThreadPoolExecutor
 
+    clients_ready_barrier = threading.Barrier(2)
+    writes_completed_barrier = threading.Barrier(2)
+
     def _run_client_a() -> Dict[str, Any]:
         with _client(seeded=True) as client_a:
+            clients_ready_barrier.wait(timeout=5)
             key = _idem()
             payload = {
                 "memoId": "memo-concurrent-a",
@@ -1042,6 +1059,7 @@ def test_ask_004_concurrent_clients_isolation_and_replay() -> None:
             )
             assert resp2.status_code == 201, resp2.text
             assert resp2.json()["data"]["memo_id"] == "memo-concurrent-a"
+            writes_completed_barrier.wait(timeout=5)
             resp_conf = client_a.post(
                 "/bff/agora/committee/sessions/committee-memo-001/memos",
                 json={**payload, "summary": "Conflicting Summary A"},
@@ -1057,6 +1075,7 @@ def test_ask_004_concurrent_clients_isolation_and_replay() -> None:
 
     def _run_client_b() -> Dict[str, Any]:
         with _client(seeded=True) as client_b:
+            clients_ready_barrier.wait(timeout=5)
             key = _idem()
             payload = {
                 "memoId": "memo-concurrent-b",
@@ -1075,6 +1094,7 @@ def test_ask_004_concurrent_clients_isolation_and_replay() -> None:
             )
             assert resp2.status_code == 201, resp2.text
             assert resp2.json()["data"]["memo_id"] == "memo-concurrent-b"
+            writes_completed_barrier.wait(timeout=5)
             assert client_b.get(
                 "/bff/agora/committee/sessions/committee-memo-001/memos/memo-concurrent-a",
                 headers=AUTH,
