@@ -41,6 +41,20 @@ GENERATOR_PATH = Path("docs/contracts/agora/generate_backend_contract.py")
 PARENT_BUNDLE_PATH = Path(
     "services/control-plane/specs/agora/bundle_index.v1_12.json"
 )
+CHAIN_ROOT_BUNDLE = Path(
+    "services/control-plane/specs/agora/bundle_index.v1_3.json"
+)
+BUNDLE_CHAIN_REFRESH_VERSIONS = (
+    "1_4",
+    "1_5",
+    "1_6",
+    "1_7",
+    "1_8",
+    "1_9",
+    "1_10",
+    "1_11",
+    "1_12",
+)
 
 LEAVES = (
     {
@@ -170,10 +184,11 @@ def _git(*args: str, allow_failure: bool = False) -> str:
     return proc.stdout.strip()
 
 
-def _git_bytes(commit: str, path: Path) -> bytes:
+def _git_bytes(commit: str, path: Path, repo_root: Path | None = None) -> bytes:
+    root = repo_root or REPO_ROOT
     proc = subprocess.run(
         ["git", "show", f"{commit}:{path.as_posix()}"],
-        cwd=REPO_ROOT,
+        cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
@@ -585,13 +600,18 @@ def _definition_checksums() -> dict[str, str]:
     return checksums
 
 
-def _source_contracts() -> list[dict[str, str]]:
+def _source_contracts(bundle_shas: dict[str, str] | None = None) -> list[dict[str, str]]:
     sources: list[dict[str, str]] = []
+    bundle_shas = bundle_shas or {}
     for leaf in LEAVES:
+        bundle_path = leaf["bundle"]
+        m = re.search(r"bundle_index\.v(1_\d+)\.json", bundle_path.name)
+        v_key = m.group(1) if m else ""
+        bundle_sha = bundle_shas.get(v_key) or _sha256_path(bundle_path)
         sources.append(
             {
-                "bundle_path": leaf["bundle"].as_posix(),
-                "bundle_sha256": _sha256_path(leaf["bundle"]),
+                "bundle_path": bundle_path.as_posix(),
+                "bundle_sha256": bundle_sha,
                 "manifest_path": leaf["manifest"].as_posix(),
                 "manifest_sha256": _sha256_path(leaf["manifest"]),
                 "openapi_path": leaf["openapi"].as_posix(),
@@ -601,7 +621,7 @@ def _source_contracts() -> list[dict[str, str]]:
     return sources
 
 
-def _build_capability_manifest() -> dict[str, Any]:
+def _build_capability_manifest(bundle_shas: dict[str, str] | None = None) -> dict[str, Any]:
     capabilities: list[dict[str, Any]] = []
     seen_names: set[str] = set()
     for leaf in LEAVES:
@@ -635,7 +655,7 @@ def _build_capability_manifest() -> dict[str, Any]:
         "schema_bundle_index": BUNDLE_PATH.as_posix(),
         "openapi_ref": OPENAPI_PATH.as_posix(),
         "capabilities": capabilities,
-        "source_contracts": _source_contracts(),
+        "source_contracts": _source_contracts(bundle_shas),
         "required_definition_checksums": _definition_checksums(),
         "compatibility": {
             "status": "pending",
@@ -653,11 +673,29 @@ def _build_capability_manifest() -> dict[str, Any]:
 
 
 def build_bundle_artifacts() -> dict[Path, bytes]:
+    artifacts: dict[Path, bytes] = {}
+    refreshed_bundle_shas: dict[str, str] = {}
+
+    parent_sha = _sha256_path(CHAIN_ROOT_BUNDLE)
+    for v in BUNDLE_CHAIN_REFRESH_VERSIONS:
+        bundle_rel = Path(f"services/control-plane/specs/agora/bundle_index.v{v}.json")
+        raw_text = (REPO_ROOT / bundle_rel).read_text(encoding="utf-8")
+        refreshed_text = re.sub(
+            r'("bundle_index_sha256":\s*")[0-9a-f]{64}(")',
+            r"\g<1>" + parent_sha + r"\2",
+            raw_text,
+            count=1,
+        )
+        b = refreshed_text.encode("utf-8")
+        artifacts[bundle_rel] = b
+        parent_sha = _sha256_bytes(b)
+        refreshed_bundle_shas[v] = parent_sha
+
     openapi = _build_openapi()
-    capability = _build_capability_manifest()
+    capability = _build_capability_manifest(refreshed_bundle_shas)
     openapi_bytes = _yaml_bytes(openapi)
     capability_bytes = _json_bytes(capability)
-    parent_sha = _sha256_path(PARENT_BUNDLE_PATH)
+    parent_sha = refreshed_bundle_shas.get("1_12") or _sha256_path(PARENT_BUNDLE_PATH)
 
     route_families = {
         str(capability.get("name") or capability.get("id")): list(
@@ -696,11 +734,10 @@ def build_bundle_artifacts() -> dict[Path, bytes]:
             "and generated-type evidence are intentionally absent, so compatibility is pending."
         ),
     }
-    return {
-        OPENAPI_PATH: openapi_bytes,
-        CAPABILITY_PATH: capability_bytes,
-        BUNDLE_PATH: _json_bytes(bundle),
-    }
+    artifacts[OPENAPI_PATH] = openapi_bytes
+    artifacts[CAPABILITY_PATH] = capability_bytes
+    artifacts[BUNDLE_PATH] = _json_bytes(bundle)
+    return artifacts
 
 
 def _external_ref_paths(payload: Any, owner: Path) -> set[Path]:
@@ -725,28 +762,231 @@ def _external_ref_paths(payload: Any, owner: Path) -> set[Path]:
     return paths
 
 
-def _frontend_required_files() -> list[Path]:
+def _frontend_required_files(root: Path | None = None) -> list[Path]:
+    base_root = root or REPO_ROOT
     pending = [OPENAPI_PATH]
     discovered: set[Path] = {OPENAPI_PATH}
     while pending:
         owner = pending.pop()
-        payload = _read_yaml(owner) if owner.suffix in {".yaml", ".yml"} else _read_json(owner)
-        for path in _external_ref_paths(payload, REPO_ROOT / owner):
+        full_owner = base_root / owner
+        payload = _read_yaml(full_owner) if owner.suffix in {".yaml", ".yml"} else _read_json(full_owner)
+        for path in _external_ref_paths(payload, full_owner):
             if path not in discovered:
                 discovered.add(path)
                 pending.append(path)
     return sorted(discovered)
 
 
-def _derivation_files() -> list[Path]:
-    paths: set[Path] = {GENERATOR_PATH, BUNDLE_PATH, CAPABILITY_PATH, OPENAPI_PATH}
+def _read_bundle_chain(
+    start_bundle: Path = BUNDLE_PATH,
+    *,
+    check_parent_hashes: bool = False,
+    root: Path | None = None,
+) -> list[tuple[Path, dict[str, Any]]]:
+    base_root = REPO_ROOT
+    lookup_root = root or REPO_ROOT
+    chain: list[tuple[Path, dict[str, Any]]] = []
+    visited: set[Path] = set()
+    current: Path | None = start_bundle
+
+    while current is not None:
+        if current in visited:
+            raise ContractError(f"cycle in Agora bundle extension chain at {current.as_posix()}")
+        visited.add(current)
+        full_current = (lookup_root / current).resolve()
+        if not full_current.is_file() and root is not None:
+            full_current = (base_root / current).resolve()
+        try:
+            rel_current = full_current.relative_to(
+                lookup_root.resolve() if (lookup_root / current).is_file() else base_root.resolve()
+            )
+        except ValueError as exc:
+            raise ContractError(f"bundle path escapes repository: {current.as_posix()}") from exc
+        if not full_current.is_file():
+            raise ContractError(f"missing required bundle index: {current.as_posix()}")
+        try:
+            bundle = json.loads(full_current.read_bytes())
+        except json.JSONDecodeError as exc:
+            raise ContractError(f"invalid JSON in bundle {current.as_posix()}: {exc}") from exc
+        if not isinstance(bundle, dict):
+            raise ContractError(f"expected JSON object in bundle: {current.as_posix()}")
+        chain.append((rel_current, bundle))
+
+        extends = bundle.get("extends")
+        if isinstance(extends, dict) and extends.get("bundle_path"):
+            parent_rel = str(extends["bundle_path"])
+            if ".." in Path(parent_rel).parts:
+                raise ContractError(f"parent bundle path escapes repository: {parent_rel}")
+            if not parent_rel.startswith("services/control-plane/"):
+                parent_rel = f"services/control-plane/{parent_rel}"
+            parent_path = Path(parent_rel)
+            full_parent = (lookup_root / parent_path).resolve()
+            if not full_parent.is_file() and root is not None:
+                full_parent = (base_root / parent_path).resolve()
+            try:
+                full_parent.relative_to(
+                    lookup_root.resolve() if (lookup_root / parent_path).is_file() else base_root.resolve()
+                )
+            except ValueError as exc:
+                raise ContractError(f"parent bundle path escapes repository: {parent_rel}") from exc
+            if not full_parent.is_file():
+                raise ContractError(f"missing parent bundle index: {parent_rel}")
+            if check_parent_hashes:
+                expected_sha = _sha256_bytes(full_parent.read_bytes())
+                declared_sha = extends.get("bundle_index_sha256")
+                if declared_sha != expected_sha:
+                    raise ContractError(
+                        f"stale parent hash in {current.as_posix()}: "
+                        f"expected {expected_sha}, declared {declared_sha}"
+                    )
+            current = parent_path
+        else:
+            current = None
+
+    return list(reversed(chain))
+
+
+def _collect_chain_files(
+    chain: list[tuple[Path, dict[str, Any]]],
+    *,
+    check_hashes: bool = False,
+    root: Path | None = None,
+) -> set[Path]:
+    base_root = REPO_ROOT
+    lookup_root = root or REPO_ROOT
+    files: set[Path] = set()
+
+    for bundle_path, bundle in chain:
+        files.add(bundle_path)
+        for rel, expected_hash in (bundle.get("files") or {}).items():
+            file_rel = Path("services/control-plane") / rel
+            full_path = (lookup_root / file_rel).resolve()
+            if not full_path.is_file() and root is not None:
+                full_path = (base_root / file_rel).resolve()
+            try:
+                rel_clean = full_path.relative_to(
+                    lookup_root.resolve() if (lookup_root / file_rel).is_file() else base_root.resolve()
+                )
+            except ValueError as exc:
+                raise ContractError(f"bundle file escapes repository: {rel}") from exc
+            if not full_path.is_file():
+                raise ContractError(f"missing bundle input file: {file_rel.as_posix()}")
+            if check_hashes:
+                actual = _sha256_bytes(full_path.read_bytes())
+                if actual != expected_hash:
+                    raise ContractError(
+                        f"hash mismatch for {file_rel.as_posix()} in {bundle_path.as_posix()}: "
+                        f"expected {expected_hash}, actual {actual}"
+                    )
+            files.add(rel_clean)
+
+        openapi_entry = bundle.get("openapi")
+        if isinstance(openapi_entry, dict) and openapi_entry.get("path"):
+            o_rel = Path(openapi_entry["path"])
+            full_path = (lookup_root / o_rel).resolve()
+            if not full_path.is_file() and root is not None:
+                full_path = (base_root / o_rel).resolve()
+            try:
+                rel_clean = full_path.relative_to(
+                    lookup_root.resolve() if (lookup_root / o_rel).is_file() else base_root.resolve()
+                )
+            except ValueError as exc:
+                raise ContractError(f"openapi path escapes repository: {openapi_entry['path']}") from exc
+            if not full_path.is_file():
+                raise ContractError(f"missing bundle openapi file: {o_rel.as_posix()}")
+            if check_hashes and openapi_entry.get("sha256"):
+                actual = _sha256_bytes(full_path.read_bytes())
+                if actual != openapi_entry["sha256"]:
+                    raise ContractError(
+                        f"openapi hash mismatch for {o_rel.as_posix()} in {bundle_path.as_posix()}: "
+                        f"expected {openapi_entry['sha256']}, actual {actual}"
+                    )
+            files.add(rel_clean)
+
+    # Recursively trace external $refs from discovered files
+    pending = list(files)
+    discovered = set(files)
+    while pending:
+        owner = pending.pop()
+        full_owner = (lookup_root / owner).resolve()
+        if not full_owner.is_file() and root is not None:
+            full_owner = (base_root / owner).resolve()
+        if not full_owner.is_file():
+            continue
+        if owner.suffix in {".yaml", ".yml"}:
+            payload = yaml.safe_load(full_owner.read_bytes())
+        elif owner.suffix == ".json":
+            payload = json.loads(full_owner.read_bytes())
+        else:
+            continue
+        if isinstance(payload, dict):
+            for ref_path in _external_ref_paths(payload, full_owner):
+                if ref_path not in discovered:
+                    full_ref = (lookup_root / ref_path).resolve()
+                    if not full_ref.is_file() and root is not None:
+                        full_ref = (base_root / ref_path).resolve()
+                    if not full_ref.is_file():
+                        raise ContractError(f"missing external ref file: {ref_path.as_posix()}")
+                    discovered.add(ref_path)
+                    files.add(ref_path)
+                    pending.append(ref_path)
+
+    return files
+
+
+def _derivation_files(root: Path | None = None) -> list[Path]:
+    base_root = root or REPO_ROOT
+    chain = _read_bundle_chain(BUNDLE_PATH, check_parent_hashes=False, root=base_root)
+    paths = _collect_chain_files(chain, check_hashes=False, root=base_root)
+    paths.add(GENERATOR_PATH)
+    paths.add(BUNDLE_PATH)
+    paths.add(CAPABILITY_PATH)
+    paths.add(OPENAPI_PATH)
     for leaf in LEAVES:
         paths.update({leaf["bundle"], leaf["manifest"], leaf["openapi"]})
-        bundle = _read_json(leaf["bundle"])
-        for relative in (bundle.get("files") or {}):
-            paths.add(Path("services/control-plane") / relative)
-    paths.update(_frontend_required_files())
+    paths.update(_frontend_required_files(root=base_root))
     return sorted(paths)
+
+
+def _validate_bundle_chain(root: Path | None = None) -> None:
+    base_root = root or REPO_ROOT
+    chain = _read_bundle_chain(BUNDLE_PATH, check_parent_hashes=True, root=base_root)
+    _collect_chain_files(chain, check_hashes=True, root=base_root)
+
+
+def validate_backend_derivation_closure(
+    repo_root: Path,
+    backend_handoff: dict[str, Any],
+    contract_commit: str,
+) -> list[str]:
+    reasons: list[str] = []
+    source_files = backend_handoff.get("source_files") or []
+    if not isinstance(source_files, list) or not source_files:
+        return ["backend-source-files-missing"]
+    try:
+        expected_paths = {p.as_posix() for p in _derivation_files(root=repo_root)}
+    except Exception:
+        expected_paths = set()
+    provided_paths = set()
+    for entry in source_files:
+        if not isinstance(entry, dict) or "path" not in entry or "sha256" not in entry:
+            return ["backend-source-files-invalid"]
+        rel_path = entry["path"]
+        provided_paths.add(rel_path)
+        expected_sha = entry["sha256"]
+        try:
+            raw = _git_bytes(contract_commit, Path(rel_path), repo_root=repo_root)
+        except (ContractError, Exception):
+            reasons.append("backend-source-file-git-bytes-missing")
+            continue
+        if _sha256_bytes(raw) != expected_sha:
+            reasons.append("backend-source-file-hash-mismatch")
+    if expected_paths:
+        if expected_paths - provided_paths:
+            reasons.append("backend-source-files-incomplete")
+        if provided_paths - expected_paths:
+            reasons.append("backend-source-files-extraneous")
+    return sorted(set(reasons))
 
 
 def _validate_commit(commit: str, label: str) -> None:
@@ -864,6 +1104,7 @@ def _validate_openapi() -> None:
 
 def verify_handoff(path: Path) -> None:
     _write_or_check(build_bundle_artifacts(), REPO_ROOT, check=True)
+    _validate_bundle_chain(REPO_ROOT)
     _validate_openapi()
     handoff = _read_json(path)
     if handoff.get("contract_family") != CONTRACT_FAMILY or handoff.get("generated") is not True:
@@ -883,7 +1124,11 @@ def verify_handoff(path: Path) -> None:
 
 
 def command_bundle(args: argparse.Namespace) -> int:
-    _write_or_check(build_bundle_artifacts(), Path(args.output_root).resolve(), args.check)
+    output_root = Path(args.output_root).resolve()
+    _write_or_check(build_bundle_artifacts(), output_root, args.check)
+    if args.check:
+        _validate_bundle_chain(output_root)
+        _validate_openapi()
     print("verified" if args.check else "written", CONTRACT_FAMILY, "bundle")
     return 0
 

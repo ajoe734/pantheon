@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -253,6 +254,16 @@ def load_handoffs(
     return backend, backend_sha, frontend, frontend_sha
 
 
+def _load_backend_generator() -> Any:
+    target = REPO_ROOT / "docs" / "contracts" / "agora" / "generate_backend_contract.py"
+    spec = importlib.util.spec_from_file_location("generate_backend_contract", target)
+    if spec is None or spec.loader is None:
+        raise ManifestError(f"unable to load backend contract generator from {target}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def working_tree_binding_reasons(
     *,
     frontend_root: Path,
@@ -276,6 +287,18 @@ def working_tree_binding_reasons(
             reasons.append(f"{label}-working-tree-hash-mismatch")
     if sha256_file(require_local_file(BACKEND_HANDOFF_PATH)) != backend_handoff_sha:
         reasons.append("backend-handoff-working-tree-hash-mismatch")
+    source_files = backend_handoff.get("source_files")
+    if isinstance(source_files, list):
+        for entry in source_files:
+            if isinstance(entry, dict) and "path" in entry and "sha256" in entry:
+                try:
+                    local_file = require_local_file(entry["path"])
+                    if sha256_file(local_file) != entry["sha256"]:
+                        reasons.append("backend-source-file-working-tree-hash-mismatch")
+                        break
+                except ManifestError:
+                    reasons.append("backend-source-file-working-tree-hash-mismatch")
+                    break
     frontend_handoff_path = frontend_root / FRONTEND_HANDOFF_PATH
     if not frontend_handoff_path.is_file():
         reasons.append("frontend-handoff-working-tree-missing")
@@ -359,6 +382,22 @@ def handoff_blocking_reasons(
             continue
         if actual != expected:
             reasons.append(f"{label}-hash-mismatch")
+
+    if (
+        COMMIT_RE.fullmatch(backend_contract)
+        and backend_contract != ZERO_COMMIT
+        and commit_is_reachable(REPO_ROOT, backend_contract, backend_dev_ref)
+    ):
+        try:
+            generator = _load_backend_generator()
+            closure_reasons = generator.validate_backend_derivation_closure(
+                REPO_ROOT,
+                backend_handoff,
+                backend_contract,
+            )
+            reasons.extend(closure_reasons)
+        except Exception:
+            reasons.append("backend-derivation-closure-validation-failed")
 
     try:
         actual_types = sha256_git_generated_types(
