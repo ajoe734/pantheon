@@ -1,0 +1,306 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-COMMIT-IDENTITY-001",
+  "title": "Unify bounded commit subjects and exact canonical Task-ID validation",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "base_sha_at_dispatch": "18065bf29e917f5b5f08691632543619f19374f7",
+  "task_branch": "task/OPS-COMMIT-IDENTITY-001",
+  "depends_on": [
+    "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001"
+  ],
+  "depends_on_status_at_dispatch": "done, satisfied=true",
+  "delivery_state": "ready_for_review",
+  "supersedes_review": {
+    "pr": 5654,
+    "head_sha": "8cdd72d0252bbcf83d6affdc8fa0136809e7717c",
+    "decision": "reopen",
+    "reviewer": "Codex",
+    "review_report": "refs/tags/pantheon-review/reopen/8cdd72d0252bbcf83d6affdc8fa0136809e7717c",
+    "note": "Addressed the recorded P1 text-based closeout identity waiver and P2 implicit GITHUB_WORKSPACE/proc-parent module discovery. The owner was subsequently assigned to Codex with Antigravity as canonical reviewer; no approval is claimed."
+  },
+  "plan": {
+    "path": "/tmp/pantheon-tooling-root-repair-20260907/COMMIT_IDENTITY_PLAN.md",
+    "sha256": "2e57e428ca20e367964f61fb152ac39b988c413bc92b7de267f70ff36aa7ff51",
+    "source_ref": "pantheon-dev@46bbfe935df1e68740569fb5dc6233897de98b0b",
+    "packet_id": "pkt-commit-identity-root-repair-20260907-v1",
+    "packet_digest": "4103551dd4f824f39d4647890e447d4db227977e1df91ae46deb2d45295eb79a",
+    "supplement_path": "/tmp/pantheon-review-handoff-contract-20260906.N5IA5r/COMMIT_IDENTITY_TEST_CONTRACT_SUPPLEMENT_0713.md"
+  },
+  "scope": {
+    "artifacts_count": 14,
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/test_common.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "scripts/git/check_commit_trailers.py",
+      "scripts/git/test_check_commit_trailers_independent_review.py",
+      "scripts/git/worker_commit.py",
+      "scripts/git/test_worker_commit.py",
+      "scripts/git/test_index_safety.py",
+      "scripts/git/test_git_workflow_helpers.py",
+      "scripts/git/test_task_review_merge_gate.py",
+      "docs/operations/commit-identity-contract.md",
+      "docs/deployment/evidence/OPS-COMMIT-IDENTITY-001/evidence.json"
+    ],
+    "owned": [
+      "two deterministic bounded-commit-subject-prefix helpers (canonical_commit_subject_prefix, commit_subject_prefix_variants) shared by CI, the worker commit wrapper, and canonical done",
+      "single authoritative checker (check_commit_trailers.check_message) across CI, worker_commit preflight, and ai_status done/reconciliation",
+      "exact prefix comparison before first colon against shared prefix variants across all consumers, rejecting short-ID suffix collisions (e.g. ABC-001-OTHER:, ABC-0010:) and bounded long-prefix suffix collisions",
+      "rejection of duplicate trailers (both conflicting values and identical duplicate occurrences) in check_commit_trailers, worker_commit, and ai_status",
+      "removal of text-only merge exemptions in check_message; unproven raw message strings without Task-ID trailer are rejected",
+      "worker_commit preflight unconditionally validates commit identity via check_message respecting PANTHEON_COMMAND_ROOT with no target-cwd override and no fail-open fallback",
+      "ai_status lazily imports check_commit_trailers so that non-commit status commands execute cleanly in sparse command environments",
+      "test fixture synchronization across test_index_safety.py and test_git_workflow_helpers.py matching the single checker contract without production workarounds",
+      "Every selected authored closeout message uses the shared checker and audited owner/reviewer validation; no text-based trailer waiver remains.",
+      "Explicit command-root or target-only module resolution; no parent-process or GITHUB_WORKSPACE discovery."
+    ],
+    "not_changing": [
+      "approved_closeout_commit_ref / approved_closeout_metadata_ref merge-first-parent unwrapping and ancestry verification",
+      "scripts/git/check_commit_scope.py (separate pre-commit guard)",
+      "auto_integrator.py, worker_runner.py, supervisor.py, branch protection, credentials, or canonical JSON shape",
+      "validate_merged_tooling_done's Human/Ops + development_tooling authority and its reviewer-free direct-tooling exception",
+      "real git merge commit skipping in git rev-list via parent count (>1)"
+    ],
+    "composes_with": [
+      "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+      "the existing per-task PR review/merge flow used to recover PR #5639's own original approval"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "On dev 46bbfe935df1e68740569fb5dc6233897de98b0b, check_commit_trailers.check_message required subjects <=72 chars while ai_status.py's done-finalize gate required the literal, untruncated task id to appear in the subject. A 92-char generated task id (INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9) cannot satisfy both: its genuine, independently-approved, merged (PR #5639, head 50adbe0c68cfcc5d42024061c91f86dedb45159c into c607359338026f4e440f62d052e19648d78d3f04) commit passed CI's bounded-subject check but could never satisfy done's literal-substring check.",
+    "codex_reopen_5ade9528b_finding_and_fix": {
+      "finding": "P1 scripts/ai_status.py:3472 still used subject.startswith((task_id, full_prefix, bounded_prefix)). With Task-ID: ABC-001, subjects ABC-001-OTHER: repair and ABC-0010: repair were rejected by CI and worker preflight but accepted by collect_done_delivery_metadata.",
+      "fix": "Converged collect_done_delivery_metadata and validate_merged_tooling_done on the single checker.check_message, which extracts the exact subject prefix before the first colon and checks actual_prefix in (target_task_id, full_prefix, bounded_prefix). Added tests for short-ID suffix collisions and identical duplicate trailers across all consumers.",
+      "reproducer_probe": "/tmp/ops-commit-identity-001-codex-review-probe.py verified: ABC-001-OTHER: and ABC-0010: rejected identically across CI, worker preflight, and closeout; positive PR #5639 commit 50adbe0c accepted identically across all three paths."
+    },
+    "positive_case_unaffected": "The immutable, already-merged PR #5639 commit (50adbe0c68cfcc5d42024061c91f86dedb45159c, real 92-char Task-ID, subject 'INTEGRATION-UNBLOCK-GOV-APPROVAL-AU: record accepted source merge') passes CI, worker preflight, and owner metadata collection unchanged.",
+    "codex_reopen_8cdd72d_finding_and_fix": {
+      "finding": "Closeout waived required trailers and actor/reviewer checks for Merge/Revert/promote/hotfix/publish text; worker loaded missing modules from parent cwd or GITHUB_WORKSPACE.",
+      "fix": "Removed waiver and discovery; added 35 closeout style/metadata subcases plus missing-local-module and incomplete-explicit-runtime regressions. Structural merge selection and audited reassignment implementations unchanged."
+    },
+    "codex_reopen_d609ff7_finding_and_fix": {
+      "finding": "scripts/git/check_commit_trailers.py:95 silently ignored Git-recognized identity trailers with whitespace before the colon (Task-ID : OTHER, Task-ID\\t: OTHER, task-id : OTHER, and duplicate Task-ID : ABC-001). Also check_trailer_continuation_problems rejected non-identity multiline prose (such as Details: and Verified: blocks in commit 887b7a7).",
+      "fix": "Updated extract_trailer_lines to recognize Git trailer token syntax with whitespace before colon, added check_non_canonical_trailer_syntax to reject whitespace before separator, normalized keys for duplicate/conflict detection, and refined check_trailer_continuation_problems to only flag identity-bearing continuations while accepting non-identity multiline prose.",
+      "reproducer_probe": "Four-case ambiguity probe in isolated test harness confirms rejection of space/tab, duplicate, and mixed-case trailers with non-canonical syntax and conflict/duplicate errors across checker, worker_commit dry-run, and ai_status metadata collection; positive PR5639, Details prose, and 887b7a7 messages pass."
+    }
+  },
+  "implementation": {
+    "shared_helpers": "common.canonical_commit_subject_prefix(task_id, max_len=72) deterministic compacted prefix; common.commit_subject_prefix_variants(task_id, max_len=72) returns (full_prefix, bounded_prefix).",
+    "ci_check_commit_trailers": "check_message is the sole validator. Compares prefix before colon against commit_subject_prefix_variants, rejects identical or conflicting duplicate trailers, supports --task-id, and rejects unproven merge strings without Task-ID trailer.",
+    "worker_commit_preflight": "Delegates to the one shared check_message; uses the issued command runtime or target repository, with no implicit external module discovery. Missing dependencies fail closed.",
+    "ai_status_done_gate": "collect_done_delivery_metadata delegates directly to checker.check_message(full_message, required=required_fields, prefix_required=prefix_required, expected_task_id=task_id, delivery_class='product'). Lazy import via _commit_trailer_checker().",
+    "validate_merged_tooling_done": "delegates directly to checker.check_message(commit_message, required=('Task-ID',), prefix_required=True, expected_task_id=task_id, delivery_class='tooling').",
+    "test_fixtures": "test_index_safety.py and test_task_review_merge_gate.py provide check_commit_trailers.py in isolated repos and runtime fixtures; test_git_workflow_helpers.py asserts rejection of unproven merge subject strings lacking Task-ID trailer."
+  },
+  "verification": {
+    "environment": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "provision_command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python",
+      "interpreter": ".venv-pantheon/bin/python3",
+      "note": "Candidate validation only: env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA; governed commands retain supervisor-issued runtime binding."
+    },
+    "checksums": {
+      ".orchestrator/common.py": "000bfa722c76264e93616b8149f541b9ba72526c5558720400be7d716cb1f3e2",
+      ".orchestrator/test_common.py": "d724a9a492b3ff3ad9c423f10904837b6d36b431cc0e952d130b71f4da33d140",
+      ".orchestrator/test_supervisor.py": "98be24c12d2b77dc9e03d88a6aba254f50613c7ab2a3c4a699fcdc409cf64e6e",
+      "scripts/ai_status.py": "4506ad8993ba519e2993ce82e2e632fffd0aa965472367b9c7af1465cc8676df",
+      "scripts/test_ai_status.py": "02e40a49ccada30451f4e6acecb74b9f0e3cb30d4efc233d27a78a3a33f3a3c4",
+      "scripts/git/check_commit_trailers.py": "45275a00f7b387ac9cc00043b64638f90cabcf7676d02a3742fe88f05e49e19e",
+      "scripts/git/test_check_commit_trailers_independent_review.py": "0f70539e8985ac27c53a867827b9f5b21fae69a873ae6ba004680355f0811763",
+      "scripts/git/worker_commit.py": "e253c9618c1d40a79743a7d800cf9d1eecb804f71e26e8bd4d22109ffa816061",
+      "scripts/git/test_worker_commit.py": "fe9b283837bc401a0cfb0050f6068875ce9a6b78191ce8177c911fc64951d70b",
+      "scripts/git/test_index_safety.py": "8290ed0d15b48bd643f6be6c5e83000e44b0d88868c78f9c8917bfc235133297",
+      "scripts/git/test_git_workflow_helpers.py": "1504b250a3d02fe51ae1e836a969121d2bf457eb9abd95bf989c0f8737682b12",
+      "scripts/git/test_task_review_merge_gate.py": "dc902557c4d8550ad40fc90da211885a96986f5919619a50a679f108d5896966",
+      "docs/operations/commit-identity-contract.md": "3852ea8471db5537f8d26dfad88c11f94131580026007767f9594f10f9133828"
+    },
+    "prior_head_runs": [
+      {
+        "command": "python3 -m pytest -q scripts/test_ai_status.py .orchestrator/test_common.py scripts/git/test_worker_commit.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py",
+        "result": "664 passed, 208 subtests passed in 424.16s"
+      },
+      {
+        "command": "python3 -m pytest -q .orchestrator/test_supervisor.py -k test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart",
+        "result": "1 passed, 294 deselected in 29.20s"
+      },
+      {
+        "command": "python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/git/check_commit_trailers.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/worker_commit.py scripts/git/test_worker_commit.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py .orchestrator/common.py .orchestrator/test_common.py",
+        "result": "passed cleanly with zero errors"
+      },
+      {
+        "command": "/tmp/ops-commit-identity-001-codex-review-probe.py",
+        "result": "confirmed exact prefix mismatch rejection (ABC-001-OTHER:, ABC-0010:) across CI, worker preflight, and closeout; immutable PR5639 passes all three paths"
+      }
+    ],
+    "passed": [
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k DeliveryMetadataValidationTests",
+        "result": "46 passed, 408 deselected, 37 subtests passed in 6.71s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_check_commit_trailers_independent_review.py scripts/git/test_worker_commit.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_review_merge_gate.py",
+        "result": "238 passed, 2 subtests passed in 46.48s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
+        "result": "104 passed, 52 subtests passed in 26.39s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart or RealProcessReviewHandoffRecoveryFlowTests'",
+        "result": "16 passed, 279 deselected, 2 subtests passed in 62.16s",
+        "exit_status": 0
+      },
+      {
+        "command": "python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/git/check_commit_trailers.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/worker_commit.py scripts/git/test_worker_commit.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_review_merge_gate.py .orchestrator/common.py .orchestrator/test_common.py .orchestrator/test_supervisor.py",
+        "result": "passed cleanly with zero errors",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart",
+        "result": "1 passed, 294 deselected in 25.20s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_worker_commit.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py",
+        "result": "123 passed, 2 subtests passed in 20.73s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
+        "result": "104 passed, 52 subtests passed in 23.57s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
+        "result": "111 passed in 18.16s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 600 python3 -m unittest scripts/test_ai_status.py",
+        "result": "Ran 452 tests in 175.994s, OK",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -B -m pytest -q .orchestrator/test_supervisor.py::RealProcessReviewHandoffRecoveryFlowTests::test_reserved_phase_reaps_real_expired_lease_and_refuses_unauthorized_signals",
+        "result": "1 passed in 1.74s",
+        "exit_status": 0
+      }
+    ],
+    "actual_commit_probe": {
+      "method": "Actual module imports and read-only Git metadata; approval/repository context mocked; no live closeout",
+      "source_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-commit-identity-001",
+      "source_hashes": {
+        ".orchestrator/common.py": "000bfa722c76264e93616b8149f541b9ba72526c5558720400be7d716cb1f3e2",
+        "scripts/ai_status.py": "4506ad8993ba519e2993ce82e2e632fffd0aa965472367b9c7af1465cc8676df",
+        "scripts/test_ai_status.py": "02e40a49ccada30451f4e6acecb74b9f0e3cb30d4efc233d27a78a3a33f3a3c4",
+        "scripts/git/check_commit_trailers.py": "45275a00f7b387ac9cc00043b64638f90cabcf7676d02a3742fe88f05e49e19e"
+      },
+      "source_unchanged": true,
+      "commit": "50adbe0c68cfcc5d42024061c91f86dedb45159c",
+      "message_sha256": "ce7e54d703d90df15104058dec3a4acfcb06067e79a1836ee5c11c5d4afc2434",
+      "task_id": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9",
+      "task_id_length": 92,
+      "subject": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AU: record accepted source merge",
+      "formatter_for_same_description": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AU: record accepted source merge",
+      "checker_problems": [],
+      "owner_result": {
+        "metadata_accepted": true,
+        "commit": "50adbe0c68cfcc5d42024061c91f86dedb45159c",
+        "commit_subject": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AU: record accepted source merge",
+        "task_id": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9",
+        "actor": "Codex",
+        "reviewer": "Codex2"
+      },
+      "git_reads": [
+        [
+          "rev-parse",
+          "--abbrev-ref",
+          "HEAD"
+        ],
+        [
+          "rev-parse",
+          "HEAD"
+        ],
+        [
+          "rev-parse",
+          "50adbe0c68cfcc5d42024061c91f86dedb45159c"
+        ],
+        [
+          "show",
+          "-s",
+          "--format=%s",
+          "50adbe0c68cfcc5d42024061c91f86dedb45159c"
+        ],
+        [
+          "show",
+          "-s",
+          "--format=%b",
+          "50adbe0c68cfcc5d42024061c91f86dedb45159c"
+        ],
+        [
+          "show",
+          "-s",
+          "--format=%an",
+          "50adbe0c68cfcc5d42024061c91f86dedb45159c"
+        ],
+        [
+          "show",
+          "-s",
+          "--format=%ae",
+          "50adbe0c68cfcc5d42024061c91f86dedb45159c"
+        ],
+        [
+          "status",
+          "--porcelain"
+        ],
+        [
+          "remote"
+        ]
+      ],
+      "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 60 .venv-pantheon/bin/python3 /tmp/pantheon-review-handoff-contract-20260906.N5IA5r/probe_genuine_commit_identity_0600.py --source-root /tmp/pantheon-worker-worktrees/pantheon/ops-commit-identity-001 --git-root /tmp/pantheon-worker-worktrees/pantheon/ops-commit-identity-001",
+      "exit_status": 0
+    },
+    "failed": [],
+    "completed_batches": [
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 600 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py .orchestrator/test_common.py scripts/git/test_worker_commit.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py",
+        "result": "2 failed, 665 passed, 245 subtests passed in 259.81s",
+        "exit_status": 1,
+        "resolution": "Both failures referenced the removed unused re-export of canonical_commit_subject_prefix from worker/checker modules. Tests now import the defining common module directly. The four affected Git test files were rerun to terminal success; this combined run itself is not labelled passed."
+      }
+    ],
+    "actual_worker_probe": {
+      "source_commit": "50adbe0c68cfcc5d42024061c91f86dedb45159c",
+      "message_sha256": "ce7e54d703d90df15104058dec3a4acfcb06067e79a1836ee5c11c5d4afc2434",
+      "method": "Unchanged real Git commit message supplied to actual copied candidate worker wrapper in a complete isolated fixture; dry-run only, no canonical status mutation.",
+      "exit_status": 0,
+      "stdout": "[dry-run] staged set matches scope; would commit:\n  - candidate.txt\n",
+      "stderr": ""
+    }
+  },
+  "recovery_note": "This task fixes the identity contract going forward only. Recovering the original PR #5639 delivery uses the existing resume_integration / owner done flow against its own real approval and merge record; this task does not mark PR #5639 done or fabricate a new approval for it.",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex2",
+    "note": "Ready for exact-head independent review by Codex2 on PR #5654."
+  },
+  "runtime_activation": {
+    "status": "not_performed",
+    "incumbent_sha": "18065bf29e917f5b5f08691632543619f19374f7",
+    "handoff_document": "docs/operations/commit-identity-contract.md#qualified-activation-handoff-pending-merge",
+    "requires": "Genuine assigned exact-head review, required checks and sole integrator merge before existing qualified runtime promotion; original PR5639 uses its own approval and merge for recovery."
+  },
+  "contract_blocker": {
+    "status": "resolved",
+    "resolved_by": "Coordinator artifact contract grant 2026-09-07T13:54:19Z adding .orchestrator/test_supervisor.py; fixture completed using coherent test time and explicit expired/unexpired preconditions, preserving all real PID ticks, deferred CAS, no-unauthorized-signal, positive-expiry, and pending-intent assertions; test passes cleanly."
+  }
+}

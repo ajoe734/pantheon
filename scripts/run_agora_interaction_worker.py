@@ -23,6 +23,17 @@ from agora.governance.store import ProposalStore
 from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
+from agora.research.dispatcher import (
+    ResearchDispatcher,
+    build_authentic_adapter_registry,
+    build_canonical_research_backend_clients,
+)
+from agora.research.routes.common import publish_research_progress
+from agora.research.store import (
+    MemoryResearchPlanStore,
+    PostgresResearchPlanStore,
+    make_research_plan_store,
+)
 from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
 
 logging.basicConfig(
@@ -44,12 +55,15 @@ def main() -> int:
     if args.healthcheck:
         # A healthcheck must not return before required dependency factories
         # are proven constructible. It skips the long-running loop and any
-        # live database mutation, but a Persona discovery client that cannot
-        # be built is a real startup failure, not something to hide.
+        # live database mutation, but a Persona discovery client or required
+        # research backend client that cannot be built is a real startup failure.
         try:
             build_canonical_persona_client()
+            adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
+            if adapter_mode == "real":
+                build_canonical_research_backend_clients(mode=adapter_mode)
         except Exception:
-            logger.exception("Healthcheck failed: could not construct required Persona discovery client")
+            logger.exception("Healthcheck failed: could not construct required clients")
             return 1
         logger.info("Healthcheck OK")
         return 0
@@ -83,6 +97,69 @@ def main() -> int:
     # always-empty implementation.
     read_store = build_canonical_persona_client()
 
+    # Durable research store and dispatcher
+    # Research store is a required dependency: wire the same durable owner store (postgres in production)
+    # and fail startup if unavailable.
+    research_backend = (
+        os.getenv("AGORA_RESEARCH_STORE_BACKEND")
+        or os.getenv("AGORA_RESEARCH_PLAN_STORE_BACKEND")
+        or (workshop_backend if workshop_backend == "postgres" else "off")
+    ).strip().lower()
+    research_dsn = (
+        os.getenv("AGORA_RESEARCH_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+        or gov_dsn
+    )
+    research_schema = os.getenv("AGORA_RESEARCH_STORE_SCHEMA", "agora_research")
+    storage_path = os.getenv("AGORA_RESEARCH_STORE_STORAGE_PATH")
+
+    if research_backend == "postgres":
+        research_store = PostgresResearchPlanStore(dsn=research_dsn, schema=research_schema)
+    elif research_backend in ("off", "memory"):
+        research_store = MemoryResearchPlanStore(storage_path=storage_path)
+    else:
+        raise ValueError(f"Unsupported AGORA_RESEARCH_STORE_BACKEND: {research_backend}")
+
+    # Wire authentic backend adapters for research stages
+    adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
+    if adapter_mode == "real":
+        backend_clients = build_canonical_research_backend_clients(mode=adapter_mode)
+    else:
+        backend_clients = None
+    adapter_registry = build_authentic_adapter_registry(
+        mode=adapter_mode,
+        execution_owners=backend_clients,
+    )
+
+    # Durable dataset store: wire the same durable owner store (postgres in production)
+    dataset_backend = (
+        os.getenv("AGORA_DATASET_STORE_BACKEND")
+        or (workshop_backend if workshop_backend == "postgres" else "off")
+    ).strip().lower()
+    dataset_dsn = (
+        os.getenv("AGORA_DATASET_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+        or dsn
+    )
+    dataset_schema = os.getenv("AGORA_DATASET_STORE_SCHEMA", "agora")
+
+    from agora.dataset_extraction.extractor import AgoraDatasetStore
+    import agora.dataset_extraction.router as dataset_router
+
+    dataset_store = AgoraDatasetStore(
+        backend=dataset_backend,
+        dsn=dataset_dsn,
+        schema=dataset_schema,
+    )
+    dataset_router._STORE = dataset_store
+
+    research_dispatcher = ResearchDispatcher(
+        store=research_store,
+        adapter_registry=adapter_registry,
+        publish_progress_fn=publish_research_progress,
+        dataset_store=dataset_store,
+    )
+
     tenant_id = args.tenant_id or os.getenv("PANTHEON_TENANT_ID")
 
     worker = AgoraInteractionWorker(
@@ -90,6 +167,9 @@ def main() -> int:
         workshop_store=workshop_store,
         read_store=read_store,
         proposal_store=proposal_store,
+        research_store=research_store,
+        research_dispatcher=research_dispatcher,
+        dataset_store=dataset_store,
         worker_id=os.getenv("PANTHEON_AGORA_WORKER_ID", "agora-interaction-worker"),
     )
 

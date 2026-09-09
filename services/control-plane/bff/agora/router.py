@@ -24,6 +24,7 @@ from services.control_plane.bff.ports import (
     create_read_surface_ports,
 )
 from services.control_plane.bff.governance.decision_journal_write_owner import (
+    build_decision_journal_write_owner,
     wrap_get_read_store_with_decision_journal_owner,
 )
 
@@ -45,7 +46,7 @@ from .dashboard.router import create_dashboard_router
 from .shadow.router import create_shadow_router
 from .personalization.router import create_personalization_router
 from .management_projection.router import create_management_projection_router
-from .dataset_extraction.router import create_dataset_extraction_router
+from .dataset_extraction.router import create_dataset_extraction_router, _default_store
 from .interaction.router import create_interaction_router
 from .interaction.store import InteractionLifecycleStore
 from .governance.router import create_governance_router
@@ -127,6 +128,9 @@ def create_agora_router(
     handle_sse_stream: Optional[Callable[..., Any]] = None,
     publish_event_fn: Optional[Callable[..., Any]] = None,
     service: Optional[AgoraService] = None,
+    journal_write_owner: Optional[Any] = None,
+    get_journal_write_owner: Optional[Callable[[], Any]] = None,
+    dataset_store: Optional[Any] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -137,11 +141,12 @@ def create_agora_router(
     elif get_read_store is None:
         raise RuntimeError("Neither read_surface nor get_read_store was configured.")
 
-    # JOURNAL-OWNER-001: every Agora sub-router below shares this same
-    # get_read_store closure, so wrapping it once here is the single
-    # composition point that binds the whole Agora journal surface (reads
-    # and writes) to the canonical governance Decision Journal owner.
-    get_read_store = wrap_get_read_store_with_decision_journal_owner(get_read_store)
+    if get_journal_write_owner is None:
+        if journal_write_owner is not None:
+            get_journal_write_owner = (lambda: journal_write_owner() if callable(journal_write_owner) else journal_write_owner)
+        else:
+            _default_jwo = build_decision_journal_write_owner()
+            get_journal_write_owner = lambda: _default_jwo
 
     if command_store is not None:
         get_command_store = (lambda: command_store() if callable(command_store) else command_store)
@@ -151,6 +156,7 @@ def create_agora_router(
 
     router = APIRouter(tags=["agora"])
     workshop_store = make_workshop_store()
+    ds_store = dataset_store if dataset_store is not None else _default_store()
     workshop_canonical_operations = WorkshopCanonicalOperations(
         approval_resolver=lambda decision_id: get_read_store().get_approval_decision(
             decision_id
@@ -171,6 +177,7 @@ def create_agora_router(
         get_read_store=get_read_store,
         get_audit_store=get_audit_store,
         get_command_store=get_command_store,
+        get_journal_write_owner=get_journal_write_owner,
         idempotency_store=idempotency_store,
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
@@ -219,7 +226,10 @@ def create_agora_router(
         )
         result["journal"] = _read_list(
             "journal",
-            lambda: read_store.list_decision_journal_entries(),
+            lambda: read_store.list_decision_journal_entries(
+                tenant_id=scope.tenant_id if scope else None,
+                user_id=scope.user_id if scope else None,
+            ),
         )
         result["decision_events"] = _read_list(
             "decision_events",
@@ -366,7 +376,15 @@ def create_agora_router(
         workshop_store=workshop_store,
         canonical_operations=workshop_canonical_operations,
     ))
-    router.include_router(create_research_router(**_kw, require_write_role=require_write_role))
+    research_router = create_research_router(
+        **_kw,
+        require_write_role=require_write_role,
+        workshop_store=workshop_store,
+        dataset_store=ds_store,
+    )
+    router.include_router(research_router)
+    router.research_store = getattr(research_router, "store", None)
+    router.research_dispatcher = getattr(research_router, "dispatcher", None)
     router.include_router(create_trading_room_router(
         **_kw,
         require_write_role=require_write_role,
@@ -387,6 +405,7 @@ def create_agora_router(
         create_dataset_extraction_router(
             **_kw,
             require_write_role=require_write_role,
+            dataset_store=ds_store,
         )
     )
     router.include_router(create_interaction_router(
@@ -433,9 +452,26 @@ def create_agora_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> CommandResponse[DecisionJournalEntryDTO]:
         identity = extract_identity(authorization, mfa_token=x_mfa_token)
         (require_journal_write_role or require_write_role)(identity)
+        scope = None
+        requested_tenant = (
+            x_tenant_id
+            or x_pantheon_tenant
+            or (payload.get("tenant_id") if isinstance(payload, dict) else None)
+            or (payload.get("tenantId") if isinstance(payload, dict) else None)
+        )
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=requested_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         agora_service.reject_body_idempotency_key(payload)
         agora_service.require_merge_patch_content_type(content_type)
         resolved_key = agora_service.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -447,15 +483,35 @@ def create_agora_router(
             resolved_key=resolved_key,
             correlation_id=x_correlation_id or x_trace_id,
             x_request_id=x_request_id,
+            tenant_id=scope.tenant_id if scope else None,
+            user_id=scope.user_id if scope else None,
         )
 
     @router.get("/bff/agora/daily")
     def agora_daily_brief(
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return agora_service.get_daily_brief()
+        scope = None
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
+        resolved_tenant = (scope.tenant_id if scope else None) or (x_tenant_id.strip() if x_tenant_id else None) or (x_pantheon_tenant.strip() if x_pantheon_tenant else None)
+        resolved_user = (scope.user_id if scope else None) or (x_user_id.strip() if x_user_id else None) or getattr(identity, "operator_id", None)
+        return agora_service.get_daily_brief(
+            identity=identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
 
     @router.get("/bff/agora/signals")
     def agora_list_signals(
@@ -632,13 +688,26 @@ def create_agora_router(
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
+        scope = None
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         return agora_service.list_journal_entries(
             identity=identity,
             page_token=page_token,
             page_size=page_size,
+            tenant_id=scope.tenant_id if scope else None,
+            user_id=scope.user_id if scope else None,
         )
 
     @router.post("/bff/agora/journal", status_code=201)
@@ -648,15 +717,34 @@ def create_agora_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Any:
         identity = extract_identity(authorization)
         (require_journal_write_role or require_write_role)(identity)
+        scope = None
+        requested_tenant = (
+            x_tenant_id
+            or x_pantheon_tenant
+            or (payload.get("tenant_id") if isinstance(payload, dict) else None)
+            or (payload.get("tenantId") if isinstance(payload, dict) else None)
+        )
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=requested_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         return agora_service.create_journal_entry(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
             x_dry_run=x_dry_run,
+            tenant_id=scope.tenant_id if scope else None,
+            user_id=scope.user_id if scope else None,
         )
 
     @router.get("/bff/agora/training-examples")
@@ -932,6 +1020,7 @@ def create_agora_router(
 
     router.interaction_lifecycle = interaction_lifecycle
     router.workshop_store = workshop_store
+    router.dataset_store = ds_store
     router.proposal_store = proposal_store
     router.trading_room_store = trading_room_store
     router.agora_service = agora_service

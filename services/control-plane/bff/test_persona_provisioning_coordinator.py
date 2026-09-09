@@ -5,6 +5,7 @@ import os
 import sys
 from collections import Counter
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 import pytest
@@ -27,6 +28,7 @@ except ImportError:
         PersonaProvisioningCoordinator,
         deterministic_provisioning_ids,
     )
+from services.registry.paper_strategy_spec import validate_strategy_spec
 from services.registry.strategy_artifact import (
     strategy_artifact_checksum,
     validate_strategy_artifact,
@@ -49,20 +51,63 @@ class TrackingStore(MemoryPersonaProvisioningStore):
         )
 
 
+def _owner_now() -> str:
+    """Owner services stamp second-precision UTC creation times."""
+
+    return datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class FakeOwnerTransport:
-    """Small in-memory implementation of only the owner routes under test."""
+    """Small in-memory implementation of only the owner routes under test.
+
+    Owner-side invariants that the coordinator's bodies must satisfy are
+    modelled with the real owner code where it is pure: Registry's inline
+    StrategySpec checksum and StrategySpec revision lineage rule, and strict
+    Governance's proposal-owner / actor binding, CAS versioning and decided
+    provenance.  ``governance_subject`` is the verified subject of the
+    approval principal the transport would authenticate as; ``governance_roles``
+    are the roles that principal has actually been granted.
+    """
 
     def __init__(
         self,
         *,
         response_loss: set[str] | None = None,
         mutation_failure: set[str] | None = None,
+        governance_subject: str = "pantheon-persona-provisioner",
+        governance_roles: tuple[str, ...] = ("approval_proposer", "automated_gate"),
     ) -> None:
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
         self.calls: list[tuple[str, str, str, dict[str, Any] | None]] = []
         self.response_loss = set(response_loss or set())
         self.mutation_failure = set(mutation_failure or set())
         self.mutations = Counter()
+        self.governance_subject = governance_subject
+        self.governance_roles = set(governance_roles)
+        self.advance_receipts: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _authorization_scope(self) -> dict[str, Any] | None:
+        """Owner-stamped scope for the dedicated dev paper subject, else None.
+
+        Strict Governance derives this from the verified principal's grant;
+        it is never a client body field.
+        """
+
+        try:
+            from services.governance.paper_approval_scope import (
+                DEV_PAPER_AUTHORIZATION_SCOPE,
+                DEV_PAPER_PROVISIONER_SUBJECT,
+                dev_paper_feature_enabled,
+            )
+        except ImportError:  # paper scope owner module not integrated yet
+            return None
+        if self.governance_subject != DEV_PAPER_PROVISIONER_SUBJECT:
+            return None
+        if not dev_paper_feature_enabled():
+            raise PermissionError(
+                "HTTP 403: Dev paper approval principal is not enabled in this environment"
+            )
+        return deepcopy(DEV_PAPER_AUTHORIZATION_SCOPE)
 
     def get(self, owner: str, path: str) -> Mapping[str, Any] | None:
         self.calls.append(("GET", owner, path, None))
@@ -90,10 +135,137 @@ class FakeOwnerTransport:
         binding["status"] = body["status"]
         return deepcopy(binding)
 
+    def _owner_registry_entry(self, registry_id: str) -> dict[str, Any]:
+        """Resolve an approved RegistryEntry from owner state, by exact ID."""
+
+        view = self.objects.get(
+            ("registry", f"/api/registry/strategy-artifacts/{registry_id}")
+        )
+        if view is None:
+            raise AssertionError(f"unknown RegistryEntry: {registry_id}")
+        entry = deepcopy(view["entry"])
+        if entry.get("artifact_state") != "approved":
+            raise AssertionError(f"RegistryEntry {registry_id} is not approved")
+        return entry
+
     def _put(self, owner: str, path: str, value: Mapping[str, Any]) -> dict[str, Any]:
         stored = deepcopy(dict(value))
         self.objects[(owner, path)] = stored
         return stored
+
+    def _read_entry_dict(self, registry_id: str) -> dict[str, Any] | None:
+        """Exact local owner read, as RegistryService._read_entry_dict."""
+
+        for (view_owner, view_path), view in self.objects.items():
+            if view_owner == "registry" and view_path.endswith(f"/{registry_id}"):
+                return deepcopy(view["entry"])
+        return None
+
+    def _advance_registry_entry(self, target: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Model RegistryService.advance_artifact_state's strict approval contract.
+
+        A caller-supplied ``approver`` is retired; approval needs the decision
+        reference, a command key and the caller's exact CAS base
+        (state/version/updated_at).  A same-key identical replay returns the
+        committed row without re-running the transition, a same-key
+        divergent replay is a conflict, and the approval itself is verified
+        with the real shared ``ApprovalEvidence`` exactly as Registry does,
+        including the paper usage context for a scoped decision.
+        """
+
+        from services.governance.approval_authority import ApprovalEvidence, ApprovalInvalid
+
+        view = self.objects[("registry", target)]
+        entry = view["entry"]
+        approving = body["target_state"] == "approved"
+        if approving:
+            if body.get("approver") is not None:
+                raise ValueError(
+                    "HTTP 400: Caller-supplied approver is retired; use a Governance decision reference"
+                )
+            if not body.get("approval_decision_id") or not body.get("command_key"):
+                raise ValueError(
+                    "HTTP 400: Approval requires verified decision reference, actor and command key"
+                )
+            if not all(
+                body.get(key)
+                for key in ("expected_artifact_state", "expected_version", "expected_updated_at")
+            ):
+                raise ValueError(
+                    "HTTP 400: Approval requires the caller artifact base state/version/time"
+                )
+        fields = {
+            key: body.get(key)
+            for key in (
+                "target_state",
+                "approver",
+                "approval_decision_id",
+                "expected_artifact_state",
+                "expected_version",
+                "expected_updated_at",
+            )
+        }
+        receipt_key = (target, body["command_key"])
+        receipt = self.advance_receipts.get(receipt_key)
+        if receipt is not None:
+            if receipt["fields"] != fields:
+                raise ValueError("HTTP 409: command_key replay diverges from the committed command")
+            return deepcopy(receipt["view"])
+        base = (entry["artifact_state"], entry["version"], entry["updated_at"])
+        claimed = (
+            body["expected_artifact_state"],
+            body.get("expected_version") or entry["version"],
+            body.get("expected_updated_at") or entry["updated_at"],
+        )
+        if base != claimed:
+            raise ValueError(f"HTTP 409: stale artifact base {claimed!r} != {base!r}")
+        committed_at = _owner_now()
+        if approving:
+            decision = self.objects.get(
+                ("governance", f"/api/governance/approvals/{body['approval_decision_id']}")
+            )
+            if decision is None:
+                raise ValueError("HTTP 400: Governance denied exact decision read")
+            try:
+                evidence = ApprovalEvidence.model_validate(decision)
+                usage_context = None
+                if getattr(evidence, "authorization_scope", None) is not None:
+                    from services.governance.paper_approval_scope import (
+                        current_environment,
+                        paper_candidate_usage_context,
+                    )
+
+                    usage_context = paper_candidate_usage_context(
+                        deepcopy(entry),
+                        evidence=evidence.model_dump(),
+                        read_entry=self._read_entry_dict,
+                        environment=current_environment(),
+                    )
+                expected = {
+                    "tenant_id": entry["owner_tenant"],
+                    "target_type": "registry_entry",
+                    "target_id": entry["registry_id"],
+                    "target_version": entry["version"],
+                    "candidate_digest": entry["checksum"],
+                }
+                if usage_context is None:
+                    evidence.require_valid(expected=expected)
+                else:
+                    evidence.require_valid(expected=expected, usage_context=usage_context)
+            except (ApprovalInvalid, ValueError) as exc:
+                raise ValueError(f"HTTP 400: {exc}") from exc
+            entry.update(
+                artifact_state="approved",
+                approval_decision_id=body["approval_decision_id"],
+                approver=evidence.actor_id,
+                approved_at=committed_at,
+                approval_evidence=evidence.model_dump(),
+                updated_at=committed_at,
+            )
+        else:
+            entry.update(artifact_state=body["target_state"], updated_at=committed_at)
+        self.advance_receipts[receipt_key] = {"fields": fields, "view": deepcopy(view)}
+        return view
 
     def _apply_post(self, owner: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
         if owner == "capital" and path == "/api/capital-pools":
@@ -105,18 +277,42 @@ class FakeOwnerTransport:
             return self._put(owner, f"/api/capital-pools/{body['pool_id']}", pool)
 
         if owner == "registry" and path == "/api/registry/strategy-specs":
-            entry = {
-                "registry_id": body["registry_id"],
-                "artifact_type": "strategy_spec",
-                "strategy_id": body["strategy_id"],
-                "version": body["version"],
-                "artifact_state": body["artifact_state"],
-                "lineage": deepcopy(body["lineage"]),
-                "storage_ref": {"backend": "inline", "path": "$.entry.metadata.strategy_spec"},
-                "checksum": "sha256:strategy-spec",
-                "approval_decision_id": None,
-                "metadata": {**body["metadata"], "strategy_spec": body["strategy_spec"]},
-            }
+            # The real facade validates the inline StrategySpec against the
+            # canonical schema, computes its checksum and enforces the
+            # per-strategy revision lineage rule before it persists anything;
+            # a rejected revision has no readback.
+            from services.registry.models import RegistryEntry
+            from services.registry.service import (
+                StrategySpecRegisterRequest,
+                _check_strategy_spec_version_lineage,
+                _strategy_spec_register_payload,
+            )
+
+            admitted = _strategy_spec_register_payload(
+                StrategySpecRegisterRequest.model_validate(body)
+            )
+            existing = [
+                RegistryEntry.from_dict(view["entry"])
+                for (view_owner, view_path), view in self.objects.items()
+                if view_owner == "registry"
+                and view_path.startswith("/api/registry/strategy-specs/")
+                and view["entry"]["strategy_id"] == body["strategy_id"]
+            ]
+            _check_strategy_spec_version_lineage(
+                existing,
+                body["strategy_id"],
+                body["version"],
+                admitted.lineage,
+                base_checksum=body.get("base_checksum"),
+            )
+            created_at = _owner_now()
+            entry = RegistryEntry(
+                registry_id=body["registry_id"],
+                owner_tenant=body["metadata"]["tenant_id"],
+                created_at=created_at,
+                updated_at=created_at,
+                **vars(admitted),
+            ).to_dict()
             return self._put(
                 owner,
                 f"/api/registry/strategy-specs/{body['registry_id']}",
@@ -124,73 +320,117 @@ class FakeOwnerTransport:
             )
 
         if owner == "registry" and path == "/api/registry/strategy-artifacts":
-            artifact = deepcopy(body["strategy_artifact"])
-            entry = {
-                "registry_id": body["registry_id"],
-                "artifact_type": "execution_bundle",
-                "strategy_id": artifact["strategy_id"],
-                "version": artifact["version"],
-                "artifact_state": body["artifact_state"],
-                "lineage": deepcopy(artifact["lineage"]),
-                "storage_ref": {
-                    "backend": "inline",
-                    "path": "$.entry.metadata.strategy_artifact",
-                },
-                "checksum": strategy_artifact_checksum(artifact),
-                "approval_decision_id": None,
-                "metadata": {
-                    **deepcopy(body.get("metadata") or {}),
-                    "strategy_artifact": artifact,
-                },
-                "evaluation_summary": deepcopy(body.get("evaluation_summary") or {}),
-                "rollback_target": body.get("rollback_target"),
-            }
+            # The real facade validates the StrategyArtifact schema and builds
+            # the execution_bundle envelope, including its durable checksum.
+            from services.registry.models import RegistryEntry
+            from services.registry.strategy_artifact import (
+                build_strategy_artifact_registry_payload,
+            )
+
+            registry_id, admitted = build_strategy_artifact_registry_payload(body)
+            created_at = _owner_now()
+            entry = RegistryEntry(
+                registry_id=registry_id,
+                owner_tenant=(body.get("metadata") or {}).get("tenant_id"),
+                created_at=created_at,
+                updated_at=created_at,
+                **vars(admitted),
+            ).to_dict()
+            assert entry["checksum"] == strategy_artifact_checksum(body["strategy_artifact"])
             return self._put(
                 owner,
-                f"/api/registry/strategy-artifacts/{body['registry_id']}",
+                f"/api/registry/strategy-artifacts/{registry_id}",
                 {"entry": entry, "deployment_stage": "none"},
             )
 
         if owner == "governance" and path == "/api/governance/approvals":
+            # Strict Governance: the proposal owner must be the verified
+            # subject, the body tenant must be the principal's tenant, the
+            # base version must be zero, and a same-ID decision is a conflict.
+            if body["owner_user_id"] != self.governance_subject:
+                raise PermissionError(
+                    "HTTP 403: Proposal owner and tenant must match verified principal"
+                )
+            if "approval_proposer" not in self.governance_roles and not (
+                self.governance_roles & {"automated_gate", "governance_reviewer"}
+            ):
+                raise PermissionError("HTTP 403: Approval propose role required")
+            if body["expected_version"] != 0:
+                raise ValueError("HTTP 409: Proposal expected_version must be zero")
+            decision_path = f"/api/governance/approvals/{body['decision_id']}"
+            if (owner, decision_path) in self.objects:
+                raise ValueError("HTTP 409: Approval decision already exists")
             decision = {
-                **body,
+                **{key: value for key, value in body.items() if key != "expected_version"},
                 "decision": None,
                 "decision_state": "proposed",
                 "actor_role": None,
                 "actor_id": None,
+                "rationale": None,
+                "created_at": _owner_now(),
+                "decided_at": None,
+                "conditions": [],
+                "evidence_refs": [],
+                "superseded_by": None,
+                "revoked_at": None,
+                "metadata": None,
+                "controller_record_ref": None,
+                "recorded_at": None,
+                "authority_status": None,
+                "authorization_scope": self._authorization_scope(),
+                "version": 1,
+                "event_id": f"event-{body['decision_id']}-1",
             }
-            return self._put(owner, f"/api/governance/approvals/{body['decision_id']}", decision)
+            return self._put(owner, decision_path, decision)
 
-        if owner == "governance" and path.endswith("/review"):
-            target = path.removesuffix("/review")
+        if owner == "governance" and path.endswith(("/review", "/decide")):
+            target = path.rsplit("/", 1)[0]
             decision = self.objects[(owner, target)]
-            decision.update(
-                decision_state="under_review",
-                actor_role=body["actor_role"],
-                actor_id=body["actor_id"],
-            )
-            return decision
-
-        if owner == "governance" and path.endswith("/decide"):
-            target = path.removesuffix("/decide")
-            decision = self.objects[(owner, target)]
+            self._authorization_scope()  # the dedicated grant is re-admitted per command
+            if body["actor_id"] != self.governance_subject or (
+                body["actor_role"] not in self.governance_roles
+            ):
+                raise PermissionError(
+                    "HTTP 403: Body actor and role must match verified principal"
+                )
+            if body["expected_version"] != decision["version"]:
+                raise ValueError("HTTP 409: Approval base version is stale")
+            decision["version"] += 1
+            decision["event_id"] = f"event-{decision['decision_id']}-{decision['version']}"
+            if path.endswith("/review"):
+                if decision["decision_state"] != "proposed":
+                    raise ValueError("HTTP 400: Can only accept review from 'proposed' state")
+                decision.update(
+                    decision_state="under_review",
+                    actor_role=body["actor_role"],
+                    actor_id=body["actor_id"],
+                )
+                return decision
+            if decision["decision_state"] != "under_review":
+                raise ValueError("HTTP 400: Can only decide from 'under_review'")
+            decided_at = _owner_now()
             decision.update(
                 decision_state="decided",
                 decision=body["outcome"],
+                rationale=body["rationale"],
                 actor_role=body["actor_role"],
                 actor_id=body["actor_id"],
+                evidence_refs=deepcopy(body.get("evidence_refs") or []),
+                conditions=list(body.get("conditions") or []),
+                decided_at=decided_at,
+                recorded_at=decided_at,
+                authority_status="authoritative",
+                controller_record_ref=(
+                    f"governance-controller://approval-{decision['decision_id']}"
+                ),
             )
+            for field in ("candidate_digest", "proof_digest", "expires_at", "session_id"):
+                if body.get(field) is not None:
+                    decision[field] = body[field]
             return decision
 
         if owner == "registry" and path.endswith("/advance"):
-            target = path.removesuffix("/advance")
-            view = self.objects[(owner, target)]
-            view["entry"].update(
-                artifact_state=body["target_state"],
-                approval_decision_id=body["approval_decision_id"],
-                approver=body["approver"],
-            )
-            return view
+            return self._advance_registry_entry(path.removesuffix("/advance"), body)
 
         if owner == "capital" and path == "/api/bindings":
             binding = {
@@ -211,7 +451,10 @@ class FakeOwnerTransport:
             return binding
 
         if owner == "deployment" and path == "/api/deployment/plans":
-            entry = body["registry_entry"]
+            # Deployment is the owner reader: it resolves the RegistryEntry by
+            # the exact registry_id it was given, exactly like the real service.
+            # It must never trust a caller-embedded snapshot.
+            entry = self._owner_registry_entry(body["registry_id"])
             plan = {
                 "plan_id": body["plan_id"],
                 "approval_decision_id": body["approval_decision_id"],
@@ -310,6 +553,8 @@ def _coordinator(
     registrar,
     *,
     lease_seconds: int = 60,
+    actor_id: str = "pantheon-persona-provisioner",
+    governance_actor_id: str | None = None,
 ) -> PersonaProvisioningCoordinator:
     return PersonaProvisioningCoordinator(
         store=store,
@@ -317,7 +562,20 @@ def _coordinator(
         schedule_registrar=registrar,
         lease_owner="test-worker",
         lease_seconds=lease_seconds,
+        actor_id=actor_id,
+        governance_actor_id=governance_actor_id,
     )
+
+
+def _owner_entry(transport: FakeOwnerTransport, kind: str, registry_id: str) -> dict[str, Any]:
+    """The durable owner-side RegistryEntry, by exact ID."""
+
+    return deepcopy(transport.objects[("registry", f"/api/registry/{kind}/{registry_id}")]["entry"])
+
+
+def _plus_24h(timestamp: str) -> str:
+    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    return (parsed + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _post_payload(
@@ -408,8 +666,8 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert baseline["strategy_id"] == ids.strategy_id
     assert baseline["version"] == ids.baseline_version
     assert baseline["artifact_state"] == "candidate"
-    assert baseline["strategy_spec"]["capital_scale_pct"] == 0.0
-    assert baseline["strategy_spec"]["fail_closed_baseline"] is True
+    assert baseline["strategy_spec"]["metadata"]["capital_scale_pct"] == 0.0
+    assert baseline["strategy_spec"]["metadata"]["fail_closed_baseline"] is True
 
     baseline_approval = _post_payload(
         transport,
@@ -454,8 +712,28 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert candidate["artifact_state"] == "candidate"
     assert candidate["rollback_target"] == ids.baseline_version
     assert candidate["metadata"]["rollback_target_registry_id"] == ids.baseline_registry_id
-    assert candidate["strategy_spec"]["persona_id"] == record.persona_id
-    assert candidate["strategy_spec"]["capital_pool_id"] == ids.capital_pool_id
+    assert candidate["strategy_spec"]["metadata"]["persona_id"] == record.persona_id
+    assert candidate["strategy_spec"]["metadata"]["capital_pool_id"] == ids.capital_pool_id
+    # The forward revision names its exact approved parent and, like the
+    # baseline, admits zero live capital in a paper-only execution context.
+    # Both inline specs satisfy the canonical StrategySpec schema Registry
+    # validates and hashes, from persisted request data only.
+    assert candidate["lineage"]["parent_registry_ids"] == [ids.baseline_registry_id]
+    assert "parent_registry_ids" not in baseline["lineage"]
+    for spec_payload in (baseline, candidate):
+        spec = spec_payload["strategy_spec"]
+        assert validate_strategy_spec(spec) == []
+        assert spec["strategy_id"] == ids.strategy_id
+        assert spec["execution_profile"]["execution_mode_hint"] == "paper"
+        assert spec["provenance"]["created_at"] == record.created_at
+        assert spec["provenance"]["created_by"] == "pantheon-persona-provisioner"
+        assert spec["metadata"]["capital_scale_pct"] == 0.0
+        assert spec["metadata"]["execution_context"] == "paper"
+        assert spec["metadata"]["requested_by"] == "operator-a"
+        assert spec_payload["evaluation_summary"]["capital_scale_pct"] == 0.0
+        assert spec_payload["evaluation_summary"]["execution_context"] == "paper"
+        assert spec_payload["metadata"]["execution_context"] == "paper"
+        assert spec_payload["metadata"]["capital_scale_pct"] == 0.0
 
     approval = _post_payload(
         transport,
@@ -465,6 +743,45 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert approval["target_type"] == "registry_entry"
     assert approval["target_id"] == ids.registry_id
     assert approval["risk_level"] == "low"
+    # Every proposal binds the durable owner checksum of its exact target and
+    # a finite expiry anchored to that entry's owner creation time; the
+    # decision retains both.  The proposal owner is the Governance subject,
+    # never the human requester.
+    for decision_id, kind, registry_id in (
+        (ids.baseline_approval_decision_id, "strategy-specs", ids.baseline_registry_id),
+        (
+            ids.baseline_strategy_artifact_approval_decision_id,
+            "strategy-artifacts",
+            ids.baseline_strategy_artifact_id,
+        ),
+        (ids.approval_decision_id, "strategy-specs", ids.registry_id),
+        (
+            ids.strategy_artifact_approval_decision_id,
+            "strategy-artifacts",
+            ids.strategy_artifact_id,
+        ),
+    ):
+        owner_entry = _owner_entry(transport, kind, registry_id)
+        proposal = _post_payload(
+            transport,
+            "/api/governance/approvals",
+            identity=("decision_id", decision_id),
+        )
+        decision = _post_payload(
+            transport,
+            f"/api/governance/approvals/{decision_id}/decide",
+        )
+        assert owner_entry["checksum"].startswith("sha256:")
+        assert proposal["candidate_digest"] == owner_entry["checksum"]
+        assert proposal["expires_at"] == _plus_24h(owner_entry["created_at"])
+        assert decision["candidate_digest"] == proposal["candidate_digest"]
+        assert decision["expires_at"] == proposal["expires_at"]
+        assert proposal["owner_user_id"] == "pantheon-persona-provisioner"
+        assert proposal["owner_user_id"] != "operator-a"
+        persisted = transport.objects[("governance", f"/api/governance/approvals/{decision_id}")]
+        assert persisted["expires_at"] == _plus_24h(owner_entry["created_at"])
+        assert persisted["expires_at"] <= _plus_24h(persisted["created_at"])
+        assert persisted["candidate_digest"] == owner_entry["checksum"]
     artifact = _post_payload(
         transport,
         "/api/registry/strategy-artifacts",
@@ -497,25 +814,47 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     )
     assert review["actor_role"] == "automated_gate"
     assert decide["actor_role"] == "automated_gate"
+    assert review["actor_id"] == decide["actor_id"] == "pantheon-persona-provisioner"
+    for bundle in (baseline_artifact, artifact):
+        assert bundle["evaluation_summary"]["execution_context"] == "paper"
+        assert bundle["evaluation_summary"]["capital_scale_pct"] == 0.0
+        assert bundle["metadata"]["execution_context"] == "paper"
+        assert bundle["metadata"]["capital_scale_pct"] == 0.0
+        assert bundle["metadata"]["persona_id"] == record.persona_id
+        # No binding_intent: its schema-mandatory observed_* fields describe a
+        # RuntimeBinding this coordinator has neither created nor observed.
+        assert "binding_intent" not in bundle["strategy_artifact"]
+        assert bundle["strategy_artifact"]["parameters"]["symbols"] == (
+            candidate["strategy_spec"]["market_scope"]["symbols"]
+        )
 
-    advance = _post_payload(
-        transport,
-        f"/api/registry/strategy-specs/{ids.registry_id}/advance",
-    )
-    assert advance == {
-        "target_state": "approved",
-        "approver": "pantheon-persona-provisioner",
-        "approval_decision_id": ids.approval_decision_id,
-    }
-    artifact_advance = _post_payload(
-        transport,
-        f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}/advance",
-    )
-    assert artifact_advance == {
-        "target_state": "approved",
-        "approver": "pantheon-persona-provisioner",
-        "approval_decision_id": ids.strategy_artifact_approval_decision_id,
-    }
+    # Registry approval: the approver is the Governance decision, the actor
+    # is the transport subject (never a body field), and the CAS base is the
+    # exact candidate row read back before the transition.
+    for kind, registry_id, decision_id in (
+        ("strategy-specs", ids.registry_id, ids.approval_decision_id),
+        (
+            "strategy-artifacts",
+            ids.strategy_artifact_id,
+            ids.strategy_artifact_approval_decision_id,
+        ),
+    ):
+        advance = _post_payload(transport, f"/api/registry/{kind}/{registry_id}/advance")
+        assert "approver" not in advance
+        assert advance["target_state"] == "approved"
+        assert advance["approval_decision_id"] == decision_id
+        assert advance["expected_artifact_state"] == "candidate"
+        approved_entry = _owner_entry(transport, kind, registry_id)
+        assert advance["expected_version"] == approved_entry["version"]
+        assert advance["expected_updated_at"] < approved_entry["updated_at"] or (
+            advance["expected_updated_at"] == approved_entry["updated_at"]
+        )
+        assert advance["command_key"] == (
+            f"persona-provisioning:{ids.token}:advance:{registry_id}:approved:"
+            + advance["command_key"].rsplit(":", 1)[1]
+        )
+        assert approved_entry["approver"] == "pantheon-persona-provisioner"
+        assert approved_entry["approval_evidence"]["decision_id"] == decision_id
 
     binding = _post_payload(transport, "/api/bindings")
     assert binding["binding_id"] == ids.persona_capital_binding_id
@@ -533,13 +872,10 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     )
     assert plan["metadata"]["strategy_spec_registry_id"] == ids.registry_id
     assert plan["metadata"]["strategy_artifact_id"] == ids.strategy_artifact_id
-    assert plan["registry_entry"]["artifact_state"] == "approved"
-    assert plan["registry_entry"]["artifact_type"] == "execution_bundle"
-    assert plan["registry_entry"]["metadata"]["strategy_artifact"]["artifact_id"] == (
-        ids.strategy_artifact_id
-    )
-    assert plan["approval_decision"]["decision"] == "approved"
-    assert plan["approval_decision"]["target_id"] == ids.strategy_artifact_id
+    # Deployment owns the Registry/Governance reads; the coordinator sends the
+    # exact IDs and never a client-side snapshot of owner state.
+    assert "registry_entry" not in plan
+    assert "approval_decision" not in plan
     assert plan["rollback"]["target_artifact_id"] == ids.baseline_strategy_artifact_id
     assert plan["rollback"]["target_version"] == ids.baseline_version
     assert plan["rollback"]["action_type"] == "pause_then_replace"
@@ -548,8 +884,7 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     dispatch = _post_payload(transport, dispatch_path)
     assert dispatch["saga_id"] == ids.deployment_saga_id
     assert dispatch["metadata"]["persona_capital_binding_id"] == ids.persona_capital_binding_id
-    assert dispatch["registry_entry"]["registry_id"] == ids.strategy_artifact_id
-    assert dispatch["registry_entry"]["artifact_type"] == "execution_bundle"
+    assert "registry_entry" not in dispatch
     assert "runtime_id" not in dispatch
     assert "runtime_binding_id" not in dispatch
     assert {call[1] for call in transport.calls} == {
@@ -697,8 +1032,21 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     assert plan.rollback.target_artifact_id == ids.baseline_strategy_artifact_id
     assert plan.rollback.target_version == ids.baseline_version
     assert plan.binding_id is None
-    assert plan.registry_entry["artifact_type"] == "execution_bundle"
     assert dispatch.saga_id == ids.deployment_saga_id
+
+    # The forbidden client snapshots are gone from both wire requests; the owner
+    # objects are resolved by exact ID from owner state, as Deployment does.
+    assert not hasattr(plan, "registry_entry")
+    assert not hasattr(plan, "approval_decision")
+    assert not hasattr(dispatch, "registry_entry")
+    owner_registry_entry = transport._owner_registry_entry(plan.registry_id)
+    owner_approval_decision = transport.objects[
+        ("governance", f"/api/governance/approvals/{plan.approval_decision_id}")
+    ]
+    assert owner_registry_entry["artifact_type"] == "execution_bundle"
+    assert owner_registry_entry["approval_decision_id"] == plan.approval_decision_id
+    assert owner_approval_decision["decision"] == "approved"
+    assert owner_approval_decision["target_id"] == ids.strategy_artifact_id
 
     governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
     sys.path.insert(0, governance_dir)
@@ -707,8 +1055,8 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     domain_plan = StagePlanner().create_plan(
         plan_id=plan.plan_id,
         approval_decision_id=plan.approval_decision_id,
-        approval_decision=plan.approval_decision,
-        registry_entry=plan.registry_entry,
+        approval_decision=owner_approval_decision,
+        registry_entry=owner_registry_entry,
         capital_pool_id=plan.capital_pool_id,
         target_stage=plan.target_stage.value,
         current_stage=plan.current_stage.value if plan.current_stage else None,

@@ -5,7 +5,10 @@ import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import pytest
+from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
 
 from services.registry.strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
@@ -81,6 +84,8 @@ def _facts():
         "expires_at": "2026-07-15T00:00:00Z",
         "revoked_at": None,
     }
+    plan["metadata"] = {"tenant_id": "tenant-unit"}
+    approval = approval_snapshot(candidate_digest=registry["entry"]["checksum"], **approval)
     capital_pool = {
         "pool_id": request["capital_pool_id"],
         "status": "active",
@@ -159,6 +164,8 @@ def _verify(
         registry_base_url="http://registry:8087",
         governance_base_url="http://governance:8082",
         capital_base_url="http://capital:8092",
+        approval_reader=SnapshotApprovalReader(approval),
+        registry_fetch_json=lambda url, timeout: registry,
         fetch_json=_fetcher(
             registry,
             approval,
@@ -440,7 +447,7 @@ def test_http_authority_failures_distinguish_retryable_from_rejected(
             fp=None,
         )
 
-    monkeypatch.setattr(authority, "urlopen", fail_read)
+    monkeypatch.setattr(authority, "build_opener", lambda *_: SimpleNamespace(open=fail_read))
 
     with pytest.raises(expected_type) as raised:
         authority._fetch_json("http://authority.test/resource", 1.0)
@@ -468,7 +475,7 @@ def test_deployment_authority_read_sends_service_token_and_tenant(monkeypatch):
 
     monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "runtime:service")
     monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-runtime")
-    monkeypatch.setattr(authority, "urlopen", read)
+    monkeypatch.setattr(authority, "build_opener", lambda *_: SimpleNamespace(open=read))
 
     headers = authority._deployment_request_headers()
     result = authority._fetch_json(

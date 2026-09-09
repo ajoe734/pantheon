@@ -184,3 +184,123 @@ Smoke evidence captured on `2026-04-16`:
 - artifacts: `/tmp/openclaw-bp5-oss-002.fXeSom/smoke-results.json`
 - result: `ingest`, `review`, `retrain`, and `deploy` all passed against the
   pinned upstream runtime
+
+## 10. Unified ordinary-turn transport (SIMPLIFY-OPENCLAW-001)
+
+Ordinary `invoke`, `stream`, structured extraction, and readiness answer probes
+use the Gateway `POST /v1/responses` builder and terminal normalization in
+`assistant_openclaw_provider.py`. Small and large prompts follow the same path;
+ordinary turns require no CLI binary. Administrative cron/auth CLI and read-only
+kernel delegation retain their existing owners.
+
+The request selects `openclaw/<agentId>` and carries an admitted explicit model
+in `X-OpenClaw-Model`. A successful explicit override does not change the next
+ordinary request's model. Invoke, stream, and readiness resolve the main agent
+to `OPENCLAW_PRIMARY_MODEL` (or the provider default); non-default agents retain
+their Gateway-configured model unless an admitted explicit override is given.
+Readiness neither retries on another model nor changes future routing. Tenant, actor,
+and conversation components are positionally encoded and escaped in the
+upstream session key. Both mounted turn routes resolve the conversation from
+`metadata.session_user`, then the legacy `metadata.session_id`; an internal
+explicit session ID takes precedence, including governed invocation IDs.
+History, context, attachments, and trace use the same
+builder. Socket reads, TLS reads, and SSE consumption share a total deadline.
+Only one normalized terminal result is emitted, including interruption,
+timeout, refusal, incomplete output, and upstream failures.
+
+Governed Persona `invoke` and `invoke/stream` share the existing durable
+invocation ledger. An atomic SQLite claim is committed before upstream I/O;
+concurrent requests see `in_doubt` rather than issuing a second turn. A
+completed key replays across either route, preserving exact text, response ID,
+and reported usage; streaming still forwards live deltas on the first attempt.
+The terminal envelope is committed before a stream publishes its terminal
+result. Crash, cancellation, or failed persistence leaves the claim fenced.
+Changed content or authenticated operator returns an idempotency conflict.
+Both routes use the admitted tenant, authenticated actor, and the same `pint-`
+identity derived from the trimmed idempotency key. Previously stored fingerprints
+that lack the authenticated operator fail closed as conflicts; they are never
+silently resubmitted or replayed to an unbound actor.
+
+`POST /api/openclaw-adapter/assistant/providers/openclaw/structured` accepts a
+schema for the fixed data-only `emit_extraction` tool. Arbitrary caller tool
+names, tool definitions, tool choice, and unadmitted agents are rejected.
+Returned arguments undergo recursive schema validation; wrong/missing calls
+and invalid arguments are failures, never domain commands. The pinned Gateway
+normally yields a function call in `response.completed` with nested status
+`incomplete`; this tool handback differs from incomplete text generation.
+The adapter retains the function-call identity and reported usage.
+
+The Gateway agent's own native-tool policy remains a necessary server-side
+boundary: configure the extraction agent with `tools.deny: ["*"]` so only the
+request's data-emission client tool is offered. A client `tool_choice` or
+post-response validation alone cannot prevent native execution. Before each
+mounted extraction request, the adapter reads `config.get` through its existing
+administrative Gateway RPC, using the same URL and credential as the HTTP turn.
+The snapshot must be valid and contain exactly one selected default agent with
+`tools.deny: ["*"]`. Missing, mismatched, malformed or unavailable policy returns
+a typed 503 before any model request. No local mirror or prior successful probe
+substitutes for this check. Policy RPC startup/read and the HTTP turn share the
+configured invocation deadline: the RPC can use its remaining budget and HTTP
+receives only the time left after verification. There is no separate ten-second
+policy cap or retry, and exhaustion prevents model dispatch. This administrative read requires the CLI; ordinary
+invoke/stream/readiness still use only HTTP. No policy is written automatically.
+The pinned local fixture verifies both pre-dispatch rejection without policy
+and native execution denial with policy. Configuration administrators must keep
+the denial in force during admitted extraction turns; this source change does
+not attest to any hosted deployment's configuration.
+
+Cron completion in `services/control-plane/cron/openclaw_client.py` requires
+both `jobId` and `runId` to match. The pinned Gateway's exact `{id, runId}`
+`cron.runs` lookup runs before pagination. Missing run IDs fail as unknown
+without replaying `cron.run`; add, dispatch, RPC polling and sleep consume one
+deadline. A late result is never accepted as success. Failed, cancelled, timed
+out, and skipped runs are terminal failures.
+
+### Reproduce local Gateway acceptance
+
+Human/Ops clarified on 2026-09-06 that a pinned, reproducible local Gateway and
+synthetic model fixture satisfy this task's functional acceptance; real account
+credentials are not required. The opt-in runner is embedded in the declared
+transport test file:
+
+```bash
+SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-replay-100.json timeout 1200 \
+  .venv-pantheon/bin/python3 \
+  services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py
+```
+
+It uses the immutable local image ID recorded in `evidence.json` (built from
+`integrations/openclaw/gateway/Dockerfile`, upstream 2026.7.1). Docker must have
+that image available. The runner starts and removes its own uniquely named
+container, mounts only a temporary synthetic workspace, uses loopback ports
+and test-only tokens, and runs a deterministic local OpenAI-completions model.
+It never mounts real credentials or changes another container. Ordinary pytest
+collection does not start the container.
+
+The runner asserts positive extraction, invalid arguments, wrong/missing tool,
+and native `exec` denial against the actual Gateway. It then loads the CLI
+provider from the frozen dev SHA, runs 100 prompts per arm, and records session
+cold/warm TTFT/full p50/p95, model usage, errors, and transport subprocesses.
+Subprocess counts come from actual CPython `subprocess.Popen` audit events
+inside each synchronous replay attempt, attributed by thread-local arm/case
+identity. Per-attempt event records include the executable basename and thread
+identity, excluding argv and environment. Concurrent attempts, fixture setup,
+and cleanup cannot contribute to another attempt's count. These are adapter
+process invocations (including CLI's `docker exec`), not descendants inside
+the shared Gateway. Failed process creation still counts as an attempted
+invocation and fails replay acceptance. Regression tests launch real children
+through captured subprocess aliases and inject an HTTP-side child to prove
+extra invocations are detected. Earlier fixed-count replay rows are historical
+and do not establish measured subprocess totals.
+Ten agent sessions each receive ten sequential turns; up to four sessions run
+concurrently. CLI TTFT means text availability from its buffered invoke API;
+HTTP TTFT is the first normalized delta. Usage comes from the synthetic model
+and does not measure tokenizer behavior or external model cost. CLI timing
+includes Docker exec overhead. These are local transport measurements, not
+production model quality, production latency, or hosted deployment proof.
+
+The task-scoped evidence manifest records exact identities, executed checks,
+results, and limitations. Earlier corrective-pass records remain in git history.
+The separate `integrations/openclaw/adapter/cron_transport.py` production Docker
+transport still has a most-recent-run fallback; that file is outside this task's
+artifact grant and needs an explicit scope handoff to its owner.

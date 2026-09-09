@@ -616,6 +616,7 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -933,6 +934,7 @@ jobs:
           DEV_FE_PUBLIC_HOST: ${{ vars.DEV_FE_PUBLIC_HOST || 'app.dev.mvl-cap.tw' }}
           DEV_FE_STATIC_ROOT: ${{ vars.DEV_FE_STATIC_ROOT || '/var/www/pantheon-dev-fe' }}
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -1140,6 +1142,7 @@ jobs:
           # Must be provisioned as repo/environment secrets by a human; deploy_nonprod_vm.sh
           # refuses to deploy dev with DEV_BFF_AUTH_MODE=strict if these are empty.
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           # External browser IdP verification uses only public identity
@@ -1283,23 +1286,77 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
+          EXPECTED_BFF_SHA: ${{ steps.target.outputs.sha }}
+          EXPECTED_FE_SHA: ${{ steps.frontend.outputs.sha }}
+          DEV_PAPER_RUN_ID: ${{ github.run_id }}
+          DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
+          DEV_PAPER_PHASE: paper_bootstrap
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
           unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          [[ "${EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
             52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
+          # The guard binary above is the immutable pinned trust root; the
+          # guarded command below comes from the accepted dev-tip controller
+          # checkout, so a merged CAPTURE change here takes effect on the
+          # next deploy run without moving the lease guard's pin.
+          #
+          # The guarded script runs, inside the same guarded child so
+          # failure diagnostics can still be captured before quarantine:
+          #   docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5
+          diagnostics_script="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/run_dev_paper_baseline_with_diagnostics.sh"
+          [[ -f "${diagnostics_script}" && ! -L "${diagnostics_script}" ]]
+          collector="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/collect_dev_paper_diagnostics.py"
+          [[ -f "${collector}" && ! -L "${collector}" ]]
+          diagnostic_dir="${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT}"
+          mkdir -p "${diagnostic_dir}"
+          # Predeclare fixed run/attempt runner paths and initialize terminal
+          # evidence before guard invocation. A cancellation or lease loss that
+          # terminates the step mid-flight still leaves behind durable status on
+          # disk, and the upload step finds it via the fixed path without depending
+          # on outputs written only after the guarded command returns.
+          echo "diagnostic_dir=${diagnostic_dir}" >> "${GITHUB_OUTPUT}"
+          echo "diagnostics_file=${diagnostic_dir}/diagnostics.json" >> "${GITHUB_OUTPUT}"
+          echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
+          echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
+          python3 -c "import datetime as dt, json, sys; doc = {'schemaVersion': 1, 'collectionStatus': 'not_started', 'bootstrapExit': None, 'collectedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'collectorExit': None, 'collectorErrorCategory': None, 'collectorStderrSummary': None}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(doc, sort_keys=True) + '\n')" "${diagnostic_dir}/collection-status.json"
+          baseline_status=0
+          # Collection happens inside this same guarded child, before the
+          # guard observes the failure and quarantines the lease/heartbeat.
+          # A later, separate guard invocation cannot do this: the guard's
+          # own EXIT trap already stops the heartbeat for quarantine as soon
+          # as this command returns non-zero.
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
-            bash -c '
-              set -euo pipefail
-              "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
-                "set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5"
-            '
+            DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
+            DEV_PAPER_DIAGNOSTICS_COLLECTOR="${collector}" \
+            EXPECTED_FE_SHA="${EXPECTED_FE_SHA}" \
+            DEV_PAPER_RUN_ID="${DEV_PAPER_RUN_ID}" \
+            DEV_PAPER_ATTEMPT="${DEV_PAPER_ATTEMPT}" \
+            DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
+            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            "${diagnostics_script}" || baseline_status=$?
+          exit "${baseline_status}"
+
+      - name: Upload dev paper failure diagnostics
+        id: paper_bootstrap_diagnostics_upload
+        if: ${{ always() && steps.paper_bootstrap.conclusion != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/diagnostics.json
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/collection-status.json
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Dev evolution dispatch hosted probe
         id: evolution-dispatch-probe
@@ -1682,6 +1739,7 @@ jobs:
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -2366,6 +2424,7 @@ jobs:
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}

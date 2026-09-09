@@ -54,7 +54,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, Header, Request
@@ -96,8 +96,10 @@ from assistant_codex_provider import (
 from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderError, ClaudeProviderResult
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
+    DEFAULT_AGENT_ID as OPENCLAW_DEFAULT_AGENT_ID,
     OpenClawProviderError as GatewayOpenClawProviderError,
     delegates_kernel_mode_to_codex,
+    derive_session_user,
 )
 from assistant_provider_registry import AssistantProviderRegistry, AssistantProviderRegistryError
 from assistant_provider_runtime import (
@@ -845,6 +847,17 @@ class AssistantProviderInvokeRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     messages: Optional[List[Dict[str, Any]]] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+    # An explicit model override is threaded through to the provider's
+    # `X-OpenClaw-Model` header (see `_invoke_upstream`/the stream handler
+    # below) -- but only when it is an *authorized* override: paired with a
+    # governed non-default `agent_id` + `persona_admission` (the same
+    # admission gate `validate_agent_selection` already enforces below).
+    # Without that pairing there is no authorization surface for a model
+    # override on the default Management-AI agent, so it is rejected
+    # (`reject_unauthorized_model`) rather than silently ignored, which
+    # would let a caller believe an override took effect when it never
+    # reached the upstream request at all.
+    model: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_agent_selection(self) -> "AssistantProviderInvokeRequest":
@@ -854,6 +867,56 @@ class AssistantProviderInvokeRequest(BaseModel):
             raise ValueError("agent_id and persona_admission must be supplied together")
         if self.agent_id != self.persona_admission.agent_id:
             raise ValueError("agent_id does not match the governed Persona admission")
+        return self
+
+    @model_validator(mode="after")
+    def reject_unauthorized_model(self) -> "AssistantProviderInvokeRequest":
+        if self.model is not None and self.persona_admission is None:
+            raise ValueError(
+                "an explicit model override requires a governed non-default agent_id "
+                "with a matching persona_admission; the default agent is routed by "
+                "agent_id only"
+            )
+        return self
+
+
+class AssistantProviderStructuredInvokeRequest(BaseModel):
+    """Restricted structured-data extraction request.
+
+    Accepts only a caller-declared JSON-schema `parameters` body
+    (`extraction_schema`) for the fixed, server-approved `emit_extraction`
+    tool. A caller may never supply its own `tools`/`tool_choice` — that
+    would let it smuggle in an arbitrary shell/tool definition.
+    """
+
+    mode: str = "user"
+    prompt: str
+    agent_id: Optional[str] = None
+    session_id: Optional[str] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    extraction_schema: Dict[str, Any]
+    tools: Optional[Any] = None
+    tool_choice: Optional[Any] = None
+    # See AssistantProviderInvokeRequest.model's comment -- no mounted route
+    # threads an explicit model override through; declared here only so it
+    # can be explicitly rejected rather than silently dropped.
+    model: Optional[str] = None
+
+    @model_validator(mode="after")
+    def reject_caller_supplied_tools(self) -> "AssistantProviderStructuredInvokeRequest":
+        if self.tools is not None or self.tool_choice is not None:
+            raise ValueError(
+                "caller-supplied tool definitions are not accepted; only extraction_schema is allowed"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def reject_explicit_model(self) -> "AssistantProviderStructuredInvokeRequest":
+        if self.model is not None:
+            raise ValueError(
+                "an explicit model override is not supported on this mounted route; "
+                "routing is by agent_id only"
+            )
         return self
 
 
@@ -1388,23 +1451,88 @@ class _PersonaOpinionInvocationInDoubt(RuntimeError):
     pass
 
 
-def _invoke_persona_opinion_idempotently(
-    req: AssistantProviderInvokeRequest,
+def _persona_opinion_admission_error(
+    req: "AssistantProviderInvokeRequest",
     *,
-    idempotency_key: str,
-    invoke_fn: Any,
-) -> tuple[int, Dict[str, Any]]:
-    """Fence and replay an exact governed Persona provider attempt.
+    idempotency_key: Optional[str],
+    mode: str,
+    metadata: Dict[str, Any],
+) -> Optional[Tuple[int, Dict[str, Any]]]:
+    """Shared Persona-opinion admission/runtime-policy/live-agent/idempotency
+    fencing check.
 
-    The running claim is committed before the upstream CLI is called.  If the
-    adapter dies after OpenClaw has accepted the call but before the terminal
-    response is committed, a restart returns ``in_doubt`` and never calls the
-    provider again.  This deliberately prefers an honest missing opinion over
-    duplicate provider work.
+    Every dispatch path that can route a `persona_admission` request to an
+    upstream agent (the ordinary `/invoke` endpoint and the `/invoke/stream`
+    SSE variant) MUST call this before starting the upstream attempt so a
+    caller cannot bypass admission by hitting a different route with the
+    same syntactically valid Persona request. Returns `None` and mutates
+    `metadata` in place on success; returns `(status_code, content)` on
+    rejection.
     """
+    if req.persona_admission is None:
+        return None
+    if not str(idempotency_key or "").strip():
+        return 422, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_IDEMPOTENCY_REQUIRED",
+            "message": "Idempotency-Key is required for governed Persona opinion invocation.",
+        }
+    if mode != "user":
+        return 422, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_MODE_DENIED",
+            "message": "Governed Persona opinion agents may only run in user mode.",
+        }
+    try:
+        _assert_persona_opinion_admitted(req.persona_admission)
+        _assert_persona_opinion_runtime_policy(req.persona_admission.agent_id)
+        _require_live_persona_opinion_agent(req.persona_admission.agent_id)
+    except _PersonaOpinionAgentNotReady as exc:
+        resp = _persona_opinion_agent_not_ready_response(exc)
+        return resp.status_code, json.loads(bytes(resp.body))
+    except GatewayOpenClawProviderError as exc:
+        resp = _persona_opinion_gateway_error_response(exc)
+        return resp.status_code, json.loads(bytes(resp.body))
+    except (ValueError, RuntimeError) as exc:
+        return 403, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_ADMISSION_DENIED",
+            "message": str(exc),
+        }
+    requested_tools = metadata.get("allowed_tools")
+    if requested_tools not in (None, []):
+        return 422, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_TOOL_AUTHORITY_DENIED",
+            "message": "Governed Persona opinion invocation has an empty tool allowlist.",
+        }
+    metadata.update({
+        "tenant_id": req.persona_admission.tenant_id,
+        "allowed_tools": [],
+        "execution_authority": "none",
+        "order_submitted": False,
+        "broker_called": False,
+        "capital_changed": False,
+        "runtime_bound": False,
+        "lifecycle_promoted": False,
+        "policy_mutated": False,
+        "persona_memory_mutated": False,
+    })
+    return None
 
+
+def _claim_persona_opinion_invocation(
+    req: AssistantProviderInvokeRequest, *, idempotency_key: str, operator_id: str = "",
+) -> tuple[str, Optional[tuple[int, Dict[str, Any]]]]:
+    """Commit one exact-attempt claim, or return its durable terminal replay.
+
+    Both routes use the same actor-bound fingerprint and existing ledger.
+    Legacy unbound fingerprints fail closed on conflict rather than replaying
+    an opinion to a different actor or silently submitting another attempt.
+    """
     fingerprint = hashlib.sha256(
-        json.dumps(req.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps({"request": req.model_dump(mode="json"), "operator_id": operator_id},
+                   sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
@@ -1419,6 +1547,9 @@ def _invoke_persona_opinion_idempotently(
                 completed_at TEXT
             )
         """)
+        # Serialize lookup plus insert across connections/processes. Release the
+        # transaction before upstream I/O so competing callers see running.
+        connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             "SELECT request_fingerprint,state,http_status,response_json "
             "FROM persona_opinion_invocation_replays WHERE idempotency_key=?",
@@ -1430,7 +1561,7 @@ def _invoke_persona_opinion_idempotently(
                     "Idempotency-Key was already used for different Persona invocation content"
                 )
             if row[1] == "completed" and row[2] is not None and row[3]:
-                return int(row[2]), json.loads(str(row[3]))
+                return fingerprint, (int(row[2]), json.loads(str(row[3])))
             raise _PersonaOpinionInvocationInDoubt(
                 "The exact provider attempt was already claimed and has no terminal replay; duplicate invocation is fenced"
             )
@@ -1441,7 +1572,12 @@ def _invoke_persona_opinion_idempotently(
         )
         connection.commit()
 
-    payload = invoke_fn()
+    return fingerprint, None
+
+
+def _complete_persona_opinion_invocation(
+    *, idempotency_key: str, fingerprint: str, payload: Dict[str, Any],
+) -> None:
     response_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
         updated = connection.execute(
@@ -1454,7 +1590,108 @@ def _invoke_persona_opinion_idempotently(
                 "Provider returned but its durable invocation claim could not be finalized"
             )
         connection.commit()
+
+
+def _invoke_persona_opinion_idempotently(
+    req: AssistantProviderInvokeRequest,
+    *,
+    idempotency_key: str,
+    invoke_fn: Any,
+    operator_id: str = "",
+) -> tuple[int, Dict[str, Any]]:
+    """Fence a crash/in-doubt attempt instead of resubmitting upstream work."""
+    fingerprint, replay = _claim_persona_opinion_invocation(
+        req, idempotency_key=idempotency_key, operator_id=operator_id,
+    )
+    if replay is not None:
+        return replay
+    payload = invoke_fn()
+    _complete_persona_opinion_invocation(
+        idempotency_key=idempotency_key, fingerprint=fingerprint, payload=payload,
+    )
     return 200, payload
+
+
+def _persona_opinion_session_id(idempotency_key: str) -> str:
+    return "pint-" + hashlib.sha256(idempotency_key.strip().encode("utf-8")).hexdigest()[:32]
+
+
+def _persona_opinion_replay_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+    data = payload["data"]
+    output = data["output"]
+    if data["status"] != "completed":
+        event = {"type": "error", "error_code": output["reason"], "message": output["message"]}
+        if "status_code" in output:
+            event["status_code"] = output["status_code"]
+        return event
+    text = next((item["item"]["text"] for item in output.get("json_events", [])
+                 if isinstance(item.get("item"), dict) and "text" in item["item"]), "")
+    event = {
+        "type": "done", "text": text,
+        "elapsed_ms": output.get("duration_ms", 0), "transport": "responses_http",
+    }
+    for key in ("usage", "response_id", "function_calls"):
+        if key in output:
+            event[key] = output[key]
+    return event
+
+
+def _persona_opinion_stream_payload(
+    req: AssistantProviderInvokeRequest, event: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Store stream terminals in the invoke envelope for cross-route replay."""
+    if event["type"] == "error":
+        status = "degraded"
+        output = {"json_events": [], "reason": event["error_code"], "message": event["message"]}
+        if "status_code" in event:
+            output["status_code"] = event["status_code"]
+    else:
+        status = "completed"
+        output = AssistantOpenClawProvider._build_output(
+            text=str(event.get("text") or ""), request_id=str(uuid.uuid4()),
+            elapsed_ms=max(0, int(event.get("elapsed_ms") or 0)), stderr="",
+            agent_id=req.agent_id or OPENCLAW_DEFAULT_AGENT_ID,
+        )
+        output["transport"] = "responses_http"
+        if req.model:
+            output["active_model"] = req.model
+        for key in ("usage", "response_id", "function_calls"):
+            if key in event:
+                output[key] = event[key]
+    return {"status": "ok", "data": {
+        "provider": "openclaw", "mode": "user", "status": status, "output": output,
+        "redaction": {"provider_invocation": {"redacted_fields": 0}},
+    }}
+
+
+def _stream_persona_opinion_idempotently(
+    req: AssistantProviderInvokeRequest, *, idempotency_key: str, operator_id: str,
+    stream_fn: Any,
+) -> Iterator[Dict[str, Any]]:
+    fingerprint, replay = _claim_persona_opinion_invocation(
+        req, idempotency_key=idempotency_key, operator_id=operator_id,
+    )
+    if replay is not None:
+        yield _persona_opinion_replay_event(replay[1])
+        return
+    events = stream_fn()
+    try:
+        for event in events:
+            if event.get("type") in ("done", "error"):
+                # Persist before publishing the terminal event. A disconnect,
+                # crash or failed commit before here leaves a running claim.
+                _complete_persona_opinion_invocation(
+                    idempotency_key=idempotency_key, fingerprint=fingerprint,
+                    payload=_persona_opinion_stream_payload(req, event),
+                )
+                yield event
+                return
+            yield event
+        raise _PersonaOpinionInvocationInDoubt("Provider stream ended without a durable terminal result")
+    finally:
+        close = getattr(events, "close", None)
+        if close is not None:
+            close()
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke")
@@ -1485,62 +1722,12 @@ def invoke_openclaw_provider(
         metadata.setdefault("trace_id", x_trace_id)
     mode = str(req.mode or "user").strip().lower() or "user"
     if req.persona_admission is not None:
-        if not str(idempotency_key or "").strip():
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_IDEMPOTENCY_REQUIRED",
-                    "message": "Idempotency-Key is required for governed Persona opinion invocation.",
-                },
-            )
-        if mode != "user":
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_MODE_DENIED",
-                    "message": "Governed Persona opinion agents may only run in user mode.",
-                },
-            )
-        try:
-            _assert_persona_opinion_admitted(req.persona_admission)
-            _assert_persona_opinion_runtime_policy(req.persona_admission.agent_id)
-            _require_live_persona_opinion_agent(req.persona_admission.agent_id)
-        except _PersonaOpinionAgentNotReady as exc:
-            return _persona_opinion_agent_not_ready_response(exc)
-        except GatewayOpenClawProviderError as exc:
-            return _persona_opinion_gateway_error_response(exc)
-        except (ValueError, RuntimeError) as exc:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_ADMISSION_DENIED",
-                    "message": str(exc),
-                },
-            )
-        requested_tools = metadata.get("allowed_tools")
-        if requested_tools not in (None, []):
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_TOOL_AUTHORITY_DENIED",
-                    "message": "Governed Persona opinion invocation has an empty tool allowlist.",
-                },
-            )
-        metadata.update({
-            "allowed_tools": [],
-            "execution_authority": "none",
-            "order_submitted": False,
-            "broker_called": False,
-            "capital_changed": False,
-            "runtime_bound": False,
-            "lifecycle_promoted": False,
-            "policy_mutated": False,
-            "persona_memory_mutated": False,
-        })
+        admission_error = _persona_opinion_admission_error(
+            req, idempotency_key=idempotency_key, mode=mode, metadata=metadata,
+        )
+        if admission_error is not None:
+            status_code, content = admission_error
+            return JSONResponse(status_code=status_code, content=content)
     if delegates_kernel_mode_to_codex(mode):
         try:
             result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
@@ -1564,18 +1751,25 @@ def invoke_openclaw_provider(
             "context_pack": req.context_pack or {},
             "metadata": metadata,
             "messages": req.messages,
+            "attachments": req.attachments,
             "operator_id": x_operator_id.strip(),
             "trace_id": x_trace_id,
         }
         if req.agent_id is not None:
             invoke_kwargs["agent_id"] = req.agent_id
+        if req.model is not None:
+            # `reject_unauthorized_model` above already guarantees `model`
+            # is only set together with an admitted `persona_admission`, so
+            # this is the authorized-override path; it reaches the upstream
+            # `X-OpenClaw-Model` header verbatim, with no fallback
+            # candidate substituted in front of it (see
+            # `_resolve_model_candidates`).
+            invoke_kwargs["model"] = req.model
         if req.persona_admission is not None:
             # A deterministic session identity makes the upstream attempt
             # auditable.  The invocation ledger below fences a crash/in-doubt
             # attempt instead of invoking the provider a second time.
-            invoke_kwargs["session_id"] = "pint-" + hashlib.sha256(
-                str(idempotency_key).encode("utf-8")
-            ).hexdigest()[:32]
+            invoke_kwargs["session_id"] = _persona_opinion_session_id(str(idempotency_key))
         try:
             result = _OPENCLAW_AGENT_PROVIDER.invoke(req.prompt, **invoke_kwargs)
         except GatewayOpenClawProviderError as exc:
@@ -1589,6 +1783,7 @@ def invoke_openclaw_provider(
                         "json_events": [],
                         "reason": exc.error_code,
                         "message": exc.message,
+                        **({"status_code": exc.status_code} if req.persona_admission is not None else {}),
                     },
                     "redaction": {"provider_invocation": {"redacted_fields": 0}},
                 },
@@ -1604,6 +1799,7 @@ def invoke_openclaw_provider(
                 req,
                 idempotency_key=str(idempotency_key).strip(),
                 invoke_fn=_invoke_upstream,
+                operator_id=x_operator_id.strip(),
             )
         except _PersonaOpinionInvocationConflict as exc:
             return JSONResponse(status_code=409, content={
@@ -1621,11 +1817,128 @@ def invoke_openclaw_provider(
     return JSONResponse(status_code=200, content=_invoke_upstream())
 
 
+@app.post("/api/openclaw-adapter/assistant/providers/openclaw/structured")
+def invoke_openclaw_structured_provider(
+    req: AssistantProviderStructuredInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    """Restricted, server-approved structured-data extraction turn.
+
+    Accepts only a caller-declared JSON-schema `parameters` body
+    (`extraction_schema`) — never a full arbitrary tool/tool-list (rejected
+    with 422 by the request model above). The model is pinned to the fixed
+    `emit_extraction` tool via `invoke_structured`; this endpoint returns
+    parsed structured data only and never executes a domain action.
+
+    Read the selected Gateway's native-tool policy before dispatch. Missing,
+    mismatched or unavailable policy denies extraction before model execution.
+    """
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
+            },
+        )
+    mode = str(req.mode or "user").strip().lower() or "user"
+    if delegates_kernel_mode_to_codex(mode):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "provider_error",
+                "error_code": "OPENCLAW_KERNEL_DELEGATION_REQUIRED",
+                "message": "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
+            },
+        )
+    # This endpoint has no Persona-admission mechanism (unlike the ordinary
+    # invoke endpoint's agent_id+persona_admission pairing enforced by
+    # AssistantProviderInvokeRequest.validate_agent_selection). Structured
+    # extraction is a restricted, data-only capability: it must never let a
+    # caller route to an arbitrary/persona agent without going through that
+    # admission/runtime-policy path, so only the default agent is permitted.
+    if req.agent_id is not None and req.agent_id != OPENCLAW_DEFAULT_AGENT_ID:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "provider_error",
+                "error_code": "OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
+                "message": (
+                    "Structured extraction is restricted to the default agent; "
+                    "persona/tool routing requires the admitted invoke endpoint."
+                ),
+            },
+        )
+    invoke_kwargs: Dict[str, Any] = {
+        "agent_id": OPENCLAW_DEFAULT_AGENT_ID,
+        "extraction_schema": req.extraction_schema,
+        "mode": mode,
+        "messages": req.messages,
+        "operator_id": x_operator_id.strip(),
+        "trace_id": x_trace_id,
+    }
+    if req.agent_id is not None:
+        invoke_kwargs["agent_id"] = req.agent_id
+    if req.session_id is not None:
+        invoke_kwargs["session_id"] = req.session_id
+    try:
+        deadline = time.monotonic() + _OPENCLAW_AGENT_PROVIDER._timeout
+        _assert_structured_gateway_policy(OPENCLAW_DEFAULT_AGENT_ID, deadline=deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise GatewayOpenClawProviderError(
+                "Structured policy verification exhausted the invocation deadline.",
+                status_code=504, error_code="OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE",
+            )
+        invoke_kwargs["timeout_seconds"] = remaining
+        result = _OPENCLAW_AGENT_PROVIDER.invoke_structured(req.prompt, **invoke_kwargs)
+    except GatewayOpenClawProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result.to_dict()})
+
+
+def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None:
+    """Read policy from the same authenticated Gateway as the HTTP turn.
+
+    This is an administrative, read-only RPC, not an agent CLI turn. Never
+    trust caller metadata, a local config mirror, or a cached successful probe.
+    No public arbitrary-RPC route is added. Deny-all takes precedence over
+    other tool profiles/allow lists in the pinned Gateway.
+    """
+    try:
+        snapshot = _OPENCLAW_AGENT_PROVIDER._gateway_call(
+            # CLI startup is part of this read. An independent ten-second
+            # cap can reject a healthy Gateway while the turn still has time.
+            # The HTTP dispatch receives only what remains of this deadline.
+            "config.get", timeout_seconds=deadline - time.monotonic(),
+        )
+    except GatewayOpenClawProviderError as exc:
+        raise GatewayOpenClawProviderError(
+            "Cannot verify native-tool denial on the extraction Gateway.",
+            status_code=503, error_code="OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE",
+        ) from exc
+    config = snapshot.get("config") if isinstance(snapshot, dict) else None
+    agents = config.get("agents") if isinstance(config, dict) else None
+    entries = agents.get("list") if isinstance(agents, dict) else None
+    matches = ([item for item in entries if isinstance(item, dict) and item.get("id") == agent_id]
+               if isinstance(entries, list) else [])
+    tools = matches[0].get("tools") if len(matches) == 1 else None
+    if (not isinstance(snapshot, dict) or snapshot.get("valid") is not True or not isinstance(tools, dict)
+            or tools.get("deny") != ["*"]):
+        raise GatewayOpenClawProviderError(
+            "Extraction requires one verified Gateway agent with tools.deny=['*'].",
+            status_code=503, error_code="OPENCLAW_STRUCTURED_POLICY_DENIED",
+        )
+
+
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream")
 def invoke_openclaw_provider_stream(
     req: AssistantProviderInvokeRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Stream an OpenClaw agent turn as SSE via the gateway `POST /v1/responses`.
 
@@ -1640,8 +1953,13 @@ def invoke_openclaw_provider_stream(
     operator = (x_operator_id or "").strip()
     metadata = dict(req.metadata or {})
     mode = str(req.mode or "user").strip().lower() or "user"
-    # Stable per-conversation session so multi-turn shares a warm agent session.
-    session_user = str(metadata.get("session_user") or metadata.get("session_id") or operator or "").strip() or None
+    # Stable per-conversation session so multi-turn shares a warm agent
+    # session. Derived from authenticated tenant/actor plus the caller's
+    # conversation name so two callers cannot collide onto the same upstream
+    # session by reusing the same caller-chosen session_user/session_id.
+    session_user = derive_session_user(
+        operator_id=operator, metadata=metadata
+    )
 
     def event_stream() -> Iterator[str]:
         if not operator:
@@ -1654,6 +1972,19 @@ def invoke_openclaw_provider_stream(
         metadata["operator_id"] = operator
         if x_trace_id:
             metadata.setdefault("trace_id", x_trace_id)
+        if req.persona_admission is not None:
+            admission_error = _persona_opinion_admission_error(
+                req, idempotency_key=idempotency_key, mode=mode, metadata=metadata,
+            )
+            if admission_error is not None:
+                _, content = admission_error
+                yield "data: " + json.dumps({
+                    "type": "error",
+                    "error_code": content.get("error_code", "PERSONA_OPINION_ADMISSION_DENIED"),
+                    "message": content.get("message", "Persona opinion admission denied."),
+                }) + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
         if delegates_kernel_mode_to_codex(mode):
             try:
                 result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
@@ -1691,15 +2022,48 @@ def invoke_openclaw_provider_stream(
                 }) + "\n\n"
             yield "data: [DONE]\n\n"
             return
-        try:
-            for evt in _OPENCLAW_AGENT_PROVIDER.stream(
+        def upstream_stream():
+            scoped_session = session_user
+            if req.persona_admission is not None:
+                scoped_session = derive_session_user(
+                    operator_id=operator, metadata=metadata,
+                    session_id=_persona_opinion_session_id(str(idempotency_key)),
+                )
+            return _OPENCLAW_AGENT_PROVIDER.stream(
                 req.prompt,
                 mode=mode,
                 operator_id=operator,
                 trace_id=x_trace_id,
-                session_user=session_user,
-            ):
-                yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+                session_user=scoped_session,
+                model=req.model,
+                agent_id=req.agent_id,
+                messages=req.messages,
+                attachments=req.attachments,
+                context_pack=req.context_pack,
+            )
+
+        try:
+            if req.persona_admission is not None:
+                events = _stream_persona_opinion_idempotently(
+                    req, idempotency_key=str(idempotency_key).strip(),
+                    operator_id=operator, stream_fn=upstream_stream,
+                )
+            else:
+                events = upstream_stream()
+            try:
+                for evt in events:
+                    yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+            finally:
+                close = getattr(events, "close", None)
+                if close is not None:
+                    close()
+        except (_PersonaOpinionInvocationConflict, _PersonaOpinionInvocationInDoubt) as exc:
+            code = ("PERSONA_OPINION_IDEMPOTENCY_CONFLICT"
+                    if isinstance(exc, _PersonaOpinionInvocationConflict)
+                    else "PERSONA_OPINION_INVOCATION_IN_DOUBT")
+            yield "data: " + json.dumps({
+                "type": "error", "error_code": code, "message": str(exc), "status_code": 409,
+            }) + "\n\n"
         except Exception as exc:  # noqa: BLE001
             yield "data: " + json.dumps({
                 "type": "error", "error_code": "ADAPTER_STREAM_ERROR",

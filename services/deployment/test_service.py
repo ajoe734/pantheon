@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
 from fastapi.testclient import TestClient
 
 _AUTH_HEADERS = {
@@ -34,12 +35,15 @@ def _seed_approval_store(path: Path) -> None:
             "tenant_id": "tenant-deployment-test",
         }
     }
+    for record in payload.values():
+        record.update(approval_snapshot(**record, target_type='registry_entry', candidate_digest='sha256:abc123def4567890'))
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _seed_registry_snapshot(path: Path) -> None:
     payload = {
         "reg-strat-001-1.2.0": {
+            "owner_tenant": "tenant-deployment-test",
             "registry_id": "reg-strat-001-1.2.0",
             "artifact_type": "model_artifact",
             "strategy_id": "strat-001",
@@ -171,8 +175,13 @@ def client():
     module = importlib.import_module("services.deployment.service")
     module = importlib.reload(module)
 
+    # Explicit unit transport injection; production selectors never read these fixtures.
+    module.planner_service.registry_reader = lambda identity: json.loads(registry_snapshot.read_text())[identity]
+    module.planner_service.approval_reader = SnapshotApprovalReader(lambda: json.loads(approval_store.read_text())['approval-001'])
+    test_client = TestClient(module.app, headers=_AUTH_HEADERS)
+    test_client.registry_snapshot = registry_snapshot
     try:
-        yield TestClient(module.app, headers=_AUTH_HEADERS), governance_dir
+        yield test_client, governance_dir
     finally:
         for key, value in env_backup.items():
             if value is None:
@@ -423,7 +432,7 @@ def test_create_plan_rejects_deployment_stage_as_artifact_state(client):
     test_client, _ = client
     for artifact_state in ["paper", "canary", "live"]:
         payload = _plan_payload(plan_id=f"plan-invalid-artifact-state-{artifact_state}")
-        payload["registry_entry"] = {
+        registry_entry = {
             "registry_id": "reg-strat-001-1.2.0",
             "artifact_type": "model_artifact",
             "strategy_id": "strat-001",
@@ -435,6 +444,8 @@ def test_create_plan_rejects_deployment_stage_as_artifact_state(client):
             "lineage": {"source_run_ids": ["replication-run-001"]},
             "deployment_summary": {"current_stage": "none"},
         }
+        registry_entry["owner_tenant"] = "tenant-deployment-test"
+        test_client.registry_snapshot.write_text(json.dumps({registry_entry["registry_id"]: registry_entry}))
         response = test_client.post("/api/deployment/plans", json=payload)
         assert response.status_code == 422
         assert "requires artifact_state=approved" in response.json()["detail"]

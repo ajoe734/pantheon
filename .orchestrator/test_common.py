@@ -225,14 +225,15 @@ class JsonLoadResilienceTests(unittest.TestCase):
                     }
                 )
 
-    def test_ai_status_sync_rejects_empty_existing_status_file(self) -> None:
+    def test_ai_status_rejects_empty_journal_without_initializing_projection(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmpdir:
-            status_root = Path(tmpdir)
+            status_root = Path(tmpdir) / "status"
+            status_root.mkdir()
             subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
             status_file = status_root / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
-            env = os.environ.copy()
+            env = {key: value for key, value in os.environ.items() if not key.startswith(("PANTHEON_", "ORCH_"))}
             for env_name in (
                 "PANTHEON_WORKTREE_ROOT",
                 "ORCH_WORKSPACE_PATH",
@@ -247,7 +248,11 @@ class JsonLoadResilienceTests(unittest.TestCase):
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
-            env["AI_NAME"] = "Ops"
+            env["AI_NAME"] = "Codex2"
+            env.update(common.task_state_store_runtime_env({
+                "paths": {"status_file": str(status_file)},
+                "task_state_store": {"mode": "authoritative", "event_log": str(Path(tmpdir) / "runtime" / "tasks.jsonl")},
+            }))
 
 
             result = subprocess.run(
@@ -257,10 +262,12 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=15,
             )
+            self.assertEqual(status_file.read_bytes(), b"", "rejected command must not initialize the projection")
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Refusing to initialize from empty status file", result.stderr + result.stdout)
+        self.assertIn("Authoritative task-state journal is empty; refusing ai-status.json fallback", result.stderr + result.stdout)
 
     def test_load_json_retries_after_transient_decode_error(self) -> None:
         payload = {"ok": True}
@@ -2949,6 +2956,161 @@ class LogicalActivityReaderTests(unittest.TestCase):
                         [event_id],
                     )
                 build_snapshot.assert_not_called()
+
+
+class CanonicalCommitSubjectPrefixTests(unittest.TestCase):
+    """OPS-COMMIT-IDENTITY-001: one bounded-prefix rule for CI and `done`.
+
+    A merged PR5639-style task carried a 92-char generated task_id. CI's
+    bounded-subject helper (`bound_commit_subject`) and canonical `done`'s
+    subject check disagreed about whether the literal full id had to appear
+    in the subject, because each had its own idea of what a "bounded"
+    subject looked like. `canonical_commit_subject_prefix` is now the single
+    source of truth both consult.
+    """
+
+    SHORT_ID = "REG-002"
+    LONG_ID = (
+        "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
+        "MERGE-STATE-BLOCKED-B14932FE23E9"
+    )
+
+    def test_short_task_id_prefix_is_returned_unchanged(self):
+        self.assertGreater(72, len(self.SHORT_ID) + 2 + 10)
+        self.assertEqual(
+            common.canonical_commit_subject_prefix(self.SHORT_ID),
+            self.SHORT_ID,
+        )
+
+    def test_long_task_id_is_compacted_deterministically(self):
+        self.assertGreater(len(self.LONG_ID), 72)
+        prefix = common.canonical_commit_subject_prefix(self.LONG_ID)
+        self.assertLessEqual(len(prefix), 35)
+        self.assertTrue(self.LONG_ID.startswith(prefix))
+        # Deterministic: repeated calls agree, so a validator and a subject
+        # generator derive the identical bounded prefix independently.
+        self.assertEqual(prefix, common.canonical_commit_subject_prefix(self.LONG_ID))
+
+    def test_matches_bound_commit_subject_prefix_for_short_and_long_ids(self):
+        for task_id in (self.SHORT_ID, self.LONG_ID):
+            with self.subTest(task_id=task_id):
+                expected_prefix = common.canonical_commit_subject_prefix(task_id)
+                subject = common.bound_commit_subject(task_id, "repair merge state")
+                actual_prefix = subject.split(":", 1)[0]
+                self.assertEqual(actual_prefix, expected_prefix)
+                self.assertLessEqual(len(subject), 72)
+
+    def test_empty_task_id_normalizes_to_task_placeholder(self):
+        self.assertEqual(common.canonical_commit_subject_prefix(""), "TASK")
+        self.assertEqual(common.canonical_commit_subject_prefix(None), "TASK")
+
+
+class CommitSubjectPrefixVariantsTests(unittest.TestCase):
+    """OPS-COMMIT-IDENTITY-001: a validator without the description must
+    accept either prefix `bound_commit_subject` can actually emit.
+
+    `bound_commit_subject` only compacts a task_id's prefix as a last
+    resort -- it first tries the full, uncompacted normalized task_id and
+    only falls back to the compacted form when the *actual* description is
+    long enough that the literal candidate still exceeds 72 chars. That
+    means the same 61-char task_id produces an uncompacted 61-char prefix
+    when paired with a short description ("fix") and a compacted 35-char
+    prefix when paired with a longer one. `canonical_commit_subject_prefix`
+    alone assumed compaction was forced once the id crossed ~60 chars
+    regardless of the actual description, so a genuine formatter-emitted
+    subject with a short description could fail a validator that only
+    compared against that single "expected" value.
+    """
+
+    BOUNDARY_ID = "A" * 61
+
+    def test_short_description_keeps_full_uncompacted_prefix(self):
+        subject = common.bound_commit_subject(self.BOUNDARY_ID, "fix")
+        actual_prefix = subject.split(":", 1)[0]
+        self.assertEqual(actual_prefix, self.BOUNDARY_ID)
+        self.assertLessEqual(len(subject), 72)
+
+        full_prefix, compacted_prefix = common.commit_subject_prefix_variants(
+            self.BOUNDARY_ID
+        )
+        self.assertEqual(full_prefix, self.BOUNDARY_ID)
+        self.assertNotEqual(compacted_prefix, actual_prefix)
+        self.assertIn(actual_prefix, (full_prefix, compacted_prefix))
+
+    def test_longer_description_forces_compacted_prefix(self):
+        subject = common.bound_commit_subject(
+            self.BOUNDARY_ID, "implement a much longer description here"
+        )
+        actual_prefix = subject.split(":", 1)[0]
+        full_prefix, compacted_prefix = common.commit_subject_prefix_variants(
+            self.BOUNDARY_ID
+        )
+        self.assertEqual(actual_prefix, compacted_prefix)
+        self.assertIn(actual_prefix, (full_prefix, compacted_prefix))
+
+    def test_short_task_id_full_and_compacted_prefix_coincide(self):
+        full_prefix, compacted_prefix = common.commit_subject_prefix_variants(
+            "REG-002"
+        )
+        self.assertEqual(full_prefix, "REG-002")
+        self.assertEqual(compacted_prefix, "REG-002")
+
+
+class TestWriteStatusPrecondition(unittest.TestCase):
+    def test_write_status_rejects_empty_canonical_events(self):
+        with tempfile.TemporaryDirectory(prefix="test-write-status-empty-") as temp_dir:
+            root = Path(temp_dir)
+            status_root = root / "coord"
+            status_root.mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            event_log = root / "runtime" / "task-state" / "events.jsonl"
+            event_log.parent.mkdir(parents=True)
+            event_log.touch()
+
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "state_file": str(status_root / ".orchestrator" / "worker-runtime" / "state.json"),
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
+            }
+            with self.assertRaisesRegex(RuntimeError, "runtime mutation requires existing canonical events"):
+                common.write_status(config, {"tasks": []}, source="test-empty")
+
+    def test_write_status_succeeds_when_canonical_events_exist(self):
+        from rewrite import task_state_store
+
+        with tempfile.TemporaryDirectory(prefix="test-write-status-ok-") as temp_dir:
+            root = Path(temp_dir)
+            status_root = root / "coord"
+            status_root.mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            event_log = root / "runtime" / "task-state" / "events.jsonl"
+            event_log.parent.mkdir(parents=True)
+
+            task_state_store.append_state_commit(
+                event_log, {"tasks": [{"id": "TASK-1", "status": "in_progress"}]}, source="genesis-bootstrap"
+            )
+
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "state_file": str(status_root / ".orchestrator" / "worker-runtime" / "state.json"),
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
+            }
+            payload = {"tasks": [{"id": "TASK-1", "status": "done"}]}
+            common.write_status(config, payload, source="test-update")
+            self.assertEqual(json.loads(status_file.read_text()), payload)
+            snapshot = task_state_store.load_snapshot(event_log)
+            self.assertEqual(snapshot["event_count"], 2)
+            self.assertEqual(snapshot["state"], payload)
 
 
 if __name__ == "__main__":

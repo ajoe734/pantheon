@@ -63,10 +63,31 @@ case "$MODE" in
   smoke)
     run_step "stage0-validate" stage0_validate
     run_step "stage0-baseline" stage0_baseline
+    if [[ -f scripts/test_dev_paper_diagnostics_failure_path.py ]]; then
+      run_step "dev-paper-diagnostics-failure-path" "$PYTHON" -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py
+    fi
+    if [[ -d .orchestrator/execution_grant_issuer ]]; then
+      run_step "execution-grant-issuer-suite" "$PYTHON" -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'
+    fi
+    if [[ -f deploy/execution-grant-issuer/test_run_server.py ]]; then
+      run_step "execution-grant-issuer-server-suite" "$PYTHON" -m unittest deploy/execution-grant-issuer/test_run_server.py
+    fi
+    if [[ -f scripts/test_request_execution_grant.py ]]; then
+      run_step "request-execution-grant-suite" "$PYTHON" -m unittest scripts/test_request_execution_grant.py
+    fi
     ;;
   full)
     run_step "stage0-validate" stage0_validate
     run_step "stage0-baseline" stage0_baseline
+    if [[ -d .orchestrator/execution_grant_issuer ]]; then
+      run_step "execution-grant-issuer-suite" "$PYTHON" -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'
+    fi
+    if [[ -f deploy/execution-grant-issuer/test_run_server.py ]]; then
+      run_step "execution-grant-issuer-server-suite" "$PYTHON" -m unittest deploy/execution-grant-issuer/test_run_server.py
+    fi
+    if [[ -f scripts/test_request_execution_grant.py ]]; then
+      run_step "request-execution-grant-suite" "$PYTHON" -m unittest scripts/test_request_execution_grant.py
+    fi
     # Layer additional gates here as the suite grows.
     if [[ -f Makefile ]] && grep -q '^acceptance:' Makefile; then
       run_step "make-acceptance" make acceptance

@@ -36,6 +36,8 @@ DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-fals
 # preflight gate below refuses to deploy rather than shipping a strict-looking
 # BFF where every protected route is actually unusable.
 DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"
+DEV_PAPER_PRINCIPALS_AUTHORIZED="${DEV_PAPER_PRINCIPALS_AUTHORIZED:-false}"
+PANTHEON_DEV_CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET:-$DEV_BFF_JWT_SECRET}"
 DEV_BFF_JWT_ISSUER="${DEV_BFF_JWT_ISSUER:-pantheon-dev}"
 DEV_BFF_JWT_AUDIENCE="${DEV_BFF_JWT_AUDIENCE:-bff-operators}"
 DEV_BFF_JWKS_URI="${DEV_BFF_JWKS_URI:-}"
@@ -329,6 +331,7 @@ Environment overrides:
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
   DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
+  DEV_PAPER_PRINCIPALS_AUTHORIZED
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
   DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
@@ -726,6 +729,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS=$(shell_quote "$DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS")"
   command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED=$(shell_quote "$DEV_PAPER_PRINCIPALS_AUTHORIZED")"
+  command_prefix+=" PANTHEON_DEV_CAPITAL_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
   command_prefix+=" PANTHEON_DEV_BFF_JWKS_URI=$(shell_quote "$DEV_BFF_JWKS_URI")"
@@ -3060,6 +3065,11 @@ rollback_dev_bff_on_failure() {
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="false" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
+    PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
@@ -3124,6 +3134,84 @@ rollback_dev_bff_on_failure() {
   exit 1
 }
 
+prepare_dev_paper_principals() {
+  # Runs inside the existing exact-pair lease, after the candidate checkout and
+  # before any replacement. Signing material stays on the approved deploy path.
+  # No token output is logged or uploaded; only a private short-lived env file.
+  local principal_dir principal_env principal_rc=0
+  DEV_PAPER_PRINCIPALS_SUPPORTED=false
+  DEV_PAPER_ISSUER_BUILD_TARGETS=()
+  # An exact predecessor must remain restorable by a newer controller. Older
+  # source cannot consume this grant and must not receive manufactured authority.
+  if [[ ! -f scripts/issue_dev_paper_principals.py ]]; then
+    # The FE/BFF rollback lane preserves upgraded owners. A full root downgrade
+    # could interpret persisted scoped decisions with old scope-less consumers.
+    # The fixed consumer volume is a conservative durable adoption floor, even
+    # after containers are replaced or the grant itself is withdrawn.
+    if [[ "${PANTHEON_DEPLOY_COMPONENT:-}" == root ]] && \
+        docker volume inspect pantheon_dev-paper-governance-tokens >/dev/null 2>&1; then
+      info "refusing scope-less owner downgrade; restore exact prior FE/BFF with component=bff"
+      return 1
+    fi
+    info "exact target predates dev paper principals; preserving predecessor contract"
+    return 0
+  fi
+  if [[ "${PANTHEON_DEPLOY_COMPONENT}" == bff && "${PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED}" == true ]]; then
+    # First adoption changes owner contracts and mounts: BFF-only is insufficient.
+    local owner owner_id
+    for owner in governance registry deployment runtime-manager deployment-outbox-consumer; do
+      owner_id="$(docker compose -p pantheon -f docker-compose.yml ps -q "${owner}")"
+      [[ -n "${owner_id}" ]] || { info "paper principal adoption requires root deploy"; return 1; }
+      docker inspect "${owner_id}" | python3 -c '
+import json,sys
+c=json.load(sys.stdin)[0]
+mounted=any(m.get("Destination")=="/run/pantheon-principals" and not m.get("RW") for m in c.get("Mounts",[]))
+configured=any("_SERVICE_TOKEN_FILE=/run/pantheon-principals/" in e for e in c["Config"].get("Env",[]))
+sys.exit(0 if mounted and configured else 1)
+' || { info "paper principal adoption requires root deploy"; return 1; }
+    done
+  fi
+  principal_dir="$(mktemp -d /tmp/pantheon-dev-principals.XXXXXX)"
+  principal_env="${principal_dir}/principals.env"
+  PANTHEON_ENV=dev python3 scripts/issue_dev_paper_principals.py \
+    --output-env "${principal_env}" || principal_rc=$?
+  if [[ "${principal_rc}" -eq 0 ]]; then
+    # shellcheck disable=SC1090
+    source "${principal_env}" || principal_rc=$?
+  fi
+  # Exact targets were just created in this private directory, never the repo.
+  if [[ -f "${principal_env}" ]]; then rm -- "${principal_env}"; fi
+  rmdir -- "${principal_dir}"
+  if [[ "${principal_rc}" -eq 0 ]]; then
+    if [[ "${PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED}" == true ]]; then
+      DEV_PAPER_PRINCIPALS_SUPPORTED=true
+      DEV_PAPER_ISSUER_BUILD_TARGETS=(dev-paper-principal-issuer)
+    else
+      # A withdrawn grant must not leave the old immutable container env
+      # renewing forever. Stop the fixed issuer, then revoke its exact files.
+      # Governance reads the shared grant marker on every approval admission.
+      # This revokes access, not already committed business ApprovalDecisions.
+      COMPOSE_PROFILES=dev-paper-principals docker compose -p pantheon -f docker-compose.yml \
+        build dev-paper-principal-issuer || return 1
+      COMPOSE_PROFILES=dev-paper-principals docker compose -p pantheon -f docker-compose.yml \
+        stop dev-paper-principal-issuer || return 1
+      COMPOSE_PROFILES=dev-paper-principals docker compose -p pantheon -f docker-compose.yml \
+        run --rm --no-deps dev-paper-principal-issuer --revoke || return 1
+    fi
+  fi
+  return "${principal_rc}"
+}
+
+start_dev_paper_principal_issuer() {
+  [[ "${DEV_PAPER_PRINCIPALS_SUPPORTED:-false}" == true ]] || return 0
+  COMPOSE_PROFILES=dev-paper-principals docker compose -p pantheon -f docker-compose.yml \
+    up -d --no-deps --wait --wait-timeout 60 dev-paper-principal-issuer || return 1
+  local issuer_id issuer_sha
+  issuer_id="$(docker compose -p pantheon -f docker-compose.yml ps -q dev-paper-principal-issuer)"
+  issuer_sha="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${issuer_id}")"
+  [[ "${issuer_sha}" == "${PANTHEON_DEPLOY_SHA}" ]] || { info "issuer exact source identity mismatch"; return 1; }
+}
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -3131,6 +3219,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    prepare_dev_paper_principals
     # Keep the requested immutable identity in the environment for every
     # Compose call in this root deployment.  In particular, the lifecycle
     # projector is force-recreated after the full stack build; a command-local
@@ -3138,6 +3227,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # the compose default (`unknown`) and make the exact-SHA readiness gate
     # impossible to satisfy.
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
+    # Runtime authority reads and the durable outbox consumer must use the
+    # same tenant as the BFF that creates the dev DeploymentPlans. Otherwise
+    # healthy workers poll the generic Compose tenant (default) indefinitely.
+    export PANTHEON_DEPLOYMENT_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}"
     # Dev deploys activate the required persistent root compose profile: openclaw.
     # Dormant smoke profiles (e.g. dormant-smoke for MLflow/FinRL/RLlib/Ray-Tune/Qlib/TRL/experiments),
     # one-off smoke profiles (activation-ready-smoke, openclaw-activation-ready-e2e, smoke, source-search-bounded),
@@ -3149,6 +3242,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #
     # Operators can supply explicit profiles via PANTHEON_DEV_COMPOSE_PROFILES when running bounded verifications.
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
+    if [[ "${DEV_PAPER_PRINCIPALS_SUPPORTED}" == true ]]; then
+      PANTHEON_DEV_COMPOSE_PROFILES+=",dev-paper-principals"
+    fi
     validate_source_refresh_profile
     validate_required_loop_workers
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -3168,6 +3264,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    start_dev_paper_principal_issuer || exit 1
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
@@ -3210,6 +3307,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
+    PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
@@ -3312,14 +3414,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    prepare_dev_paper_principals
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
     # Phase 2: Build candidate operator-bff and loop-run-projector-scheduler images.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    start_dev_paper_principal_issuer || exit 1
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
@@ -3350,6 +3454,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
+    PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
     PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \

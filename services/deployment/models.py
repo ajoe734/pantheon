@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class DeploymentStageBody(str, Enum):
@@ -102,13 +102,12 @@ class DeploymentPlanBody(BaseModel):
 
 
 class CreateDeploymentPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     plan_id: Optional[str] = None
     approval_decision_id: str
     capital_pool_id: Optional[str] = None
     target_stage: DeploymentStageBody
-    registry_id: Optional[str] = None
-    registry_entry: Optional[Dict[str, Any]] = None
-    approval_decision: Optional[Dict[str, Any]] = None
+    registry_id: str = Field(min_length=1)
     current_stage: Optional[DeploymentStageBody] = None
     created_by: Optional[str] = None
     sponsor_persona_id: Optional[str] = None
@@ -430,6 +429,7 @@ class DeploymentProjectionReadModelResponse(BaseModel):
 
 
 class DispatchDeploymentPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     trace_id: Optional[str] = None
     correlation_id: Optional[str] = None
     idempotency_key: Optional[str] = None
@@ -437,7 +437,6 @@ class DispatchDeploymentPlanRequest(BaseModel):
     saga_id: Optional[str] = None
     source_task_id: Optional[str] = None
     workflow_id: Optional[str] = None
-    registry_entry: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
 
 

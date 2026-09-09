@@ -236,6 +236,23 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Provision real worker sandbox
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles
+          dpkg-query --show --showformat='${Package} ${Version}\n' bubblewrap apparmor apparmor-profiles
+          # Ubuntu supplies this per-binary profile for restricted userns hosts.
+          # Load it unchanged; retain host-wide restrictions and child capability denial.
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          sha256sum "$profile"
+          sudo apparmor_parser --replace "$profile"
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          /usr/bin/bwrap --version
+          timeout 5s /usr/bin/bwrap --die-with-parent --unshare-pid \
+            --ro-bind / / --dev-bind /dev /dev --proc /proc -- /bin/true
+          echo "Real worker sandbox capability probe passed (exit 0)"
+
       - name: Install deps (best-effort)
         run: |
           if [[ -f requirements.txt ]]; then
@@ -249,6 +266,46 @@ jobs:
           # Keep these explicit: requirements.txt intentionally does not pull
           # product service dependencies into a tooling-only change.
           python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
+          # scripts/run-acceptance.sh (invoked below for a mixed product+
+          # tooling diff) also runs the execution-grant-issuer suites; install
+          # their pinned deps here so that best-effort path does not
+          # silently fail closed on a missing firebase-admin/PyJWT import.
+          if [[ -f deploy/execution-grant-issuer/requirements.txt ]]; then
+            python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt || true
+          fi
+
+      # Run the existing real boundary cases even for a workflow-only change.
+      # unittest normally treats skipped tests as success; these are required.
+      - name: Verify real worker sandbox boundaries
+        timeout-minutes: 3
+        env:
+          PANTHEON_SANDBOX_BINARY: /usr/bin/bwrap
+          SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "Source base=${SOURCE_BASE_SHA} head=${SOURCE_HEAD_SHA} checkout=$(git rev-parse HEAD)"
+          manifest=docs/deployment/evidence/OPS-CI-WORKER-SANDBOX-PREREQUISITE-001/evidence.json
+          git rev-parse "${SOURCE_HEAD_SHA}:${manifest}"
+          PYTHONPATH=.orchestrator python3 - <<'PY'
+          import json
+          import unittest
+          import test_worker_runner_heartbeat as tests
+
+          if tests._FUNCTIONAL_BWRAP != "/usr/bin/bwrap":
+              raise SystemExit("Required real bubblewrap capability is unavailable")
+          names = [
+              "TestCoordinationRootValidation.test_provider_cannot_chmod_or_write_command_runtime",
+              "TestCrossRepoLeasedWorktreeWriteBoundary.test_reproduce_and_prevent_20260827_reviewer_checkout_mutation",
+              "TestCrossRepoLeasedWorktreeWriteBoundary.test_prevent_cross_repo_file_mutations",
+          ]
+          suite = unittest.defaultTestLoader.loadTestsFromNames(names, tests)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          passed = result.wasSuccessful() and not result.skipped and result.testsRun == len(names)
+          print(json.dumps({"tests": result.testsRun, "skips": len(result.skipped),
+                            "failures": len(result.failures), "errors": len(result.errors),
+                            "exit_code": 0 if passed else 1}))
+          raise SystemExit(0 if passed else 1)
+          PY
 
       - name: Classify changed components
         id: boundary
@@ -267,6 +324,34 @@ jobs:
             value="$(CLASSIFICATION="$classification" FIELD="$field" python3 -c 'import json, os; print(str(json.loads(os.environ["CLASSIFICATION"])[os.environ["FIELD"]]).lower())')"
             echo "${field}=${value}" >> "$GITHUB_OUTPUT"
           done
+
+      - name: Detect execution-grant-issuer changes
+        id: issuer_boundary
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Independent of scripts/component_boundary.py's manifest-driven
+          # classification (which currently has no entry for this path set),
+          # so this dedicated tooling gate cannot silently stop running if
+          # the manifest ever falls behind these exact paths.
+          if [[ -n "$BASE_SHA" && "$BASE_SHA" != "0000000000000000000000000000000000000000" ]] \
+            && git cat-file -e "${BASE_SHA}^{commit}"; then
+            range="$BASE_SHA...$HEAD_SHA"
+          else
+            range="${HEAD_SHA}~1...$HEAD_SHA"
+          fi
+          changed="$(git diff --name-only $range -- \
+            .orchestrator/execution_grant_issuer \
+            scripts/request_execution_grant.py \
+            scripts/test_request_execution_grant.py \
+            deploy/execution-grant-issuer)"
+          if [[ -n "$changed" ]]; then
+            echo "$changed"
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # DTG-CI-01: these three gates are independent, not mutually exclusive.
       # A mixed tooling/product diff must run every applicable gate; an
@@ -290,6 +375,8 @@ jobs:
         if: steps.boundary.outputs.development_tooling_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m pytest -q \
+            .orchestrator/test_recovery_contract_boundaries.py \
+            .orchestrator/rewrite/test_integration_receipt.py \
             scripts/git/test_auto_integrator.py \
             scripts/git/test_task_review_merge_gate.py \
             scripts/git/test_github_review_bridge.py \
@@ -297,6 +384,16 @@ jobs:
             scripts/test_auto_integrator_install.py \
             scripts/test_supervisor_launch_ownership.py \
             scripts/test_supervisor_watchdog_install.py
+
+      - name: Run execution-grant-issuer gate
+        if: steps.issuer_boundary.outputs.touched == 'true'
+        run: |
+          python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt
+          PYTHONPATH=.orchestrator python3 -m pytest -q \
+            .orchestrator/execution_grant_issuer/test_issuer.py \
+            deploy/execution-grant-issuer/test_run_server.py
+          PANTHEON_COMMAND_ROOT="$PWD" python3 -m pytest -q \
+            scripts/test_request_execution_grant.py
 
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')

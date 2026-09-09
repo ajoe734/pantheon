@@ -818,6 +818,9 @@ def detect_truth_mismatches(
     orchestrator_state: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     ai_status = _ai_status_module()
+    review_bridge_is_required = ai_status.github_review_bridge_required(
+        ai_status.load_config()
+    )
     task_map = {task["id"]: task for task in state.get("tasks", [])}
     del orchestrator_state
     live_workers = [
@@ -970,6 +973,7 @@ def detect_truth_mismatches(
                 )
         if (
             task_status == "review_approved"
+            and review_bridge_is_required
             and (
                 isinstance(task.get(ai_status.APPROVAL_BINDING_KEY), Mapping)
                 or (

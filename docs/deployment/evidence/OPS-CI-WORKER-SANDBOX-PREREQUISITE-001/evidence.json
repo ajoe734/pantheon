@@ -1,0 +1,171 @@
+{
+  "task_id": "OPS-CI-WORKER-SANDBOX-PREREQUISITE-001",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "ci_verified_pending_final_head_review",
+  "source_base_sha": "c526e2ede5d18a21e3f6c3630e8db510b7902f31",
+  "sources": {
+    "plan": {
+      "path": "/tmp/pantheon-ci-sandbox-prerequisite-20260907.hOWroL/SA_SD.md",
+      "sha256": "6adb80970dafb807b6eb04f38f0a8a095d7c84b47753f5fd97cf5a7375354c86",
+      "byte_identical_copy": "docs/operations/ci-worker-sandbox-prerequisite.md"
+    },
+    "recheck": {
+      "path": "/tmp/pantheon-ci-sandbox-prerequisite-20260907.hOWroL/RECHECK.md",
+      "sha256": "7c863860f49c600fb7c4c2b5b2b55904c33d466e31f7e4612d27f14ff550f418"
+    }
+  },
+  "original_failure": {
+    "source_head_sha": "97c8d4ca880609f3dfe69c8aa85cbba99ece7bea",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34079580708/job/101612323383",
+    "log_sha256": "856529ea5a104dd20d6647f376c34b5756e3d6b8bbfbcf102b0c9d8a4f790e3a",
+    "error": "RuntimeError: bubblewrap (bwrap) is required to enforce the read-only PANTHEON_COMMAND_ROOT worker boundary",
+    "tests": 858,
+    "failures": 1,
+    "duration_seconds": 272.445,
+    "exit_code": 1
+  },
+  "required_real_tests": [
+    "TestCoordinationRootValidation.test_provider_cannot_chmod_or_write_command_runtime",
+    "TestCrossRepoLeasedWorktreeWriteBoundary.test_reproduce_and_prevent_20260827_reviewer_checkout_mutation",
+    "TestCrossRepoLeasedWorktreeWriteBoundary.test_prevent_cross_repo_file_mutations"
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 1,
+      "result": "Initial bootstrap failed: no candidate interpreter supplied pytest. Resolved with an isolated dependency venv; no shared interpreter rebound."
+    },
+    {
+      "command": "python3 -m venv /tmp/ops-ci-sandbox-dependencies && /tmp/ops-ci-sandbox-dependencies/bin/python -m pip install pytest pyyaml cryptography \"pydantic>=2\"",
+      "exit_code": 0
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/ops-ci-sandbox-dependencies/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-specific distribution and pytest imports verified from a foreign cwd."
+    },
+    {
+      "command": "timeout 5s /usr/bin/bwrap --die-with-parent --unshare-pid --ro-bind / / --dev-bind /dev /dev --proc /proc -- /bin/true",
+      "environment": "local worker; not GitHub proof",
+      "package_version": "0.9.0-1ubuntu0.1",
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator PANTHEON_SANDBOX_BINARY=/usr/bin/bwrap timeout 90s .venv-pantheon/bin/python3 -m unittest -v test_worker_runner_heartbeat.TestCoordinationRootValidation.test_provider_cannot_chmod_or_write_command_runtime test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_reproduce_and_prevent_20260827_reviewer_checkout_mutation test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_prevent_cross_repo_file_mutations",
+      "tests": 3,
+      "skips": 0,
+      "failures": 0,
+      "errors": 0,
+      "duration_seconds": 4.709,
+      "exit_code": 0,
+      "log_sha256": "2c2bfcb6e063a93bc22b79567a7e9d36f2cc46b643c96277db7b9713792d26e5"
+    },
+    {
+      "command": "/tmp/ops-ci-sandbox-actionlint/actionlint -shellcheck= .github/workflows/branch-ci.yml",
+      "version": "1.7.12",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 /tmp/ops-ci-sandbox-validate.py",
+      "exit_code": 0,
+      "method": "Parse YAML; remove only the two named new steps and assert exact equality with base workflow; bash -n on added run blocks; ast.parse on inline Python; byte-compare operations plan with source."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "github_acceptance": {
+    "source_base_sha": "4cd939078372332b76c288dd257b9e6ca06fb6b8",
+    "source_head_sha": "182c113e406d8d1ec50ec360e240a3f88ce45271",
+    "checkout_sha": "6752aa88ca6449d2c447dfa8f473e7b12f445538",
+    "manifest_blob_sha": "6fdf0d07455a1fcd7ca7bd38538b979aede36839",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34081175935",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34081175935/job/101616647262",
+    "log_sha256": "7bd7e4d2281f4cf7bede4afea71a86dc8a3e29ac17269ca4b6f087cfd080018f",
+    "result": "success",
+    "exit_code": 0,
+    "bubblewrap_version": "0.9.0-1ubuntu0.1",
+    "apparmor_version": "4.0.1really4.0.1-0ubuntu0.24.04.7",
+    "apparmor_profiles_version": "4.0.1really4.0.1-0ubuntu0.24.04.7",
+    "profile_sha256": "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9",
+    "capability_probe": {
+      "command": "timeout 5s /usr/bin/bwrap --die-with-parent --unshare-pid --ro-bind / / --dev-bind /dev /dev --proc /proc -- /bin/true",
+      "exit_code": 0
+    },
+    "required_boundary_tests": {
+      "command": "PYTHONPATH=.orchestrator python3 - (inline unittest loader in Verify real worker sandbox boundaries step)",
+      "tests": 3,
+      "skips": 0,
+      "failures": 0,
+      "errors": 0,
+      "duration_seconds": 3.783,
+      "exit_code": 0
+    },
+    "other_jobs": {
+      "Commit trailers": "success",
+      "Runtime mirror guard": "success",
+      "Python packaging provision": "success"
+    },
+    "existing_component_gates": {
+      "classification": "delivery-only, development_tooling_touched=false, product_touched=false",
+      "tooling_smoke": "not selected by unchanged condition",
+      "tooling_integration_authority": "not selected by unchanged condition",
+      "product_or_mixed_smoke": {
+        "command": "./scripts/run-acceptance.sh smoke",
+        "exit_code": 0,
+        "reported_counts": [
+          "7 unittest cases",
+          "56 unittest cases",
+          "13/13 checks",
+          "10/10 groups",
+          "36 unittest cases",
+          "26 unittest cases",
+          "23 passed, 2 skipped (existing baseline suite)",
+          "58 passed"
+        ]
+      }
+    },
+    "final_head_rule": "This recorded run proves the unchanged workflow implementation. After the current-dev merge and evidence-only commit, collect another terminal Branch CI run at the final head before handoff. Bind that run in canonical handoff/PR evidence; do not create a self-referential manifest commit after review."
+  },
+  "delivery": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/5651",
+    "merge_commit": null,
+    "identity_binding": "The governed handoff freezes the final PR head and this manifest blob. CI prints source base/head, checkout SHA, and manifest blob without a self-referential manifest hash."
+  },
+  "coordination": {
+    "classifier_task": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+    "closure_task": "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001",
+    "required_followup": "After prerequisite merge, deliver exact merged SHA and CI proof to both owners. Classifier owner must remove its transparent fake_bwrap shortcut, rebase current dev and rerun its original genuine queue/TaskStore/runner test in GitHub CI.",
+    "existing_diagnostic_comment": "https://github.com/ajoe734/pantheon/pull/5637#issuecomment-5564611808"
+  },
+  "scope": "Only existing Branch CI prerequisites and the two declared documents. No classifier/runtime/test-source changes, live host policy changes, deployment, product readiness, or twelve-loop acceptance.",
+  "workflow_sha256": "9d930882bca86ca4ef935f0f067531d681d5d551d06dcf8f13da221ceb62af8a",
+  "ci_attempts": [
+    {
+      "source_head_sha": "27f54aca6496965d3dbc93ff02f18ae4e12dccf7",
+      "manifest_blob_sha": "6fdf0d07455a1fcd7ca7bd38538b979aede36839",
+      "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34081024456/job/101616227041",
+      "runner_image": "ubuntu-24.04 / 20260831.293.1",
+      "bubblewrap_version": "0.9.0-1ubuntu0.1",
+      "result": "failure",
+      "exit_code": 1,
+      "error": "bwrap: setting up uid map: Permission denied",
+      "required_tests_executed": 0,
+      "required_test_step": "skipped_after_failed_probe",
+      "log_sha256": "3dd715fda5d16689ae22c2133876ffb532c5f2d5c8d4575b84f42c07666cff64"
+    }
+  ],
+  "ci_profile": {
+    "source": "Ubuntu apparmor-profiles distribution package",
+    "path": "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict",
+    "configuration": "Load the unmodified package profile with apparmor_parser --replace on the disposable GitHub runner only. No host-wide restriction changes or privileged test execution.",
+    "references": [
+      "https://ubuntu.com/server/docs/how-to/security/apparmor/",
+      "https://bugs.launchpad.net/bugs/2064672",
+      "https://bugs.launchpad.net/bugs/2069526"
+    ]
+  },
+  "implementation_base_sha": "4cd939078372332b76c288dd257b9e6ca06fb6b8"
+}

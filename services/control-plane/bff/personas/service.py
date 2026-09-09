@@ -6,6 +6,7 @@ Zero reverse imports of main.py.
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextvars import ContextVar
 from copy import deepcopy
 import copy
@@ -269,10 +270,7 @@ def _get_active_write_owner(explicit: Optional[Any] = None) -> Any:
         return svc.get_write_owner()
     if persona_write_owner is not None:
         return persona_write_owner
-    try:
-        return create_persona_registry_write_owner()
-    except Exception:
-        return None
+    return create_persona_registry_write_owner()
 
 class _DefaultCommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
@@ -674,8 +672,6 @@ def _is_persona_lifecycle_operational(value: Any) -> bool:
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 
-# --- _PERSONA_BFF_OVERLAY ---
-_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
 
 # --- _PERSONA_PROVISIONING_STORE ---
@@ -706,9 +702,126 @@ def _persona_provisioning_store():
     return _PERSONA_PROVISIONING_STORE
 
 
+# --- PERSONA_OWNER_SERVICE_ACTOR_ID ---
+# The single explicit service principal this module presents to strict owners.
+# Capital binds a mutation body's ``actor_id`` to the verified token subject (or
+# a verified delegated actor claim, which this BFF never mints), so the owner
+# transport subject/service claims, the ``X-Pantheon-Service`` header and the
+# coordinator's mutation ``actor_id`` must all be the same identity or every
+# Capital write fails closed with 403 ACTOR_ID_MISMATCH before persistence.
+# The human requester stays audit metadata (``requested_by``); it is never
+# asserted as the authenticated actor.
+PERSONA_OWNER_SERVICE_ACTOR_ID = "control-plane-bff"
+
+
 # --- _PersonaOwnerHttpTransport ---
 class _PersonaOwnerHttpTransport:
     """Strict synchronous transport to canonical provisioning owner APIs."""
+
+    def __init__(self, *, tenant_id: str | None = None) -> None:
+        # The coordinator knows the authoritative tenant while the transport
+        # is deliberately kept independent of the request object.  Carry that
+        # identity into every owner call so internal writes cannot fall back to
+        # an unbound/default tenant during a GET-first reconciliation.
+        self.tenant_id = str(tenant_id or "").strip() or str(
+            os.getenv("PANTHEON_BFF_TENANT_ID")
+            or os.getenv("PANTHEON_TENANT_ID")
+            or "default"
+        ).strip()
+
+    def _service_jwt(self, owner: str) -> str:
+        """Mint a short-lived, tenant-bound service JWT for strict owners."""
+
+        if owner == "governance":
+            # Product approval authority is issued by the authorized dev delivery
+            # lane, never self-granted by adding a role to this generic BFF JWT.
+            from services.service_token_file import configured_service_token
+            token = configured_service_token("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN")
+            if not token:
+                raise RuntimeError("Scoped Persona Governance principal is required")
+            if self.tenant_id != "tenant-dev":
+                raise RuntimeError("Persona paper Governance principal is tenant-dev only")
+            return token
+
+        secret_env = {
+            "capital": "PANTHEON_CAPITAL_JWT_SECRET",
+            "registry": "PANTHEON_REGISTRY_JWT_SECRET",
+            "governance": "PANTHEON_GOVERNANCE_JWT_SECRET",
+        }.get(owner, "PANTHEON_BFF_JWT_SECRET")
+        secret = str(
+            os.getenv(secret_env)
+            or os.getenv("PANTHEON_BFF_JWT_SECRET")
+            or ""
+        ).strip()
+        if not secret:
+            raise RuntimeError(
+                "PANTHEON_BFF_JWT_SECRET is required for strict Persona owner calls"
+            )
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        now = int(time.time())
+        claims: dict[str, Any] = {
+            "sub": PERSONA_OWNER_SERVICE_ACTOR_ID,
+            "service": PERSONA_OWNER_SERVICE_ACTOR_ID,
+            "tenant_id": self.tenant_id,
+            "allowed_tenants": [self.tenant_id],
+            "roles": [
+                "service",
+                "operator",
+                "admin",
+                "approver",
+                "reviewer",
+                "risk_owner",
+                "capital.admin",
+                "persona.admin",
+            ],
+            "iat": now,
+            "exp": now + 120,
+        }
+        issuer = str(
+            os.getenv("CAPITAL_JWT_ISSUER")
+            or os.getenv("PANTHEON_BFF_JWT_ISSUER")
+            or ""
+        ).strip()
+        audience = str(
+            os.getenv("CAPITAL_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_BFF_JWT_AUDIENCE")
+            or ""
+        ).strip()
+        if issuer:
+            claims["iss"] = issuer
+        if audience:
+            claims["aud"] = audience
+        return encode_jwt_hs256(claims, secret=secret)
+
+    def _headers(self, owner: str, payload: Mapping[str, Any] | None = None) -> dict[str, str]:
+        tenant_id = str((payload or {}).get("tenant_id") or self.tenant_id).strip()
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Tenant-Id": tenant_id,
+            "X-Pantheon-Service": (
+                os.getenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner")
+                if owner == "governance" else PERSONA_OWNER_SERVICE_ACTOR_ID
+            ),
+        }
+        idempotency_key = str(
+            (payload or {}).get("idempotency_key")
+            or (payload or {}).get("idempotencyKey")
+            or ""
+        ).strip()
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        if owner in {"capital", "registry", "governance"}:
+            headers["Authorization"] = f"Bearer {self._service_jwt(owner)}"
+        else:
+            # Deployment and the other dev owner APIs use the repository's
+            # bounded structured token in permissive dev mode.  Capital is the
+            # exception: it remains strict and receives the JWT above.
+            headers["Authorization"] = (
+                f"Bearer {PERSONA_OWNER_SERVICE_ACTOR_ID}:operator,admin,service"
+            )
+        return headers
 
     _OWNER_ENVIRONMENTS = {
         "capital": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
@@ -735,7 +848,16 @@ class _PersonaOwnerHttpTransport:
 
     def get(self, owner: str, path: str) -> Optional[Dict[str, Any]]:
         try:
-            value = _get_json(self._url(owner, path))
+            request = urllib_request.Request(
+                self._url(owner, path),
+                headers=self._headers(owner),
+                method="GET",
+            )
+            with urllib_request.urlopen(
+                request,
+                timeout=max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))),
+            ) as response:
+                value = json.loads(response.read().decode("utf-8"))
         except urllib_error.HTTPError as exc:
             if exc.code == 404:
                 return None
@@ -745,7 +867,25 @@ class _PersonaOwnerHttpTransport:
         return value
 
     def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        value = _post_json(self._url(owner, path), dict(payload))
+        headers = self._headers(owner, payload)
+        if owner == "governance":
+            # Governance forbids idempotency fields in its body. Bind the header
+            # to the exact operation, tenant and CAS payload across safe replay.
+            headers["Idempotency-Key"] = "persona-governance-" + _stable_json_hash({
+                "method": "POST", "path": path, "tenant_id": self.tenant_id,
+                "payload": dict(payload),
+            })
+        request = urllib_request.Request(
+            self._url(owner, path),
+            data=json.dumps(dict(payload)).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib_request.urlopen(
+            request,
+            timeout=max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))),
+        ) as response:
+            value = json.loads(response.read().decode("utf-8"))
         if not isinstance(value, dict):
             raise RuntimeError(f"{owner} POST {path} returned a non-object receipt")
         return value
@@ -754,7 +894,7 @@ class _PersonaOwnerHttpTransport:
         request = urllib_request.Request(
             self._url(owner, path),
             data=json.dumps(dict(payload)).encode("utf-8"),
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            headers=self._headers(owner, payload),
             method="PATCH",
         )
         timeout = max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30")))
@@ -1186,20 +1326,15 @@ def _materialize_terminal_persona_provisioning_ledger(
     _active_writer = _get_active_write_owner()
     _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
     if _updater is None:
-        _updater = getattr(_get_active_read_store(), "update_persona", None)
-    if _updater is not None:
-        _updater(
-            persona_id,
-            lifecycle_state=new_state,
-            metadata=metadata_updates,
+        raise RuntimeError(
+            f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
+            "no fallback writer is permitted."
         )
-    if persona_id in _PERSONA_BFF_OVERLAY:
-        _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-        _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-        if runtime_binding_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = runtime_binding_id
-        if runtime_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+    _updater(
+        persona_id,
+        lifecycle_state=new_state,
+        metadata=metadata_updates,
+    )
     raw["lifecycle_state"] = new_state
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
@@ -1223,12 +1358,18 @@ def _reconcile_persona_provisioning_compensation(
         return None
     coordinator = PersonaProvisioningCoordinator(
         store=store,
-        transport=_PersonaOwnerHttpTransport(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=str(metadata.get("tenant_id") or "")),
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"persona-compensation:{uuid.uuid4().hex}",
         lease_seconds=max(
             30,
             int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+        # Compensation writes go to the same strict owners as forward
+        # coordination, so it must present the same authenticated principal.
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
         ),
     )
     try:
@@ -1287,13 +1428,15 @@ def _evaluate_persona_provisioning_status(
             _active_writer = _get_active_write_owner()
             _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
             if _updater is None:
-                _updater = getattr(_get_active_read_store(), "update_persona", None)
-            if _updater is not None:
-                _updater(
-                    persona_id,
-                    lifecycle_state="provisioning_failed",
-                    metadata=changed_updates,
+                raise RuntimeError(
+                    f"Persona write owner unavailable for terminal lifecycle update of "
+                    f"{persona_id!r}; no fallback writer is permitted."
                 )
+            _updater(
+                persona_id,
+                lifecycle_state="provisioning_failed",
+                metadata=changed_updates,
+            )
             raw.setdefault("metadata", {}).update(changed_updates)
         return "provisioning_failed"
     if current_state not in ("provisioning", "draft", "paper_running"):
@@ -1815,20 +1958,15 @@ def _evaluate_persona_provisioning_status(
         _active_writer = _get_active_write_owner()
         _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
         if _updater is None:
-            _updater = getattr(_get_active_read_store(), "update_persona", None)
-        if _updater is not None:
-            _updater(
-                persona_id,
-                lifecycle_state=new_state,
-                metadata=metadata_updates,
+            raise RuntimeError(
+                f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
+                "no fallback writer is permitted."
             )
-        if persona_id in _PERSONA_BFF_OVERLAY:
-            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-            if binding_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = binding_id
-            if runtime_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+        _updater(
+            persona_id,
+            lifecycle_state=new_state,
+            metadata=metadata_updates,
+        )
         raw["lifecycle_state"] = new_state
         raw["status"] = new_state
         raw.setdefault("metadata", {}).update(metadata_updates)
@@ -2035,39 +2173,19 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
         ) from exc
 
     for record in prov_records:
-        persona_proj, meta_proj = _persona_record_for_provisioning(
-            record,
-            payload=record.request_payload,
-            owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
-        )
-        pid = record.persona_id
-        if pid not in records_by_id:
-            records_by_id[pid] = persona_proj
-        else:
-            existing = records_by_id[pid]
-            existing_meta = dict(existing.get("metadata") or {}) if isinstance(existing.get("metadata"), dict) else {}
-            for k, v in meta_proj.items():
-                if v is not None and (k not in existing_meta or not existing_meta[k]):
-                    existing_meta[k] = v
-            existing["metadata"] = existing_meta
-            if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
-                existing["lifecycle_state"] = "paper_running"
-
-    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
-        if pid not in records_by_id:
-            records_by_id[pid] = {
-                "id": pid,
-                "persona_id": pid,
-                "name": overlay.get("name"),
-                "lifecycle_state": overlay.get("state") or "draft",
-                "updated_at": overlay.get("updatedAt"),
-                "metadata": {
-                    "archetype": overlay.get("archetype"),
-                    "owner": overlay.get("owner"),
-                    "risk_level": overlay.get("risk"),
-                    "tenant_id": overlay.get("tenantId"),
-                },
-            }
+        try:
+            persona_proj, _ = _persona_record_for_provisioning(
+                record,
+                payload=record.request_payload,
+                owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
+            )
+        except ProvisioningConflict:
+            # A ledger row cannot relabel a different canonical owner record.
+            log.warning("Skipping Persona provisioning projection with conflicting owner scope")
+            continue
+        # This scoped projection retains canonical fields and overlays current
+        # ledger metadata, including pending/failed progress after a reload.
+        records_by_id[record.persona_id] = persona_proj
 
     result = list(records_by_id.values())
     if clean_tenant:
@@ -2239,22 +2357,8 @@ def _persona_strategy_discovery_payload(
     _ensure_persona_exists(persona_id)
     persona = _get_active_read_store().get_persona(persona_id)
     if persona is None:
-        overlay = _PERSONA_BFF_OVERLAY.get(persona_id) or {}
-        persona = {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": overlay.get("name") or persona_id,
-            "mandate": overlay.get("archetype") or overlay.get("name") or persona_id,
-            "strategy_family": overlay.get("archetype"),
-            "lifecycle_state": overlay.get("state") or "draft",
-            "status": overlay.get("state") or "draft",
-            "metadata": {
-                "archetype": overlay.get("archetype"),
-                "risk_level": overlay.get("risk"),
-                "market_scope": overlay.get("marketScope"),
-                "asset_classes": overlay.get("assetClasses"),
-            },
-        }
+        directory = _get_persona_directory_snapshot()
+        persona = directory.records_by_id.get(persona_id)
     route_policy = _get_active_read_store().get_route_policy_for_persona(persona_id) or {}
     capability_snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id) or {}
     profile = extract_persona_strategy_profile(
@@ -2601,9 +2705,8 @@ def _project_persona_fleet_item(
     all_evolution_decisions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
     routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
+    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
 
     bindings = list(_get_active_read_store().get_bindings_for_persona(persona_id) or [])
     binding_ids = {
@@ -3454,7 +3557,7 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
         items.append(
             _project_persona_dto(
                 raw,
-                overlay=_PERSONA_BFF_OVERLAY.get(persona_id),
+                overlay=None,
                 routed_strategies=_routed_strategies_for_persona(persona_id),
                 evaluate_provisioning=False,
             )
@@ -3695,7 +3798,18 @@ def _persona_record_for_provisioning(
         )
         if isinstance(raw_traits, dict) and raw_traits.get(key) not in (None, "")
     } or None
-    if record.state == "succeeded":
+    # Match the terminal materializer's minimum receipt contract. A state
+    # label alone must not bypass authoritative runtime readback.
+    succeeded_with_readback = (
+        record.state == "succeeded"
+        and bool(str(record.references.get("runtime_binding_id") or "").strip())
+        and bool(str(record.references.get("runtime_id") or "").strip())
+        and isinstance(record.references.get("authoritative_readback"), Mapping)
+        and isinstance(record.result, Mapping)
+        and record.result.get("paper_running") is True
+        and record.result.get("status") == "paper_running"
+    )
+    if succeeded_with_readback:
         lifecycle_state = "paper_running"
     elif record.state in {"failed", "compensated"}:
         lifecycle_state = "provisioning_failed"
@@ -3715,14 +3829,15 @@ def _persona_record_for_provisioning(
     )
     _active_writer = _get_active_write_owner()
     creator = getattr(_active_writer, "create_persona", None) if _active_writer else None
-    if creator is None:
-        creator = getattr(_get_active_read_store(), "create_persona", None)
     updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
-    if updater is None:
-        updater = getattr(_get_active_read_store(), "update_persona", None)
     existing = _get_active_read_store().get_persona(record.persona_id)
     if existing is None:
-        if mutate_store and callable(creator):
+        if mutate_store:
+            if not callable(creator):
+                raise RuntimeError(
+                    f"Persona write owner unavailable for create of {record.persona_id!r}; "
+                    "no fallback writer is permitted."
+                )
             persona = creator(
                 persona_id=record.persona_id,
                 name=str(payload.get("name") or record.normalized_name),
@@ -3757,22 +3872,29 @@ def _persona_record_for_provisioning(
     else:
         existing_metadata = existing.get("metadata")
         existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
-        if mutate_store and (
+        if (
+            str(existing.get("persona_id") or existing.get("id") or "").strip()
+            != record.persona_id
+            or
             str(existing.get("name") or "").strip()
             != str(payload.get("name") or record.normalized_name).strip()
-            or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
+            or _persona_record_tenant_id(existing) != record.tenant_id
         ):
             raise ProvisioningConflict(
                 "stable Persona identity is already occupied by different tenant/name semantics"
             )
-        if (
-            record.state == "succeeded"
-            and str(existing.get("lifecycle_state") or "") == "paper_running"
-        ):
-            lifecycle_state = "paper_running"
-        elif existing.get("lifecycle_state") and record.state == "succeeded":
+        if existing.get("lifecycle_state") not in {
+            "draft", "research_only", "provisioning", "provisioning_failed", "paper_running",
+        }:
+            # Provisioning is not authority to reactivate frozen/retired
+            # owners or downgrade a later governed lifecycle.
             lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store and callable(updater):
+        if mutate_store:
+            if not callable(updater):
+                raise RuntimeError(
+                    f"Persona write owner unavailable for update of {record.persona_id!r}; "
+                    "no fallback writer is permitted."
+                )
             persona = updater(
                 record.persona_id,
                 lifecycle_state=lifecycle_state,
@@ -3787,7 +3909,6 @@ def _persona_record_for_provisioning(
                 "actor_id": str(existing.get("actor_id") or canonical_owner),
                 "created_by": str(existing.get("created_by") or canonical_owner),
                 "archetype": existing.get("archetype") or archetype,
-                "lifecycle_state": lifecycle_state,
                 "risk_level": existing.get("risk_level") or risk,
                 "mandate": existing.get("mandate") or mandate,
                 "strategy_family": existing.get("strategy_family") or strategy_family,
@@ -3795,6 +3916,21 @@ def _persona_record_for_provisioning(
                 "metadata": {**existing_metadata, **metadata},
                 "required_data_sources": existing.get("required_data_sources") or _persona_create_required_data_sources(payload),
             }
+    if persona.get("lifecycle_state") in {
+        "draft", "research_only", "provisioning", "provisioning_failed", "paper_running",
+    }:
+        # The owner remains draft/research_only. Only this BFF projection
+        # exposes coordinator progress to the response and reconciler.
+        owner_state = persona.get("owner_lifecycle_state")
+        if persona.get("lifecycle_state") in {"draft", "research_only"}:
+            owner_state = persona["lifecycle_state"]
+        persona = {
+            **persona,
+            "lifecycle_state": lifecycle_state,
+            "metadata": {**(persona.get("metadata") or {}), **metadata},
+        }
+        if owner_state:
+            persona["owner_lifecycle_state"] = owner_state
     return persona, metadata
 
 
@@ -3828,7 +3964,6 @@ def _persona_create_response(
         routed_strategies=0,
         evaluate_provisioning=False,
     )
-    _PERSONA_BFF_OVERLAY[record.persona_id] = overlay
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
         "create_flow": "durable_owner_coordinated_provisioning",
@@ -3894,12 +4029,18 @@ def _coordinate_persona_create(
     )
     coordinator = PersonaProvisioningCoordinator(
         store=store,
-        transport=_PersonaOwnerHttpTransport(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=record.tenant_id),
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"operator-bff:{os.getenv('HOSTNAME', 'local')}:{uuid.uuid4().hex}",
         lease_seconds=max(
             30,
             int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+        # Owner mutations are authenticated as this BFF service principal; the
+        # requesting human stays audit metadata inside each owner payload.
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
         ),
     )
     try:
@@ -10867,8 +11008,6 @@ _STRATEGY_BFF_RISK_MAP = {
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
-_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
 _PERSONA_PROVISIONING_RECONCILER_TASK: Optional[asyncio.Task[Any]] = None

@@ -82,6 +82,41 @@ def read_task_archive_file_safe(path: Path) -> str:
         raise e
 
 
+def read_task_archive_file_bytes_safe(path: Path) -> bytes:
+    import stat
+    import errno
+    try:
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"archive-leaf must be a regular file: {path}")
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise RuntimeError(f"Failed to lstat archive-leaf {path}: {e}")
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        raise
+
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise RuntimeError(f"archive-leaf fd must be a regular file: {path}")
+        with open(fd, "rb") as f:
+            return f.read()
+    except Exception as e:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise e
+
+
 def _archive_fault(point: str) -> None:
     if str(os.environ.get("LOOP_TEST_ARCHIVE_SIGKILL_AFTER") or "").strip() == point:
         os.kill(os.getpid(), 9)
@@ -445,6 +480,25 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
 
+def load_archived_raw_bytes(task_id: str | None) -> bytes | None:
+    normalized = normalize_task_id(task_id)
+    if not normalized:
+        return None
+    path = archive_task_path(normalized)
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        try:
+            return read_task_archive_file_bytes_safe(path)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load archive bytes safely: {e}")
+
+
+
 def correct_archived_task_review_file(
     task_id: str,
     review_file: str,
@@ -750,6 +804,7 @@ def status_archive_outbox_payload(
     snapshots: list[dict[str, Any]],
     *,
     archive_root: str,
+    archive_file_sha256s: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build the sole durable archive-outbox contract.
 
@@ -761,11 +816,17 @@ def status_archive_outbox_payload(
         str(snapshot["task_id"]): _canonical_json_sha256(snapshot)
         for snapshot in snapshots
     }
-    binding = {
+    binding: dict[str, Any] = {
         "archive_root": archive_root,
         "snapshots": snapshots,
         "snapshot_sha256s": snapshot_sha256s,
     }
+    if archive_file_sha256s:
+        binding["archive_file_sha256s"] = {
+            str(k): str(v).strip()
+            for k, v in archive_file_sha256s.items()
+            if str(v).strip()
+        }
     return {
         "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
         "transaction_id": "ai-status-archive-tx-" + _canonical_json_sha256(binding),
@@ -798,10 +859,12 @@ def validate_status_archive_outbox(
         "snapshots",
         "snapshot_sha256s",
     }
-    if set(value) != required:
+    allowed = required | {"archive_file_sha256s"}
+    if not (required <= set(value) <= allowed):
         raise RuntimeError("status archive outbox schema is not exact")
     snapshots = value.get("snapshots")
     snapshot_sha256s = value.get("snapshot_sha256s")
+    raw_file_shas = value.get("archive_file_sha256s")
     if (
         value.get("schema_version") != STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION
         or not isinstance(value.get("archive_root"), str)
@@ -815,17 +878,26 @@ def validate_status_archive_outbox(
         or not isinstance(snapshot_sha256s, dict)
     ):
         raise RuntimeError("status archive outbox contract is invalid")
+    if raw_file_shas is not None:
+        if not isinstance(raw_file_shas, dict):
+            raise RuntimeError("status archive outbox contract is invalid")
+        task_ids = {str(s["task_id"]) for s in snapshots}
+        for tid, sha in raw_file_shas.items():
+            if tid not in task_ids or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+                raise RuntimeError("status archive outbox contract is invalid")
     expected_digests = {
         str(snapshot["task_id"]): _canonical_json_sha256(snapshot)
         for snapshot in snapshots
     }
     if snapshot_sha256s != expected_digests:
         raise RuntimeError("status archive outbox snapshot digest mismatch")
-    binding = {
+    binding: dict[str, Any] = {
         "archive_root": value["archive_root"],
         "snapshots": snapshots,
         "snapshot_sha256s": snapshot_sha256s,
     }
+    if raw_file_shas:
+        binding["archive_file_sha256s"] = raw_file_shas
     expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(binding)
     if value.get("transaction_id") != expected_id:
         raise RuntimeError("status archive outbox digest mismatch")

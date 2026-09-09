@@ -193,7 +193,7 @@ store.release(failed, lease_owner='prior-worker', lease_seconds=60)
 transport = FakeOwnerTransport()
 store2 = MemoryPersonaProvisioningStore(backend=backend)
 personas_service._PERSONA_PROVISIONING_STORE = store2
-personas_service._PersonaOwnerHttpTransport = lambda: transport
+personas_service._PersonaOwnerHttpTransport = lambda **kwargs: transport
 personas_service._register_persona_cron_required = _schedule_receipt
 
 with tempfile.TemporaryDirectory() as td:
@@ -348,7 +348,7 @@ store.release(failed, lease_owner='prior-worker', lease_seconds=60)
 transport = FakeOwnerTransport()
 store2 = MemoryPersonaProvisioningStore(backend=backend)
 personas_service._PERSONA_PROVISIONING_STORE = store2
-personas_service._PersonaOwnerHttpTransport = lambda: transport
+personas_service._PersonaOwnerHttpTransport = lambda **kwargs: transport
 personas_service._register_persona_cron_required = _schedule_receipt
 
 with tempfile.TemporaryDirectory() as td:

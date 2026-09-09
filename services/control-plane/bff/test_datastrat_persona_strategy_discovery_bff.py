@@ -221,8 +221,6 @@ def _discovery_client():
         )
         bff_main.read_store = _TestReadSurfacePorts(ports)
         bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
         client = TestClient(bff_main.app)
         try:
             yield client

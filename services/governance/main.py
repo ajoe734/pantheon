@@ -60,6 +60,16 @@ from services.governance.promotion_readiness.signoff_api import (
     SignoffAPI,
     SignoffApiError,
 )
+from services.governance.paper_approval_scope import (
+    PaperApprovalDenied,
+    PaperCandidateUnavailable,
+    configured_paper_registry_reader,
+    require_paper_owned_decision,
+    resolve_dev_paper_grant,
+    validate_paper_decide_body,
+    validate_paper_proposal,
+    verify_paper_candidate_for_decision,
+)
 
 # ---------------------------------------------------------------------------
 # Platform objects — resolve relative to repo layout
@@ -213,40 +223,6 @@ register_fastapi_health_routes(
 
 def _to_response(d: ApprovalDecision) -> ApprovalDecisionResponse:
     return ApprovalDecisionResponse(**d.to_dict())
-
-
-def _emit(
-    event_type: str,
-    decision: ApprovalDecision,
-    detail: Optional[Dict[str, Any]] = None,
-) -> None:
-    try:
-        audit_store.append_event(
-            event_type=event_type,
-            decision_id=decision.decision_id,
-            actor_id=decision.actor_id,
-            actor_role=(
-                decision.actor_role.value
-                if isinstance(decision.actor_role, ActorRole)
-                else decision.actor_role
-            ),
-            target_type=(
-                decision.target_type.value
-                if isinstance(decision.target_type, TargetType)
-                else decision.target_type
-            ),
-            target_id=decision.target_id,
-            detail=detail,
-        )
-    except Exception as exc:
-        log.warning("Audit write failed: %s", exc)
-
-
-def _get_or_404(decision_id: str) -> ApprovalDecision:
-    decision = store.get(decision_id)
-    if not decision:
-        raise HTTPException(status_code=404, detail=f"Decision '{decision_id}' not found")
-    return decision
 
 
 def _record_or_404(
@@ -1299,6 +1275,164 @@ def record_rollback(
     return body
 
 
+def _approval_principal(authorization: Optional[str]) -> AuthContext:
+    """Strict approval admission; no synthesized actor, tenant or role."""
+    import math
+    env = {key: os.getenv(key.replace('PANTHEON_RUNTIME_', 'PANTHEON_GOVERNANCE_'), '')
+           for key in _governance_auth_env()}
+    env['PANTHEON_RUNTIME_AUTH_MODE'] = 'strict'
+    env['PANTHEON_RUNTIME_DEFAULT_ROLE'] = '__missing_approval_role__'
+    issuer = env.get('PANTHEON_RUNTIME_OIDC_ISSUER') or env.get('PANTHEON_RUNTIME_JWT_ISSUER')
+    audience = env.get('PANTHEON_RUNTIME_OIDC_AUDIENCE') or env.get('PANTHEON_RUNTIME_JWT_AUDIENCE')
+    if not issuer or not audience:
+        raise HTTPException(503, 'Governance expected issuer and audience must be configured')
+    try:
+        ctx = validate_request_auth(authorization=authorization, mfa_header=None,
+                                    required_roles=(), mfa_required=False, env=env)
+        claims = ctx.claims
+        exp = claims.get('exp')
+        if (ctx.token_kind != 'jwt' or not isinstance(claims.get('sub'), str)
+                or not claims['sub'].strip() or ctx.actor_id != claims['sub']
+                or not isinstance(claims.get('tenant_id'), str) or not claims['tenant_id'].strip()
+                or not ctx.roles or "__missing_approval_role__" in ctx.roles or isinstance(exp, bool) or not isinstance(exp, (int, float))
+                or not math.isfinite(exp) or exp <= datetime.now(timezone.utc).timestamp()):
+            raise AuthError('AUTH_APPROVAL_CLAIMS_REQUIRED', 'Verified subject, tenant, roles and expiry required', 401)
+        return ctx
+    except AuthError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(401, 'Invalid approval claims') from exc
+
+
+def _dev_paper_grant(ctx: AuthContext):
+    """Dedicated dev paper principal admission; None for every other subject.
+
+    The dedicated subject never reaches generic role handling: it is either
+    admitted with its exact tenant/scope/role bundle or rejected here.
+    """
+    try:
+        return resolve_dev_paper_grant(ctx)
+    except PaperApprovalDenied as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+def _paper_registry_reader():
+    """Exact Registry owner reader for the dev paper candidate recheck."""
+    return configured_paper_registry_reader()
+
+
+def _approval_reader(authorization: Optional[str]) -> AuthContext:
+    ctx = _approval_principal(authorization)
+    _dev_paper_grant(ctx)
+    from services.governance.write_authority import WRITE_AUTHORITY_MATRIX
+    roles = {role for values in WRITE_AUTHORITY_MATRIX.values() for role in values}
+    if not ctx.roles.intersection(roles | {'approval_reader', 'approval_proposer'}):
+        raise HTTPException(403, 'Approval read role required')
+    return ctx
+
+
+def _tenant_approval(decision_id: str, ctx: AuthContext) -> ApprovalDecision:
+    decision = store.get(decision_id)
+    if decision is None or decision.tenant_id != ctx.claims['tenant_id']:
+        raise HTTPException(404, 'Approval decision not found')
+    return decision
+
+
+def _approval_command(operation, decision_id, body, authorization, idempotency_key):
+    from services.governance.pg_store import ApprovalCommandConflict, ApprovalCommandNotFound
+    ctx = _approval_principal(authorization)
+    grant = _dev_paper_grant(ctx)
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        raise HTTPException(422, 'Idempotency-Key required')
+    declared_role = getattr(body, 'actor_role', None)
+    role = declared_role.value if declared_role else 'approval_proposer'
+    if operation == 'propose':
+        from services.governance.write_authority import WRITE_AUTHORITY_MATRIX
+        allowed = {'approval_proposer'} | {r for rs in WRITE_AUTHORITY_MATRIX.values() for r in rs}
+        if not ctx.roles.intersection(allowed):
+            raise HTTPException(403, 'Approval propose role required')
+        if body.tenant_id != ctx.claims['tenant_id'] or body.owner_user_id != ctx.actor_id:
+            raise HTTPException(403, 'Proposal owner and tenant must match verified principal')
+        if body.expected_version != 0:
+            raise HTTPException(409, 'Proposal expected_version must be zero')
+    elif role not in ctx.roles or body.actor_id != ctx.actor_id:
+        raise HTTPException(403, 'Body actor and role must match verified principal')
+    now = datetime.now(timezone.utc)
+    if grant is not None:
+        if operation == 'revoke':
+            raise HTTPException(403, 'Dev paper principal may not revoke decisions')
+        if operation == 'propose':
+            try:
+                validate_paper_proposal(body.model_dump(mode='json'), grant=grant, now=now)
+            except PaperApprovalDenied as exc:
+                raise HTTPException(exc.status_code, str(exc)) from exc
+    command = {
+        'operation': operation, 'decision_id': decision_id,
+        'tenant_id': ctx.claims['tenant_id'], 'actor_id': ctx.actor_id, 'actor_role': role,
+        'expected_version': body.expected_version, 'idempotency_key': idempotency_key,
+        'body': body.model_dump(mode='json'),
+    }
+    if grant is not None:
+        # The owner-stamped scope is part of the command identity, so a replay
+        # under a different scope can never match the original receipt.
+        command['authorization_scope'] = grant.authorization_scope
+    def mutate(decision):
+        if operation == 'propose':
+            if decision is not None:
+                raise ApprovalCommandConflict('Approval decision already exists')
+            fields = body.model_dump(mode='json', exclude={'expected_version', 'decision_id'})
+            proposed = ApprovalDecision.create_proposed(
+                decision_id=decision_id,
+                authorization_scope=grant.authorization_scope if grant is not None else None,
+                **fields,
+            )
+            errors = proposed.validate()
+            if errors:
+                raise ValueError('; '.join(errors))
+            return proposed
+        if decision is None:
+            raise ApprovalCommandNotFound('Approval decision not found')
+        if grant is not None:
+            # Owner reads run inside the CAS mutate callback: after auth/claim
+            # admission and after the durable replay short-circuit, so an
+            # original receipt is replayed exactly while a fresh transition
+            # always rechecks the actual candidate.
+            current = decision.to_dict()
+            require_paper_owned_decision(current, grant=grant, now=now)
+            if operation == 'decide':
+                validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+            verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+        if operation == 'review':
+            decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
+        elif operation == 'revoke':
+            decision.revoke(actor_role=role, actor_id=ctx.actor_id)
+        else:
+            fields = body.model_dump(mode='json', exclude={'expected_version', 'actor_role', 'actor_id', 'evidence_refs'})
+            refs = [EvidenceRef(**ref.model_dump()) for ref in (body.evidence_refs or [])]
+            decision.decide(actor_role=role, actor_id=ctx.actor_id, evidence_refs=refs or None, **fields)
+        errors = decision.validate()
+        if errors:
+            raise ValueError('; '.join(errors))
+        return decision
+    if not hasattr(store, 'execute_command'):
+        raise HTTPException(503, 'Approval commands require PostgreSQL decision and audit stores')
+    try:
+        return ApprovalDecisionResponse(**store.execute_command(command=command, mutate=mutate, audit_store=audit_store))
+    except ApprovalCommandNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ApprovalCommandConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except PaperApprovalDenied as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    except PaperCandidateUnavailable as exc:
+        raise HTTPException(503, 'Registry candidate read unavailable') from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        # No database text or credentials in API response/logs.
+        raise HTTPException(503, 'Approval transaction unavailable') from exc
+
+
 # ---------------------------------------------------------------------------
 # Routes — proposals
 # ---------------------------------------------------------------------------
@@ -1309,46 +1443,14 @@ def record_rollback(
     status_code=201,
     summary="Propose a new ApprovalDecision",
 )
-def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
-    """Create a new ApprovalDecision in the *proposed* state.
-
-    Called by: promotion plane, evolution controller, registry pipeline.
-    """
-    decision_id = body.decision_id or f"apv-{uuid.uuid4().hex[:12]}"
-    if store.get(decision_id):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Decision '{decision_id}' already exists",
-        )
-
-    decision = ApprovalDecision.create_proposed(
-        decision_id=decision_id,
-        target_type=body.target_type.value,
-        target_id=body.target_id,
-        target_version=body.target_version,
-        risk_level=body.risk_level.value,
-        capital_pool_id=body.capital_pool_id,
-        persona_id=body.persona_id,
-        tenant_id=body.tenant_id,
-        owner_user_id=body.owner_user_id,
-        proposal_id=body.proposal_id,
-        proposal_revision=body.proposal_revision,
-        proposal_content_digest=body.proposal_content_digest,
-        validation_result_digest=body.validation_result_digest,
-        session_id=body.session_id,
-        candidate_digest=body.candidate_digest,
-        proof_digest=body.proof_digest,
-        expires_at=body.expires_at,
-    )
-
-    errors = decision.validate()
-    if errors:
-        raise HTTPException(status_code=422, detail={"validation_errors": errors})
-
-    store.put(decision)
-    _emit("approval_decision_created", decision)
-    log.info("Proposed %s for %s/%s", decision_id, body.target_type, body.target_id)
-    return _to_response(decision)
+def propose_approval(body: ProposeApprovalRequest,
+                     authorization: Optional[str] = Header(None),
+                     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
+    # Deterministic generated ID permits response-loss replay without knowing the ID.
+    ctx = _approval_principal(authorization)
+    identity = json.dumps([ctx.claims['tenant_id'], ctx.actor_id, idempotency_key])
+    decision_id = body.decision_id or 'apv-' + hashlib.sha256(identity.encode()).hexdigest()
+    return _approval_command('propose', decision_id, body, authorization, idempotency_key)
 
 
 # ---------------------------------------------------------------------------
@@ -1363,6 +1465,7 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
 def get_latest_approved(
     target_type: str = Query(..., description="TargetType value"),
     target_id: str  = Query(..., description="Target artifact / object ID"),
+    authorization: Optional[str] = Header(None),
 ) -> Optional[ApprovalDecisionResponse]:
     """Return the most recent *decided* + *approved* decision for a target.
 
@@ -1371,10 +1474,18 @@ def get_latest_approved(
     Used by deployment planner, runtime manager, and evolution controller to
     verify canonical approval before proceeding.
     """
-    decision = store.find_latest_approved(target_type, target_id)
-    if not decision:
-        return None
-    return _to_response(decision)
+    ctx = _approval_reader(authorization)
+    from services.governance.approval_authority import ApprovalEvidence, ApprovalInvalid
+    candidates = []
+    for decision in store.find_by_target(target_type, target_id):
+        if decision.tenant_id != ctx.claims['tenant_id']:
+            continue
+        try:
+            ApprovalEvidence.model_validate(decision.to_dict()).require_valid()
+        except (ValueError, ApprovalInvalid):
+            continue
+        candidates.append(decision)
+    return _to_response(max(candidates, key=lambda d: d.decided_at)) if candidates else None
 
 
 @app.get(
@@ -1387,9 +1498,11 @@ def list_approvals(
     target_id:      Optional[str] = Query(None),
     decision_state: Optional[str] = Query(None),
     risk_level:     Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
 ) -> List[ApprovalDecisionResponse]:
     """List all decisions with optional filters.  Most-recent first."""
-    decisions = store.list_all()
+    ctx = _approval_reader(authorization)
+    decisions = [d for d in store.list_all() if d.tenant_id == ctx.claims["tenant_id"]]
 
     def _match_str(val, expected: str) -> bool:
         return val == expected or (hasattr(val, "value") and val.value == expected)
@@ -1412,8 +1525,8 @@ def list_approvals(
     response_model=ApprovalDecisionResponse,
     summary="Get a single approval decision",
 )
-def get_approval(decision_id: str) -> ApprovalDecisionResponse:
-    return _to_response(_get_or_404(decision_id))
+def get_approval(decision_id: str, authorization: Optional[str] = Header(None)) -> ApprovalDecisionResponse:
+    return _to_response(_tenant_approval(decision_id, _approval_reader(authorization)))
 
 
 # ---------------------------------------------------------------------------
@@ -1425,24 +1538,11 @@ def get_approval(decision_id: str) -> ApprovalDecisionResponse:
     response_model=ApprovalDecisionResponse,
     summary="Accept review (proposed → under_review)",
 )
-def accept_review(
-    decision_id: str,
-    body: AcceptReviewRequest,
-) -> ApprovalDecisionResponse:
-    """Transition a proposed decision to *under_review*.
+def accept_review(decision_id: str, body: AcceptReviewRequest,
+                 authorization: Optional[str] = Header(None),
+                 idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
+    return _approval_command('review', decision_id, body, authorization, idempotency_key)
 
-    Authorization: role must be permitted for the decision's risk_level per
-    the write-authority matrix.
-    """
-    decision = _get_or_404(decision_id)
-    try:
-        decision.accept_review(actor_role=body.actor_role.value, actor_id=body.actor_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    store.put(decision)
-    _emit("approval_decision_state_changed", decision, {"new_state": "under_review"})
-    return _to_response(decision)
 
 
 @app.post(
@@ -1450,69 +1550,11 @@ def accept_review(
     response_model=ApprovalDecisionResponse,
     summary="Record outcome (under_review → decided)",
 )
-def record_decision(
-    decision_id: str,
-    body: DecideRequest,
-) -> ApprovalDecisionResponse:
-    """Record the final outcome: *approved*, *rejected*, or *approved_with_conditions*.
+def record_decision(decision_id: str, body: DecideRequest,
+                 authorization: Optional[str] = Header(None),
+                 idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
+    return _approval_command('decide', decision_id, body, authorization, idempotency_key)
 
-    An *approved* decision here is what deployment planner and evolution
-    controller cite when constructing a DeploymentPlan or executing a
-    follow-through action.
-    """
-    decision = _get_or_404(decision_id)
-
-    # Enforce write-authority matrix: caller must hold a role authorized to
-    # decide at the decision's risk level.
-    risk_level_str = (
-        decision.risk_level.value
-        if hasattr(decision.risk_level, "value")
-        else decision.risk_level
-    )
-    if not is_authorized_to_decide(body.actor_role.value, risk_level_str):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Role '{body.actor_role.value}' is not authorized to decide "
-                f"at risk level '{risk_level_str}'"
-            ),
-        )
-
-    evidence_refs = None
-    if body.evidence_refs:
-        evidence_refs = [
-            EvidenceRef(
-                ref_type=e.ref_type,
-                ref_id=e.ref_id,
-                storage_ref=e.storage_ref,
-            )
-            for e in body.evidence_refs
-        ]
-
-    try:
-        decision.decide(
-            outcome=body.outcome.value,
-            rationale=body.rationale,
-            actor_role=body.actor_role.value,
-            actor_id=body.actor_id,
-            conditions=body.conditions,
-            evidence_refs=evidence_refs,
-            session_id=body.session_id,
-            candidate_digest=body.candidate_digest,
-            proof_digest=body.proof_digest,
-            expires_at=body.expires_at,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    store.put(decision)
-    _emit(
-        "approval_decision_decided",
-        decision,
-        {"outcome": body.outcome.value, "rationale": body.rationale},
-    )
-    log.info("Decision %s → %s", decision_id, body.outcome)
-    return _to_response(decision)
 
 
 @app.post(
@@ -1520,21 +1562,11 @@ def record_decision(
     response_model=ApprovalDecisionResponse,
     summary="Revoke a decided decision",
 )
-def revoke_decision(
-    decision_id: str,
-    body: RevokeRequest,
-) -> ApprovalDecisionResponse:
-    """Revoke a decided approval.  Requires risk_owner or governance_committee role."""
-    decision = _get_or_404(decision_id)
-    try:
-        decision.revoke(actor_role=body.actor_role.value, actor_id=body.actor_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+def revoke_decision(decision_id: str, body: RevokeRequest,
+                 authorization: Optional[str] = Header(None),
+                 idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
+    return _approval_command('revoke', decision_id, body, authorization, idempotency_key)
 
-    store.put(decision)
-    _emit("approval_decision_revoked", decision)
-    log.info("Decision %s revoked by %s (%s)", decision_id, body.actor_id, body.actor_role)
-    return _to_response(decision)
 
 
 # ---------------------------------------------------------------------------

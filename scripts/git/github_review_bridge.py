@@ -63,13 +63,60 @@ STATUS_STATES = {
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_REVIEW_MERGE_METHOD = "MERGE"
-TASK_BRIEF_PREFIX = ".orchestrator/task-briefs/"
-# GitHub's commit-files response is bounded. A closeout record should be a
-# tiny one-file successor. Request the largest supported page, then reject a
-# full page rather than risk treating an omitted later page as proof that no
-# code changed.
-COMMIT_FILES_PAGE_SIZE = 100
-MAX_SAFE_SUCCESSOR_FILES = COMMIT_FILES_PAGE_SIZE - 1
+GITHUB_REVIEW_MODES = frozenset({"pull_request_review"})
+
+
+_HTTP_STATUS_CODE_RE = re.compile(
+    r"\b(?:HTTP(?:/\d(?:\.\d)?)?(?:\s*status)?\s*[:/]?\s*|\(HTTP\s*|API\s+|['\"]status['\"]\s*:\s*['\"]?)(\d{3})\b",
+    re.IGNORECASE,
+)
+_SERVER_TRANSPORT_ERROR_PHRASES = (
+    "service unavailable",
+    "internal server error",
+    "bad gateway",
+    "gateway timeout",
+    "connection refused",
+    "connection reset",
+    "timed out",
+    "timeout",
+    "could not resolve host",
+    "network is unreachable",
+    "tls handshake",
+    "bad credentials",
+    "resource not accessible",
+    "rate limit",
+)
+
+
+def _is_not_found(exc: Exception | str) -> bool:
+    """Recognize actual HTTP 404 only; retain HTTP 5xx/auth/transport failures as api_error."""
+    text = str(exc or "").strip()
+    if not text:
+        return False
+
+    codes = [int(m) for m in _HTTP_STATUS_CODE_RE.findall(text)]
+    if codes:
+        if any(code != 404 for code in codes):
+            return False
+        if any(code == 404 for code in codes):
+            return True
+
+    text_lower = text.casefold()
+    for phrase in _SERVER_TRANSPORT_ERROR_PHRASES:
+        if phrase in text_lower:
+            return False
+
+    if (
+        re.search(r"\b404\s+not\s+found\b", text_lower)
+        or re.search(r"['\"]status['\"]\s*:\s*['\"]?404\b", text_lower)
+        or re.search(r"['\"]message['\"]\s*:\s*['\"]not found['\"]", text_lower)
+    ):
+        return True
+
+    if re.search(r"(?:^|\b)(?:gh:\s*)?not\s+found\b", text_lower):
+        return True
+
+    return False
 
 
 class GitHubReviewBridgeError(RuntimeError):
@@ -291,19 +338,11 @@ def validate_result_evidence(
         raise GitHubReviewBridgeError("bridge result intent nonce mismatch")
 
     mode = str(value.get("mode") or "").strip()
-    review_recorded = bool(value.get("github_review_id"))
-    status_recorded = bool(
-        value.get("status_id")
-        and value.get("status_context") == CANONICAL_REVIEW_CONTEXT
-        and str(value.get("status_state") or "").strip().lower()
-        == STATUS_STATES[normalized_decision]
-    )
-    recognized = {
-        "pull_request_review": review_recorded,
-        "required_commit_status": status_recorded,
-        "pull_request_review_and_required_status": review_recorded and status_recorded,
-    }
-    if not recognized.get(mode, False):
+    if mode not in GITHUB_REVIEW_MODES:
+        raise GitHubReviewBridgeError(
+            f"bridge result mode {mode!r} is not supported; must be 'pull_request_review'"
+        )
+    if not value.get("github_review_id"):
         raise GitHubReviewBridgeError(
             f"bridge result has no recognized {normalized_decision} evidence for mode {mode!r}"
         )
@@ -347,212 +386,6 @@ def repository_from_pull_request_url(value: Any) -> str | None:
         return None
 
 
-def _is_task_brief_path(value: Any) -> bool:
-    path = str(value or "").strip().lstrip("/")
-    if not path.startswith(TASK_BRIEF_PREFIX):
-        return False
-    remainder = path[len(TASK_BRIEF_PREFIX) :]
-    return bool(remainder) and ".." not in remainder.split("/")
-
-
-def task_brief_only_successor(
-    *,
-    repository: str,
-    approved_head_sha: str,
-    successor_head_sha: str,
-    runner: JsonRunner | None = None,
-) -> dict[str, Any] | None:
-    """Classify one harmless generated-task-brief successor, or reject it.
-
-    This is intentionally much narrower than a generic docs-only exemption.
-    The successor must be a *single direct child* of the approved head, and
-    every reported new and previous filename must be inside task-briefs. Any
-    unavailable, truncated, malformed, renamed-from-code, or multi-commit
-    response fails closed by returning ``None``.
-
-    The caller may then carry the existing review forward to the successor
-    without pretending that a broader post-approval change was reviewed.
-    """
-
-    repository = _require_repository_slug(repository)
-    approved = str(approved_head_sha or "").strip().lower()
-    successor = str(successor_head_sha or "").strip().lower()
-    if not OID_RE.fullmatch(approved) or not OID_RE.fullmatch(successor):
-        return None
-    if approved == successor:
-        return None
-    client = runner or GhJsonRunner()
-    try:
-        payload = client.run_json(
-            [
-                "gh",
-                "api",
-                f"repos/{repository}/commits/{successor}"
-                f"?per_page={COMMIT_FILES_PAGE_SIZE}&page=1",
-            ]
-        )
-    except GitHubReviewBridgeError:
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    if str(payload.get("sha") or "").strip().lower() != successor:
-        return None
-    parents = payload.get("parents")
-    if not isinstance(parents, list) or len(parents) != 1:
-        return None
-    parent = parents[0]
-    if not isinstance(parent, Mapping):
-        return None
-    if str(parent.get("sha") or "").strip().lower() != approved:
-        return None
-    files = payload.get("files")
-    if (
-        not isinstance(files, list)
-        or not files
-        or len(files) > MAX_SAFE_SUCCESSOR_FILES
-        or bool(payload.get("truncated"))
-    ):
-        return None
-    changed_paths: list[str] = []
-    for file in files:
-        if not isinstance(file, Mapping):
-            return None
-        filename = str(file.get("filename") or "").strip().lstrip("/")
-        if not _is_task_brief_path(filename):
-            return None
-        previous_filename = file.get("previous_filename")
-        if previous_filename is not None and not _is_task_brief_path(previous_filename):
-            return None
-        changed_paths.append(filename)
-    return {
-        "kind": "task_brief_only_successor",
-        "approved_head_sha": approved,
-        "successor_head_sha": successor,
-        "changed_paths": changed_paths,
-    }
-
-
-def carry_approval_to_task_brief_only_successor(
-    *,
-    repository: str,
-    task_id: str,
-    actor: str,
-    approved_head_sha: str,
-    successor_head_sha: str,
-    pr: int,
-    head_branch: str,
-    base: str,
-    publish: bool,
-    runner: JsonRunner | None = None,
-) -> dict[str, Any] | None:
-    """Carry one approved task-brief-only successor without a new review.
-
-    The classifier is deliberately fail-closed. When it accepts the direct
-    successor and ``publish`` is true, it records a git-native proof tag at
-    that successor and wakes the canonical gate workflow. No PR review, status
-    row, task brief, or branch commit is written as a side effect.
-    """
-
-    client = runner or GhJsonRunner()
-    carried = task_brief_only_successor(
-        repository=repository,
-        approved_head_sha=approved_head_sha,
-        successor_head_sha=successor_head_sha,
-        runner=client,
-    )
-    if carried is None:
-        return None
-    if not publish:
-        return carried
-    return publish_task_brief_only_successor_proof(
-        repository=repository,
-        task_id=task_id,
-        actor=actor,
-        carried=carried,
-        pr=pr,
-        head_branch=head_branch,
-        base=base,
-        runner=client,
-    )
-
-
-def publish_task_brief_only_successor_proof(
-    *,
-    repository: str,
-    task_id: str,
-    actor: str,
-    carried: Mapping[str, Any],
-    pr: int,
-    head_branch: str,
-    base: str,
-    dispatch_if_proof_exists: bool = True,
-    runner: JsonRunner | None = None,
-) -> dict[str, Any]:
-    """Publish a proof for an already-classified harmless successor.
-
-    Callers must first classify the successor and obtain an allow decision from
-    the full review gate.  Keeping this write-only step separate makes it
-    impossible for classification to create a GitHub proof for a head the gate
-    subsequently rejects.
-    """
-
-    if carried.get("kind") != "task_brief_only_successor":
-        raise GitHubReviewBridgeError("carry-forward proof requires a task-brief-only classification")
-    approved_head_sha = str(carried.get("approved_head_sha") or "").strip().lower()
-    successor_head_sha = str(carried.get("successor_head_sha") or "").strip().lower()
-    changed_paths = carried.get("changed_paths")
-    if (
-        not OID_RE.fullmatch(approved_head_sha)
-        or not OID_RE.fullmatch(successor_head_sha)
-        or approved_head_sha == successor_head_sha
-        or not isinstance(changed_paths, list)
-        or not changed_paths
-        or not all(_is_task_brief_path(path) for path in changed_paths)
-    ):
-        raise GitHubReviewBridgeError("carry-forward proof received an invalid task-brief classification")
-    binding = ReviewBinding.from_mapping(
-        {
-            "pr": pr,
-            "head_sha": successor_head_sha,
-            "head_branch": head_branch,
-            "base": base,
-        }
-    )
-    client = runner or GhJsonRunner()
-    proof = _push_review_proof_tag(
-        client,
-        repository=_require_repository_slug(repository),
-        binding=binding,
-        task_id=task_id,
-        actor=actor,
-        decision=APPROVE,
-        message=(
-            "Automatic carry-forward: this one direct successor changes only "
-            "generated .orchestrator/task-briefs/ paths after the approved head."
-        ),
-    )
-    proof_published = bool(proof.get("created"))
-    # A new proof always needs a workflow run.  If the ref already exists,
-    # callers can suppress a redundant dispatch only after observing the
-    # canonical check green on a later integration pass.  Keeping the retry
-    # path available matters when a worker died after creating the tag but
-    # before dispatching the workflow.
-    workflow_dispatched = proof_published or dispatch_if_proof_exists
-    if workflow_dispatched:
-        _dispatch_canonical_review_gate_workflow(
-            client,
-            repository=_require_repository_slug(repository),
-            binding=binding,
-            required=True,
-        )
-    return {
-        **dict(carried),
-        "review_proof_ref": str(proof.get("ref") or "") or None,
-        "proof_published": proof_published,
-        "workflow_dispatched": workflow_dispatched,
-    }
-
-
 def _review_marker(
     *,
     task_id: str,
@@ -566,6 +399,29 @@ def _review_marker(
         f"task={task_id} actor={actor} decision={decision} head={head_sha}"
         f"{f' intent={intent_nonce}' if intent_nonce else ''} -->"
     )
+
+
+_REVIEW_MARKER_RE = re.compile(
+    r"<!--\s*pantheon-review-bridge\s+"
+    r"task=(?P<task>\S+)\s+"
+    r"actor=(?P<actor>\S+)\s+"
+    r"decision=(?P<decision>\S+)\s+"
+    r"head=(?P<head>[0-9a-fA-F]+)"
+    r"(?:\s+intent=(?P<intent>[0-9a-fA-F]+))?\s*-->"
+)
+
+
+def _parse_review_marker(body: str) -> dict[str, str] | None:
+    match = _REVIEW_MARKER_RE.search(str(body or ""))
+    if not match:
+        return None
+    return {
+        "task": match.group("task"),
+        "actor": match.group("actor"),
+        "decision": match.group("decision"),
+        "head": match.group("head").lower(),
+        "intent": (match.group("intent") or "").lower(),
+    }
 
 
 def _review_body(
@@ -724,8 +580,7 @@ def _review_manifest_identity(
     try:
         base_payload = runner.run_json(["gh", "api", base_endpoint])
     except GitHubReviewBridgeError as exc:
-        detail = str(exc).casefold()
-        if "not found" in detail or "404" in detail:
+        if _is_not_found(exc):
             return path, blob_sha
         if not exact_pr_file_change():
             raise GitHubReviewBridgeError(
@@ -1102,16 +957,57 @@ def _submit_review(
     body: str,
     marker: str,
     decision: str,
+    task_id: str = "",
+    intent_nonce: str = "",
+    actor: str = "",
 ) -> dict[str, Any]:
     expected_state = REVIEW_STATES[decision]
-    existing = _matching_review(
-        _reviews(runner, repository=repository, pr=binding.pr),
-        marker=marker,
-        expected_state=expected_state,
-        head_sha=binding.head_sha,
-    )
-    if existing is not None:
-        return existing
+    all_reviews = _reviews(runner, repository=repository, pr=binding.pr)
+
+    caller_nonce = str(intent_nonce or "").strip().lower()
+    if task_id and caller_nonce:
+        timeline_nonces: list[str] = []
+        matching_review: dict[str, Any] | None = None
+        for rev in all_reviews:
+            parsed = _parse_review_marker(str(rev.get("body") or ""))
+            if (
+                parsed
+                and parsed["task"] == task_id
+                and parsed["head"] == binding.head_sha.lower()
+            ):
+                rev_intent = parsed["intent"]
+                if rev_intent:
+                    timeline_nonces.append(rev_intent)
+                if (
+                    rev_intent == caller_nonce
+                    and str(rev.get("state") or "").upper() == expected_state
+                    and str(rev.get("commit_id") or "").strip().lower() == binding.head_sha.lower()
+                    and (not actor or parsed.get("actor") == actor)
+                    and parsed.get("decision") == decision
+                ):
+                    matching_review = dict(rev)
+
+        if (
+            timeline_nonces
+            and caller_nonce in timeline_nonces
+            and timeline_nonces[-1] != caller_nonce
+        ):
+            raise GitHubReviewBridgeError(
+                f"review intent {caller_nonce} for task {task_id} at {binding.head_sha[:12]} "
+                f"has been superseded by newer review intent {timeline_nonces[-1]}"
+            )
+        if matching_review is not None:
+            return matching_review
+    else:
+        existing = _matching_review(
+            all_reviews,
+            marker=marker,
+            expected_state=expected_state,
+            head_sha=binding.head_sha,
+        )
+        if existing is not None:
+            return existing
+
     runner.run_json(
         [
             "gh",
@@ -1265,6 +1161,142 @@ def operator_acceptance_proof_tag_name(*, head_sha: str) -> str:
     return review_proof_tag_name(decision=OPERATOR_ACCEPT, head_sha=head_sha)
 
 
+def _delete_ref(runner: JsonRunner, *, repository: str, ref: str) -> None:
+    prefix = "refs/tags/"
+    if not ref.startswith(prefix):
+        return
+    tag_name = ref[len(prefix):]
+    encoded_tag_name = quote(tag_name, safe="")
+    try:
+        runner.run_json(
+            ["gh", "api", "--method", "DELETE", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
+        )
+    except GitHubReviewBridgeError as exc:
+        if _is_not_found(exc):
+            return
+        raise
+
+
+def _read_tag_payload(
+    runner: JsonRunner,
+    *,
+    repository: str,
+    ref: str,
+    max_peel_depth: int = 5,
+) -> dict[str, Any] | None:
+    def _malformed(detail: str) -> dict[str, Any]:
+        return {
+            "status": "malformed",
+            "ref": ref,
+            "raw_ref": ref_payload if isinstance(ref_payload, Mapping) else None,
+            "target_commit": None,
+            "payload": None,
+            "tag_sha": None,
+            "detail": detail,
+        }
+
+    prefix = "refs/tags/"
+    if not ref.startswith(prefix):
+        return _malformed(f"ref {ref!r} does not start with {prefix}")
+    tag_name = ref[len(prefix):]
+    encoded_tag_name = quote(tag_name, safe="")
+    ref_payload = None
+    try:
+        ref_payload = runner.run_json(
+            ["gh", "api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
+        )
+    except GitHubReviewBridgeError as exc:
+        if _is_not_found(exc):
+            return None
+        raise
+    if ref_payload is None:
+        return _malformed("ref payload is None")
+    if not isinstance(ref_payload, Mapping):
+        return _malformed(f"ref payload is not a mapping: {type(ref_payload).__name__}")
+    if str(ref_payload.get("ref") or "").strip() != ref:
+        return _malformed(f"ref payload ref mismatch: {ref_payload.get('ref')!r} != {ref!r}")
+
+    obj = ref_payload.get("object")
+    if not isinstance(obj, Mapping):
+        return _malformed("ref object is missing or not a mapping")
+    obj_type = str(obj.get("type") or "").strip().lower()
+    obj_sha = str(obj.get("sha") or "").strip().lower()
+    if not OID_RE.fullmatch(obj_sha):
+        return _malformed(f"ref object sha is invalid: {obj_sha!r}")
+
+    target_commit: str | None = None
+    parsed_payload: dict[str, Any] | None = None
+    tag_sha: str | None = None
+
+    if obj_type == "commit":
+        target_commit = obj_sha
+    elif obj_type == "tag":
+        tag_sha = obj_sha
+        current_sha = obj_sha
+        for _ in range(max(1, max_peel_depth)):
+            try:
+                tag_obj = runner.run_json(
+                    ["gh", "api", f"repos/{repository}/git/tags/{current_sha}"]
+                )
+            except GitHubReviewBridgeError as exc:
+                if _is_not_found(exc):
+                    return _malformed(f"tag object {current_sha} not found during peel")
+                raise
+            if not isinstance(tag_obj, Mapping):
+                return _malformed(f"tag object {current_sha} is not a mapping: {type(tag_obj).__name__}")
+            if parsed_payload is None:
+                raw_message = str(tag_obj.get("message") or "").strip()
+                if raw_message:
+                    try:
+                        data = json.loads(raw_message)
+                        if isinstance(data, dict):
+                            parsed_payload = data
+                    except (ValueError, TypeError):
+                        parsed_payload = None
+            target = tag_obj.get("object")
+            if not isinstance(target, Mapping):
+                return _malformed(f"tag object {current_sha} target is missing or not a mapping")
+            target_type = str(target.get("type") or "").strip().lower()
+            target_sha = str(target.get("sha") or "").strip().lower()
+            if not OID_RE.fullmatch(target_sha):
+                return _malformed(f"tag object {current_sha} target sha is invalid: {target_sha!r}")
+            if target_type == "commit":
+                target_commit = target_sha
+                break
+            if target_type == "tag":
+                current_sha = target_sha
+                continue
+            return _malformed(f"tag object {current_sha} target type is unsupported: {target_type!r}")
+        else:
+            return _malformed(f"tag peel exceeded depth {max_peel_depth}")
+    else:
+        return _malformed(f"ref object type is unsupported: {obj_type!r}")
+
+    return {
+        "status": "valid",
+        "ref": ref,
+        "raw_ref": ref_payload,
+        "target_commit": target_commit,
+        "payload": parsed_payload,
+        "tag_sha": tag_sha,
+    }
+
+
+def _resolve_ref_target_commit(
+    runner: JsonRunner,
+    *,
+    repository: str,
+    ref_payload: Mapping[str, Any],
+    max_peel_depth: int = 5,
+) -> str | None:
+    ref = str(ref_payload.get("ref") or "")
+    if ref:
+        info = _read_tag_payload(runner, repository=repository, ref=ref, max_peel_depth=max_peel_depth)
+        if info and info.get("status") != "malformed":
+            return info.get("target_commit")
+    return None
+
+
 def _push_review_proof_tag(
     runner: JsonRunner,
     *,
@@ -1274,47 +1306,206 @@ def _push_review_proof_tag(
     actor: str,
     decision: str,
     message: str,
+    intent_nonce: str = "",
 ) -> dict[str, Any]:
     """Push a git tag at the exact reviewed head recording the decision.
 
-    Idempotent: if the tag ref already exists (a retried approve/reopen on
-    the same head), it is returned as-is rather than recreated, matching
-    `_submit_required_status`'s existing-first pattern.
+    Idempotent: if the tag ref already exists and resolves to the exact head
+    with matching payload, it is returned as-is rather than recreated.
+    An opposing decision tag is only invalidated/deleted if the caller's intent
+    is proven strictly newer in the PR reviews timeline.
     """
+    caller_nonce = str(intent_nonce or "").strip().lower()
+
+    opposing_refs: list[str] = []
+    if decision == APPROVE:
+        opposing_refs = [
+            f"refs/tags/{review_proof_tag_name(decision=REOPEN, head_sha=binding.head_sha)}"
+        ]
+    elif decision == REOPEN:
+        opposing_refs = [
+            f"refs/tags/{review_proof_tag_name(decision=APPROVE, head_sha=binding.head_sha)}",
+            f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=binding.head_sha)}",
+        ]
+    elif decision == OPERATOR_ACCEPT:
+        opposing_refs = [
+            f"refs/tags/{review_proof_tag_name(decision=REOPEN, head_sha=binding.head_sha)}"
+        ]
+
+    for opp_ref in opposing_refs:
+        opp_info = _read_tag_payload(runner, repository=repository, ref=opp_ref)
+        if opp_info is None:
+            continue
+        if opp_info.get("status") == "malformed":
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: tag payload is missing or malformed ({opp_info.get('detail', '')})"
+            )
+        # Opposing tag exists! Fail closed if malformed, mismatched, or not proven strictly newer.
+        opp_target = opp_info.get("target_commit")
+        if opp_target != binding.head_sha.lower():
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: targets mismatched commit {opp_target!r}, "
+                f"expected {binding.head_sha.lower()!r}"
+            )
+        opp_payload = opp_info.get("payload")
+        if not isinstance(opp_payload, Mapping):
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: tag payload is missing or malformed"
+            )
+        if str(opp_payload.get("task_id") or "").strip() != task_id:
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: task_id {opp_payload.get('task_id')!r} != {task_id!r}"
+            )
+
+        opp_nonce = str(opp_payload.get("intent_nonce") or "").strip().lower()
+        reviews = _reviews(runner, repository=repository, pr=binding.pr)
+        timeline: list[str] = []
+        for rev in reviews:
+            parsed = _parse_review_marker(str(rev.get("body") or ""))
+            if (
+                parsed
+                and parsed["task"] == task_id
+                and parsed["head"] == binding.head_sha.lower()
+            ):
+                if parsed["intent"]:
+                    timeline.append(parsed["intent"])
+
+        if opp_ref == f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=binding.head_sha)}":
+            if str(opp_payload.get("decision") or "").strip().lower() != OPERATOR_ACCEPT:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing operator tag {opp_ref}: unexpected decision {opp_payload.get('decision')!r}"
+                )
+            if timeline and timeline[-1] != caller_nonce:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing tag {opp_ref}: caller intent {caller_nonce} is superseded by {timeline[-1]} in PR #{binding.pr} reviews timeline"
+                )
+            if opp_nonce and opp_nonce in timeline:
+                opp_idx = max(i for i, n in enumerate(timeline) if n == opp_nonce)
+                caller_idx = max(i for i, n in enumerate(timeline) if n == caller_nonce)
+                if caller_idx <= opp_idx:
+                    raise GitHubReviewBridgeError(
+                        f"cannot delete opposing tag {opp_ref}: caller intent {caller_nonce} is not "
+                        f"strictly newer than opposing intent {opp_nonce} in PR #{binding.pr} reviews timeline"
+                    )
+            _delete_ref(runner, repository=repository, ref=opp_ref)
+            continue
+
+        if decision == OPERATOR_ACCEPT:
+            if str(opp_payload.get("decision") or "").strip().lower() != REOPEN:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref}: unexpected decision {opp_payload.get('decision')!r}"
+                )
+            if not opp_nonce or not caller_nonce:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref} without established intent ordering "
+                    f"(caller_nonce={caller_nonce!r}, opposing_nonce={opp_nonce!r})"
+                )
+            if opp_nonce not in timeline or caller_nonce not in timeline:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref}: intent ordering cannot be proven "
+                    f"from PR #{binding.pr} reviews timeline (timeline={timeline})"
+                )
+            opp_idx = max(i for i, n in enumerate(timeline) if n == opp_nonce)
+            caller_idx = max(i for i, n in enumerate(timeline) if n == caller_nonce)
+            if caller_idx <= opp_idx:
+                raise GitHubReviewBridgeError(
+                    f"cannot delete opposing review tag {opp_ref}: caller operator intent {caller_nonce} is not "
+                    f"strictly newer than opposing intent {opp_nonce} in PR #{binding.pr} reviews timeline"
+                )
+            _delete_ref(runner, repository=repository, ref=opp_ref)
+            continue
+
+        if not opp_nonce or not caller_nonce:
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref} without established intent ordering "
+                f"(caller_nonce={caller_nonce!r}, opposing_nonce={opp_nonce!r})"
+            )
+        if opp_nonce not in timeline or caller_nonce not in timeline:
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: intent ordering cannot be proven "
+                f"from PR #{binding.pr} reviews timeline (timeline={timeline})"
+            )
+        opp_idx = max(i for i, n in enumerate(timeline) if n == opp_nonce)
+        caller_idx = max(i for i, n in enumerate(timeline) if n == caller_nonce)
+        if caller_idx <= opp_idx:
+            raise GitHubReviewBridgeError(
+                f"cannot delete opposing tag {opp_ref}: caller intent {caller_nonce} is not "
+                f"strictly newer than opposing intent {opp_nonce} in PR #{binding.pr} reviews timeline"
+            )
+        _delete_ref(runner, repository=repository, ref=opp_ref)
 
     tag_name = review_proof_tag_name(decision=decision, head_sha=binding.head_sha)
     ref = f"refs/tags/{tag_name}"
-    # GitHub's git-refs lookup route takes `git/refs/tags/<name>` with
-    # `refs/tags/` as literal path segments -- only the tag's own internal
-    # slashes need percent-encoding. Encoding the whole ref (including
-    # `refs/tags/` itself) 404s; verified against the live API before this
-    # landed, after the first version of this file shipped that exact bug.
-    encoded_tag_name = quote(tag_name, safe="")
-    try:
-        existing = runner.run_json(
-            ["gh", "api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
-        )
-    except GitHubReviewBridgeError:
-        # `gh api` exits non-zero on a 404, which is the expected outcome the
-        # first time this exact head is approved/reopened -- not a failure.
-        existing = None
-    if isinstance(existing, Mapping) and existing.get("ref") == ref:
-        return {**dict(existing), "created": False}
+    existing_info = _read_tag_payload(runner, repository=repository, ref=ref)
+    if existing_info is not None:
+        if existing_info.get("status") == "malformed":
+            raise GitHubReviewBridgeError(
+                f"cannot evaluate existing tag {ref}: tag payload is missing or malformed ({existing_info.get('detail', '')})"
+            )
+        target_commit = existing_info.get("target_commit")
+        payload = existing_info.get("payload")
+        if (
+            target_commit == binding.head_sha.lower()
+            and isinstance(payload, Mapping)
+            and str(payload.get("task_id") or "").strip() == task_id
+            and str(payload.get("actor") or "").strip() == actor
+            and str(payload.get("decision") or "").strip().lower() == decision.lower()
+            and str(payload.get("intent_nonce") or "").strip().lower() == caller_nonce
+        ):
+            return {**dict(existing_info["raw_ref"]), "created": False}
 
-    tag_message = json.dumps(
-        {
-            "task_id": task_id,
-            "decision": decision,
-            "actor": actor,
-            "pr": binding.pr,
-            "head_sha": binding.head_sha,
-            "head_branch": binding.head_branch,
-            "base": binding.base,
-            "message": message,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+        # Check if caller has a strictly newer intent of the same decision
+        if (
+            caller_nonce
+            and isinstance(payload, Mapping)
+            and target_commit == binding.head_sha.lower()
+        ):
+            existing_nonce = str(payload.get("intent_nonce") or "").strip().lower()
+            if existing_nonce:
+                reviews = _reviews(runner, repository=repository, pr=binding.pr)
+                timeline = []
+                for rev in reviews:
+                    parsed = _parse_review_marker(str(rev.get("body") or ""))
+                    if (
+                        parsed
+                        and parsed["task"] == task_id
+                        and parsed["head"] == binding.head_sha.lower()
+                    ):
+                        if parsed["intent"]:
+                            timeline.append(parsed["intent"])
+                if (
+                    existing_nonce in timeline
+                    and caller_nonce in timeline
+                    and max(i for i, n in enumerate(timeline) if n == caller_nonce)
+                    > max(i for i, n in enumerate(timeline) if n == existing_nonce)
+                ):
+                    _delete_ref(runner, repository=repository, ref=ref)
+                else:
+                    raise GitHubReviewBridgeError(
+                        f"existing tag {ref} does not match caller intent: target={target_commit} payload={payload}"
+                    )
+            else:
+                raise GitHubReviewBridgeError(
+                    f"existing tag {ref} does not match caller intent: target={target_commit} payload={payload}"
+                )
+        else:
+            raise GitHubReviewBridgeError(
+                f"existing tag {ref} does not match caller intent: target={target_commit} payload={payload}"
+            )
+
+    tag_payload = {
+        "task_id": task_id,
+        "decision": decision,
+        "actor": actor,
+        "pr": binding.pr,
+        "head_sha": binding.head_sha,
+        "head_branch": binding.head_branch,
+        "base": binding.base,
+        "message": message,
+    }
+    if intent_nonce:
+        tag_payload["intent_nonce"] = intent_nonce
+    tag_message = json.dumps(tag_payload, ensure_ascii=False, sort_keys=True)
     created_tag = runner.run_json(
         ["gh", "api", "--method", "POST", f"repos/{repository}/git/tags", "--input", "-"],
         payload={
@@ -1395,7 +1586,7 @@ def _dispatch_canonical_review_gate_workflow(
     *,
     repository: str,
     binding: ReviewBinding,
-    required: bool = False,
+    required: bool = True,
 ) -> None:
     """Best-effort: wake the Canonical Review Gate workflow so it re-reads
     the tag just pushed and posts its own, correctly-attributed status.
@@ -1585,6 +1776,7 @@ def bridge_operator_acceptance(
         actor=actor,
         decision=OPERATOR_ACCEPT,
         message=message,
+        intent_nonce=nonce,
     )
     _dispatch_canonical_review_gate_workflow(
         client,
@@ -1700,62 +1892,20 @@ def bridge_review_decision(
             body=body,
             marker=marker,
             decision=decision,
+            task_id=task_id,
+            intent_nonce=intent_nonce,
+            actor=actor,
         )
     except GitHubReviewBridgeError as exc:
         review_error = str(exc)[:600]
 
-    required_contexts: set[str] = set()
-    context_error = ""
-    try:
-        required_contexts = _required_status_contexts(
-            runner,
-            repository=repository,
-            base=normalized_binding.base,
-        )
-    except GitHubReviewBridgeError as exc:
-        context_error = str(exc)[:600]
-
-    status: dict[str, Any] | None = None
-    context_required = CANONICAL_REVIEW_CONTEXT in required_contexts
-    if context_required:
-        status = _submit_required_status(
-            runner,
-            repository=repository,
-            binding=normalized_binding,
-            task_id=task_id,
-            actor=actor,
-            decision=decision,
-            target_url=(
-                f"{pr_url}#pantheon-review-intent-{intent_nonce}"
-                if intent_nonce
-                else pr_url
-            ),
-        )
-
-    # Deliberately unchanged from the pre-tag contract: this still requires
-    # a GitHub review or the required commit status, exactly as before the
-    # proof tag existed. Loosening this to accept the tag alone would touch
-    # scripts/ai_status.py's GITHUB_REVIEW_MODES / evidence-matching
-    # validation, a separately audited integrity surface -- not worth
-    # widening for a case ("no required context configured" + "self-review
-    # blocked") that stops applying once the tag-based check is back in
-    # dev's required contexts.
-    if review is None and status is None:
-        details = [item for item in (review_error, context_error) if item]
-        if CANONICAL_REVIEW_CONTEXT not in required_contexts:
-            details.append(
-                f"base branch {normalized_binding.base!r} does not require "
-                f"{CANONICAL_REVIEW_CONTEXT!r}"
-            )
+    if review is None:
         raise GitHubReviewBridgeError(
-            "Governed task decision was not recorded as a GitHub review or "
-            "a branch-policy-recognized status"
-            + (f": {'; '.join(details)}" if details else "")
+            "Governed task decision was not recorded as a GitHub review"
+            + (f": {review_error}" if review_error else "")
         )
 
-    # Only push the git-native proof tag once at least one legacy path has
-    # confirmed the decision is real -- a call that was going to raise above
-    # should not leave a dangling "approved" tag behind on GitHub.
+    # Push the git-native proof tag.
     proof_ref = _push_review_proof_tag(
         runner,
         repository=repository,
@@ -1764,22 +1914,19 @@ def bridge_review_decision(
         actor=actor,
         decision=decision,
         message=message,
+        intent_nonce=intent_nonce,
     )
     review_proof_ref = str(proof_ref.get("ref") or "") or None
 
-    if decision == APPROVE:
+    if decision in (APPROVE, REOPEN):
         _dispatch_canonical_review_gate_workflow(
             runner,
             repository=repository,
             binding=normalized_binding,
+            required=True,
         )
 
-    if review is not None and status is not None:
-        mode = "pull_request_review_and_required_status"
-    elif review is not None:
-        mode = "pull_request_review"
-    else:
-        mode = "required_commit_status"
+    mode = "pull_request_review"
 
     result = BridgeResult(
         repository=repository,
@@ -1791,14 +1938,14 @@ def bridge_review_decision(
         actor=actor,
         mode=mode,
         github_review_id=int(review.get("id")) if review and review.get("id") else None,
-        status_id=int(status.get("id")) if status and status.get("id") else None,
-        status_context=CANONICAL_REVIEW_CONTEXT if status is not None else None,
-        status_state=STATUS_STATES[decision] if status is not None else None,
+        status_id=None,
+        status_context=None,
+        status_state=None,
         review_proof_ref=review_proof_ref,
         pr_url=pr_url,
         recorded_at=_utc_now(),
         intent_nonce=intent_nonce,
-        review_error=review_error if review is None else "",
+        review_error="",
     )
     validate_result_evidence(
         result.as_dict(),

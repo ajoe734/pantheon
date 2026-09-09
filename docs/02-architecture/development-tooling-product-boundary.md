@@ -42,6 +42,16 @@ the only development-task ingress paths.
 Development-tooling success means that tasks can be stored and dispatched. It
 does not mean that the product has been built, deployed, or accepted.
 
+A signed privileged (`security`/`hosted`/`live`) task packet is admitted the
+same as a functional one; it never requires an operator grant to be *stored*
+(OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001). Storing such a task produces a
+canonical non-executable pending-authorization record, never a runnable one,
+and product login/control mode is still not a prerequisite or substitute for
+the independently verified MFA-bound execution grant
+`.orchestrator/execution_authorization.py` requires before that same task may
+actually dispatch. Intake and execution authorization are two separate gates;
+neither is satisfied by the other.
+
 Worker task context follows the same source/runtime boundary. A task brief
 already tracked by a task branch is read-only dispatch input; the supervisor
 does not refresh it from mutable canonical status during owner or reviewer

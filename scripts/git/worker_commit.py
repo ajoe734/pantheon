@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -81,12 +82,39 @@ else:
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+_runtime_scripts_git = (
+    Path(_command_root).expanduser().resolve() / "scripts" / "git"
+    if _command_root
+    else None
+)
+if _command_root:
+    if not _runtime_scripts_git or not (_runtime_scripts_git / "check_commit_trailers.py").is_file():
+        raise ModuleNotFoundError(
+            "PANTHEON_COMMAND_ROOT does not contain scripts/git/check_commit_trailers.py"
+        )
+    SCRIPTS_GIT_DIR = _runtime_scripts_git
+else:
+    SCRIPTS_GIT_DIR = ROOT / "scripts" / "git"
+if str(SCRIPTS_GIT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_GIT_DIR))
+
 try:
     from common import write_activity_log
 except ModuleNotFoundError as exc:
     if exc.name == "common":
         raise ModuleNotFoundError(
             "worker_commit.py requires Pantheon .orchestrator/common.py; "
+            "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
+            "from a different repository"
+        ) from exc
+    raise
+
+try:
+    from check_commit_trailers import check_message
+except ModuleNotFoundError as exc:
+    if exc.name == "check_commit_trailers":
+        raise ModuleNotFoundError(
+            "worker_commit.py requires scripts/git/check_commit_trailers.py; "
             "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
             "from a different repository"
         ) from exc
@@ -104,8 +132,34 @@ def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> s
     )
 
 
+def _worker_identity(env: dict[str, str]) -> tuple[str, str] | None:
+    """Return the per-run author identity without mutating shared Git config."""
+    agent = (env.get("AI_NAME") or env.get("PANTHEON_LLM_AGENT") or "").strip()
+    if not agent or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", agent):
+        return None
+    return agent, f"{agent.lower()}-agent@pantheon.local"
+
+
 def _build_env(index_file: str | None) -> dict[str, str]:
     env = os.environ.copy()
+    identity_fields = (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    )
+    if not any(env.get(key) for key in identity_fields):
+        identity = _worker_identity(env)
+        if identity:
+            name, email = identity
+            env.update(
+                {
+                    "GIT_AUTHOR_NAME": name,
+                    "GIT_AUTHOR_EMAIL": email,
+                    "GIT_COMMITTER_NAME": name,
+                    "GIT_COMMITTER_EMAIL": email,
+                }
+            )
     if index_file:
         Path(index_file).parent.mkdir(parents=True, exist_ok=True)
         env["GIT_INDEX_FILE"] = index_file
@@ -262,22 +316,17 @@ def main() -> int:
         return 5
 
     msg_lines = [l for l in msg_text.splitlines() if not l.startswith("#")]
-    subject = msg_lines[0].strip() if msg_lines else ""
-
-    if not subject:
-        print(f"ERROR: commit message in {args.message_file} has an empty subject line.", file=sys.stderr)
-        return 5
-
-    if len(subject) > 72:
-        print(
-            f"ERROR: commit subject exceeds 72 characters ({len(subject)} chars): '{subject}'",
-            file=sys.stderr,
-        )
-        print(
-            "Hint: Compact the subject line (e.g. abbreviate scope/summary) to <= 72 chars. "
-            f"Keep full Task-ID in trailer (Task-ID: {args.task_id}).",
-            file=sys.stderr,
-        )
+    clean_msg = "\n".join(msg_lines)
+    problems = check_message(
+        clean_msg,
+        required=("Task-ID",),
+        prefix_required=True,
+        expected_task_id=args.task_id,
+        delivery_class="tooling",
+    )
+    if problems:
+        for p in problems:
+            print(f"ERROR: {p}", file=sys.stderr)
         return 5
 
     # Step 1: clear any existing staging. With a private index this is a no-op,

@@ -16,6 +16,15 @@ weight to every consumer, including dev_bridge_models.py: common,
 rewrite.dispatch_admission, rewrite.task_machine, and task_archive are
 now required at import time, not just supervisor.py. Any isolated-copy
 test fixture that copies this file must also copy those four.
+
+OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 added a fifth: execution_authorization,
+imported so evaluate_task_delivery_admission can feed the one normalized
+execution-authorization verdict into TaskIntent (see that module's docstring).
+
+OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001 added multi_repo_registry
+and integration_receipt for multi-repository finalization admission.
+To preserve import isolation for lightweight status and bridge tooling, both
+are imported lazily when evaluating multi-repository finalization gates.
 """
 from __future__ import annotations
 
@@ -25,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import execution_authorization
 from common import display_name_for, normalize_agent_id, utc_now
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import task_machine as rewrite_task_machine
@@ -187,6 +197,55 @@ def is_operator_exact_head_acceptance(task: Mapping[str, Any] | None) -> bool:
         str(acceptance.get("operator_acceptance_proof_ref") or "").strip()
         == f"{_OPERATOR_ACCEPTANCE_PROOF_PREFIX}{head_sha}"
     )
+
+
+def task_has_current_canonical_integration_receipt(
+    config: Mapping[str, Any] | None,
+    task: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether task carries a matching, current canonical integration receipt.
+
+    Reuses the shared canonical integration_receipt consumption predicate
+    across both scheduler and sole auto-integrator.
+    """
+    if not isinstance(task, Mapping):
+        return False
+    from rewrite import integration_receipt
+
+    return integration_receipt.integration_receipt_consumes_candidate(task, config=config)
+
+
+def is_non_default_repository_finalization_pending(
+    config: Mapping[str, Any] | None,
+    task: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether owner-finalization dispatch must be suppressed for unreceipted multirepo work.
+
+    For every configured non-default registry repository, an exact review_approved delivery
+    with no current canonical integration receipt must not reserve owned_finalize_dispatch.
+    It remains visible to the existing sole auto-integrator; once that existing receipt is
+    current, normal owner closeout remains eligible.
+    Normal unmerged Pantheon finalization remains eligible.
+    Unknown or misconfigured repositories fail closed (treated as pending / not reconciled).
+    """
+    if not isinstance(task, Mapping):
+        return False
+    status = str(task.get("status") or "").strip().lower()
+    if status != "review_approved":
+        return False
+
+    config_dict = dict(config) if isinstance(config, Mapping) else {}
+    import multi_repo_registry
+
+    try:
+        repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, task)
+    except (ValueError, TypeError, AttributeError):
+        return True
+
+    if repo_id == "pantheon":
+        return False
+
+    return not task_has_current_canonical_integration_receipt(config_dict, task)
 
 
 def normalize_execution_resources(
@@ -445,18 +504,25 @@ def evaluate_task_delivery_admission(
             normalized_status_set(settings.get("dependency_done_statuses"), ["done"]),
         ),
         human_ops_hold=bool(
-            str(task.get("waiting_for") or "").strip()
+            (
+                str(task.get("waiting_for") or "").strip()
+                and not execution_authorization.is_execution_authorization_hold(task)
+            )
             or (
                 task.get("review_decision_intent") not in (None, {}, [])
                 and not review_decision_intent_replay_eligible(
                     config, task, target_agent
                 )
             )
+            or is_operator_exact_head_acceptance(task)
         ),
         review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
         execution_resources=tuple(task_execution_resources(task)),
+        execution_authorized=execution_authorization.is_execution_authorized(
+            task, now=datetime.now(timezone.utc)
+        ),
     )
-    return rewrite_dispatch_admission.evaluate_dispatch_intent(
+    decision = rewrite_dispatch_admission.evaluate_dispatch_intent(
         task_intent,
         delivery_lane_for_agent(config, target_agent),
         build_delivery_admission_snapshot(
@@ -475,6 +541,19 @@ def evaluate_task_delivery_admission(
         ),
         requested_endpoint_id=requested_endpoint_id,
     )
+    if not decision.eligible:
+        return decision
+    if (
+        decision.task_reason is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
+        and is_non_default_repository_finalization_pending(config, task)
+    ):
+        return rewrite_dispatch_admission.DispatchDecision(
+            eligible=False,
+            reason=rewrite_dispatch_admission.DispatchBlockReason.TASK_NOT_DISPATCHABLE,
+            task_reason=decision.task_reason,
+            logical_lane_id=decision.logical_lane_id,
+        )
+    return decision
 
 
 def dispatch_event_is_in_unchanged_cooldown(

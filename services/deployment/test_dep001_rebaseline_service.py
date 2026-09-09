@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
 from fastapi.testclient import TestClient
 
 _AUTH_HEADERS = {
@@ -24,7 +25,7 @@ _AUTH_HEADERS = {
 
 
 def _approved_decision() -> dict:
-    return {
+    return approval_snapshot(**{
         "decision_id": "approval-dep001-rb-001",
         "target_id": "reg-dep001-rb-1.2.0",
         "target_version": "1.2.0",
@@ -33,7 +34,8 @@ def _approved_decision() -> dict:
         "capital_pool_id": "pool-dep001-rb",
         "persona_id": "persona-dep001-rb",
         "tenant_id": "tenant-dep001-test",
-    }
+        "candidate_digest": "sha256:dep001rbabc123",
+    })
 
 
 def _seed_approval_store(path: Path) -> None:
@@ -45,6 +47,7 @@ def _seed_approval_store(path: Path) -> None:
 
 def _registry_entry(current_stage: str, *, artifact_state: str = "approved") -> dict:
     return {
+        "owner_tenant": "tenant-dep001-test",
         "registry_id": "reg-dep001-rb-1.2.0",
         "artifact_type": "model_artifact",
         "strategy_id": "strat-dep001-rb",
@@ -69,15 +72,17 @@ def _rollback_ref() -> dict:
 
 def _request_payload(
     *,
+    registry_owner,
     plan_id: str,
     current_stage: str,
     target_stage: str,
     artifact_state: str = "approved",
 ) -> dict:
+    registry_owner.update(_registry_entry(current_stage, artifact_state=artifact_state))
     payload = {
         "plan_id": plan_id,
         "approval_decision_id": "approval-dep001-rb-001",
-        "registry_entry": _registry_entry(current_stage, artifact_state=artifact_state),
+        "registry_id": "reg-dep001-rb-1.2.0",
         "capital_pool_id": "pool-dep001-rb",
         "sponsor_persona_id": "persona-dep001-rb",
         "target_stage": target_stage,
@@ -114,8 +119,13 @@ def dep001_client():
         module = importlib.import_module("services.deployment.service")
         module = importlib.reload(module)
 
+        test_client = TestClient(module.app, headers=_AUTH_HEADERS)
+        test_client.registry_owner = {}
+        test_client.approval_owner = _approved_decision()
+        module.planner_service.registry_reader = lambda identity: dict(test_client.registry_owner)
+        module.planner_service.approval_reader = SnapshotApprovalReader(lambda: test_client.approval_owner)
         try:
-            yield TestClient(module.app, headers=_AUTH_HEADERS)
+            yield test_client
         finally:
             for key, value in env_backup.items():
                 if value is None:
@@ -152,6 +162,7 @@ def test_approved_artifact_can_create_rebaseline_stage_plans(
     create = dep001_client.post(
         "/api/deployment/plans",
         json=_request_payload(
+            registry_owner=dep001_client.registry_owner,
             plan_id=plan_id,
             current_stage=current_stage,
             target_stage=target_stage,
@@ -182,6 +193,7 @@ def test_deployment_plan_service_requires_approved_artifact_state(dep001_client)
     response = dep001_client.post(
         "/api/deployment/plans",
         json=_request_payload(
+            registry_owner=dep001_client.registry_owner,
             plan_id="plan-dep001-rb-candidate",
             current_stage="none",
             target_stage="paper",
@@ -195,11 +207,12 @@ def test_deployment_plan_service_requires_approved_artifact_state(dep001_client)
 
 def test_deployment_plan_service_requires_decided_approval_authority(dep001_client):
     payload = _request_payload(
+        registry_owner=dep001_client.registry_owner,
         plan_id="plan-dep001-rb-undecided",
         current_stage="none",
         target_stage="paper",
     )
-    payload["approval_decision"] = {
+    dep001_client.approval_owner = {
         **_approved_decision(),
         "decision_state": "under_review",
         "decision": None,

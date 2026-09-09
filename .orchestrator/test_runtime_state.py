@@ -10,6 +10,7 @@ import signal
 import tempfile
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -18,6 +19,32 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import common
 import runtime_state
+
+
+class RuntimeStateUpdateLockTests(unittest.TestCase):
+    def test_nonblocking_update_uses_one_nonblocking_exclusive_lock(self) -> None:
+        state = runtime_state.default_state()
+        saved: list[dict[str, object]] = []
+
+        @contextmanager
+        def lock(_config: dict[str, object], **kwargs: object):
+            self.assertFalse(kwargs["shared"])
+            self.assertTrue(kwargs["nonblocking"])
+            yield None
+
+        with (
+            mock.patch.object(runtime_state, "runtime_state_lock", lock),
+            mock.patch.object(runtime_state, "_load_runtime_state_unlocked", return_value=state),
+            mock.patch.object(
+                runtime_state,
+                "_save_runtime_state_unlocked",
+                side_effect=lambda _config, value: saved.append(value),
+            ),
+        ):
+            with runtime_state.runtime_state_update({}, nonblocking=True) as current:
+                current["supervisor"]["cadence_next_deadline_monotonic"] = 2.0
+
+        self.assertEqual(saved, [state])
 
 
 class TerminalQueueCompactionTests(unittest.TestCase):
@@ -1167,3 +1194,61 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     nonblocking=True,
                 ):
                     self.fail("reverse-order runtime lock was acquired")
+
+    def test_configured_authority_preserves_leaf_validation_and_rejects_symlink(self) -> None:
+        status_root = self.root / "status"
+        orchestrator_dir = status_root / ".orchestrator"
+        worker_runtime_dir = orchestrator_dir / "worker-runtime"
+        worker_runtime_dir.mkdir(parents=True, exist_ok=True)
+        (status_root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+
+        configured_state = orchestrator_dir / "state.json"
+        migrated_state = worker_runtime_dir / "state.json"
+        migrated_queue = worker_runtime_dir / "approval-queue.json"
+
+        migrated_state.write_text(json.dumps(runtime_state.default_state()) + "\n", encoding="utf-8")
+        migrated_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
+
+        unrelated = self.root / "unrelated.json"
+        unrelated.write_text('{"unrelated": true}\n', encoding="utf-8")
+        configured_state.symlink_to(unrelated)
+
+        cfg = {
+            "paths": {
+                "status_file": str(status_root / "ai-status.json"),
+                "state_file": str(configured_state),
+                "approval_queue": str(migrated_queue),
+            }
+        }
+
+        # 1. Configured symlink MUST NOT be masked by existence of worker-runtime/state.json
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"canonical runtime_state data leaf cannot be a symlink",
+        ):
+            runtime_state.load_runtime_state(cfg)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"canonical runtime_state data leaf cannot be a symlink",
+        ):
+            with runtime_state.runtime_state_update(cfg):
+                pass
+
+        # 2. No implicit compatibility fallback function exists
+        self.assertFalse(hasattr(runtime_state, "_canonical_runtime_source_path"))
+
+        # 3. Clean configured path in worker-runtime loads and updates successfully
+        valid_cfg = {
+            "paths": {
+                "status_file": str(status_root / "ai-status.json"),
+                "state_file": str(migrated_state),
+                "approval_queue": str(migrated_queue),
+            }
+        }
+        loaded = runtime_state.load_runtime_state(valid_cfg)
+        self.assertIsNotNone(loaded)
+        with runtime_state.runtime_state_update(valid_cfg) as st:
+            st["auto_commit_archive"]["pending_token"] = "valid-token"
+        reloaded = runtime_state.load_runtime_state(valid_cfg)
+        self.assertEqual(reloaded["auto_commit_archive"]["pending_token"], "valid-token")

@@ -1,0 +1,97 @@
+name: Persona Owner Contract
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - services/persona/**
+      - services/capital/**
+      - services/deployment/**
+      - services/governance/**
+      - services/registry/**
+      - services/runtime-manager/**
+      - services/control-plane/governance/**
+      - services/service_token_file.py
+      - services/dev-paper-principal-issuer/**
+      - scripts/*dev_paper_principal*.py
+      - scripts/test_governance_runtime_image.py
+      - scripts/test_dev_deployment_tenant.py
+      - scripts/run_dev_paper_baseline_with_diagnostics.sh
+      - scripts/test_dev_paper_release_stimulus.py
+      - docker-compose.yml
+      - docker-compose.control.yml
+      - scripts/deploy_nonprod_vm.sh
+      - .github/workflows/nonprod-deploy.yml
+      - services/control-plane/bff/**
+      - tests/persona_capital_write_owner/**
+      - .github/workflows/persona-owner-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Persona provisioning owner contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: gov_approval_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GOV_APPROVAL_TEST_DSN: postgresql://postgres@127.0.0.1:5432/gov_approval_test
+      TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/gov_approval_test
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch immutable lease controller for compensation fixtures
+        run: |
+          git fetch --no-tags --depth=1 origin 9e564718da8c39199a4c311f1a667b74226e3428
+          git cat-file -e 9e564718da8c39199a4c311f1a667b74226e3428^{commit}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Provision isolated runner distribution
+        run: |
+          python3 -m pip install --upgrade pip "setuptools>=68"
+          python3 -m pip install -r requirements.txt -r services/control-plane/bff/requirements.txt
+          python3 -m pip install "PyYAML>=6,<7"
+          python3 scripts/dev/provision_python_distribution.py --mode current --allow-system-interpreter
+      - name: Verify shipped Governance image candidate validators
+        run: |
+          docker build -f services/governance/Dockerfile -t pantheon-governance-contract:ci .
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --entrypoint python pantheon-governance-contract:ci \
+            -m unittest -v scripts.test_governance_runtime_image
+      - name: Verify real owners, paper scope, renewal and durable receipt reload
+        run: |
+          python3 -m pytest -q \
+            scripts/test_dev_deployment_tenant.py \
+            scripts/test_dev_paper_release_stimulus.py \
+            scripts/test_bootstrap_dev_paper_baseline.py \
+            scripts/test_dev_paper_diagnostics_failure_path.py \
+            services/control-plane/bff/tests/test_persona_*contract.py \
+            services/control-plane/bff/test_persona_provisioning_coordinator.py \
+            tests/persona_capital_write_owner/test_persistent_owners.py \
+            scripts/test_issue_dev_paper_principals.py \
+            scripts/test_dev_paper_principal_renewal.py \
+            services/governance/test_paper_approval_scope.py \
+            services/governance/test_decision_journal.py \
+            services/control-plane/bff/governance/test_decision_journal_write_owner.py \
+            tests/agora_write_owner/ \
+            services/governance/test_paper_approval_postgres.py \
+            services/governance/test_approval_authority_postgres.py \
+            services/registry/test_paper_scope_registry.py \
+            services/registry/test_owner_durability.py \
+            services/deployment/test_paper_scope_service.py \
+            services/runtime-manager/test_paper_scope_deploy_authority.py

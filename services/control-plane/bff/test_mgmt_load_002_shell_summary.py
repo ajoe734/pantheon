@@ -29,7 +29,6 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
         store = create_read_surface_ports()
         bff_main.read_store = store
         bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
-        bff_main._GOV_BFF_JOB_OVERLAY.clear()
         bff_main._ACKNOWLEDGED_ALERTS.clear()
         bff_main.app.openapi_schema = None
 
@@ -91,7 +90,6 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
         finally:
             bff_main.read_store = original_store
             bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
-            bff_main._GOV_BFF_JOB_OVERLAY.clear()
             bff_main._ACKNOWLEDGED_ALERTS.clear()
             bff_main.app.openapi_schema = None
 

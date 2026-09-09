@@ -707,8 +707,15 @@ def _codex_auth_probe(
         "-s",
         "read-only",
         "--skip-git-repo-check",
-        prompt,
     ]
+    provider_settings = (config.get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}
+    model = str(provider_settings.get("model") or "").strip()
+    if model:
+        command.extend(["--model", model])
+    reasoning_effort = str(provider_settings.get("model_reasoning_effort") or "").strip()
+    if reasoning_effort:
+        command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
+    command.append(prompt)
     cache_identity_before_probe: dict[str, Any] | None = None
     if recover_incompatible_models_cache:
         cache_path, _cache_path_error = _codex_models_cache_path(config, provider_id, env)

@@ -109,7 +109,7 @@
     },
     "approver": {
       "type": "string",
-      "$comment": "Temporary compatibility actor hint. GOV-001 will move approval authority into ApprovalDecision."
+      "$comment": "Read-only actor from the verified Governance decision; caller approver input is retired."
     },
     "approved_at": {
       "type": "string",
@@ -147,6 +147,13 @@
     },
     "metadata": {
       "type": "object"
+    },
+    "approval_evidence": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Verified exact Governance owner evidence captured atomically with the approval transition; consumers revalidate at new use time."
     }
   }
 }

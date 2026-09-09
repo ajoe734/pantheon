@@ -53,6 +53,7 @@ class ActorRole(str, Enum):
 
 
 class TargetType(str, Enum):
+    PERSONA_TRAINING_TARGET = "persona_training_target"
     REGISTRY_ENTRY = "registry_entry"
     STRATEGY_SPEC = "strategy_spec"
     STRATEGY_WORKSHOP = "strategy_workshop"
@@ -84,13 +85,19 @@ class EvidenceRefType(str, Enum):
 # Owner Matrix
 # ---------------------------------------------------------------------------
 
-OWNER_MATRIX: Dict[RiskLevel, List[ActorRole]] = {
-    RiskLevel.LOW: [ActorRole.GOVERNANCE_REVIEWER, ActorRole.AUTOMATED_GATE],
-    RiskLevel.MEDIUM: [ActorRole.GOVERNANCE_REVIEWER, ActorRole.RISK_OWNER],
-    RiskLevel.HIGH: [ActorRole.RISK_OWNER, ActorRole.GOVERNANCE_COMMITTEE],
-    RiskLevel.CRITICAL: [ActorRole.GOVERNANCE_COMMITTEE],
+from services.governance.write_authority import (
+    WRITE_AUTHORITY_MATRIX, REVOKE_AUTHORITY, is_authorized_to_decide,
+)
+from services.governance.paper_approval_scope import (
+    authorization_scope_errors,
+    normalize_authorization_scope,
+)
+
+OWNER_MATRIX = {
+    RiskLevel(risk): [ActorRole(role) for role in roles]
+    for risk, roles in WRITE_AUTHORITY_MATRIX.items()
 }
-REVOKE_ROLES = {ActorRole.RISK_OWNER, ActorRole.GOVERNANCE_COMMITTEE}
+REVOKE_ROLES = {ActorRole(role) for role in REVOKE_AUTHORITY}
 
 
 class OwnerMatrix:
@@ -99,7 +106,7 @@ class OwnerMatrix:
     @staticmethod
     def is_authorized(role: ActorRole, risk: RiskLevel) -> bool:
         """Return True if *role* is authorized to decide at *risk* level."""
-        return role in OWNER_MATRIX.get(risk, [])
+        return is_authorized_to_decide(role, risk)
 
     @staticmethod
     def minimum_roles_for(risk: RiskLevel) -> List[ActorRole]:
@@ -263,6 +270,12 @@ class ApprovalDecision:
     controller_record_ref: Optional[str] = None
     recorded_at: Optional[str] = None
     authority_status: Optional[str] = None
+    version: int = 0
+    event_id: Optional[str] = None
+    # Owner-stamped usage bound (environment / stages / capital ceiling).
+    # Never client-settable; derived from the verified proposing principal
+    # and retained verbatim across every later transition.
+    authorization_scope: Optional[Dict[str, Any]] = None
 
     # -- factory helpers -----------------------------------------------------
 
@@ -286,9 +299,13 @@ class ApprovalDecision:
         candidate_digest: Optional[str] = None,
         proof_digest: Optional[str] = None,
         expires_at: Optional[str] = None,
+        authorization_scope: Optional[Dict[str, Any]] = None,
     ) -> "ApprovalDecision":
         """Create a new decision in the *proposed* state."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if authorization_scope is not None:
+            # Malformed scope is a hard error; it never silently becomes unscoped.
+            authorization_scope = normalize_authorization_scope(authorization_scope)
         return cls(
             decision_id=decision_id,
             target_type=target_type,
@@ -316,6 +333,7 @@ class ApprovalDecision:
             candidate_digest=candidate_digest,
             proof_digest=proof_digest,
             expires_at=expires_at,
+            authorization_scope=authorization_scope,
         )
 
     def accept_review(self, actor_role: ActorRole | str, actor_id: str) -> None:
@@ -365,14 +383,16 @@ class ApprovalDecision:
                 f"Role '{normalized_role.value}' not authorized for risk level '{normalized_risk.value}'"
             )
         if outcome == DecisionOutcome.APPROVED_WITH_CONDITIONS:
-            if not conditions:
+            if not conditions or any(not isinstance(item, str) or not item.strip() for item in conditions):
                 raise ValueError(
-                    "'approved_with_conditions' requires at least one condition"
+                    "'approved_with_conditions' requires nonempty conditions"
                 )
-            self.conditions = conditions
+        elif conditions:
+            raise ValueError("conditions require 'approved_with_conditions'")
         effective_refs = evidence_refs if evidence_refs is not None else self.evidence_refs
         if consultation_gate_required(self.target_type, self.risk_level):
             validate_consultation_gate(effective_refs)
+        self.conditions = list(conditions or [])
         if evidence_refs:
             self.evidence_refs = evidence_refs
         if session_id is not None:
@@ -429,11 +449,11 @@ class ApprovalDecision:
         """Return a list of validation errors (empty = valid)."""
         errors: List[str] = []
 
-        if not self.decision_id:
+        if not isinstance(self.decision_id, str) or not self.decision_id.strip():
             errors.append("decision_id is required")
-        if not self.target_id:
+        if not isinstance(self.target_id, str) or not self.target_id.strip():
             errors.append("target_id is required")
-        if not self.target_version:
+        if not isinstance(self.target_version, str) or not self.target_version.strip():
             errors.append("target_version is required")
         if not self.tenant_id:
             errors.append("tenant_id is required")
@@ -454,6 +474,14 @@ class ApprovalDecision:
         if self.decision_state == DecisionState.DECIDED and not self.rationale:
             errors.append("rationale is required for decided decisions")
 
+        # Structural scope check plus the dedicated paper subject binding:
+        # that subject can never hold an unscoped or broadened decision.
+        errors.extend(authorization_scope_errors(
+            actor_id=self.actor_id,
+            owner_user_id=self.owner_user_id,
+            authorization_scope=self.authorization_scope,
+        ))
+
         # Role authorization
         try:
             role = ActorRole(self.actor_role)
@@ -468,10 +496,12 @@ class ApprovalDecision:
 
         # Conditions required for approved_with_conditions
         if self.decision == DecisionOutcome.APPROVED_WITH_CONDITIONS:
-            if not self.conditions:
+            if not self.conditions or any(not isinstance(item, str) or not item.strip() for item in self.conditions):
                 errors.append(
-                    "'approved_with_conditions' requires at least one condition"
+                    "'approved_with_conditions' requires nonempty conditions"
                 )
+        elif self.conditions:
+            errors.append("conditions require 'approved_with_conditions'")
 
         # decided_at required for decided state
         if self.decision_state == DecisionState.DECIDED and not self.decided_at:
@@ -557,6 +587,9 @@ class ApprovalDecision:
             controller_record_ref=data.get("controller_record_ref"),
             recorded_at=data.get("recorded_at"),
             authority_status=data.get("authority_status"),
+            version=data.get("version", 0),
+            event_id=data.get("event_id"),
+            authorization_scope=data.get("authorization_scope"),
         )
 
     @classmethod
@@ -620,6 +653,12 @@ def validate_decision_json(data: Dict[str, Any]) -> List[str]:
         errors.append(
             f"Invalid risk_level: {data['risk_level']}. Must be one of {valid_risks}"
         )
+
+    errors.extend(authorization_scope_errors(
+        actor_id=data.get("actor_id"),
+        owner_user_id=data.get("owner_user_id"),
+        authorization_scope=data.get("authorization_scope"),
+    ))
 
     # Consultation gate check for high-risk allocation_policy
     if consultation_gate_required(

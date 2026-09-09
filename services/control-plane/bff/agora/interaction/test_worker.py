@@ -533,7 +533,7 @@ def test_retry_and_recover_routes_do_not_execute_inline(bff_client):
         headers={"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "retry-no-exec-key"},
         json={"reason": "Testing decoupled retry"},
     )
-    assert retry_resp.status_code == 202
+    assert retry_resp.status_code == 202, retry_resp.text
     assert retry_resp.json()["data"]["status"] == "queued"
     assert len(calls) == 0
 

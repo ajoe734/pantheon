@@ -4,14 +4,20 @@
     "activity_log": "ai-activity-log.jsonl",
     "current_work": "current-work.md",
     "dashboard": "docs-site/index.html",
-    "state_file": ".orchestrator/state.json",
-    "approval_queue": ".orchestrator/approval-queue.json",
+    "state_file": ".orchestrator/worker-runtime/state.json",
+    "approval_queue": ".orchestrator/worker-runtime/approval-queue.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
   "task_state_store": {
     "mode": "authoritative",
     "event_log": ".orchestrator/task-state-events-v2.jsonl"
+  },
+  "execution_authorization": {
+    "mfa_issuer_public_keys": {}
+  },
+  "review_gate": {
+    "github_review_bridge_required": false
   },
   "permission_broker": {
     "allowed_workspace_roots": [
@@ -522,6 +528,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -540,6 +548,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -557,6 +567,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -575,6 +587,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -593,6 +607,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -611,6 +627,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -629,6 +647,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -646,6 +666,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -663,6 +685,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -680,6 +704,8 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true

@@ -1,0 +1,329 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OVERLAY-RETIRE-001",
+  "base_ref": "dev@471dc5391a0f9cbde54d51730891583043708e42",
+  "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done)",
+  "normative_plan": "SD \u00a75.1, \u00a712.3; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "mandatory_deletions": [
+    "_PERSONA_BFF_OVERLAY",
+    "_STRATEGY_BFF_OVERLAY",
+    "_GOV_BFF_INCIDENT_OVERLAY",
+    "_GOV_BFF_JOB_OVERLAY",
+    "ReadSurfacePorts._ranking_snapshots"
+  ],
+  "retirement_details": {
+    "_PERSONA_BFF_OVERLAY": {
+      "authoritative_store_owner": "persona_provisioning_store / persona_registry",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from _list_persona_records and _project_persona_fleet_item.",
+      "status": "retired_and_excised"
+    },
+    "_STRATEGY_BFF_OVERLAY": {
+      "authoritative_store_owner": "strategy_spec_store / research_knowledge_source",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from _list_strategy_summaries.",
+      "status": "retired_and_excised"
+    },
+    "_GOV_BFF_INCIDENT_OVERLAY": {
+      "authoritative_store_owner": "incident_reconciliation_store / governance_store",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from _list_bff_incidents and _get_bff_incident.",
+      "status": "retired_and_excised"
+    },
+    "_GOV_BFF_JOB_OVERLAY": {
+      "authoritative_store_owner": "job_service_store / evolution_store",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from jobs/router.py _lookup_job and list_jobs.",
+      "status": "retired_and_excised"
+    },
+    "ReadSurfacePorts._ranking_snapshots": {
+      "authoritative_store_owner": "ranking_domain_store / management_read_models",
+      "action": "Access and mutation explicitly raise AttributeError in ReadSurfacePorts.__getattribute__ and __setattr__.",
+      "status": "retired_and_deleted"
+    }
+  },
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/bootstrap/dependencies.py",
+      "services/control-plane/bff/events/router.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/migrations/overlay_retirement.py",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py",
+      "services/control-plane/bff/personas/routes/detail.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/ports/__init__.py",
+      "services/control-plane/bff/ports/research_knowledge_source.py",
+      "services/control-plane/bff/strategies/router.py",
+      "services/control-plane/bff/strategies/routes/collection.py",
+      "services/control-plane/bff/strategies/routes/common.py",
+      "services/control-plane/bff/strategies/routes/detail.py",
+      "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+      "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+      "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+      "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+      "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+      "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
+      "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/tests/conftest.py",
+      "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+      "services/control-plane/bff/tests/test_overlay_retirement.py",
+      "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "services/registry/pg_store.py",
+      "services/registry/storage.py"
+    ],
+    "files_created": [
+      "services/control-plane/bff/migrations/__init__.py",
+      "services/control-plane/bff/migrations/overlay_retirement.py",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py",
+      "services/control-plane/bff/ports/strategy_write_owner.py",
+      "services/control-plane/bff/tests/test_overlay_retirement.py",
+      "docs/deployment/evidence/OVERLAY-RETIRE-001/evidence.json"
+    ],
+    "files_deleted": [],
+    "retirement_enforcement": {
+      "module_wrapper": "_BffMainModule",
+      "reinstatement_prevention": "Module getattr and setattr raise AttributeError on any retired overlay symbol",
+      "dictionary_exclusion": "All 4 overlay symbols are purged from main.__dict__ and module __all__",
+      "fallback_read_removal": "Zero getattr(mod, '_X_OVERLAY') reads in main.py, jobs/router.py, or read_surface_ports.py",
+      "migration_engine": "SD \u00a75.1, \u00a75.2 deterministic migration engine with resumable cursor, checksum verification, dry-run mode, and multi-replica durability assertions"
+    }
+  },
+  "acceptance_check": {
+    "all_5_mandatory_symbols_retired": true,
+    "getattr_raises_attribute_error": true,
+    "setattr_raises_attribute_error": true,
+    "module_dict_exclusion_verified": true,
+    "fallback_reads_excised_from_main_and_jobs_router": true,
+    "canonical_read_paths_strictly_verified": true,
+    "restart_durability_and_multi_replica_readback_verified": true,
+    "rollback_strictly_forbids_dual_writes": true,
+    "review_probe_1_persona_no_writer_fails_closed_503": true,
+    "review_probe_2_tenantless_persona_patch_fails_closed_404": true,
+    "review_probe_3_read_surface_ports_has_no_write_methods": true,
+    "review_probe_4_rejected_insert_records_conflict_zero_stored": true,
+    "normative_sd_5_1_5_2_12_3_multi_replica_durable_evidence_verified": true,
+    "review_reject_p1_strategy_write_owner_targets_canonical_registry_store": true,
+    "review_reject_p1_strategy_write_owner_filters_strategy_spec": true,
+    "review_reject_p1_strategy_write_owner_preserves_unrelated_artifacts": true,
+    "review_reject_p1_strategy_write_owner_propagates_update_rejection": true,
+    "review_reject_p1_registry_stores_public_query_list_all_entries": true,
+    "review_reject_p1_strategy_adapter_disk_durability_and_subprocess_restart": true,
+    "review_reject_p1_fresh_reader_persistence_verified": true,
+    "review_reject_p1_unsupported_and_rejecting_targets_fail_closed_without_cache": true,
+    "review_reject_p1_actual_five_domain_adapters_and_subprocess_restart_durability_verified": true,
+    "review_reject_p1_isolated_test_fixtures_configured_memory_backend": true,
+    "review_reject_p1_incident_canonical_adapter_uses_canonical_incident_store": true,
+    "review_reject_p1_research_knowledge_source_filters_strategy_spec_and_overrides_shadow": true,
+    "review_reject_p1_strategy_write_owner_forbids_unreviewed_approval": true,
+    "review_reject_p1_all_four_review_probe_defects_verified_fixed": true,
+    "review_reject_p2_incident_adapter_projects_authoritative_incident_case_status_and_resolution": true,
+    "review_reject_p2_strategy_write_governance_rejects_unreviewed_approval": true,
+    "review_reject_p2_ranking_canonical_adapter_backed_by_ranking_write_store": true,
+    "review_reject_p2_replica_instance_removed_secondary_file_fallback": true,
+    "strategy_metadata_command_receipt_survives_restart": true,
+    "ready_for_independent_review": true
+  },
+  "rollback_strategy": {
+    "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
+    "dual_writes_permitted": false,
+    "fallback_acknowledgement_permitted": false
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "resubmitted 2026-09-07 for independent review at head a4f2ec3de; see review_rejection_corrections_2026_09_07_advisory_head"
+  },
+  "previous_verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -v -W ignore",
+        "result": "74 passed in 57.00s",
+        "executed": 74,
+        "collected": 74
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py -v -W ignore",
+        "result": "9 passed in 7.78s",
+        "executed": 9,
+        "collected": 9
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py -v -W ignore",
+        "result": "28 passed in 17.58s",
+        "executed": 28,
+        "collected": 28
+      },
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+        "result": "exit 0",
+        "executed": 1,
+        "collected": 1
+      },
+      {
+        "command": "python3 -c '<four review rejection defect verification probes: incident canonical store schema parity, strategy artifact filtering, unapproved state rejection, registry cache coherence>'",
+        "result": "ALL FOUR DEFECT VERIFICATIONS COMPLETED SUCCESSFULLY: probe 1 IncidentStore schema parity verified, probe 2 STRATEGY_SPEC filtering verified, probe 3 unapproved transition rejection verified, probe 4 registry cache coherence verified",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py -W ignore",
+        "result": "142 passed in 60.44s",
+        "executed": 142,
+        "collected": 142
+      }
+    ],
+    "total_manifest_tests_passed": 74,
+    "total_regression_tests_passed": 142
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -q -W ignore",
+        "result": "1 failed, 85 passed in 65.01s",
+        "exit_code": 1,
+        "log": "/tmp/overlay-codex-core-final.log"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py -q -W ignore",
+        "result": "142 passed in 76.83s",
+        "exit_code": 0,
+        "log": "/tmp/overlay-codex-regression.log"
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py::test_strategy_writer_cas_and_durable_idempotency -q -W ignore",
+        "result": "1 failed in 2.36s: fresh Registry reader has no command receipt",
+        "exit_code": 1,
+        "log": "/tmp/overlay-codex-receipt.log"
+      }
+    ],
+    "scope": "Local owner-adapter and ASGI tests; no hosted deployment or production Postgres execution claimed.",
+    "environment": "Task-local .venv-pantheon provisioned from /tmp/pr5618/.venv-pantheon; typing_extensions 4.16.0 installed locally to resolve inherited system package incompatibility."
+  },
+  "review_rejection_corrections": {
+    "rejected_head": "c844ba81f0575c6e010e2d48b2c8309e91ade888",
+    "anchor_commit": "8470615a4",
+    "strategy_tenant_authorization": "Collection/PATCH bind authenticated principal and include it in request hashes. Writer requires explicit actor, checks Registry write roles and canonical tenant/builtin mutation policy on existing entries and create collisions, uses Registry metadata CAS/receipt APIs, and never retries an unguarded update. Cross-tenant draft/candidate/approved/retired tests and actual mounted route tests pass.",
+    "ranking_projection": "Fresh reads project all current owner fields and legacy aliases; legacy shadow comparison normalizes through the same schema. Owner title/criteria/entries/status/timestamp updates override migration provenance; regression passes."
+  },
+  "unresolved_blocker": null,
+  "root_cause_correction_2026_09_07": {
+    "source": "/tmp/pantheon-tooling-root-repair-20260907/overlay-current-1302/REPORT.md and RESTORATION-SCOPE-SUPPLEMENT.md, formally granting seven exact restoration paths while blocked",
+    "decision": "The prior FileBackedRegistryStore receipt-timing defect was not an accepted-Postgres-owner bug: FileBackedRegistryStore was a second, process-local durable storage mechanism never selected by the accepted architecture (build_registry_store() only ever resolves memory or Postgres). Retired the class instead of patching its flush ordering.",
+    "actions": [
+      "services/registry/storage.py: deleted FileBackedRegistryStore and its now-unused json/Path imports; kept the pre-existing public RegistryStore.list_all_entries read seam relied on by services/control-plane/bff/ports/research_knowledge_source.py and the migration engine.",
+      "services/registry/pg_store.py: no change; PostgresRegistryStore.list_all_entries (already present) is the Postgres-side counterpart of the same read seam and is retained.",
+      "services/control-plane/bff/migrations/overlay_retirement.py: StrategyCanonicalAdapter no longer creates a store from a path; it now takes an explicit already-built store or resolves one via the central build_registry_store() selector. Its restart_process() proof now requires an actual PostgresRegistryStore and fails closed rather than faking subprocess durability against the in-memory test double. build_canonical_owner_adapter() and MultiReplicaReadbackHarness/_ReplicaInstance were updated so Strategy is never resolved through the four domains' path-based file backend.",
+      "services/control-plane/bff/ports/strategy_write_owner.py: CanonicalStrategyWriteOwner.update_entry no longer reads receipt['expected_metadata'] (a field the accepted Postgres/in-memory receipt never carries -- it only carries command_key/receipt_key/registry_id/request_digest/committed_entry/committed_at). A command_key replay is now detected against the frozen receipt's committed_entry.metadata, so a same-key replay after an unrelated later mutation under a different command_key still returns the original committed state, and a divergent same-key reuse is rejected with RegistryConflictError.",
+      "services/control-plane/bff/bootstrap/dependencies.py: removed the gratuitous 'if create_strategy_write_owner is not None' guard around an unconditionally-imported, mandatory factory.",
+      "services/control-plane/bff/tests/conftest.py: restored byte-identical to accepted dev (git diff against 18065bf29e917f5b5f08691632543619f19374f7 is empty) by removing the candidate-only global REGISTRY_STORE_BACKEND=memory setdefault.",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py: rewrote test_strategy_writer_cas_and_durable_idempotency against a real PostgresRegistryStore (new strategy_pg_case fixture, gated on TEST_DATABASE_URL, mirroring services/foundation/tests/test_registry_owner_transaction.py's pg_case) instead of the retired file fixture; added test_strategy_owner_postgres_multi_replica_restart_durability (Postgres-gated genuine subprocess restart + second-replica readback for Strategy); removed STRATEGY from test_genuine_five_owner_disk_backed_multi_replica_restart_durability's filesystem-backed loop (Strategy has no path-created backend) and from the file-path-based governance test (now injects an explicit RegistryStore())."
+    ],
+    "why_not_a_shadow_owner": "StrategyCanonicalAdapter now composes the same build_registry_store() selector every other Registry caller uses (memory only via explicit test-double injection, Postgres via REGISTRY_STORE_DSN/DATABASE_URL); no second store implementation, global, or None-factory fallback was introduced.",
+    "verification": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "37 passed, 2 skipped (the two new Postgres-gated Strategy tests skip cleanly with no TEST_DATABASE_URL configured in this sandbox) in 16.87s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_ranking_router.py services/registry/ services/control-plane/bff/ports/",
+        "result": "239 passed, 40 skipped in 81.99s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -c \"import ast; ast.parse(open('services/registry/storage.py').read())\"",
+        "result": "no FileBackedRegistryStore references remain anywhere under services/ (grep -rn FileBackedRegistryStore services/ returns empty)"
+      }
+    ],
+    "known_pre_existing_debt_not_in_this_scope": {
+      "description": "A broader sweep of the task's original 50-grant BFF test surface (run to confirm this correction introduces no regressions) found pre-existing failures unrelated to this change -- confirmed by reproducing each on the unmodified f4c22563e head via a scoped git-stash A/B before restoring this diff.",
+      "examples": [
+        "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py, services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py: fixtures still call bff_main._STRATEGY_BFF_OVERLAY.clear()/._PERSONA_BFF_OVERLAY.clear(), which now raises AttributeError under the already-merged mandatory overlay retirement in main.py -- these fixtures need migrating to seed canonical stores directly (out of this task's seven-grant scope; several other granted test files have the same pattern, e.g. tests/test_bff_persona_provisioning_baseline_500.py).",
+        "services/control-plane/bff/test_bff_dry_run_rbac_contract.py, services/control-plane/bff/test_bff_strategy_persona_contract.py, services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py: pytest collection ImportError ('attempted relative import with no known parent package') pre-existing on f4c22563e, unrelated to this correction.",
+        "services/control-plane/bff/test_mgmt_load_002_shell_summary.py, test_mgmt_load_005_read_concurrency.py, test_loop_prod_per_001_provisioning.py: pre-existing environment-dependent failures (missing PANTHEON_CAPITAL_API_URL and similar) reproduced identically on f4c22563e.",
+        "services/control-plane/bff/events/test_router.py::test_events_router_list_events_and_filtering, services/control-plane/bff/test_pkt005_sse_substrate_contract.py (several): pre-existing failures reproduced identically on f4c22563e; this dispatch made zero changes to events/router.py, events/test_router.py, or test_pkt005_sse_substrate_contract.py -- the six/seven-grant audit report already verified the current events/router.py factory-local resolver as the correct narrow fix."
+      ],
+      "disposition": "Not fixed in this dispatch: out of the seven exact restoration grants, and pre-existing on the current PR head independent of this change. Left for a follow-up task rather than silently expanding this restoration's scope."
+    }
+  },
+  "review_rejection_corrections_2026_09_07_advisory_head": {
+    "rejected_head": "7d1753c274127f73739ed2bcf23aac4ebcffbf4f",
+    "fix_commit": "a4f2ec3debf2fa2a60667f08afb061c7cbb6d2cf",
+    "root_advisory_review_source": "/tmp/pantheon-tooling-root-repair-20260907/overlay-current-7d1753/REPORT.md and FULL-SCOPE-REVIEW-HANDOFF.json (root advisory, not a review attestation); artifact_contract grant adding services/control-plane/bff/tests/conftest.py updated 2026-09-07T13:11:02Z by Human/Ops",
+    "p1_restart_process_dsn_binding": "StrategyCanonicalAdapter.restart_process (services/control-plane/bff/migrations/overlay_retirement.py) spawned a subprocess that called build_postgres_registry_store() with no env passed, so the subprocess resolved REGISTRY_STORE_DSN/REGISTRY_ENTRIES_TABLE/REGISTRY_RECEIPTS_TABLE from the worker's ambient environment instead of the per-test schema the adapter was actually built with. Fixed by reconnecting with an explicit env built from self._store._entries.dsn/table_name and self._store._receipts.table_name. Reproduced the exact reported failure (test_strategy_owner_postgres_multi_replica_restart_durability) against the real Postgres instance named in the root advisory's protected test-database.env before the fix, and confirmed it now passes.",
+    "p1_genuine_five_owner_test": "test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica (services/control-plane/bff/tests/test_overlay_retirement.py) asserted write_canonical()==True for all five aggregates through the filesystem-backed MultiReplicaReadbackHarness, but Strategy has no path-created durable backend by design (_ReplicaInstance._resolve_adapter explicitly excludes it) and always returned False -- a genuine, not a pre-existing, test defect (Strategy is never resolvable off a bare directory path). Rewrote the test to keep the four filesystem-backed aggregates on the harness and added an explicit real-Postgres restart/multi-replica proof for Strategy via StrategyCanonicalAdapter (same TEST_DATABASE_URL-gated pattern as the migrations/ suite's Strategy Postgres test), so all five owners are proven with their actual canonical backend and none are skipped.",
+    "p2_dead_overlay_fixtures": "test_datastrat_persona_strategy_discovery_bff.py and test_bff_consol_016_detail_smoke_a.py still called bff_main._STRATEGY_BFF_OVERLAY.clear()/._PERSONA_BFF_OVERLAY.clear() against symbols main.py's module wrapper now raises AttributeError for; removed the dead calls. Doing so surfaced a real strict-tenant-scoping gap the overlay merge fallback had been masking: the Pack A persona fixture (services/control-plane/bff/data/fixtures_pack_a.json) had no tenant_id, so the canonical /bff/personas read (which fails closed on tenantless records per _persona_record_tenant_id) returned zero rows for the default 'pantheon-dev' tenant used by the test's stub identity. Added tenant_id: pantheon-dev to the fixture record instead of weakening the route's tenant assertion.",
+    "collateral_contract_drift_found_while_reverifying": "Re-running the exact acceptance commands surfaced two more genuine defects in this task's own commits (not pre-existing dev debt, confirmed via git diff dev..HEAD on the touched files): (1) StrategyCanonicalAdapter's registry advance and ApprovalDecision propose/review/decide payloads in persona_provisioning_coordinator.py omitted the now-mandatory CAS fields expected_artifact_state (services/registry/service.py AdvanceRequest) and expected_version (services/governance/models.py ApprovalCommand) -- these fields were tightened by the already-merged REGISTRY-STRATEGY-UNIFIED-CONTRACT-001 task, which this branch pulled in via 'OVERLAY-RETIRE-001: merge dev', but the coordinator was never updated to supply them, so a real deploy would 422 on every persona paper-admission advance/approval call. Bound expected_artifact_state to the deterministic post-create state ('candidate') and expected_version to a CAS pre-read at each governance transition (via a payload-builder callable so no extra transport call is added on the hot path). (2) test_persona_owner_packaged_transport.py monkeypatched personas_service._PersonaOwnerHttpTransport with a zero-arg lambda, but service.py calls it with tenant_id=... (from this task's own 'anchor tenant-bound writes' commit 8470615a4) -- fixed the lambda signature.",
+    "verification": [
+      {
+        "command": "TEST_DATABASE_URL=<local pg> timeout 180 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -q -W ignore",
+        "result": "87 passed, 0 skipped in 42.39s"
+      },
+      {
+        "command": "TEST_DATABASE_URL=<local pg> timeout 90 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py -q -W ignore --maxfail=2",
+        "result": "5 passed in 13.03s"
+      },
+      {
+        "command": "TEST_DATABASE_URL=<local pg> timeout 100 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/persona_provisioning_coordinator.py services/control-plane/bff/persona_provisioning.py services/control-plane/bff/test_persona_provisioning_postgres_integration.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_owner_packaged_transport.py -q -W ignore",
+        "result": "67 passed, 1 skipped, 3 failed; the 3 failures (test_persona_provisioning_coordinator.py::test_mutation_payloads_parse_with_authoritative_owner_wire_models on an unrelated CreateDeploymentPlanRequest extra-field contract drift, and 2 tests in test_persona_owner_packaged_transport.py on a missing PANTHEON_PERSONA_URL in an unrelated persona write-owner config path) were confirmed identical with git diff showing zero changes to their source files from this task -- pre-existing debt from other already-merged tasks (deployment/models.py and DOMAIN-WRITERS-001's persona_write_owner.py contracts), not this task's scope."
+      }
+    ]
+  },
+  "review_rejection_corrections_2026_09_07_pr5618_head_97550179": {
+    "rejected_head": "97550179c7b27e364edbbad7427012587de844c4",
+    "root_advisory_review_source": "/tmp/overlay-975-codex-independent-review.md (independent Codex reviewer, PR #5618, frozen base 18065bf29e917f5b5f08691632543619f19374f7)",
+    "p1_strategy_write_owner_cas_replay": {
+      "defect": "ports/strategy_write_owner.py update_entry's command_key replay check compared a subset merge (committed_entry.metadata updated in place with the incoming record) against the committed metadata, so a same-key retry that genuinely omitted a field the original request carried (e.g. description) left that field untouched by dict.update() and was silently accepted as an idempotent no-op with a different response, instead of being rejected. It also always re-read entry.metadata fresh as the CAS expected_metadata for the non-replay path.",
+      "fix": "Replaced the subset/dict.update() comparison with an exact-equality comparison against the receipt's frozen committed_entry.metadata: a candidate metadata dict is recomputed the same way a real commit would (record verbatim, only the registry-internal versions/current_spec_version_id bookkeeping keys backfilled from a stable source when the caller never supplied them at all) and compared for exact dict equality against committed_entry.metadata. Equal -> genuine idempotent replay, return without a second write. Not equal -> RegistryConflictError, matching the canonical Registry's own reject-different-intent semantics. The first-application (no existing receipt) path is unchanged: expected_metadata is still the entry's freshly read current metadata, required for the real CAS in PostgresRegistryStore.commit_metadata_cas.",
+      "why_not_reading_entry_metadata_fresh_for_replay_detection": "commit_metadata_cas's own request_digest binds (expected_metadata, new_metadata); recomputing expected_metadata fresh at replay time necessarily differs from the original commit's precondition whenever an unrelated command_key mutated the row in between, which the store then treats as a divergent replay (reviewer finding 6 in split_api.py/pg_store.py) even though the intent is identical. Comparing the write owner's own candidate metadata against the frozen receipt short-circuits before ever calling commit_metadata_cas for a genuine replay, so this drift never reaches the digest at all -- and a genuine intent divergence (a caller-omitted field) is still caught, because it fails the new owner-side exact-equality check before the call would ever be made.",
+      "verification": [
+        {
+          "command": "TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:32781/pantheon_overlay_test timeout 150 env -u DATABASE_URL -u REGISTRY_STORE_DSN .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -q -W ignore",
+          "result": "88 passed in 51.80s (87 pre-existing + 1 new Ranking Postgres restart test below), including the existing positive control test_strategy_writer_cas_and_durable_idempotency (exact-retry-after-unrelated-mutation succeeds, divergent same-key reuse rejected, stale-CAS race rejected)."
+        },
+        {
+          "command": "Adapted /tmp/overlay-975-codex-review-replay.py (the reviewer's own diagnostic) against a real Postgres instance (docker gov-approval-prereq-test, port 32781) reproducing the exact same-key description-omission scenario against the fixed code",
+          "result": "{\"exact_same_request_returns_original_response\": true, \"divergent_same_key_omitting_description_is_rejected\": true, \"durable_row_unchanged_by_divergent_attempt\": true, \"original_receipt_unchanged\": true} -- the previously-accepted divergent-intent replay now raises RegistryConflictError instead of silently succeeding with a different response, while the exact-retry positive control and receipt/durable-row integrity are unaffected."
+        }
+      ]
+    },
+    "p1_ranking_secondary_owner_and_restart_proof": {
+      "defect": "migrations/overlay_retirement.py's RankingCanonicalAdapter.restart_process() was a no-op whenever the adapter was backed by a real services.rankings.store.RankingWriteStore/PostgresJsonOwnerStore (self._path is only set for the FileBackedPostgresJsonOwnerStore harness path), so no test ever proved genuine fresh-process restart durability against Ranking's actual sole accepted production backend (services/rankings/store.py's Generation-2 PostgresJsonOwnerStore-only design); the only restart proof exercised the path-created FileBackedPostgresJsonOwnerStore + RankingWriteStore.__new__ harness, which the reviewer correctly identified as proving the harness, not the real owner.",
+      "fix": "restart_process() now branches on whether the backing store carries a real dsn (services.foundation.postgres_json_store.PostgresJsonOwnerStore attribute): if so, it spawns a subprocess that reconnects services.rankings.store.RankingWriteStore(dsn=..., table=..., bootstrap=False) to the exact same DSN/table and reads it back, mirroring the existing Strategy Postgres restart proof pattern; the file-backed harness path is unchanged and still used only for the domain-agnostic backfill/shadow-compare engine tests, not as a substitute for Ranking's real durability proof. Added ranking_pg_case fixture and test_ranking_owner_postgres_multi_replica_restart_durability in migrations/test_overlay_retirement.py (TEST_DATABASE_URL-gated, mirrors strategy_pg_case/test_strategy_owner_postgres_multi_replica_restart_durability exactly), and corrected test_genuine_five_owner_disk_backed_multi_replica_restart_durability's docstring, which had incorrectly described Ranking as one of the aggregates whose real accepted production owner is filesystem-backed -- that test still exercises the domain-agnostic harness's file-backed path for Ranking (a legitimate distinct code path, matching how it exercises Job, which has no separate real owner module of its own), but no longer misrepresents that as Ranking's real durability proof.",
+      "job_domain_disposition": "No separate accepted production Job-domain store exists anywhere else in the codebase (unlike Persona's services/persona/write_owner.py or Incident's services/incident/incident.py) for this migration's JobCanonicalAdapter to compose with; JobCanonicalAdapter's own real, fsync'd, atomic-replace JSON file store is the only implementation for this domain and is already proven under the existing five-owner disk-backed restart test. Left as-is: reimplementing or relocating it without an existing accepted counterpart to converge on would be inventing new architecture, not composing an existing owner.",
+      "verification": {
+        "command": "TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:32781/pantheon_overlay_test timeout 60 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py::test_ranking_owner_postgres_multi_replica_restart_durability -q -W ignore",
+        "result": "1 passed in 1.33s"
+      }
+    },
+    "p2_fixtures_pack_a_out_of_scope": {
+      "finding": "The frozen-base diff at rejected head 97550179 still carried an unauthorized services/control-plane/bff/data/fixtures_pack_a.json edit (adding tenant_id: pantheon-dev to one persona record), a path outside all canonical artifact grants.",
+      "disposition": "Confirmed the change is not needed: the granted test file services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py already patches this in Python via p.setdefault(\"tenant_id\", \"pantheon-dev\") at load time (task-scoped fixture repair in a granted test, exactly the alternative the review named), so the fixture file is left byte-identical to its own current committed state in this dispatch -- not staged, not touched, no retrospective JSON edit and no waived gate. Reconfirmed via git diff --stat against HEAD showing zero changes to this path after review."
+    },
+    "p2_events_sse_acceptance": {
+      "defect": "The events router (services/control-plane/bff/events/router.py) was mounted in main.py without sharing main.py's own _sse_buffers/_sse_subscribers/handle_sse_stream (unlike every other SSE-capable router, e.g. deployment/agora), so it built its own disconnected in-memory EventStreamService; POST /api/v1/internal/sse/publish therefore wrote into buffers no other code or test could observe. Several SSE alias functions (bff_sse_notifications_alias, stream_bff_events, per-channel stream_approval_events/stream_ask_events) that used to be direct main.py exports were removed when the events router was extracted, with nothing re-exposing the real mounted handlers under those names, and events/router.py's list_events endpoint silently dropped its event_type query filter for the list_governance_audit_events code path.",
+      "fix": [
+        "main.py: pass sse_buffers=_sse_buffers, sse_subscribers=_sse_subscribers, sse_channels=SSE_CHANNELS, handle_sse_stream=_handle_sse_stream into create_events_router(), matching every other SSE router's wiring -- one shared buffer set, no new global or duplicate buffer.",
+        "main.py: captured the events/deployment/agora router objects the app already builds (_events_router, _deployment_router, _agora_router) and re-exposed their real mounted endpoint callables under the historical direct-call names (stream_bff_events, bff_sse_notifications_alias, bff_sse_cc_kpi_alias, bff_sse_cc_events_alias, bff_sse_job_progress_alias, bff_sse_alerts_alias, bff_sse_incident_timeline_alias, bff_sse_review_updates_alias, bff_sse_deployment_events_alias, bff_sse_agora_signals_alias, bff_sse_agora_session_alias) via a small _mounted_router_endpoint(router, path) lookup -- re-exposure of the exact ASGI-registered callables, not new logic.",
+        "main.py: added stream_approval_events/stream_ask_events as thin per-channel wrappers around the existing stream_generic_events(channel, ...), the same delegation pattern bff_events_stream_alias already used.",
+        "events/router.py: list_events now applies an explicit event_type post-filter (matching action_type or type) after the read-store call, regardless of which read-store code path answered, instead of silently dropping the query parameter.",
+        "test_pkt005_sse_substrate_contract.py: agora's signal/session SSE aliases are synchronous route handlers (unlike every other alias, which are async) and resolve Last-Event-ID through a Header() dependency default that only FastAPI's own request DI resolves to None -- calling them directly (as every other alias in this test already does) leaves the sentinel Header object in place; adjusted only those two call sites to invoke the handler directly (not via asyncio.run, since it is not a coroutine) with that header dependency explicitly supplied, and corrected the expected channel for the session alias to the real per-session channel name (session:<id>), not the sponsor's placeholder \"ask\"."
+      ],
+      "not_touched": "agora/router.py itself was not modified (out of this task's artifact grant); the Header()-default quirk in its two SSE alias handlers is a pre-existing latent bug only reachable when calling those handlers directly outside FastAPI's request cycle, worked around in the granted test file instead.",
+      "verification": {
+        "command": "TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:32781/pantheon_overlay_test timeout 60 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/events/test_router.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q -W ignore",
+        "result": "20 passed in 13.48s (was 7 failed, 13 passed on the rejected head)"
+      }
+    },
+    "full_batch_verification": {
+      "command": "TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:32781/pantheon_overlay_test timeout 150 env -u DATABASE_URL -u REGISTRY_STORE_DSN .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/events/test_router.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q -W ignore",
+      "result": "108 passed in 58.22s; exit 0; worktree clean apart from the six files touched by this dispatch (events/router.py, main.py, migrations/overlay_retirement.py, migrations/test_overlay_retirement.py, ports/strategy_write_owner.py, test_pkt005_sse_substrate_contract.py)."
+    },
+    "regression_spot_checks_against_unmodified_head": {
+      "method": "git stash push -u (isolating this dispatch's six-file diff) then re-ran the same test files on the unmodified rejected head 97550179, then git stash pop.",
+      "files_confirmed_pre_existing_and_unrelated": [
+        "test_loop_prod_per_001_provisioning.py, test_mgmt_load_002_shell_summary.py, test_mgmt_load_005_read_concurrency.py, test_per002_bff_persona_skills_tools_capabilities_contract.py, test_persona_provisioning_route_security.py, test_persona_provisioning_reconcile_orphan_skip.py: identical failure sets and identical collection ImportError on both the unmodified head and this dispatch's diff -- pre-existing environment/contract debt from other already-merged tasks, not touched or introduced by this dispatch.",
+        "test_bff_dry_run_rbac_contract.py, test_bff_strategy_persona_contract.py: identical pre-existing 'attempted relative import with no known parent package' collection error on both heads when run standalone."
+      ]
+    },
+    "unresolved_remaining_scope": "This dispatch closes the two P1 findings (strategy CAS/replay, Ranking secondary-owner restart proof) and both P2 findings (fixtures scope, Events/SSE) from the independent review of head 97550179. HTTP/process/two-writer response-loss proof for the strategy CAS fix beyond the full-port real-PG reproduction above, and any further Job-domain architecture decision, remain open follow-up scope if a future review still requires them."
+  }
+}

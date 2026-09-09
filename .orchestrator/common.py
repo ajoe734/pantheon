@@ -37,6 +37,30 @@ CANONICAL_TASK_STATE_IDENTITY_ENV = "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON
 WORKER_EXECUTION_RESOURCES_ENV = "ORCH_TASK_EXECUTION_RESOURCES"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
+
+
+def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
+    """Return whether development review must publish GitHub proof.
+
+    The default is fail-closed.  Development may explicitly disable only this
+    publication bridge while workers share a GitHub transport identity; the
+    TaskStore reviewer decision, exact-head binding, intent CAS, and audit
+    event remain mandatory.
+
+    This stays in ``common`` because command-runtime fixtures already carry
+    that module.  All consumers therefore use one policy without introducing
+    a new runtime packaging dependency.
+    """
+
+    review_gate = config.get("review_gate")
+    if not isinstance(review_gate, Mapping):
+        return True
+    value = review_gate.get("github_review_bridge_required")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    raise ValueError("review_gate.github_review_bridge_required must be a boolean")
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_OAUTH_SCOPES = (
@@ -544,6 +568,87 @@ def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
 
 
+def canonical_status_paths(
+    repo_config: dict[str, Any],
+    status_root: Path,
+    *,
+    fill_defaults: bool = False,
+) -> dict[str, str]:
+    raw_paths = repo_config.get("paths")
+    legacy_state = (status_root / ".orchestrator" / "state.json").resolve()
+    worker_runtime_state = (status_root / ".orchestrator" / "worker-runtime" / "state.json").resolve()
+    legacy_queue = (status_root / ".orchestrator" / "approval-queue.json").resolve()
+    worker_runtime_queue = (status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").resolve()
+
+    use_legacy = (legacy_state.exists() or legacy_queue.exists()) and not (
+        worker_runtime_state.exists() or worker_runtime_queue.exists()
+    )
+
+    if fill_defaults:
+        defaults = {
+            "status_file": "ai-status.json",
+            "activity_log": "ai-activity-log.jsonl",
+            "current_work": "current-work.md",
+            "dashboard": "docs-site/index.html",
+            "state_file": ".orchestrator/state.json" if use_legacy else ".orchestrator/worker-runtime/state.json",
+            "approval_queue": ".orchestrator/approval-queue.json" if use_legacy else ".orchestrator/worker-runtime/approval-queue.json",
+            "provider_capabilities": ".orchestrator/provider_capabilities.json",
+            "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        }
+        paths = dict(defaults)
+        if isinstance(raw_paths, dict):
+            paths.update(raw_paths)
+    else:
+        paths = raw_paths
+
+    if not isinstance(paths, dict) or not paths:
+        raise ValueError("repo config must define a non-empty paths object")
+
+    rendered: dict[str, str] = {}
+    for key, raw_value in paths.items():
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise ValueError(f"repo config path {key!r} must be a non-empty string")
+        source = Path(os.path.expanduser(raw_value))
+        candidate = source if source.is_absolute() else status_root / source
+        candidate = candidate.absolute()
+        symlink = first_symlink_component(candidate)
+        if symlink is not None:
+            raise ValueError(f"repo config path {key!r} contains a symlink component: {symlink}")
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(status_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"repo config path {key!r} escapes canonical status root: {candidate}"
+            ) from exc
+        rendered[key] = str(candidate)
+
+    if (
+        rendered.get("state_file") == str(worker_runtime_state)
+        and not worker_runtime_state.exists()
+        and legacy_state.exists()
+    ):
+        rendered["state_file"] = str(legacy_state)
+        if rendered.get("approval_queue") == str(worker_runtime_queue) and not worker_runtime_queue.exists():
+            rendered["approval_queue"] = str(legacy_queue)
+    elif (
+        rendered.get("state_file") == str(legacy_state)
+        and not legacy_state.exists()
+        and worker_runtime_state.exists()
+    ):
+        rendered["state_file"] = str(worker_runtime_state)
+        if rendered.get("approval_queue") == str(legacy_queue) and not legacy_queue.exists():
+            rendered["approval_queue"] = str(worker_runtime_queue)
+
+    expected_status_file = status_root / "ai-status.json"
+    if Path(rendered.get("status_file", "")) != expected_status_file:
+        raise ValueError(
+            "live supervisor status_file must resolve to the canonical status root: "
+            f"expected {expected_status_file}, got {rendered.get('status_file')!r}"
+        )
+    return rendered
+
+
 def config_status_root(config: dict[str, Any]) -> Path:
     paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
     if "status_file" in paths:
@@ -555,6 +660,8 @@ def config_status_root(config: dict[str, Any]) -> Path:
     if "state_file" in paths:
         try:
             state_path = config_path(config, "state_file").resolve()
+            if state_path.parent.name == "worker-runtime" and state_path.parent.parent.name == ".orchestrator":
+                return state_path.parent.parent.parent.resolve()
             if state_path.parent.name == ".orchestrator":
                 return state_path.parent.parent.resolve()
             return state_path.parent.resolve()
@@ -940,6 +1047,15 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         normalized_generation = 0
     if normalized_generation > 0:
         env["ORCH_TASK_GENERATION"] = str(normalized_generation)
+    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): the exact run id the
+    # canonical claim/lease boundary bound this privileged task's one-shot
+    # grant reservation to. worker_runner.py's direct worker-entry check
+    # requires this to match ``execution_authorization.reserved_run_id``
+    # before it will launch an owner-execution process; absent for every
+    # non-privileged (the overwhelmingly common) dispatch.
+    execution_authorization_run_id = (metadata or {}).get("execution_authorization_run_id")
+    if isinstance(execution_authorization_run_id, str) and execution_authorization_run_id.strip():
+        env["ORCH_EXECUTION_AUTHORIZATION_RUN_ID"] = execution_authorization_run_id.strip()
     raw_resources = (metadata or {}).get("execution_resources", [])
     if not isinstance(raw_resources, list):
         raise ValueError("delivery execution_resources must be a list")
@@ -1269,6 +1385,59 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
     return text
 
 
+def _normalized_task_prefix(task_id: str | None) -> str:
+    raw_prefix = str(task_id or "").strip()
+    clean_prefix = re.sub(r"[^A-Za-z0-9-]+", "-", raw_prefix).strip("-").upper()
+    return clean_prefix or "TASK"
+
+
+def _compacted_task_prefix(clean_prefix: str, max_len: int) -> str:
+    max_prefix_len = min(35, max(10, max_len - 15))
+    compact_prefix = re.sub(r"-+$", "", clean_prefix[:max_prefix_len])
+    return compact_prefix or "TASK"
+
+
+def canonical_commit_subject_prefix(task_id: str | None, max_len: int = 72) -> str:
+    """Return the deterministic subject prefix `bound_commit_subject` uses for task_id.
+
+    A long task_id makes `bound_commit_subject` compact the prefix itself
+    (not just the description) once the prefix alone would leave no room for
+    a description. Deriving that same compacted form here lets a validator
+    check a subject's prefix against a task_id directly, without requiring
+    the literal full task_id to appear in the subject -- the contradiction
+    that let a merged >72-char task_id commit satisfy CI's bounded-subject
+    check while canonical `done` still demanded the untruncated id in the
+    subject.
+    """
+    clean_prefix = _normalized_task_prefix(task_id)
+    avail_desc = max_len - (len(clean_prefix) + 2)
+    if avail_desc >= 10:
+        return clean_prefix
+    return _compacted_task_prefix(clean_prefix, max_len)
+
+
+def commit_subject_prefix_variants(task_id: str | None, max_len: int = 72) -> tuple[str, str]:
+    """Return the two subject prefixes `bound_commit_subject` can emit for task_id.
+
+    `bound_commit_subject` only compacts the prefix as a last resort: it
+    first tries the full, uncompacted normalized task_id, and only falls
+    back to the compacted form when the literal candidate (full prefix plus
+    the *actual* description) still exceeds `max_len`. That means whether a
+    given task_id's prefix is compacted or not depends on the description
+    length, not on the task_id alone -- e.g. a 61-char id paired with a
+    3-char description ("fix") keeps its full, uncompacted 61-char prefix
+    (61 + 2 + 3 = 66 <= 72), while the same id paired with a longer
+    description gets the compacted prefix instead.
+
+    A validator that only has the task_id (not the description that
+    produced the subject being checked) cannot know which form to expect,
+    so it must accept either of the two: the full normalized prefix, or
+    `canonical_commit_subject_prefix`'s deterministic compacted form.
+    """
+    clean_prefix = _normalized_task_prefix(task_id)
+    return clean_prefix, canonical_commit_subject_prefix(task_id, max_len)
+
+
 def bound_commit_subject(task_id: str | None, description: str | None, max_len: int = 72) -> str:
     r"""Format a commit subject to guarantee max_len (default 72 chars) and match SUBJECT_PATTERN.
 
@@ -1276,10 +1445,7 @@ def bound_commit_subject(task_id: str | None, description: str | None, max_len: 
     Matches pattern: ^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S
     Full Task-ID remains in required trailers.
     """
-    raw_prefix = str(task_id or "").strip()
-    clean_prefix = re.sub(r"[^A-Za-z0-9-]+", "-", raw_prefix).strip("-").upper()
-    if not clean_prefix:
-        clean_prefix = "TASK"
+    clean_prefix = _normalized_task_prefix(task_id)
 
     raw_desc = str(description or "").strip()
     raw_desc = re.sub(r"\s+", " ", raw_desc)
@@ -1307,10 +1473,7 @@ def bound_commit_subject(task_id: str | None, description: str | None, max_len: 
         if len(candidate) <= max_len:
             return candidate
 
-    max_prefix_len = min(35, max(10, max_len - 15))
-    compact_prefix = re.sub(r"-+$", "", clean_prefix[:max_prefix_len])
-    if not compact_prefix:
-        compact_prefix = "TASK"
+    compact_prefix = _compacted_task_prefix(clean_prefix, max_len)
 
     prefix_cost = len(compact_prefix) + 2
     avail_desc = max_len - prefix_cost
@@ -4423,7 +4586,11 @@ def new_runtime_id(prefix: str) -> str:
 def worker_runtime_paths(config: dict[str, Any], run_id: str) -> dict[str, Path]:
     safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id or "worker")).strip("-") or "worker"
     try:
-        root = config_path(config, "state_file").parent / "worker-runtime"
+        state_dir = config_path(config, "state_file").parent
+        if state_dir.name == "worker-runtime":
+            root = state_dir
+        else:
+            root = state_dir / "worker-runtime"
     except KeyError:
         try:
             root = config_path(config, "status_file").parent / ".orchestrator" / "worker-runtime"
@@ -4518,11 +4685,12 @@ def write_status(config: dict[str, Any], payload: dict[str, Any], *, source: str
     runtime_env = task_state_store_runtime_env(config)
     from rewrite import task_state_store
 
-    task_state_store.append_state_commit(
-        runtime_env[TASK_STATE_EVENT_LOG_ENV],
-        payload,
-        source=source,
-    )
+    event_log = runtime_env[TASK_STATE_EVENT_LOG_ENV]
+    with task_state_store.snapshot_transaction(event_log) as transaction:
+        snapshot = transaction.load_snapshot()
+        if not snapshot["event_count"]:
+            raise RuntimeError("runtime mutation requires existing canonical events")
+        transaction.append_state_commit(payload, source=source)
     write_json(config_path(config, "status_file"), payload)
 
 

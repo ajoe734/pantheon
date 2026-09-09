@@ -41,11 +41,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Mapping, Sequence
+from urllib.parse import quote
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".orchestrator"))
 
+import canonical_review_gate_ci  # noqa: E402  (local helper module)
 import task_review_merge_gate as review_gate  # noqa: E402  (local helper module)
 import github_review_bridge  # noqa: E402  (local helper module)
 import multi_repo_registry  # noqa: E402  (orchestrator module)
@@ -185,8 +187,6 @@ class ReviewGate:
         candidate: "TaskCandidate",
         pr: Mapping[str, Any] | None,
         settings: "Settings",
-        *,
-        task_brief_carry_forward: Mapping[str, Any] | None = None,
     ) -> review_gate.GateDecision:
         return review_gate.gate_for_task(
             candidate.task_id,
@@ -196,117 +196,7 @@ class ReviewGate:
             task_branch_prefix=settings.task_branch_prefix,
             state=self.state,
             events=self.events,
-            task_brief_carry_forward=task_brief_carry_forward,
         )
-
-    def task_brief_carry_forward(
-        self,
-        candidate: "TaskCandidate",
-        pr: Mapping[str, Any] | None,
-        runner: "CommandRunner",
-        *,
-        root: Path,
-    ) -> dict[str, Any] | None:
-        """Classify the one generated-brief successor exception without writes."""
-
-        if not isinstance(pr, Mapping):
-            return None
-        head_sha = str(pr.get("headRefOid") or "").strip().lower()
-        repository = (
-            github_review_bridge.repository_from_pull_request_url(pr.get("url"))
-            or candidate.repository_slug
-        )
-        if not repository:
-            return None
-        try:
-            contract = review_gate.load_task_contract(
-                candidate.task_id,
-                status_root=self.status_root,
-                state=self.state,
-            )
-            if contract.policy != review_gate.POLICY_REVIEW_BEFORE_MERGE:
-                return None
-            approval = review_gate.load_approval_record(
-                candidate.task_id,
-                status_root=self.status_root,
-                events=self.events,
-            )
-        except review_gate.TaskReviewGateError:
-            return None
-        if (
-            approval is None
-            or not approval.present
-            or approval.revoked
-            or not approval.binding_present
-            or approval.binding_error
-            or approval.approved_head_sha == head_sha
-            or review_gate.normalize_agent(approval.reviewer)
-            != review_gate.normalize_agent(contract.reviewer)
-            or review_gate.normalize_pr_number(pr.get("number")) != approval.approved_pr_number
-            or str(pr.get("headRefName") or "").strip() != approval.approved_head_branch
-            or str(pr.get("baseRefName") or "").strip() != approval.approved_base_branch
-        ):
-            return None
-        try:
-            return github_review_bridge.task_brief_only_successor(
-                repository=repository,
-                approved_head_sha=approval.approved_head_sha,
-                successor_head_sha=head_sha,
-                runner=GitHubJsonCommandRunner(runner, root=root),
-            )
-        except github_review_bridge.GitHubReviewBridgeError:
-            return None
-
-    def publish_task_brief_carry_forward(
-        self,
-        candidate: "TaskCandidate",
-        pr: Mapping[str, Any],
-        runner: "CommandRunner",
-        *,
-        root: Path,
-        carried: Mapping[str, Any] | None,
-        decision: review_gate.GateDecision,
-        dispatch_if_proof_exists: bool = True,
-    ) -> dict[str, Any] | None:
-        """Publish the proof only after the complete gate allowed this head.
-
-        A prior attempt can leave the proof tag durable while the workflow
-        dispatch has not happened yet.  The caller therefore asks for an
-        existing proof to be dispatched again until the required canonical
-        check has turned green.
-        """
-
-        if (
-            not decision.allow_merge
-            or decision.reason != "task_brief_only_approval_carried_forward"
-            or not isinstance(carried, Mapping)
-        ):
-            return None
-        repository = (
-            github_review_bridge.repository_from_pull_request_url(pr.get("url"))
-            or candidate.repository_slug
-        )
-        actor = str(
-            decision.approval.get("reviewer") or decision.contract.get("reviewer") or ""
-        ).strip()
-        if not repository or not actor:
-            raise AutoIntegratorError(
-                "task-brief carry-forward was gate-approved but lacks a publishable repository or reviewer"
-            )
-        try:
-            return github_review_bridge.publish_task_brief_only_successor_proof(
-                repository=repository,
-                task_id=candidate.task_id,
-                actor=actor,
-                carried=carried,
-                pr=review_gate.normalize_pr_number(pr.get("number")) or 0,
-                head_branch=str(pr.get("headRefName") or "").strip(),
-                base=str(pr.get("baseRefName") or "").strip(),
-                dispatch_if_proof_exists=dispatch_if_proof_exists,
-                runner=GitHubJsonCommandRunner(runner, root=root),
-            )
-        except github_review_bridge.GitHubReviewBridgeError as exc:
-            raise AutoIntegratorError(f"task-brief carry-forward proof publication failed: {exc}") from exc
 
 
 class AutoIntegratorError(RuntimeError):
@@ -346,12 +236,25 @@ class AmbiguousPullRequests(AutoIntegratorError):
 
 
 class CommandFailure(AutoIntegratorError):
-    def __init__(self, args: Sequence[str] | str, returncode: int, output: str = "") -> None:
+    def __init__(
+        self,
+        args: Sequence[str] | str,
+        returncode: int,
+        output: str = "",
+        *,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
         rendered = args if isinstance(args, str) else " ".join(args)
-        super().__init__(f"command failed ({returncode}): {rendered}\n{output.strip()}")
+        combined_output = output
+        if not combined_output:
+            combined_output = f"{stderr}\n{stdout}".strip() if (stderr or stdout) else ""
+        super().__init__(f"command failed ({returncode}): {rendered}\n{combined_output.strip()}")
         self.args_rendered = rendered
         self.returncode = returncode
-        self.output = output
+        self.output = combined_output
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class CommandRunner:
@@ -668,7 +571,7 @@ def integration_candidates(
         # DTG-INT-01: a row already carrying a matching integration_receipt
         # for its current identity has already landed; skip it before any
         # GitHub/ancestry work so the cron stops re-evaluating it forever.
-        if integration_receipt.integration_receipt_consumes_candidate(raw):
+        if integration_receipt.integration_receipt_consumes_candidate(raw, config=config_dict):
             continue
         owner = str(raw.get("owner") or "").strip()
         reviewer = str(raw.get("reviewer") or "").strip()
@@ -887,6 +790,70 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
     return CheckSummary("green", len(rollup), (), (), tuple(ignored_diagnostic))
 
 
+def is_canonical_review_gate_green(rollup: Any) -> bool:
+    if not isinstance(rollup, list) or not rollup:
+        return False
+    for item in rollup:
+        if not isinstance(item, Mapping):
+            continue
+        name = check_name(item)
+        if name != github_review_bridge.CANONICAL_REVIEW_CONTEXT:
+            continue
+        values = [
+            normalize_state(item.get("conclusion")),
+            normalize_state(item.get("state")),
+            normalize_state(item.get("status")),
+        ]
+        values = [value for value in values if value]
+        if any(value in FAILURE_VALUES for value in values):
+            return False
+        if any(value in SUCCESS_VALUES for value in values):
+            return True
+    return False
+
+
+def integration_status_rollup(
+    rollup: Any, *, review_bridge_is_required: bool
+) -> CheckSummary:
+    """Summarize checks after removing an explicitly disabled legacy bridge."""
+
+    filtered = (
+        [
+            item
+            for item in rollup
+            if review_bridge_is_required
+            or check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT
+        ]
+        if isinstance(rollup, list)
+        else rollup
+    )
+    return summarize_status_rollup(filtered)
+
+
+def make_integrator_tag_lookup(
+    json_runner: GitHubJsonCommandRunner,
+) -> canonical_review_gate_ci.TagLookup:
+    def _lookup(repository: str, ref_or_sha: str) -> Any:
+        prefix = "refs/tags/"
+        if ref_or_sha.startswith(prefix):
+            tag_name = ref_or_sha[len(prefix):]
+            encoded = quote(tag_name, safe="")
+            endpoint = f"repos/{repository}/git/refs/tags/{encoded}"
+        else:
+            endpoint = f"repos/{repository}/git/tags/{ref_or_sha}"
+        try:
+            data = json_runner.run_json(["gh", "api", endpoint])
+        except Exception as exc:
+            if github_review_bridge._is_not_found(exc):
+                return None
+            raise
+        if data is None:
+            return canonical_review_gate_ci.MalformedPayload(None)
+        return data
+
+    return _lookup
+
+
 def ignored_diagnostic_note(checks: CheckSummary) -> str:
     """Render auditable context for statuses excluded from merge blocking."""
 
@@ -896,36 +863,6 @@ def ignored_diagnostic_note(checks: CheckSummary) -> str:
         " Ignored explicitly non-required diagnostics: "
         f"{', '.join(checks.ignored_diagnostic)}."
     )
-
-
-def canonical_review_gate_is_green(rollup: Any) -> bool:
-    """Whether the workflow-owned canonical review check is green.
-
-    This intentionally is not a substitute for ``summarize_status_rollup``:
-    the latter still gates every check before a merge.  It only decides
-    whether a pre-existing carry-forward proof needs the workflow to be
-    dispatched again after a prior interrupted publication attempt.
-    """
-
-    if not isinstance(rollup, list):
-        return False
-    observed = False
-    for item in rollup:
-        if not isinstance(item, Mapping):
-            continue
-        if check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT:
-            continue
-        values = [
-            normalize_state(item.get("conclusion")),
-            normalize_state(item.get("state")),
-            normalize_state(item.get("status")),
-        ]
-        values = [value for value in values if value]
-        if any(value in FAILURE_VALUES or value in PENDING_VALUES for value in values):
-            return False
-        if any(value in SUCCESS_VALUES for value in values):
-            observed = True
-    return observed
 
 
 def pr_number(pr: Mapping[str, Any]) -> int | None:
@@ -1330,6 +1267,35 @@ def _publish_new_lock(
                 _release_lock_handle(handle)
 
 
+_HELD_INTEGRATION_LOCKS: dict[str, os.stat_result] = {}
+
+
+def _register_held_lock(lock_path: Path, stat: os.stat_result) -> None:
+    _HELD_INTEGRATION_LOCKS[str(lock_path)] = stat
+    try:
+        _HELD_INTEGRATION_LOCKS[str(lock_path.expanduser().resolve())] = stat
+    except OSError:
+        pass
+
+
+def _unregister_held_lock(lock_path: Path) -> None:
+    _HELD_INTEGRATION_LOCKS.pop(str(lock_path), None)
+    try:
+        _HELD_INTEGRATION_LOCKS.pop(str(lock_path.expanduser().resolve()), None)
+    except OSError:
+        pass
+
+
+def _get_held_lock_stat(lock_path: Path) -> os.stat_result | None:
+    stat = _HELD_INTEGRATION_LOCKS.get(str(lock_path))
+    if stat is not None:
+        return stat
+    try:
+        return _HELD_INTEGRATION_LOCKS.get(str(lock_path.expanduser().resolve()))
+    except OSError:
+        return None
+
+
 @contextmanager
 def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
     """Hold the integration lock with kernel lifetime and durable owner metadata.
@@ -1448,9 +1414,12 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
                 _release_lock_handle(candidate_handle)
             raise
 
+    held_stat = os.fstat(handle.fileno())
+    _register_held_lock(lock_path, held_stat)
     try:
         yield
     finally:
+        _unregister_held_lock(lock_path)
         if owner_metadata:
             released = {
                 **owner_metadata,
@@ -1687,6 +1656,7 @@ def revalidate_before_merge(
     prior_gate: ReviewGate,
     prior_decision: review_gate.GateDecision,
     prior_pr_number: int | None,
+    config: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], review_gate.GateDecision, CheckSummary]:
     """Re-read canonical authority and the exact live PR immediately before merge."""
 
@@ -1738,15 +1708,7 @@ def revalidate_before_merge(
             f"PR #{fresh_number} failed final validation: {problem}.",
         )
 
-    fresh_carry_forward = fresh_gate.task_brief_carry_forward(
-        candidate, fresh_pr, runner, root=root
-    )
-    fresh_decision = fresh_gate.decide(
-        candidate,
-        fresh_pr,
-        settings,
-        task_brief_carry_forward=fresh_carry_forward,
-    )
+    fresh_decision = fresh_gate.decide(candidate, fresh_pr, settings)
     if not fresh_decision.allow_merge or not _decision_status_is_eligible(
         fresh_decision
     ):
@@ -1792,7 +1754,10 @@ def revalidate_before_merge(
             f"PR #{fresh_number} has an auto-merge request at final revalidation.",
         )
 
-    fresh_checks = summarize_status_rollup(fresh_pr.get("statusCheckRollup"))
+    fresh_checks = integration_status_rollup(
+        fresh_pr.get("statusCheckRollup"),
+        review_bridge_is_required=orchestrator_common.github_review_bridge_required(config),
+    )
     if fresh_checks.state == "red":
         raise FinalMergeRevalidationError(
             "final-ci-red",
@@ -1893,6 +1858,11 @@ def _write_unblock_request(
             if outcome == "rejected":
                 return UnblockPublicationOutcome("rejected")
             expected_task_id = str(payload.get("unblock_task_id") or "")
+            if receipt.get("coalesced_identity") == unblock_contract.repair_identity(payload):
+                resolved = str(receipt.get("task_id") or "")
+                if not resolved.startswith("INTEGRATION-UNBLOCK-"):
+                    raise AutoIntegratorError("coalesced unblock receipt task ID is invalid")
+                return UnblockPublicationOutcome("processed", resolved)
             if receipt.get("task_id") != expected_task_id:
                 raise AutoIntegratorError(
                     "processed unblock receipt task ID differs from request"
@@ -1943,6 +1913,13 @@ def open_unblock_task(
     except ValueError as exc:
         print(
             f"auto-integrator: unblock request not published for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    if not unblock_contract.requires_repair_task(reason):
+        print(
+            f"auto-integrator: {candidate.task_id} remains blocked by {reason}; "
+            "resolve canonical authority on the source task, no repair task published",
             file=sys.stderr,
         )
         return None
@@ -2222,6 +2199,9 @@ def _record_merge_integration_receipt(
         pr=pr,
         head_sha=head_sha,
     )
+    held_stat = _get_held_lock_stat(lock_path)
+    lock_inode: int | None = held_stat.st_ino if held_stat is not None else None
+    lock_device: int | None = held_stat.st_dev if held_stat is not None else None
     authority = integration_receipt.IntegrationAuthority(
         command_root=ROOT,
         command_sha=ROOT.name,
@@ -2231,6 +2211,8 @@ def _record_merge_integration_receipt(
         lock_path=lock_path,
         lock_schema=LOCK_SCHEMA,
         lock_pid=os.getpid(),
+        lock_inode=lock_inode,
+        lock_device=lock_device,
     )
     try:
         integration_receipt.record_integration_receipt(
@@ -2268,6 +2250,7 @@ def integrate_candidate(
     config: Mapping[str, Any] | None = None,
 ) -> IntegrationResult:
     gate = gate or ReviewGate()
+    config = config or {}
     status_root_dir = status_root if status_root is not None else gate.status_root
     target_root = root if root is not None else candidate.repository_root
 
@@ -2472,18 +2455,7 @@ def integrate_candidate(
                     dry_run=not execute,
                     commands=runner.commands[:],
                 )
-            merged_carry_forward = gate.task_brief_carry_forward(
-                candidate,
-                merged_pr,
-                runner,
-                root=target_root,
-            )
-            merged_decision = gate.decide(
-                candidate,
-                merged_pr,
-                settings,
-                task_brief_carry_forward=merged_carry_forward,
-            )
+            merged_decision = gate.decide(candidate, merged_pr, settings)
             if (
                 merged_decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
                 and not merged_decision.allow_merge
@@ -2529,29 +2501,6 @@ def integrate_candidate(
                     number,
                     url,
                     dry_run=True,
-                    commands=runner.commands[:],
-                )
-            try:
-                gate.publish_task_brief_carry_forward(
-                    candidate,
-                    merged_pr,
-                    runner,
-                    root=target_root,
-                    carried=merged_carry_forward,
-                    decision=merged_decision,
-                )
-            except AutoIntegratorError as exc:
-                detail = (
-                    f"Merged PR #{number} has a gate-approved carry-forward but {exc}; "
-                    "refusing integration."
-                )
-                return IntegrationResult(
-                    candidate.task_id,
-                    "blocked",
-                    detail,
-                    number,
-                    url,
-                    dry_run=False,
                     commands=runner.commands[:],
                 )
             _record_merge_integration_receipt(
@@ -2641,18 +2590,7 @@ def integrate_candidate(
     # Canonical review-before-merge gate. This runs before the CI and merge
     # state probes so a premature auto-merge request is revoked immediately
     # rather than after the checks happen to turn green.
-    carry_forward = gate.task_brief_carry_forward(
-        candidate,
-        pr,
-        runner,
-        root=target_root,
-    )
-    decision = gate.decide(
-        candidate,
-        pr,
-        settings,
-        task_brief_carry_forward=carry_forward,
-    )
+    decision = gate.decide(candidate, pr, settings)
     gated = decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
     if not review_gate.OID_RE.fullmatch(str(decision.head_oid or "").strip()):
         detail = (
@@ -2775,85 +2713,105 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    # A direct generated-task-brief successor is allowed by the canonical
-    # review gate, but GitHub's workflow-owned required context belongs to the
-    # successor SHA.  Publish its tag/ref and dispatch that workflow *before*
-    # examining the whole CI rollup: the old context is expected to be red
-    # until this dispatch runs.  This pass never merges; the later pass that
-    # observes the refreshed green context can continue through the ordinary
-    # rollup and exact-head merge checks below.
-    if (
-        execute
-        and decision.reason == "task_brief_only_approval_carried_forward"
-        and isinstance(carry_forward, Mapping)
-    ):
-        try:
-            publication = gate.publish_task_brief_carry_forward(
+    review_bridge_is_required = orchestrator_common.github_review_bridge_required(config)
+    rollup = pr.get("statusCheckRollup")
+    checks = integration_status_rollup(
+        rollup,
+        review_bridge_is_required=review_bridge_is_required,
+    )
+    other_failing = [
+        c for c in checks.failing if c != github_review_bridge.CANONICAL_REVIEW_CONTEXT
+    ]
+    if other_failing:
+        detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
+        unblock = (
+            open_unblock_task(
                 candidate,
-                pr,
+                "ci-red",
+                detail,
+                settings,
                 runner,
-                root=target_root,
-                carried=carry_forward,
-                decision=decision,
-                dispatch_if_proof_exists=not canonical_review_gate_is_green(
-                    pr.get("statusCheckRollup")
-                ),
+                root=status_root_dir,
+                execute=execute,
             )
-        except AutoIntegratorError as exc:
-            detail = f"PR #{number} is gate-approved but {exc}; refusing to merge."
-            unblock = (
-                open_unblock_task(
-                    candidate,
-                    "task-brief-carry-forward-publication-failed",
-                    detail,
-                    settings,
-                    runner,
-                    root=status_root_dir,
-                    execute=execute,
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
+
+    if review_bridge_is_required and not is_canonical_review_gate_green(rollup):
+        repo_slug = (
+            github_review_bridge.repository_from_pull_request_url(url)
+            or candidate.repository_slug
+            or "ajoe734/pantheon"
+        )
+        json_runner = GitHubJsonCommandRunner(runner, root=target_root)
+        tag_lookup = make_integrator_tag_lookup(json_runner)
+        has_review = canonical_review_gate_ci.review_proof_tag_exists(
+            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        )
+        has_operator = canonical_review_gate_ci.operator_acceptance_proof_tag_exists(
+            repository=repo_slug, head_sha=decision.head_oid, lookup=tag_lookup
+        )
+        reopen_ref = f"refs/tags/{github_review_bridge.review_proof_tag_name(decision=github_review_bridge.REOPEN, head_sha=decision.head_oid)}"
+        reopen_inspection = canonical_review_gate_ci.inspect_proof_tag(
+            repository=repo_slug,
+            ref=reopen_ref,
+            expected_head_sha=decision.head_oid,
+            lookup=tag_lookup,
+        )
+        if (has_review or has_operator) and reopen_inspection.is_absent:
+            head_branch = candidate.branch or str(pr.get("headRefName") or "")
+            base = candidate.target_branch or str(pr.get("baseRefName") or "dev")
+            binding = github_review_bridge.ReviewBinding(
+                pr=number,
+                head_sha=decision.head_oid,
+                head_branch=head_branch,
+                base=base,
+            )
+            dispatch_error: str | None = None
+            if execute:
+                try:
+                    github_review_bridge._dispatch_canonical_review_gate_workflow(
+                        json_runner,
+                        repository=repo_slug,
+                        binding=binding,
+                        required=True,
+                    )
+                except Exception as exc:
+                    dispatch_error = str(exc)
+
+            if dispatch_error:
+                detail = (
+                    f"PR #{number} canonical review gate check is not green; "
+                    f"failed to re-dispatch workflow for verified proof tag at {decision.head_oid[:12]}: "
+                    f"{dispatch_error} and waiting for check to complete."
                 )
-                if open_unblock
-                else None
-            )
-            return IntegrationResult(
-                candidate.task_id,
-                "blocked",
-                detail,
-                number,
-                url,
-                unblock,
-                False,
-                runner.commands[:],
-            )
-        if publication is None:
-            detail = (
-                f"PR #{number} has a carry-forward gate decision but no publishable "
-                "task-brief proof; refusing to merge."
-            )
-            return IntegrationResult(
-                candidate.task_id,
-                "blocked",
-                detail,
-                number,
-                url,
-                dry_run=False,
-                commands=runner.commands[:],
-            )
-        if publication.get("proof_published") or publication.get("workflow_dispatched"):
-            detail = (
-                f"PR #{number} published the task-brief carry-forward proof and dispatched "
-                "the canonical review gate; waiting for that successor check to turn green."
-            )
+            else:
+                detail = (
+                    f"PR #{number} canonical review gate check is not green; "
+                    f"{'re-dispatched' if execute else 'would re-dispatch'} workflow "
+                    f"for verified proof tag at {decision.head_oid[:12]} and waiting for check to complete."
+                )
             return IntegrationResult(
                 candidate.task_id,
                 "waiting",
                 detail,
                 number,
                 url,
-                dry_run=False,
+                dry_run=not execute,
                 commands=runner.commands[:],
             )
 
-    checks = summarize_status_rollup(pr.get("statusCheckRollup"))
     if checks.state == "red":
         detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
         unblock = (
@@ -3098,6 +3056,7 @@ def integrate_candidate(
                     prior_gate=gate,
                     prior_decision=decision,
                     prior_pr_number=number,
+                    config=config,
                 )
                 if execute:
                     merge_proc = runner.run(

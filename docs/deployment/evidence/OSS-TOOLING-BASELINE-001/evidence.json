@@ -1,0 +1,190 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OSS-TOOLING-BASELINE-001",
+  "title": "Resolve and validate the isolated development-tooling dependency baseline",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "e9d1a1e50b4f098db6e62c1c4e247f1f40f36827",
+  "summary": "Resolved the three orchestrator tooling runtime dependencies (pydantic, cryptography, packaging) and their full transitive closure against official PyPI latest stable releases under Python 3.12.3. Established the isolated tooling lockfile at dependencies/locks/orchestrator.txt, documented the reference in .orchestrator/requirements.txt, and validated the isolated environment through preflight checks, full tooling import contract tests, task-state-store tests, ai-status CLI tests, and dev-bridge Ed25519-signed packet intake. Kept dependency closure strictly separate from product/ML runtime, with zero mutation to live supervisor config, account grouping, quota, leases, credentials, installed CLIs, or model/slot settings.",
+  "source_packet": {
+    "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
+    "conversation_id": "pantheon-llm-oss-simplification-20260906",
+    "plan_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/EXECUTION_PLAN.md",
+    "coverage_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2/COVERAGE.md",
+    "report_candidate": 12
+  },
+  "scope": {
+    "owned": [
+      ".orchestrator/requirements.txt",
+      "dependencies/locks/orchestrator.txt",
+      "docs/deployment/evidence/OSS-TOOLING-BASELINE-001/evidence.json"
+    ],
+    "not_changing": [
+      "live supervisor config, account grouping, quota, leases, credentials, installed CLIs, model/slot settings (acceptance criterion 3)",
+      "product/BFF or ML/research requirements and runtimes (kept strictly isolated)",
+      "supervisor dispatch logic, watchdog, or auto-integrator"
+    ],
+    "composes_with": [
+      "OSS-INFRA-PROFILES-001 (infrastructure profile integration consuming isolated dependency locks)",
+      "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 (system simplification closure joining all 16 candidate dispositions)"
+    ]
+  },
+  "candidate_12_disposition": {
+    "candidate": 12,
+    "description": "Unused dependencies, locks and complete OSS family upgrades - Tooling runtime baseline",
+    "runtime": "orchestrator",
+    "interpreter": "Python 3.12.3 (x86_64-linux-gnu)",
+    "resolution_policy": "official latest stable non-yanked PyPI releases as of 2026-09-06",
+    "direct_dependencies": [
+      {
+        "name": "pydantic",
+        "specifier": ">=2.9,<3",
+        "latest_stable": "2.13.5",
+        "published_at": "2026-08-28T14:03:59.136157Z",
+        "upstream_url": "https://pypi.org/project/pydantic/2.13.5/",
+        "status": "verified PyPI stable non-yanked"
+      },
+      {
+        "name": "cryptography",
+        "specifier": ">=42,<51",
+        "latest_stable": "50.0.1",
+        "published_at": "2026-08-25T19:44:03.155112Z",
+        "upstream_url": "https://pypi.org/project/cryptography/50.0.1/",
+        "status": "verified PyPI stable non-yanked"
+      },
+      {
+        "name": "packaging",
+        "specifier": ">=23,<27",
+        "latest_stable": "26.3",
+        "published_at": "2026-08-04T18:15:27.159957Z",
+        "upstream_url": "https://pypi.org/project/packaging/26.3/",
+        "status": "verified PyPI stable non-yanked"
+      }
+    ],
+    "transitive_closure": [
+      {
+        "name": "annotated-types",
+        "version": "0.8.0",
+        "required_by": [
+          "pydantic"
+        ]
+      },
+      {
+        "name": "cffi",
+        "version": "2.1.1",
+        "required_by": [
+          "cryptography"
+        ]
+      },
+      {
+        "name": "pycparser",
+        "version": "3.0",
+        "required_by": [
+          "cffi"
+        ]
+      },
+      {
+        "name": "pydantic-core",
+        "version": "2.46.5",
+        "required_by": [
+          "pydantic"
+        ]
+      },
+      {
+        "name": "typing-extensions",
+        "version": "4.16.0",
+        "required_by": [
+          "pydantic",
+          "typing-inspection"
+        ]
+      },
+      {
+        "name": "typing-inspection",
+        "version": "0.4.4",
+        "required_by": [
+          "pydantic"
+        ]
+      }
+    ],
+    "lock_file": "dependencies/locks/orchestrator.txt"
+  },
+  "verification": {
+    "isolated_environment": {
+      "type": "python3 -m venv (isolated, disposable)",
+      "python_version": "3.12.3",
+      "pip_version": "24.0"
+    },
+    "installed_packages_verified": {
+      "annotated-types": "0.8.0",
+      "cffi": "2.1.1",
+      "cryptography": "50.0.1",
+      "packaging": "26.3",
+      "pycparser": "3.0",
+      "pydantic": "2.13.5",
+      "pydantic-core": "2.46.5",
+      "typing-extensions": "4.16.0",
+      "typing-inspection": "0.4.4"
+    },
+    "passed_checks": [
+      {
+        "description": "Dependency preflight probe against .orchestrator/requirements.txt",
+        "command": "python3 scripts/provision_live_supervisor_config.py --command-root /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/e9d1a1e50b4f098db6e62c1c4e247f1f40f36827 --requirements .orchestrator/requirements.txt --python <isolated_python> --validate-python-dependencies-only --json",
+        "exit_code": 0,
+        "output_summary": "validated python dependency preflight: cryptography=50.0.1, packaging=26.3, pydantic=2.13.5"
+      },
+      {
+        "description": "Direct dependency preflight probe against dependencies/locks/orchestrator.txt",
+        "command": "python3 -c \"import provision_live_supervisor_config as p; p.validate_python_dependencies(py, Path('dependencies/locks/orchestrator.txt'))\"",
+        "exit_code": 0,
+        "output_summary": "All 9 direct and transitive packages validated against exact locked specifiers"
+      },
+      {
+        "description": "Tooling import contracts in isolated interpreter",
+        "command": "<isolated_python> -c \"import pydantic, cryptography, packaging, annotated_types, cffi, pycparser, pydantic_core, typing_extensions, typing_inspection\"",
+        "exit_code": 0,
+        "output_summary": "All 9 distributions and their modules successfully imported with no error"
+      },
+      {
+        "description": "Supervisor config provision and runtime promotion test suite",
+        "command": "PYTHONPATH=.orchestrator:. <isolated_python> -m pytest -q scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py",
+        "exit_code": 0,
+        "result": "80 passed in 38.43s"
+      },
+      {
+        "description": "Dev-bridge signed Ed25519 packet intake test in bootstrap-style venv using .orchestrator/requirements.txt",
+        "command": "PYTHONPATH=.orchestrator:. <isolated_python> -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py",
+        "exit_code": 0,
+        "result": "4 passed in 10.14s"
+      },
+      {
+        "description": "Task state store and ai-status contract test suite",
+        "command": "PYTHONPATH=.orchestrator:. <isolated_python> -m pytest -q .orchestrator/rewrite/test_task_state_store.py scripts/test_ai_status.py",
+        "exit_code": 0,
+        "result": "425 passed, 115 subtests passed in 68.21s"
+      }
+    ]
+  },
+  "scope_boundary_and_isolation_statement": {
+    "live_supervisor_config_preserved": true,
+    "credentials_untouched": true,
+    "account_grouping_untouched": true,
+    "quotas_untouched": true,
+    "leases_untouched": true,
+    "installed_clis_untouched": true,
+    "model_slot_settings_untouched": true,
+    "product_runtime_isolation": "Product BFF and research dependencies remain isolated in their respective containers/manifests. This task only defines the development tooling / orchestrator runtime lock."
+  },
+  "files_changed": [
+    ".orchestrator/requirements.txt",
+    "dependencies/locks/orchestrator.txt",
+    "docs/deployment/evidence/OSS-TOOLING-BASELINE-001/evidence.json"
+  ],
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex2",
+    "note": "Independently verify against this exact head: (1) .orchestrator/requirements.txt preserves the minimal supervisor dependency contract (pydantic>=2.9,<3, cryptography>=42,<51, packaging>=23,<27) and references the lockfile; (2) dependencies/locks/orchestrator.txt accurately pins all 3 direct dependencies and all 6 transitive dependencies to official latest stable non-yanked versions under Python 3.12; (3) pip install from dependencies/locks/orchestrator.txt succeeds cleanly in an isolated interpreter; (4) validate_python_dependencies preflight probe passes; (5) contract tests for supervisor config, dev-bridge intake, task state store, and ai-status pass; (6) zero mutation to live supervisor config, account grouping, quota, leases, credentials, installed CLIs, or model/slot settings."
+  }
+}

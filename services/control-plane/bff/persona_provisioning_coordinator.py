@@ -13,6 +13,7 @@ import os
 import re
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import quote
 
@@ -25,6 +26,11 @@ from .persona_provisioning import (
 
 
 FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
+# Governance ApprovalDecisions proposed here are finite: Registry's approval
+# verifier requires a current ``expires_at`` and Deployment re-verifies it.
+# The bound is anchored to persisted owner timestamps, never to wall-clock at
+# retry time, so a response-loss retry composes byte-identical bodies.
+APPROVAL_TTL = timedelta(hours=24)
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _UNKNOWN_SOURCE_COMMIT = "0" * 40
 
@@ -145,6 +151,36 @@ def _registry_entry(receipt: Mapping[str, Any]) -> dict[str, Any]:
     return _mapping(value, label="Registry readback")
 
 
+def _parse_owner_time(value: Any, *, label: str) -> datetime:
+    """Parse an owner-persisted RFC 3339 timestamp; fail closed on anything else."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise PersonaProvisioningCoordinationError(f"{label} is missing")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PersonaProvisioningCoordinationError(f"{label} is malformed: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise PersonaProvisioningCoordinationError(f"{label} is not timezone-aware: {value!r}")
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_owner_time(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _approval_expiry(created_at: Any, *, label: str) -> str:
+    """Finite approval expiry: exactly ``APPROVAL_TTL`` after an owner timestamp."""
+
+    return _format_owner_time(_parse_owner_time(created_at, label=label) + APPROVAL_TTL)
+
+
+def _owner_digest(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise PersonaProvisioningCoordinationError(f"{label} has no checksum")
+    return value.strip()
+
+
 class PersonaProvisioningCoordinator:
     """Coordinate owner writes as a GET-first, checkpointed paper admission saga."""
 
@@ -157,17 +193,35 @@ class PersonaProvisioningCoordinator:
         lease_owner: str,
         lease_seconds: int = 60,
         actor_id: str = "pantheon-persona-provisioner",
+        governance_actor_id: str | None = None,
     ) -> None:
+        """``governance_actor_id`` is the verified subject of the separately
+        issued Governance approval principal.  Strict Governance requires a
+        proposal's ``owner_user_id`` and a review/decide ``actor_id`` to equal
+        that subject, so only those three fields use it; every other owner
+        write keeps ``actor_id``.  Human ``requested_by`` remains audit
+        metadata and is never presented as an approval actor.  It defaults
+        to ``actor_id`` so a caller that has not wired a distinct approval
+        principal keeps one consistent service identity.
+        """
+
         if not lease_owner.strip():
             raise ValueError("lease_owner is required")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        if not str(actor_id or "").strip():
+            raise ValueError("actor_id is required")
+        if governance_actor_id is not None and not str(governance_actor_id).strip():
+            raise ValueError("governance_actor_id must be a non-empty subject when provided")
         self.store = store
         self.transport = transport
         self.schedule_registrar = schedule_registrar
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
+        self.governance_actor_id = (
+            governance_actor_id.strip() if governance_actor_id is not None else actor_id
+        )
 
     def _checkpoint(self, record: ProvisioningRecord) -> ProvisioningRecord:
         """Persist a receipt while renewing this coordinator's lease."""
@@ -579,15 +633,16 @@ class PersonaProvisioningCoordinator:
         owner: str,
         get_path: str,
         post_path: str,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, Any] | Callable[[Mapping[str, Any] | None], Mapping[str, Any]],
         ready: Callable[[Mapping[str, Any]], bool],
         validate: Callable[[Mapping[str, Any]], None],
     ) -> dict[str, Any]:
         receipt = self._owner_get(owner, get_path)
         mutation_error: Exception | None = None
         if receipt is None or not ready(receipt):
+            resolved_payload = payload(receipt) if callable(payload) else payload
             try:
-                self.transport.post(owner, post_path, deepcopy(dict(payload)))
+                self.transport.post(owner, post_path, deepcopy(dict(resolved_payload)))
             except Exception as exc:  # response loss is reconciled by authoritative GET
                 mutation_error = exc
             receipt = self._owner_get(owner, get_path)
@@ -665,6 +720,22 @@ class PersonaProvisioningCoordinator:
             receipt=receipt,
         )
 
+    @staticmethod
+    def _paper_universe(record: ProvisioningRecord) -> tuple[list[str], str, str]:
+        """Symbols, bar frequency and data source shared by the spec and bundle."""
+
+        symbols = record.request_payload.get("symbols")
+        if not isinstance(symbols, list) or not all(
+            isinstance(item, str) and item.strip() for item in symbols
+        ):
+            symbols = ["SPY"]
+        bar_frequency = str(record.request_payload.get("bar_frequency") or "1d")
+        data_source = str(
+            record.request_payload.get("data_source")
+            or "source-ingest:paper/persona-bootstrap"
+        )
+        return list(symbols), bar_frequency, data_source
+
     def _strategy_spec_payload(
         self,
         record: ProvisioningRecord,
@@ -673,40 +744,117 @@ class PersonaProvisioningCoordinator:
         baseline: bool = False,
     ) -> dict[str, Any]:
         registry_id, _, version, label = self._artifact_values(ids, baseline=baseline)
+        name = str(record.request_payload.get("name") or record.normalized_name)
+        mandate = str(record.request_payload.get("mandate") or "").strip()
+        symbols, bar_frequency, data_source = self._paper_universe(record)
+        # Registry validates inline StrategySpec content against
+        # services/control-plane/specs/strategy_spec.schema.json (closed
+        # object) and hashes exactly that content, so the spec is composed
+        # from persisted request data only: a retry composes the same bytes.
         strategy_spec = {
+            "spec_version": "1.0",
             "strategy_id": ids.strategy_id,
-            "version": version,
-            "name": (
-                f"{record.request_payload.get('name') or record.normalized_name} "
-                "zero-capital baseline"
+            "title": f"{name} zero-capital baseline" if baseline else name,
+            "hypothesis": (
+                "Holding with zero capital and no orders yields no positions, so this "
+                "Persona can fail closed to this baseline at any time."
                 if baseline
-                else str(record.request_payload.get("name") or record.normalized_name)
+                else mandate
+                or "Close-to-close momentum over the configured paper universe can be "
+                "evaluated without live capital."
             ),
-            "persona_id": record.persona_id,
-            "tenant_id": record.tenant_id,
-            "mandate": (
-                "Fail-closed paper baseline: allocate zero capital and emit no orders"
+            "objective": (
+                "Provide the approved zero-capital rollback target for the paper "
+                "admission of this Persona."
                 if baseline
-                else record.request_payload.get("mandate")
+                else "Admit this Persona to paper-only evaluation with zero live capital."
             ),
-            "traits": (
-                {"hard_rules": ["zero_capital", "no_orders", "no_positions"]}
-                if baseline
-                else deepcopy(record.request_payload.get("traits") or {})
-            ),
-            "execution_context": "paper",
-            "capital_pool_id": ids.capital_pool_id,
-            "capital_scale_pct": 0.0 if baseline else None,
-            "fail_closed_baseline": baseline,
+            "lifecycle_state": "candidate",
+            "market_scope": {
+                "symbols": symbols,
+                "asset_classes": ["equity"],
+                "frequency": bar_frequency,
+            },
+            "data_dependencies": [{"ref": data_source, "kind": "dataset"}],
+            "execution_profile": {
+                "signal_schema_version": "1.0",
+                "quantity_type": "SHARES",
+                "rebalance_cadence": f"{bar_frequency} bar close, paper only",
+                "execution_mode_hint": "paper",
+            },
+            "evaluation_plan": {
+                "metrics": (
+                    ["no_orders", "no_positions", "no_live_capital_side_effects"]
+                    if baseline
+                    else [
+                        "paper_pnl",
+                        "max_drawdown",
+                        "turnover_rate",
+                        "no_live_capital_side_effects",
+                    ]
+                ),
+                "paper_gate": (
+                    "ApprovalDecision may approve this target for paper-stage "
+                    "deployment only, with capital_scale_pct=0."
+                ),
+                "live_gate": (
+                    "Canary and live activation remain fail-closed; this revision "
+                    "never authorizes live capital."
+                ),
+            },
+            "governance": {
+                "approval_required": True,
+                "policy_id": "persona-paper-admission",
+                "risk_profile": "low: paper-only Persona admission, zero live capital",
+            },
+            "provenance": {
+                "source_kind": "workflow",
+                "created_at": record.created_at,
+                "source_refs": [
+                    f"persona-provisioning:{ids.token}",
+                    f"persona:{record.persona_id}",
+                    f"capital-pool:{ids.capital_pool_id}",
+                ],
+                "created_by": self.actor_id,
+            },
+            "metadata": {
+                "name": name,
+                "version": version,
+                "persona_id": record.persona_id,
+                "tenant_id": record.tenant_id,
+                "capital_pool_id": ids.capital_pool_id,
+                "mandate": (
+                    "Fail-closed paper baseline: allocate zero capital and emit no orders"
+                    if baseline
+                    else mandate or None
+                ),
+                "traits": (
+                    {"hard_rules": ["zero_capital", "no_orders", "no_positions"]}
+                    if baseline
+                    else deepcopy(record.request_payload.get("traits") or {})
+                ),
+                "requested_by": self._requested_by(record),
+                "execution_context": "paper",
+                # Both revisions admit the Persona to paper only: the forward
+                # revision may emit paper orders, but it carries zero live
+                # capital exactly like the fail-closed baseline it is parented to.
+                "capital_scale_pct": 0.0,
+                "fail_closed_baseline": baseline,
+            },
         }
         source_run_id = f"persona-provisioning-{label}-{ids.token}"
+        lineage: dict[str, Any] = {"source_run_ids": [source_run_id]}
+        if not baseline:
+            # Registry requires a noninitial StrategySpec revision to name its
+            # exact parent entry; the baseline is the only prior revision.
+            lineage["parent_registry_ids"] = [ids.baseline_registry_id]
         payload = {
             "registry_id": registry_id,
             "strategy_id": ids.strategy_id,
             "version": version,
             "artifact_state": "candidate",
             "source_seed_id": source_run_id,
-            "lineage": {"source_run_ids": [source_run_id]},
+            "lineage": lineage,
             "producer_run_id": source_run_id,
             "evaluation_summary": {
                 "admission": (
@@ -715,12 +863,15 @@ class PersonaProvisioningCoordinator:
                     else "persona_paper_bootstrap"
                 ),
                 "risk_level": "low",
-                "capital_scale_pct": 0.0 if baseline else None,
+                "execution_context": "paper",
+                "capital_scale_pct": 0.0,
             },
             "metadata": {
                 "tenant_id": record.tenant_id,
                 "persona_id": record.persona_id,
                 "capital_pool_id": ids.capital_pool_id,
+                "execution_context": "paper",
+                "capital_scale_pct": 0.0,
                 "requested_by": self._requested_by(record),
                 "fail_closed_baseline": baseline,
                 "rollback_target_registry_id": (
@@ -876,11 +1027,7 @@ class PersonaProvisioningCoordinator:
         source_run_id = f"persona-provisioning-{label}-{ids.token}"
         positive_action = "HOLD" if baseline else "BUY"
         non_positive_action = "HOLD" if baseline else "SELL"
-        symbols = record.request_payload.get("symbols")
-        if not isinstance(symbols, list) or not all(
-            isinstance(item, str) and item.strip() for item in symbols
-        ):
-            symbols = ["SPY"]
+        symbols, bar_frequency, data_source = self._paper_universe(record)
         artifact = {
             "artifact_schema_version": "1.0",
             "artifact_id": artifact_id,
@@ -909,11 +1056,8 @@ class PersonaProvisioningCoordinator:
             },
             "parameters": {
                 "symbols": symbols,
-                "bar_frequency": str(record.request_payload.get("bar_frequency") or "1d"),
-                "data_source": str(
-                    record.request_payload.get("data_source")
-                    or "source-ingest:paper/persona-bootstrap"
-                ),
+                "bar_frequency": bar_frequency,
+                "data_source": data_source,
                 "lookback_bars": 2,
                 "momentum_threshold": 0.0,
                 "order_quantity": 0 if baseline else 1,
@@ -950,6 +1094,13 @@ class PersonaProvisioningCoordinator:
                 "source_run_ids": [source_run_id],
                 "source_strategy_spec_id": spec_registry_id,
             },
+            # No ``binding_intent``: the schema makes its ``observed_*`` fields
+            # mandatory and Deployment's promote pipeline substitutes them for
+            # a current RuntimeBinding.  At provisioning time nothing is bound
+            # or observed, and this coordinator never guesses a RuntimeBinding,
+            # runtime or plan, so the optional object is omitted rather than
+            # filled with a deterministic ID posing as an observation.  The
+            # Persona identity lives in the registry envelope metadata.
             "provenance_refs": [
                 "task:LOOP-PROD-PER-001",
                 f"persona-provisioning:{ids.token}",
@@ -970,6 +1121,7 @@ class PersonaProvisioningCoordinator:
                     else "persona_paper_bootstrap"
                 ),
                 "risk_level": "low",
+                "execution_context": "paper",
                 "capital_scale_pct": 0.0,
                 "source_strategy_spec_id": spec_registry_id,
             },
@@ -980,6 +1132,8 @@ class PersonaProvisioningCoordinator:
                 "capital_pool_id": ids.capital_pool_id,
                 "persona_capital_binding_id": ids.persona_capital_binding_id,
                 "source_strategy_spec_registry_id": spec_registry_id,
+                "execution_context": "paper",
+                "capital_scale_pct": 0.0,
                 "requested_by": self._requested_by(record),
                 "fail_closed_baseline": baseline,
                 "rollback_target_registry_id": (
@@ -1032,6 +1186,64 @@ class PersonaProvisioningCoordinator:
             receipt=receipt,
         )
 
+    def _candidate_binding(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+        *,
+        baseline: bool,
+        strategy_artifact: bool,
+    ) -> tuple[str, str]:
+        """Exact (checksum, expires_at) the approval of one RegistryEntry binds to.
+
+        Both values come from the checkpointed authoritative Registry readback
+        of the candidate this approval targets, never from the request body
+        the coordinator composed: Registry's approval verifier compares the
+        decision's ``candidate_digest`` with the durable entry checksum, and
+        the same persisted readback is reused on every retry so the approval
+        bodies stay deterministic.
+        """
+
+        checkpoint_prefix = "baseline_" if baseline else ""
+        key = (
+            f"{checkpoint_prefix}strategy_artifact_candidate"
+            if strategy_artifact
+            else f"{checkpoint_prefix}strategy_spec_candidate"
+        )
+        values = (
+            self._strategy_artifact_values(ids, baseline=baseline)
+            if strategy_artifact
+            else self._artifact_values(ids, baseline=baseline)
+        )
+        registry_id, _, version, _ = values
+        receipt = _mapping(
+            record.references.get(key),
+            label=f"checkpointed candidate RegistryEntry readback {key}",
+        )
+        entry = _registry_entry(receipt)
+        state = str(entry.get("artifact_state") or "")
+        if state not in {"candidate", "approved"}:
+            raise PersonaProvisioningCoordinationError(
+                f"checkpointed RegistryEntry {registry_id} is neither candidate nor approved"
+            )
+        self._validate_registry(
+            receipt,
+            ids,
+            state=state,
+            registry_id=registry_id,
+            version=version,
+            artifact_type="execution_bundle" if strategy_artifact else "strategy_spec",
+        )
+        digest = _owner_digest(
+            entry.get("checksum"),
+            label=f"RegistryEntry {registry_id} readback",
+        )
+        expires_at = _approval_expiry(
+            entry.get("created_at"),
+            label=f"RegistryEntry {registry_id} readback created_at",
+        )
+        return digest, expires_at
+
     def _validate_approval_identity(
         self,
         receipt: Mapping[str, Any],
@@ -1041,6 +1253,8 @@ class PersonaProvisioningCoordinator:
         registry_id: str,
         decision_id: str,
         version: str,
+        candidate_digest: str,
+        expires_at: str,
     ) -> None:
         if (
             receipt.get("decision_id") != decision_id
@@ -1054,6 +1268,20 @@ class PersonaProvisioningCoordinator:
         ):
             raise PersonaProvisioningCoordinationError(
                 "ApprovalDecision readback does not match the stable low-risk proposal"
+            )
+        if receipt.get("owner_user_id") != self.governance_actor_id:
+            raise PersonaProvisioningCoordinationError(
+                "ApprovalDecision readback is owned by a different Governance principal"
+            )
+        # A same-ID decision that binds another digest or another expiry was
+        # not proposed by this coordination and must never be advanced by it.
+        if receipt.get("candidate_digest") != candidate_digest:
+            raise PersonaProvisioningCoordinationError(
+                "ApprovalDecision readback does not bind the exact RegistryEntry checksum"
+            )
+        if receipt.get("expires_at") != expires_at:
+            raise PersonaProvisioningCoordinationError(
+                "ApprovalDecision readback does not carry the exact finite expiry"
             )
 
     def _coordinate_approval_proposal(
@@ -1077,8 +1305,15 @@ class PersonaProvisioningCoordinator:
             else f"{checkpoint_prefix}approval_proposed"
         )
         checkpoint_step = f"{checkpoint_key}_readback"
+        candidate_digest, expires_at = self._candidate_binding(
+            record,
+            ids,
+            baseline=baseline,
+            strategy_artifact=strategy_artifact,
+        )
         payload = {
             "decision_id": decision_id,
+            "expected_version": 0,
             "target_type": "registry_entry",
             "target_id": registry_id,
             "target_version": version,
@@ -1086,13 +1321,22 @@ class PersonaProvisioningCoordinator:
             "capital_pool_id": ids.capital_pool_id,
             "persona_id": record.persona_id,
             "tenant_id": record.tenant_id,
-            "owner_user_id": self._requested_by(record) or self.actor_id,
+            # Strict Governance binds the proposal owner to the verified
+            # approval subject.  The human requester is not that principal
+            # and stays audit metadata on the owner artifacts instead.
+            "owner_user_id": self.governance_actor_id,
             "proposal_id": f"persona-provisioning-{label}-{ids.token}",
             "proposal_revision": 1,
             "proposal_content_digest": record.request_hash,
             "validation_result_digest": _stable_hash(
-                {"registry_id": registry_id, "risk_level": "low"}
+                {
+                    "registry_id": registry_id,
+                    "risk_level": "low",
+                    "candidate_digest": candidate_digest,
+                }
             ),
+            "candidate_digest": candidate_digest,
+            "expires_at": expires_at,
         }
 
         def validate(receipt: Mapping[str, Any]) -> None:
@@ -1103,6 +1347,8 @@ class PersonaProvisioningCoordinator:
                 registry_id=registry_id,
                 decision_id=decision_id,
                 version=version,
+                candidate_digest=candidate_digest,
+                expires_at=expires_at,
             )
             if receipt.get("decision_state") not in {"proposed", "under_review", "decided"}:
                 raise PersonaProvisioningCoordinationError(
@@ -1145,6 +1391,12 @@ class PersonaProvisioningCoordinator:
         )
         checkpoint_step = f"{checkpoint_key}_readback"
         get_path = f"/api/governance/approvals/{_path_id(decision_id)}"
+        candidate_digest, expires_at = self._candidate_binding(
+            record,
+            ids,
+            baseline=baseline,
+            strategy_artifact=strategy_artifact,
+        )
 
         def ready(receipt: Mapping[str, Any]) -> bool:
             return receipt.get("decision_state") in {"under_review", "decided"}
@@ -1157,17 +1409,46 @@ class PersonaProvisioningCoordinator:
                 registry_id=registry_id,
                 decision_id=decision_id,
                 version=version,
+                candidate_digest=candidate_digest,
+                expires_at=expires_at,
             )
             if not ready(receipt):
                 raise PersonaProvisioningCoordinationError(
                     "ApprovalDecision was not accepted for review"
                 )
 
+        def build_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # CAS-bind the review transition to the exact proposed-state
+            # version this coordinator just observed (the same pre-read
+            # ``_transition_then_get`` uses to decide whether to POST), per
+            # governance ApprovalCommand's mandatory expected_version
+            # (architecture-resumption-sa-sd.md §3.3).  Only a proposal this
+            # coordination owns (same digest, expiry and subject) is reviewed.
+            if current is None:
+                raise PersonaProvisioningCoordinationError(
+                    "ApprovalDecision proposal has no persisted readback to review"
+                )
+            self._validate_approval_identity(
+                current,
+                record,
+                ids,
+                registry_id=registry_id,
+                decision_id=decision_id,
+                version=version,
+                candidate_digest=candidate_digest,
+                expires_at=expires_at,
+            )
+            return {
+                "actor_role": "automated_gate",
+                "actor_id": self.governance_actor_id,
+                "expected_version": int(current.get("version") or 0),
+            }
+
         receipt = self._transition_then_get(
             owner="governance",
             get_path=get_path,
             post_path=f"{get_path}/review",
-            payload={"actor_role": "automated_gate", "actor_id": self.actor_id},
+            payload=build_payload,
             ready=ready,
             validate=validate,
         )
@@ -1200,12 +1481,47 @@ class PersonaProvisioningCoordinator:
         )
         checkpoint_step = f"{checkpoint_key}_readback"
         get_path = f"/api/governance/approvals/{_path_id(decision_id)}"
+        candidate_digest, expires_at = self._candidate_binding(
+            record,
+            ids,
+            baseline=baseline,
+            strategy_artifact=strategy_artifact,
+        )
 
         def ready(receipt: Mapping[str, Any]) -> bool:
             return (
                 receipt.get("decision_state") == "decided"
                 and receipt.get("decision") == "approved"
             )
+
+        def require_current(receipt: Mapping[str, Any]) -> None:
+            """Fail closed on an expired proposal instead of renewing it.
+
+            The persisted proposal already carries the finite expiry this
+            coordination bound.  Deciding keeps that exact value; it must
+            still lie in the future and within ``APPROVAL_TTL`` of the
+            approval's own persisted ``created_at``.  An expired proposal is
+            never re-proposed or extended by this coordinator.
+            """
+
+            now = datetime.now(timezone.utc)
+            created_at = _parse_owner_time(
+                receipt.get("created_at"),
+                label=f"ApprovalDecision {decision_id} created_at",
+            )
+            expiry = _parse_owner_time(
+                receipt.get("expires_at"),
+                label=f"ApprovalDecision {decision_id} expires_at",
+            )
+            if expiry > created_at + APPROVAL_TTL:
+                raise PersonaProvisioningCoordinationError(
+                    f"ApprovalDecision {decision_id} expiry exceeds the {APPROVAL_TTL} bound"
+                )
+            if expiry <= now:
+                raise PersonaProvisioningCoordinationError(
+                    f"ApprovalDecision {decision_id} proposal expired at "
+                    f"{receipt.get('expires_at')}; it is not renewed"
+                )
 
         def validate(receipt: Mapping[str, Any]) -> None:
             self._validate_approval_identity(
@@ -1215,25 +1531,54 @@ class PersonaProvisioningCoordinator:
                 registry_id=registry_id,
                 decision_id=decision_id,
                 version=version,
+                candidate_digest=candidate_digest,
+                expires_at=expires_at,
             )
             if not ready(receipt):
                 raise PersonaProvisioningCoordinationError(
                     "ApprovalDecision readback is not decided/approved"
                 )
+            require_current(receipt)
 
-        receipt = self._transition_then_get(
-            owner="governance",
-            get_path=get_path,
-            post_path=f"{get_path}/decide",
-            payload={
+        def build_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # CAS-bind the decide transition to the exact under-review-state
+            # version this coordinator just observed (same rationale as the
+            # review transition above).  The decision restates the exact
+            # digest and expiry the persisted proposal binds, so Registry's
+            # approval verifier sees one immutable target.
+            if current is None:
+                raise PersonaProvisioningCoordinationError(
+                    "ApprovalDecision proposal has no persisted readback to decide"
+                )
+            self._validate_approval_identity(
+                current,
+                record,
+                ids,
+                registry_id=registry_id,
+                decision_id=decision_id,
+                version=version,
+                candidate_digest=candidate_digest,
+                expires_at=expires_at,
+            )
+            require_current(current)
+            return {
                 "actor_role": "automated_gate",
-                "actor_id": self.actor_id,
+                "actor_id": self.governance_actor_id,
                 "outcome": "approved",
                 "rationale": "Low-risk internal paper Persona admission",
                 "evidence_refs": [
                     {"ref_type": "registry_entry", "ref_id": registry_id}
                 ],
-            },
+                "candidate_digest": candidate_digest,
+                "expires_at": expires_at,
+                "expected_version": int(current.get("version") or 0),
+            }
+
+        receipt = self._transition_then_get(
+            owner="governance",
+            get_path=get_path,
+            post_path=f"{get_path}/decide",
+            payload=build_payload,
             ready=ready,
             validate=validate,
         )
@@ -1275,15 +1620,50 @@ class PersonaProvisioningCoordinator:
                 and entry.get("approval_decision_id") == decision_id
             )
 
+        def build_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # Registry's strict advance contract: the approver is the
+            # Governance decision (never a caller-supplied name), the actor is
+            # the verified transport subject (never a body field), and the CAS
+            # base is the exact candidate row this coordinator just read from
+            # the authoritative GET.  ``command_key`` is derived from that
+            # exact operation and base, so a retry of the same transition
+            # replays the durable receipt while a changed base is a new
+            # command that Registry compares against the true row.
+            if current is None:
+                raise PersonaProvisioningCoordinationError(
+                    f"Registry candidate {registry_id} has no authoritative readback to approve"
+                )
+            self._validate_registry(
+                current,
+                ids,
+                state="candidate",
+                registry_id=registry_id,
+                version=version,
+                artifact_type=artifact_type,
+            )
+            entry = _registry_entry(current)
+            updated_at = entry.get("updated_at")
+            if not isinstance(updated_at, str) or not updated_at.strip():
+                raise PersonaProvisioningCoordinationError(
+                    f"Registry candidate {registry_id} readback has no updated_at for CAS"
+                )
+            base = {
+                "approval_decision_id": decision_id,
+                "expected_artifact_state": "candidate",
+                "expected_version": str(entry["version"]),
+                "expected_updated_at": updated_at,
+            }
+            command_key = (
+                f"persona-provisioning:{ids.token}:advance:{registry_id}:approved:"
+                f"{_stable_hash(base)[:16]}"
+            )
+            return {"target_state": "approved", "command_key": command_key, **base}
+
         receipt = self._transition_then_get(
             owner="registry",
             get_path=get_path,
             post_path=f"{get_path}/advance",
-            payload={
-                "target_state": "approved",
-                "approver": self.actor_id,
-                "approval_decision_id": decision_id,
-            },
+            payload=build_payload,
             ready=ready,
             validate=lambda value: self._validate_registry(
                 value,
@@ -1414,11 +1794,17 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
+        # Deployment reads the authoritative RegistryEntry and ApprovalDecision
+        # itself under its own scoped verified reader principal, and its request
+        # model forbids extra fields.  These checkpointed receipts therefore stay
+        # local coordination preconditions from the earlier validated steps.
+        # Deployment must revalidate current owner authority using only the exact
+        # identifiers; these checkpoints are never sent as client snapshots.
         registry_receipt = _mapping(
             record.references.get("strategy_artifact_approved"),
             label="checkpointed approved StrategyArtifact RegistryEntry",
         )
-        approval_receipt = _mapping(
+        _mapping(
             record.references.get("strategy_artifact_approval_decided"),
             label="checkpointed ApprovalDecision",
         )
@@ -1426,7 +1812,15 @@ class PersonaProvisioningCoordinator:
             record.references.get("baseline_strategy_artifact_approved"),
             label="checkpointed approved zero-capital baseline StrategyArtifact RegistryEntry",
         )
-        registry_entry = _registry_entry(registry_receipt)
+        self._validate_registry(
+            registry_receipt,
+            ids,
+            state="approved",
+            registry_id=ids.strategy_artifact_id,
+            version=ids.version,
+            approval_decision_id=ids.strategy_artifact_approval_decision_id,
+            artifact_type="execution_bundle",
+        )
         baseline_entry = _registry_entry(baseline_receipt)
         self._validate_registry(
             baseline_receipt,
@@ -1444,8 +1838,6 @@ class PersonaProvisioningCoordinator:
             "target_stage": "paper",
             "current_stage": "none",
             "registry_id": ids.strategy_artifact_id,
-            "registry_entry": registry_entry,
-            "approval_decision": approval_receipt,
             "created_by": self.actor_id,
             "sponsor_persona_id": record.persona_id,
             "scale": {"capital_scale_pct": 0.0, "gross_scale_pct": 100.0},
@@ -1546,11 +1938,21 @@ class PersonaProvisioningCoordinator:
                     "Deployment saga readback does not prove admitted provisioning"
                 )
 
-        registry_entry = _registry_entry(
+        # Same owner-authority rule as the plan POST: prove the approved
+        # RegistryEntry checkpoint exists locally, then dispatch identifiers
+        # only.  DispatchDeploymentPlanRequest forbids extra fields and
+        # Deployment re-reads the authoritative entry itself.
+        self._validate_registry(
             _mapping(
                 record.references.get("strategy_artifact_approved"),
                 label="checkpointed approved StrategyArtifact RegistryEntry",
-            )
+            ),
+            ids,
+            state="approved",
+            registry_id=ids.strategy_artifact_id,
+            version=ids.version,
+            approval_decision_id=ids.strategy_artifact_approval_decision_id,
+            artifact_type="execution_bundle",
         )
         receipt = self._transition_then_get(
             owner="deployment",
@@ -1566,7 +1968,6 @@ class PersonaProvisioningCoordinator:
                 "saga_id": ids.deployment_saga_id,
                 "source_task_id": f"persona-provisioning-{ids.token}",
                 "workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
-                "registry_entry": registry_entry,
                 "metadata": {
                     "tenant_id": record.tenant_id,
                     "persona_id": record.persona_id,

@@ -178,7 +178,6 @@ def decide(
     events: Sequence[Mapping[str, Any]] | None = None,
     pr: Mapping[str, Any] | None = None,
     task_id: str = "ABC-001",
-    task_brief_carry_forward: Mapping[str, Any] | None = None,
 ) -> gate.GateDecision:
     return gate.gate_for_task(
         task_id,
@@ -186,7 +185,6 @@ def decide(
         state={"tasks": list(tasks if tasks is not None else [task_row()])},
         events=list(events if events is not None else [approval_event()]),
         now=NOW,
-        task_brief_carry_forward=task_brief_carry_forward,
     )
 
 
@@ -230,6 +228,38 @@ class PolicyResolutionTests(unittest.TestCase):
 
 
 class ApprovedPathTests(unittest.TestCase):
+    def test_diagnostic_rejection_words_are_not_review_decisions(self) -> None:
+        for message in (
+            "Owner done rejected by canonical commit metadata gate",
+            "GitHub rejects the request due to an unavailable endpoint",
+            "Documented revert procedure for a failed deploy",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(decide(events=[approval_event(), {
+                    "type": "note", "task_id": "ABC-001", "agent": "Codex",
+                    "ts": "2026-07-26T13:00:00Z", "message": message,
+                }]).allow_merge)
+
+    def test_resume_and_merge_share_non_resumable_audit_decision(self) -> None:
+        task = task_row(review_binding=approval_binding())
+        for message in gate.REVOCATION_NOTE_MARKERS:
+            events = [approval_event(), {
+                "type": "note", "task_id": "ABC-001", "agent": "Claude",
+                "ts": "2026-07-26T13:00:00Z", "message": message,
+            }, {"type": "blocker", "task_id": "ABC-001", "agent": "Codex",
+                "ts": "2026-07-26T14:00:00Z"}]
+            with self.subTest(message=message):
+                record = gate.load_approval_record("ABC-001", events=events)
+                self.assertTrue(gate.integration_resume_error(task, record))
+                self.assertFalse(decide(events=events).allow_merge)
+        record = gate.load_approval_record("ABC-001", events=[approval_event(), {
+            "type": "blocker", "task_id": "ABC-001", "agent": "Codex",
+            "ts": "2026-07-26T14:00:00Z",
+        }])
+        self.assertEqual(gate.integration_resume_error(task, record), "")
+        self.assertTrue(gate.integration_resume_error(
+            task_row(review_binding=approval_binding(head_sha="c" * 40)), record))
+
     def test_exact_head_approval_allows_merge_but_never_auto_merge(self) -> None:
         decision = decide()
 
@@ -387,27 +417,28 @@ class ApprovalBindingTests(unittest.TestCase):
         self.assertEqual(decision.head_oid, "c" * 40)
         self.assertTrue(decision.revoke_auto_merge)
 
-    def test_task_brief_only_successor_carries_approval_without_rereview(self) -> None:
+    def test_task_brief_only_successor_is_rejected_without_a_fresh_review(self) -> None:
+        """OPS-LEGACY-REVIEW-RETIRE-001: the generated-brief carry-forward
+        exception is retired. A direct successor that changes only
+        .orchestrator/task-briefs/ paths is still an unreviewed head -- it
+        must be blocked exactly like any other unapproved successor, not
+        silently approved through a task-brief classification.
+        """
+
         successor = "d" * 40
         pr = open_pr(
             headRefOid=successor,
             commits=[{"oid": successor, "committedDate": "2026-07-26T12:05:00Z"}],
         )
 
-        decision = decide(
-            pr=pr,
-            task_brief_carry_forward={
-                "kind": "task_brief_only_successor",
-                "approved_head_sha": "b" * 40,
-                "successor_head_sha": successor,
-                "changed_paths": [".orchestrator/task-briefs/abc_001.md"],
-            },
-        )
+        decision = decide(pr=pr)
 
-        self.assertTrue(decision.allow_merge)
+        self.assertFalse(decision.allow_merge)
         self.assertFalse(decision.allow_auto_merge)
-        self.assertEqual(decision.reason, "task_brief_only_approval_carried_forward")
+        self.assertEqual(decision.reason, "approval_head_mismatch")
+        self.assertEqual(decision.approval["approved_head_sha"], "b" * 40)
         self.assertEqual(decision.head_oid, successor)
+        self.assertTrue(decision.revoke_auto_merge)
 
     def test_pre_dated_head_replacement_survives_a_matching_commit_history(self) -> None:
         """Rewriting the PR's commit list does not rebuild the approval."""
@@ -2444,6 +2475,7 @@ class TaskFinalizeShellTests(unittest.TestCase):
         helpers.mkdir(parents=True)
         source = Path(__file__).resolve().parent
         for name in (
+            "check_commit_trailers.py",
             "safe_pr.sh",
             "task_finalize.sh",
             "task_review_merge_gate.py",
@@ -2456,8 +2488,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
             (source.parents[1] / ".orchestrator" / "common.py").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+        (helpers / "check_commit_trailers.py").chmod(0o755)
         (helpers / "safe_pr.sh").chmod(0o755)
         (helpers / "task_finalize.sh").chmod(0o755)
+        (helpers / "worker_commit.py").chmod(0o755)
         (repo / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
         self._git(["add", "-A"], cwd=repo)
         self._git(["commit", "-m", "base", "--no-verify"], cwd=repo)
@@ -2505,6 +2539,7 @@ class TaskFinalizeShellTests(unittest.TestCase):
         env["GH_PR_LIST_FAIL"] = "1" if pr_lookup_fails else "0"
         env["GH_REQUIRE_OFF_BEFORE_PUSH"] = "1" if require_off_before_push else "0"
         env["PANTHEON_STATUS_ROOT"] = str(repo)
+        env["PANTHEON_COMMAND_ROOT"] = str(repo)
         return env
 
     def _run_finalize(

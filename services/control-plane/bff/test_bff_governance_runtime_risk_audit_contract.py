@@ -12,11 +12,9 @@ from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 OPERATOR_TOKEN = "Bearer op-gap-005:operator"
@@ -198,14 +196,12 @@ def _isolated_bff() -> Iterator[tuple[TestClient, GovernanceRuntimeRiskAuditTest
         bff_main.read_store = store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
         try:
             yield TestClient(bff_main.app), store
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
             bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
 
 
 def _assert_final_command_envelope(payload: dict, command: str) -> str:

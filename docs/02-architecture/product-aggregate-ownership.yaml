@@ -87,15 +87,16 @@ aggregates:
     forbidden_writers:
     - _RANKING_BFF_OVERLAY
   agora_journal:
-    command_owner: agora_journal_application
-    store_owner: agora_journal_store
-    read_projection: management_agora_journal_projection
+    command_owner: governance_application
+    store_owner: governance_decision_journal_store
+    read_projection: governance_decision_journal_projection
     event_subjects:
-    - agora.journal.entry.v1
+    - governance.decision_journal.v1
     bff_routers:
     - agora
     forbidden_writers:
-    - _GOVERNANCE_DECISION_JOURNAL_OVERLAY
+    - _AGORA_JOURNAL_OVERLAY
+    - _AGORA_STORE_JOURNAL_SLICE
   agora_interaction:
     command_owner: agora_interaction_application
     store_owner: agora_interaction_store
@@ -2832,12 +2833,12 @@ mutation_routes:
 - route: PATCH /bff/agora/journal/{param}
   command: agora_patch_journal_entry
   router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
+  application_owner: governance_application
+  store_owner: governance_decision_journal_store
+  table_or_stream: governance_decision_journal
+  outbox_subject: governance.decision_journal.v1
   idempotency_scope: agora_id
-  readback_projection: management_agora_projection
+  readback_projection: governance_decision_journal_projection
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/agora/signals
@@ -2909,12 +2910,12 @@ mutation_routes:
 - route: POST /bff/agora/journal
   command: agora_create_journal_entry
   router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
+  application_owner: governance_application
+  store_owner: governance_decision_journal_store
+  table_or_stream: governance_decision_journal
+  outbox_subject: governance.decision_journal.v1
   idempotency_scope: agora_id
-  readback_projection: management_agora_projection
+  readback_projection: governance_decision_journal_projection
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/agora/training-examples

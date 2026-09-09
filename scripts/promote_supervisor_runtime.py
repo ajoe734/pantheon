@@ -9,6 +9,7 @@ It never reconstructs a retired runtime or tries to restore one.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -27,11 +28,18 @@ GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
 if str(GIT_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(GIT_SCRIPTS_DIR))
 
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1] / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
 import auto_integrator  # noqa: E402  (shared stable integration lock)
+import runtime_state  # noqa: E402  (canonical runtime-admission lock)
+import supervisor  # noqa: E402  (existing reserved-phase recovery authority)
 
 from provision_live_supervisor_config import (
     build_live_config,
     ensure_approval_queue_marker,
+    first_symlink_component,
     load_json_object,
     parse_repository_integration_roots,
     parse_repository_source_roots,
@@ -61,6 +69,27 @@ SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES = (
     "BRIDGE_SIGNING_KEY",
     "BRIDGE_SIGNING_KEY_ID",
 )
+
+
+class StorageMigrationError(RuntimeError, OSError):
+    """Raised when storage path migration or rollback encounters an error."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        forward_error: Exception | None = None,
+        migration_record: dict[str, Any] | None = None,
+        rollback_errors: list[str] | None = None,
+        restoration_verified: bool = False,
+        lock_fd: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.forward_error = forward_error
+        self.migration_record = migration_record
+        self.rollback_errors = rollback_errors or []
+        self.restoration_verified = restoration_verified
+        self.lock_fd = lock_fd
 
 
 def _utc_now() -> str:
@@ -214,9 +243,15 @@ def _pid_path(rendered: Mapping[str, Any]) -> Path:
     paths = rendered.get("paths")
     if not isinstance(paths, Mapping):
         raise ValueError("V2 config must define paths")
+    status_file = str(paths.get("status_file") or "").strip()
+    if status_file:
+        status_root = Path(status_file).expanduser().resolve().parent
+        return status_root / ".orchestrator" / "supervisor.pid"
     state_file = Path(str(paths.get("state_file") or "")).expanduser()
     if not state_file.is_absolute():
         raise ValueError("rendered V2 state_file must be absolute")
+    if state_file.parent.name == "worker-runtime" and state_file.parent.parent.name == ".orchestrator":
+        return state_file.parent.parent / "supervisor.pid"
     return state_file.parent / "supervisor.pid"
 
 
@@ -232,7 +267,15 @@ def _incumbent_pid_path(live_config_path: Path, rendered: Mapping[str, Any]) -> 
     if not live_config_path.exists():
         return _pid_path(rendered)
     incumbent = _load_json(live_config_path, label="installed live config")
-    return _pid_path(incumbent)
+    candidate = _pid_path(incumbent)
+    if not candidate.exists():
+        paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+        state_file = str(paths.get("state_file") or "").strip()
+        if state_file:
+            legacy_pid = Path(state_file).expanduser().parent / "supervisor.pid"
+            if legacy_pid.exists():
+                return legacy_pid
+    return candidate
 
 
 def _read_pid(path: Path) -> int | None:
@@ -261,6 +304,82 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> int | None:
+    """Return Linux's immutable process start-time token for PID reuse checks."""
+    if not pid or pid <= 0:
+        return None
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        raw_stat = (root / str(pid) / "stat").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError:
+        return None
+    closing_paren = raw_stat.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields = raw_stat[closing_paren + 2 :].split()
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except (TypeError, ValueError):
+        return None
+
+
+def _worker_process_identity(
+    worker: Mapping[str, Any],
+    *,
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    """Return a validated immutable worker/process generation binding."""
+    try:
+        import common
+    except ImportError:
+        return None
+
+    task_id = str(worker.get("task_id") or "").strip()
+    worker_run_id = str(worker.get("run_id") or run_id).strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    pid = worker.get("pid")
+    pid_start_ticks = worker.get("pid_start_ticks")
+    if (
+        not task_id
+        or not worker_run_id
+        or not queue_event_id
+        or not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(pid_start_ticks, int)
+        or isinstance(pid_start_ticks, bool)
+        or pid_start_ticks <= 0
+    ):
+        return None
+    try:
+        expected_generation = common.worker_process_generation_id(
+            task_id=task_id,
+            worker_run_id=worker_run_id,
+            queue_event_id=queue_event_id,
+            pid=pid,
+            pid_start_ticks=pid_start_ticks,
+        )
+    except Exception:
+        return None
+    if process_generation != expected_generation:
+        return None
+    return {
+        "schema_version": getattr(common, "WORKER_PROCESS_GENERATION_SCHEMA_VERSION", 1),
+        "task_id": task_id,
+        "worker_run_id": worker_run_id,
+        "queue_event_id": queue_event_id,
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+    }
 
 
 def stop_existing_supervisor(pid_path: Path, *, timeout_seconds: float) -> int | None:
@@ -421,6 +540,280 @@ def verify_worker_sandbox(root: Path) -> dict[str, Any]:
     }
 
 
+_EXECUTION_AUTHORIZATION_BARRIER_PROBE = r'''
+import ast
+import base64
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+sys.path[:0] = [str(root / ".orchestrator"), str(root / "scripts")]
+
+# All authority and writes below belong to this disposable probe. No live
+# verifier keys, worker identity, journal binding, or grants are inherited.
+with tempfile.TemporaryDirectory(prefix="execution-barrier-preflight-") as scratch:
+    status_root = Path(scratch) / "status"
+    status_root.mkdir()
+    event_log = Path(scratch) / "runtime" / "task-state-events.jsonl"
+    os.environ["PANTHEON_STATUS_ROOT"] = str(status_root)
+    os.environ["AI_NAME"] = "Codex2"
+    import ai_status
+    import common
+    import execution_authorization as ea
+    import worker_runner
+    from development_bridge import dev_bridge_materialize as intake
+    from rewrite import dispatch_admission as admission
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    modules = (ai_status, common, ea, worker_runner, intake, admission)
+    provenance = {}
+    for module in modules:
+        path = Path(module.__file__).resolve()
+        assert path.is_relative_to(root), "barrier imported outside candidate: " + str(path)
+        provenance[module.__name__] = {
+            "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    assert ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION in ea.RUNTIME_CAPABILITIES
+    # Behavioral helper checks below also require the real entry points to
+    # call those helpers. Retaining a detached function is not a barrier.
+    worker_tree = ast.parse(Path(worker_runner.__file__).read_text())
+    worker_functions = {
+        node.name: node for node in worker_tree.body if isinstance(node, ast.FunctionDef)
+    }
+    def call_name(node):
+        if not isinstance(node, ast.Call):
+            return ""
+        return ast.unparse(node.func)
+    def direct_call(statement, name):
+        value = getattr(statement, "value", None)
+        return call_name(value) == name
+    binding_function = worker_functions["validate_worker_entry_binding"]
+    assert any(direct_call(node, "ensure_execution_authorized_before_launch")
+               for node in binding_function.body), "worker entry detached from authorization"
+    main_function = worker_functions["main"]
+    binding_positions = [i for i, node in enumerate(main_function.body)
+                         if direct_call(node, "validate_worker_entry_binding")]
+    sandbox_positions = [i for i, node in enumerate(main_function.body)
+                         if direct_call(node, "bind_worker_sandbox")]
+    assert binding_positions and sandbox_positions and min(binding_positions) < min(sandbox_positions), (
+        "worker main must validate canonical receipt before sandbox setup"
+    )
+    guarded_launches = []
+    for node in ast.walk(main_function):
+        if not isinstance(node, ast.With):
+            continue
+        if not any(call_name(item.context_expr) == "canonical_task_state_lock_file"
+                   and any(keyword.arg == "shared" and isinstance(keyword.value, ast.Constant)
+                           and keyword.value.value is True for keyword in item.context_expr.keywords)
+                   for item in node.items):
+            continue
+        validation = [i for i, statement in enumerate(node.body)
+                      if direct_call(statement, "validate_worker_entry_binding")]
+        launch = [i for i, statement in enumerate(node.body)
+                  if direct_call(statement, "subprocess.Popen")]
+        if validation and launch and min(validation) < min(launch):
+            guarded_launches.extend(node.body[i].value for i in launch)
+    all_launches = [node for node in ast.walk(main_function) if call_name(node) == "subprocess.Popen"]
+    assert all_launches and set(all_launches) == set(guarded_launches), (
+        "worker launch lacks canonical lock and final receipt/authorization validation"
+    )
+    os.environ.update({
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        common.CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
+            common.canonical_task_state_identity_for_paths(
+                status_root=status_root, event_log=event_log,
+            )
+        ),
+    })
+    ai_status.configure_status_root_paths(status_root)
+    source_key = Ed25519PrivateKey.generate()
+    encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+    canonical = lambda value: json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode()
+    os.environ["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"] = json.dumps({
+        "isolated-preflight-source": encode(source_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    })
+    state = ai_status.default_state()
+    state["tasks"] = []
+    state["handoffs"] = []
+    state["blockers"] = []
+    state["wave_state"] = {"status": "open"}
+    for work_class in ("hosted", "functional"):
+        task_id = "RUNTIME-PREFLIGHT-" + work_class.upper()
+        packet_id = "isolated-preflight-" + work_class
+        spec = {
+            "id": task_id, "title": "Isolated runtime barrier preflight",
+            "owner": "Codex2", "reviewer": "Codex", "target_repo": "pantheon",
+            "phase": "Runtime preflight", "summary": "Disposable local probe",
+            "depends_on": [], "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
+            "acceptance": ["Verify local runtime barriers without launching work"],
+            "execution_resources": ["pantheon-dev"] if work_class == "hosted" else [],
+        }
+        packet = {
+            "packet_id": packet_id, "work_class": work_class, "tasks": [spec],
+            "actor": {"id": "isolated-preflight-source", "roles": ["source"]},
+        }
+        digest = hashlib.sha256(canonical(packet)).hexdigest()
+        packet["signature"] = {
+            "key_id": "isolated-preflight-source", "algorithm": "Ed25519",
+            "value": encode(source_key.sign(canonical(packet))),
+        }
+        batch = {
+            "packet_id": packet_id, "packet_digest": digest,
+            "actor": ai_status.DEV_BRIDGE_BATCH_ACTOR, "signed_packet": packet,
+            "tasks": [{
+                "task_id": task_id, "owner": spec["owner"], "reviewer": spec["reviewer"],
+                "title": spec["title"], "assignment_next": None,
+                "task_metadata": {"dev_bridge": {
+                    "packet_id": packet_id, "packet_digest": digest,
+                    "task_spec": spec, "task_spec_hash": hashlib.sha256(canonical(spec)).hexdigest(),
+                    "work_class": work_class, "conversation_id": "isolated-runtime-preflight",
+                    "source_turn_ids": [], "documents": [],
+                }},
+            }],
+        }
+        # Verify the actual source signature before invoking the actual
+        # materialization/assignment code. There is deliberately no MFA.
+        intake.verify_signed_dev_bridge_packet(batch, state=state)
+        intake.run_dev_bridge_materialize_batch(state, batch, commands={"assign": ai_status.command_assign})
+    ai_status.save_state(state)
+    state = ai_status.load_state()
+    hosted = ai_status.get_task(state, "RUNTIME-PREFLIGHT-HOSTED")
+    functional = ai_status.get_task(state, "RUNTIME-PREFLIGHT-FUNCTIONAL")
+    assert hosted["execution_authorization"]["state"] == "pending_authorization"
+    assert hosted["execution_authorization"]["old_runtime_hold"] is True
+    assert hosted["waiting_for"] == "Human/Ops"
+    assert hosted["execution_authorization"]["grant"] is None
+    now = datetime.now(timezone.utc)
+    lane = admission.DispatchLane("preflight", "Codex2", 1, (
+        admission.DeliveryEndpoint("preflight-endpoint", "preflight-provider", "preflight-account"),
+    ))
+    snapshot = admission.AdmissionSnapshot(
+        now=now,
+        endpoint_health={"preflight-endpoint": admission.HealthRecord("healthy")},
+        account_health={"preflight-account": admission.HealthRecord("healthy")},
+        account_limits={"preflight-account": 1},
+    )
+    for task, should_run in ((hosted, False), (functional, True)):
+        authorized = ea.is_execution_authorized(task, now=now)
+        assert authorized is should_run
+        # Dependency completion and removal of the compatibility hold must
+        # not bypass the independent planner or late queue-delivery gate.
+        intent = admission.TaskIntent(
+            task["id"], "todo", task["owner"], task["reviewer"], True,
+            execution_authorized=authorized,
+        )
+        for endpoint in (None, "preflight-endpoint"):
+            decision = admission.evaluate_dispatch_intent(
+                intent, lane, snapshot, requested_endpoint_id=endpoint,
+            )
+            assert decision.eligible is should_run, str(decision)
+            if not should_run:
+                assert decision.reason.value == "execution_authorization_required"
+        try:
+            worker_runner.ensure_execution_authorized_before_launch(
+                status_root, task["id"], active_role="owner", run_id="isolated-unreserved-run",
+            )
+        except RuntimeError:
+            assert not should_run, "ordinary execution incorrectly rejected at worker entry"
+        else:
+            assert should_run, "pending privileged task passed worker entry"
+    # Enter the actual runner main with no usable launch receipt. The sole
+    # stub is sandbox construction: if reached, it would use a harmless local
+    # marker command. Runtime/source and receipt validators stay unmodified.
+    subprocess.run(["git", "init", "-q", str(status_root)], check=True, capture_output=True)
+    runner_id = "isolated-runner-entry"
+    for name, value in (("state.json", {"workers": {runner_id: None}}),
+                        ("approval-queue.json", {}), ("config.json", {})):
+        worker_runner.write_json(status_root / ".orchestrator" / name, value)
+    os.environ.update({
+        "PANTHEON_COMMAND_ROOT": str(root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip(),
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+    })
+    sandbox_calls = []
+    def isolated_sandbox(command, **kwargs):
+        sandbox_calls.append(True)
+        return command
+    worker_runner.bind_worker_sandbox = isolated_sandbox
+    heartbeat = status_root / ".orchestrator/worker-runtime/heartbeats/preflight.json"
+    runner_status = status_root / ".orchestrator/worker-runtime/status/preflight.json"
+    marker = Path(scratch) / "unauthorized-provider-marker"
+    try:
+        worker_runner.main([
+            "--run-id", runner_id, "--heartbeat-path", str(heartbeat),
+            "--status-path", str(runner_status), "--", sys.executable, "-c",
+            "from pathlib import Path; Path(" + repr(str(marker)) + ").touch()",
+        ])
+    except RuntimeError as exc:
+        assert "canonical worker receipt is malformed" in str(exc), str(exc)
+    else:
+        raise AssertionError("worker main accepted an unusable launch receipt")
+    assert not sandbox_calls and not marker.exists() and not heartbeat.exists() and not runner_status.exists()
+    print(json.dumps({
+        "outcome": "barriers_verified", "command_root": str(root),
+        "capability": "execution_authorization_v1", "python_executable": sys.executable,
+        "python_prefix": sys.prefix, "module_provenance": provenance,
+        "checks": ["signed_no_mfa_pending_intake", "durable_legacy_hold",
+                   "planner_denies_pending", "late_delivery_denies_pending",
+                   "worker_entry_denies_unreserved", "ordinary_functional_dispatch",
+                   "worker_main_denies_invalid_receipt", "worker_launch_guard_wiring"],
+    }, sort_keys=True))
+'''
+
+
+def verify_execution_authorization_barriers(
+    root: Path, *, python_executable: Path
+) -> dict[str, Any]:
+    """Exercise candidate intake and execution gates with its selected Python.
+
+    The isolated subprocess uses only candidate code and disposable TaskStore
+    state. No live authority is inherited and no worker or grant is created.
+    A declaration or an importable no-op hook cannot pass this preflight.
+    """
+
+    runtime_root = root.expanduser().resolve()
+    python_executable = python_executable.expanduser().absolute()
+    try:
+        probe = subprocess.run(
+            [str(python_executable), "-I", "-B", "-c", _EXECUTION_AUTHORIZATION_BARRIER_PROBE, str(runtime_root)],
+            cwd=str(runtime_root),
+            env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if probe.returncode != 0:
+            raise ValueError((probe.stderr or probe.stdout or "probe failed").strip())
+        result = json.loads(probe.stdout)
+        if (
+            not isinstance(result, dict)
+            or result.get("outcome") != "barriers_verified"
+            or result.get("command_root") != str(runtime_root)
+            or result.get("python_executable") != str(python_executable)
+        ):
+            raise ValueError("barrier probe returned mismatched runtime/interpreter provenance")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            "command runtime is missing the required deferred-intake/late-"
+            f"execution authorization barriers: {exc}"
+        ) from exc
+    return result
+
+
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
     """Preserve the coordination checkout; executable code is immutable.
 
@@ -436,6 +829,608 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
         "candidate_root": str(candidate_root.resolve()),
         "status_root": str(status_root.resolve()),
         "paths": [],
+    }
+
+
+def _fsync_dir(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _preflight_storage_migration(
+    incumbent: Mapping[str, Any] | None,
+    rendered: Mapping[str, Any],
+) -> None:
+    """Preflight storage paths for symlinks, collisions, and filesystem constraints."""
+    if not incumbent:
+        return
+
+    old_store = incumbent.get("task_state_store") if isinstance(incumbent.get("task_state_store"), Mapping) else {}
+    new_store = rendered.get("task_state_store") if isinstance(rendered.get("task_state_store"), Mapping) else {}
+    old_log_raw = str(old_store.get("event_log") or "").strip()
+    new_log_raw = str(new_store.get("event_log") or "").strip()
+    if old_log_raw and new_log_raw and old_log_raw != new_log_raw:
+        old_event_log = Path(old_log_raw).expanduser()
+        new_event_log = Path(new_log_raw).expanduser()
+        if not old_event_log.is_absolute():
+            raise ValueError(f"incumbent task-state event_log must be absolute: {old_event_log}")
+        if not new_event_log.is_absolute():
+            raise ValueError(f"rendered task-state event_log must be absolute: {new_event_log}")
+
+        old_sym = first_symlink_component(old_event_log)
+        if old_sym is not None or old_event_log.is_symlink():
+            raise ValueError(f"incumbent task-state event log contains symlink: {old_sym or old_event_log}")
+        new_sym = first_symlink_component(new_event_log)
+        if new_sym is not None or new_event_log.is_symlink():
+            raise ValueError(f"rendered task-state event log contains symlink: {new_sym or new_event_log}")
+
+        if old_event_log.exists():
+            if not old_event_log.is_file():
+                raise ValueError(f"incumbent task-state event log must be a regular file: {old_event_log}")
+            # Destination collision and symlink preflight for all sidecars
+            for suffix, label in (
+                ("", "journal"),
+                (".head.json", "head"),
+                (".lock", "lock"),
+                (".legacy-anchor.json", "legacy anchor"),
+            ):
+                old_candidate = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
+                new_candidate = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
+                if old_candidate.is_symlink():
+                    raise ValueError(f"incumbent task-state {label} contains symlink: {old_candidate}")
+                if new_candidate.exists() or new_candidate.is_symlink():
+                    raise RuntimeError(f"target task-state {label} collision: {new_candidate} already exists")
+
+            # Filesystem constraints: verify same filesystem
+            target_ancestor = new_event_log.parent
+            while not target_ancestor.exists() and target_ancestor != target_ancestor.parent:
+                target_ancestor = target_ancestor.parent
+            anc_sym = first_symlink_component(target_ancestor)
+            if anc_sym is not None or target_ancestor.is_symlink():
+                raise ValueError(f"target task-state parent contains symlink: {anc_sym or target_ancestor}")
+            if old_event_log.stat().st_dev != target_ancestor.stat().st_dev:
+                raise RuntimeError(
+                    f"cannot migrate task-state across filesystem boundary: {old_event_log} to {new_event_log}"
+                )
+
+    old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+    new_paths = rendered.get("paths") if isinstance(rendered.get("paths"), Mapping) else {}
+    for key in ("state_file", "approval_queue"):
+        old_val = str(old_paths.get(key) or "").strip()
+        new_val = str(new_paths.get(key) or "").strip()
+        if old_val and new_val and old_val != new_val:
+            old_p = Path(old_val).expanduser()
+            new_p = Path(new_val).expanduser()
+            if not old_p.is_absolute() or not new_p.is_absolute():
+                raise ValueError(f"storage {key} paths must be absolute: {old_p}, {new_p}")
+            old_sym = first_symlink_component(old_p)
+            if old_sym is not None or old_p.is_symlink():
+                raise ValueError(f"incumbent {key} contains symlink: {old_sym or old_p}")
+            new_sym = first_symlink_component(new_p)
+            if new_sym is not None or new_p.is_symlink():
+                raise ValueError(f"rendered {key} contains symlink: {new_sym or new_p}")
+            if old_p.exists() and (new_p.exists() or new_p.is_symlink()):
+                raise RuntimeError(f"target {key} collision: {new_p} already exists")
+
+
+def qualify_incumbent_identity(
+    incumbent: Mapping[str, Any] | None,
+    *,
+    candidate_identity: Mapping[str, str] | None = None,
+) -> dict[str, str] | None:
+    if not incumbent:
+        return None
+
+    candidate_root: Path | None = None
+    watchdog = incumbent.get("watchdog")
+    if isinstance(watchdog, Mapping):
+        cmd = watchdog.get("supervisor_command")
+        if isinstance(cmd, list):
+            for item in cmd:
+                if isinstance(item, str) and item.endswith(".orchestrator/supervisor.py"):
+                    candidate_root = Path(item).expanduser().resolve().parent.parent
+                    break
+
+    if candidate_root is None and "command_root" in incumbent and isinstance(incumbent["command_root"], str):
+        candidate_root = Path(incumbent["command_root"]).expanduser().resolve()
+
+    if candidate_root is None and "identity" in incumbent and isinstance(incumbent["identity"], Mapping):
+        ident_root = incumbent["identity"].get("root")
+        if isinstance(ident_root, str) and ident_root.strip():
+            candidate_root = Path(ident_root).expanduser().resolve()
+
+    if candidate_root is None:
+        return None
+
+    ident = validated_immutable_command_root(candidate_root)
+    if "identity" in incumbent and isinstance(incumbent["identity"], Mapping):
+        expected_head = incumbent["identity"].get("head")
+        if expected_head and ident["head"] != expected_head:
+            raise ValueError(
+                f"incumbent identity head mismatch: expected {expected_head}, found {ident['head']}"
+            )
+    return ident
+
+
+def _is_retired_path_fence(path: Path) -> bool:
+    try:
+        st = os.lstat(str(path))
+    except OSError:
+        return False
+    mode = st.st_mode
+    if stat.S_ISFIFO(mode):
+        return True
+    if stat.S_ISDIR(mode):
+        return True
+    return False
+
+
+def _create_retired_path_fence(path: Path) -> None:
+    p = Path(path)
+    if _is_retired_path_fence(p):
+        return
+    if p.exists() or p.is_symlink():
+        raise RuntimeError(f"cannot establish retired-path fence: {p} already exists and is not a fence")
+
+    fifo_err: Exception | None = None
+    if hasattr(os, "mkfifo"):
+        try:
+            os.mkfifo(str(p), 0o600)
+        except OSError as exc:
+            fifo_err = exc
+
+    if not _is_retired_path_fence(p):
+        try:
+            p.mkdir(mode=0o700, exist_ok=False)
+        except OSError as exc:
+            err_msg = (
+                f"cannot establish retired-path fence at {p}: "
+                f"mkfifo failed ({fifo_err}); mkdir fallback failed ({exc})"
+                if fifo_err
+                else f"cannot establish retired-path fence at {p}: mkdir fallback failed ({exc})"
+            )
+            raise RuntimeError(err_msg) from exc
+
+    if not _is_retired_path_fence(p):
+        try:
+            _remove_retired_path_fence(p)
+        except Exception:
+            pass
+        raise RuntimeError(f"retired-path fence verification failed at {p}")
+
+
+def _remove_retired_path_fence(path: Path) -> None:
+    p = Path(path)
+    try:
+        st = os.lstat(str(p))
+    except OSError:
+        return
+    mode = st.st_mode
+    if stat.S_ISFIFO(mode):
+        try:
+            os.unlink(str(p))
+        except OSError:
+            pass
+    elif stat.S_ISDIR(mode):
+        try:
+            os.rmdir(str(p))
+        except OSError:
+            pass
+
+
+def _rollback_storage_files(
+    files: list[tuple[str, str]],
+) -> tuple[bool, list[str], list[tuple[str, str]], list[str]]:
+    """Idempotently roll back moved storage files in reverse order, preserving restored originals.
+
+    Returns (restoration_verified, rollback_errors, unrestored_files, fsynced_directories).
+    """
+    rollback_errors: list[str] = []
+    unrestored_files: list[tuple[str, str]] = []
+    rollback_dirs: set[Path] = set()
+
+    for old_file, new_file in reversed(files):
+        old_p = Path(old_file)
+        new_p = Path(new_file)
+
+        # 1. If already restored (old file exists as non-fence, and new file is absent):
+        if old_p.exists() and not _is_retired_path_fence(old_p) and not new_p.exists():
+            rollback_dirs.add(old_p.parent)
+            continue
+
+        # 2. If retired path fence exists at old path, remove it before replacing
+        if _is_retired_path_fence(old_p):
+            _remove_retired_path_fence(old_p)
+            if _is_retired_path_fence(old_p):
+                rollback_errors.append(f"failed to remove retired-path fence before rollback: {old_file}")
+                unrestored_files.append((old_file, new_file))
+                continue
+
+        # 3. If new file exists, roll back new -> old
+        if new_p.exists():
+            try:
+                os.replace(str(new_p), str(old_p))
+                rollback_dirs.add(old_p.parent)
+                rollback_dirs.add(new_p.parent)
+            except Exception as r_exc:
+                rollback_errors.append(f"file rollback failed ({new_file} -> {old_file}): {r_exc}")
+                unrestored_files.append((old_file, new_file))
+        else:
+            # Neither new_p exists nor valid old_p exists
+            if not (old_p.exists() and not _is_retired_path_fence(old_p)):
+                rollback_errors.append(f"neither old nor new path exists for rollback ({old_file}, {new_file})")
+                unrestored_files.append((old_file, new_file))
+
+    for d in rollback_dirs:
+        try:
+            _fsync_dir(d)
+        except Exception as r_exc:
+            rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
+
+    storage_verified = (len(unrestored_files) == 0) and all(
+        Path(old_file).exists()
+        and not _is_retired_path_fence(Path(old_file))
+        and not Path(new_file).exists()
+        for old_file, new_file in files
+    )
+    restoration_verified = (len(rollback_errors) == 0) and storage_verified
+    return restoration_verified, rollback_errors, unrestored_files, sorted(str(d) for d in rollback_dirs)
+
+
+def _recover_stopped_runtime_phase_reservations(
+    incumbent: Mapping[str, Any],
+    active_reservations: list[str],
+) -> list[str]:
+    """Reuse the supervisor's recovery protocol after its process is stopped.
+
+    Only reservations without a launch intent are cleared directly by that
+    protocol. Launch reservations are adopted or remain fail-closed under the
+    existing exact worker/process identity checks in ``supervisor.py``.
+    """
+
+    recovered: list[str] = []
+    config = dict(incumbent)
+    for phase_name in active_reservations:
+        outcome = supervisor._recover_runtime_phase_reservation(
+            config,
+            phase_name,
+            runtime_admission_locked=True,
+        )
+        if outcome is False:
+            raise RuntimeError(
+                "cannot promote runtime: supervisor reservation could not be "
+                f"safely recovered: {phase_name}"
+            )
+        recovered.append(phase_name)
+    return recovered
+
+
+def qualify_and_drain_incumbent_writers(
+    incumbent: Mapping[str, Any] | None,
+    *,
+    timeout_seconds: float = 15.0,
+    recover_stopped_reservations: bool = False,
+) -> dict[str, Any]:
+    """Qualify incumbent runtime state and drain active worker processes before cutover."""
+    if not incumbent:
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+    old_state_val = str(old_paths.get("state_file") or "").strip()
+    if not old_state_val:
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    state_path = Path(old_state_val).expanduser()
+    if not state_path.exists() or not state_path.is_file() or state_path.is_symlink():
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    try:
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"cannot inspect incumbent runtime state: {exc}") from exc
+
+    if not isinstance(raw_state, Mapping):
+        return {"drained": True, "workers_drained": [], "reservations": []}
+
+    # 1. Check reservations
+    supervisor_info = raw_state.get("supervisor") if isinstance(raw_state.get("supervisor"), Mapping) else {}
+    reservations = supervisor_info.get("runtime_phase_reservations") if isinstance(supervisor_info.get("runtime_phase_reservations"), Mapping) else {}
+    active_reservations = [
+        str(k) for k, v in reservations.items()
+        if isinstance(v, Mapping) and str(v.get("status") or "").strip() in {
+            "prepared", "pending", "active", "dispatched", "running", "started", "admitted", ""
+        }
+    ]
+    recovered_reservations: list[str] = []
+    if active_reservations and recover_stopped_reservations:
+        recovered_reservations = _recover_stopped_runtime_phase_reservations(
+            incumbent, active_reservations
+        )
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+        supervisor_info = (
+            raw_state.get("supervisor")
+            if isinstance(raw_state.get("supervisor"), Mapping)
+            else {}
+        )
+        reservations = (
+            supervisor_info.get("runtime_phase_reservations")
+            if isinstance(supervisor_info.get("runtime_phase_reservations"), Mapping)
+            else {}
+        )
+        active_reservations = [
+            str(key) for key, value in reservations.items()
+            if isinstance(value, Mapping) and str(value.get("status") or "").strip()
+            in {"prepared", "pending", "active", "dispatched", "running", "started", "admitted", ""}
+        ]
+    if active_reservations:
+        raise RuntimeError(
+            f"cannot promote runtime: active supervisor reservations exist: {active_reservations}"
+        )
+
+    # 2. Check and drain workers
+    workers = raw_state.get("workers") if isinstance(raw_state.get("workers"), Mapping) else {}
+    workers_drained: list[int] = []
+    drained_run_ids: set[str] = set()
+    conflict_statuses = {
+        "queued",
+        "started",
+        "running",
+        "waiting_approval",
+        "suspended_approval",
+        "retry_backoff",
+        "stalled",
+        "admitted",
+    }
+    for run_id, worker in workers.items():
+        if not isinstance(worker, Mapping):
+            continue
+        pid = worker.get("pid")
+        status = str(worker.get("status") or "").strip()
+        if status not in conflict_statuses:
+            continue
+        if isinstance(pid, int) and pid > 0 and _pid_alive(pid):
+            identity = _worker_process_identity(worker, run_id=run_id)
+            current_ticks = _worker_pid_start_ticks(pid)
+            if identity is None or (
+                current_ticks is not None
+                and current_ticks != identity.get("pid_start_ticks")
+            ):
+                raise RuntimeError(
+                    f"cannot promote runtime: active worker {run_id} has unknown or reused process identity (PID {pid})"
+                )
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+            deadline = time.monotonic() + timeout_seconds
+            expected_ticks = identity.get("pid_start_ticks")
+            while (
+                _pid_alive(pid)
+                and (expected_ticks is None or _worker_pid_start_ticks(pid) == expected_ticks)
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.05)
+            if _pid_alive(pid) and (expected_ticks is None or _worker_pid_start_ticks(pid) == expected_ticks):
+                raise RuntimeError(
+                    f"worker process {pid} ({run_id}) did not stop within {timeout_seconds:g}s"
+                )
+            workers_drained.append(pid)
+            drained_run_ids.add(str(run_id))
+        else:
+            raise RuntimeError(
+                f"cannot promote runtime: active worker {run_id} in un-drainable status {status}"
+            )
+
+    # 3. Check in-flight queue events
+    queue_events = (
+        raw_state.get("queue", {}).get("events", {})
+        if isinstance(raw_state.get("queue"), Mapping) and isinstance(raw_state.get("queue", {}).get("events"), Mapping)
+        else {}
+    )
+    in_flight_events = [
+        str(eid) for eid, ev in queue_events.items()
+        if isinstance(ev, Mapping)
+        and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
+        and str(ev.get("run_id") or "") not in drained_run_ids
+    ]
+    if in_flight_events:
+        raise RuntimeError(
+            f"cannot promote runtime: in-flight queue events exist: {in_flight_events}"
+        )
+
+    # 4. Check and drain active task-state store lock writers
+    old_store = incumbent.get("task_state_store") if isinstance(incumbent.get("task_state_store"), Mapping) else {}
+    old_log_raw = str(old_store.get("event_log") or "").strip()
+    if old_log_raw:
+        old_log = Path(old_log_raw).expanduser()
+        old_lock = old_log.with_name(f"{old_log.name}.lock")
+        if old_lock.exists() and not _is_retired_path_fence(old_lock):
+            deadline = time.monotonic() + timeout_seconds
+            lock_drained = False
+            while time.monotonic() < deadline:
+                probe_fd = None
+                try:
+                    probe_fd = os.open(old_lock, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+                    fcntl.flock(probe_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_drained = True
+                    break
+                except (BlockingIOError, OSError):
+                    time.sleep(0.05)
+                finally:
+                    if probe_fd is not None:
+                        try:
+                            fcntl.flock(probe_fd, fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                        try:
+                            os.close(probe_fd)
+                        except OSError:
+                            pass
+            if not lock_drained:
+                raise RuntimeError(
+                    f"cannot promote runtime: task-state store lock {old_lock} is held by active writer"
+                )
+
+    return {
+        "drained": True,
+        "workers_drained": workers_drained,
+        "drained_run_ids": sorted(drained_run_ids),
+        "reservations": recovered_reservations,
+    }
+
+
+def _migrate_storage_paths(
+    incumbent: Mapping[str, Any] | None,
+    rendered: Mapping[str, Any],
+    *,
+    keep_lock: bool = False,
+) -> dict[str, Any]:
+    """Atomically relocate storage files when live config paths change."""
+    if not incumbent:
+        return {"migrated": False, "files": [], "lock_fd": None, "fsynced_directories": []}
+
+    _preflight_storage_migration(incumbent, rendered)
+
+    moved_files: list[tuple[str, str]] = []
+    dirs_to_fsync: set[Path] = set()
+
+    old_store = incumbent.get("task_state_store") if isinstance(incumbent.get("task_state_store"), Mapping) else {}
+    new_store = rendered.get("task_state_store") if isinstance(rendered.get("task_state_store"), Mapping) else {}
+    old_log_raw = str(old_store.get("event_log") or "").strip()
+    new_log_raw = str(new_store.get("event_log") or "").strip()
+
+    old_lock_fd: int | None = None
+
+    try:
+        if old_log_raw and new_log_raw and old_log_raw != new_log_raw:
+            old_event_log = Path(old_log_raw).expanduser()
+            new_event_log = Path(new_log_raw).expanduser()
+            if old_event_log.exists():
+                old_lock = old_event_log.with_name(f"{old_event_log.name}.lock")
+                if old_lock.exists():
+                    try:
+                        old_lock_fd = os.open(old_lock, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+                    except OSError as exc:
+                        raise RuntimeError(f"cannot open task-state store lock {old_lock}: {exc}") from exc
+                    try:
+                        fcntl.flock(old_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except (BlockingIOError, OSError) as exc:
+                        raise RuntimeError(
+                            f"cannot migrate storage paths: task-state store lock {old_lock} is held by another process"
+                        ) from exc
+
+                # Double check no collision before moving any files
+                for suffix, label in (
+                    ("", "journal"),
+                    (".head.json", "head"),
+                    (".lock", "lock"),
+                    (".legacy-anchor.json", "legacy anchor"),
+                ):
+                    new_file = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
+                    if new_file.exists() or new_file.is_symlink():
+                        raise RuntimeError(f"target task-state {label} collision: {new_file} already exists")
+
+                new_event_log.parent.mkdir(parents=True, exist_ok=True)
+                os.chmod(new_event_log.parent, 0o700)
+                dirs_to_fsync.add(old_event_log.parent)
+                dirs_to_fsync.add(new_event_log.parent)
+                if new_event_log.parent.parent.exists():
+                    dirs_to_fsync.add(new_event_log.parent.parent)
+
+                for suffix in ("", ".head.json", ".lock", ".legacy-anchor.json"):
+                    old_file = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
+                    new_file = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
+                    if old_file.exists():
+                        os.replace(old_file, new_file)
+                        moved_files.append((str(old_file), str(new_file)))
+                        if suffix in (".lock", ".head.json"):
+                            _create_retired_path_fence(old_file)
+
+        old_paths = incumbent.get("paths") if isinstance(incumbent.get("paths"), Mapping) else {}
+        new_paths = rendered.get("paths") if isinstance(rendered.get("paths"), Mapping) else {}
+        for key in ("state_file", "approval_queue"):
+            old_val = str(old_paths.get(key) or "").strip()
+            new_val = str(new_paths.get(key) or "").strip()
+            if old_val and new_val and old_val != new_val:
+                old_p = Path(old_val).expanduser()
+                new_p = Path(new_val).expanduser()
+                if old_p.exists():
+                    if new_p.exists() or new_p.is_symlink():
+                        raise RuntimeError(f"target {key} collision: {new_p} already exists")
+                    new_p.parent.mkdir(parents=True, exist_ok=True)
+                    os.chmod(new_p.parent, 0o700)
+                    dirs_to_fsync.add(old_p.parent)
+                    dirs_to_fsync.add(new_p.parent)
+                    if new_p.parent.parent.exists():
+                        dirs_to_fsync.add(new_p.parent.parent)
+                    os.replace(old_p, new_p)
+                    moved_files.append((str(old_p), str(new_p)))
+                    _create_retired_path_fence(old_p)
+
+        for d in dirs_to_fsync:
+            _fsync_dir(d)
+
+    except Exception as exc:
+        restoration_verified, rollback_errors, unrestored_files, fsynced_rollback_dirs = (
+            _rollback_storage_files(moved_files)
+        )
+        all_fsynced = sorted(set(str(d) for d in dirs_to_fsync) | set(fsynced_rollback_dirs))
+
+        migration_record = {
+            "migrated": bool(moved_files),
+            "files": moved_files,
+            "unrestored_files": unrestored_files,
+            "lock_fd": old_lock_fd,
+            "restoration_verified": restoration_verified,
+            "rollback_errors": rollback_errors,
+            "fsynced_directories": all_fsynced,
+        }
+
+        # Retain exclusion through verified recovery:
+        # If keep_lock is True, OR if restoration is NOT verified, DO NOT release old_lock_fd!
+        if not keep_lock and restoration_verified and old_lock_fd is not None:
+            try:
+                fcntl.flock(old_lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(old_lock_fd)
+            except OSError:
+                pass
+            old_lock_fd = None
+
+        err_msg = f"{exc}; rollback failures: {'; '.join(rollback_errors)}" if rollback_errors else str(exc)
+        migration_err = StorageMigrationError(
+            err_msg,
+            forward_error=exc,
+            migration_record=migration_record,
+            rollback_errors=rollback_errors,
+            restoration_verified=restoration_verified,
+            lock_fd=old_lock_fd,
+        )
+        raise migration_err from exc
+    finally:
+        if not keep_lock and old_lock_fd is not None:
+            try:
+                fcntl.flock(old_lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(old_lock_fd)
+            except OSError:
+                pass
+
+    return {
+        "migrated": bool(moved_files),
+        "files": moved_files,
+        "fsynced_directories": sorted(str(d) for d in dirs_to_fsync),
+        "lock_fd": old_lock_fd if keep_lock else None,
     }
 
 
@@ -474,6 +1469,7 @@ def _replace_supervisor_locked(
     if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
         raise ValueError("rendered V2 config must define paths.approval_queue")
     approval_queue_path = Path(approval_queue_value).expanduser().absolute()
+    incumbent = _load_json(live_config_path, label="installed live config") if live_config_path.exists() else None
     incumbent_pid_path = _incumbent_pid_path(live_config_path, rendered)
     result: dict[str, Any] = {
         "schema_version": 2,
@@ -504,23 +1500,197 @@ def _replace_supervisor_locked(
         "launched_pid": None,
         "outcome": "failed",
     }
+    # Runtime promotion and supervisor reservation recovery share one
+    # canonical, re-entrant lock implementation.  A raw flock here would
+    # acquire the same sidecar inode without registering in stable_sidecar_lock,
+    # then deadlock when recovery re-enters through runtime_state_lock.
+    admission_lock = runtime_state.runtime_state_lock(rendered)
+    admission_lock_entered = False
     try:
+        admission_lock.__enter__()
+        admission_lock_entered = True
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
         )
-        ensure_approval_queue_marker(approval_queue_path)
+        result["execution_authorization_barrier_preflight"] = (
+            verify_execution_authorization_barriers(
+                Path(identity["root"]), python_executable=python_executable,
+            )
+        )
+        if incumbent:
+            incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
+            if incumbent_identity is None:
+                raise RuntimeError("existing incumbent identity is not qualified for rollback")
+        else:
+            incumbent_identity = None
+
+        # Quiesce the incumbent before sampling and draining its writers.  The
+        # incumbent owns process_queue, so draining first leaves a race where
+        # it can reserve and launch a replacement worker between the drain and
+        # the cutover.  A failed drain below restarts the qualified incumbent
+        # against its untouched config; storage migration has not started yet.
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
         )
         result["stopped_pid"] = stopped_pid
-        write_json_atomic(live_config_path, rendered)
-        result["launched_pid"] = launch_v2_supervisor(
-            rendered,
-            identity=identity,
-            status_root=status_root,
-            authority_env_file=authority_env_file,
-        )
+
+        if incumbent:
+            try:
+                result["writer_drain"] = qualify_and_drain_incumbent_writers(
+                    incumbent,
+                    timeout_seconds=termination_timeout,
+                    recover_stopped_reservations=True,
+                )
+            except Exception as drain_exc:
+                if stopped_pid is not None:
+                    try:
+                        result["restarted_pid"] = launch_v2_supervisor(
+                            incumbent,
+                            identity=incumbent_identity,
+                            status_root=status_root,
+                            authority_env_file=authority_env_file,
+                        )
+                    except Exception as restart_exc:
+                        raise RuntimeError(
+                            f"{drain_exc}; incumbent restart failed: {restart_exc}"
+                        ) from drain_exc
+                raise
+
+        migration_record: dict[str, Any] | None = None
+        lock_fd: int | None = None
+        config_written = False
+        restoration_verified = False
+        launch_succeeded = False
+        try:
+            migration_record = _migrate_storage_paths(incumbent, rendered, keep_lock=True)
+            lock_fd = migration_record.get("lock_fd")
+            result["storage_migration"] = {
+                "migrated": migration_record["migrated"],
+                "files": migration_record["files"],
+                "fsynced_directories": migration_record.get("fsynced_directories", []),
+            }
+            ensure_approval_queue_marker(approval_queue_path)
+            write_json_atomic(live_config_path, rendered)
+            config_written = True
+            result["launched_pid"] = launch_v2_supervisor(
+                rendered,
+                identity=identity,
+                status_root=status_root,
+                authority_env_file=authority_env_file,
+            )
+            launch_succeeded = True
+        except Exception as launch_exc:
+            rollback_errors: list[str] = []
+            if getattr(launch_exc, "migration_record", None):
+                migration_record = launch_exc.migration_record
+            if getattr(launch_exc, "lock_fd", None) is not None:
+                lock_fd = launch_exc.lock_fd
+            if getattr(launch_exc, "rollback_errors", None):
+                for err in launch_exc.rollback_errors:
+                    if err not in rollback_errors:
+                        rollback_errors.append(err)
+
+            if migration_record and not getattr(launch_exc, "restoration_verified", False):
+                files_to_rollback = migration_record.get("files", [])
+                if files_to_rollback:
+                    r_verified, r_errors, r_unrestored, _ = _rollback_storage_files(files_to_rollback)
+                    for err in r_errors:
+                        if err not in rollback_errors:
+                            rollback_errors.append(err)
+                    if not r_verified:
+                        migration_record["restoration_verified"] = False
+                    if r_unrestored:
+                        migration_record["unrestored_files"] = r_unrestored
+
+            config_restored_and_verified = False
+            if incumbent:
+                try:
+                    write_json_atomic(live_config_path, incumbent)
+                except Exception as r_exc:
+                    rollback_errors.append(f"config restoration failed: {r_exc}")
+                try:
+                    if live_config_path.exists() and not live_config_path.is_symlink():
+                        on_disk_config = json.loads(live_config_path.read_text(encoding="utf-8"))
+                        if on_disk_config == incumbent:
+                            config_restored_and_verified = True
+                        else:
+                            rollback_errors.append(
+                                f"live config does not match incumbent after restoration: {live_config_path}"
+                            )
+                    else:
+                        rollback_errors.append(
+                            f"live config missing or symlink after restoration: {live_config_path}"
+                        )
+                except Exception as v_exc:
+                    rollback_errors.append(f"config verification read failed: {v_exc}")
+            else:
+                config_restored_and_verified = True
+
+            storage_verified = True
+            if migration_record:
+                storage_verified = all(
+                    Path(old_file).exists()
+                    and not _is_retired_path_fence(Path(old_file))
+                    and not Path(new_file).exists()
+                    for old_file, new_file in migration_record.get("files", [])
+                )
+
+            restoration_verified = (
+                len(rollback_errors) == 0
+                and config_restored_and_verified
+                and storage_verified
+            )
+            result["restoration_verified"] = restoration_verified
+
+            if stopped_pid is not None and incumbent:
+                if not restoration_verified:
+                    rollback_errors.append(
+                        "refusing to restart incumbent against incomplete restoration / split storage"
+                    )
+                elif incumbent_identity is None:
+                    rollback_errors.append(
+                        "refusing to restart incumbent: incumbent identity is not qualified"
+                    )
+                else:
+                    if lock_fd is not None:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                        try:
+                            os.close(lock_fd)
+                        except OSError:
+                            pass
+                        lock_fd = None
+                    try:
+                        restarted_pid = launch_v2_supervisor(
+                            incumbent,
+                            identity=incumbent_identity,
+                            status_root=status_root,
+                            authority_env_file=authority_env_file,
+                        )
+                        result["restarted_pid"] = restarted_pid
+                    except Exception as r_exc:
+                        rollback_errors.append(f"incumbent restart failed: {r_exc}")
+
+            if rollback_errors:
+                result["rollback_errors"] = rollback_errors
+                err_msg = f"{launch_exc}; rollback failures: {'; '.join(rollback_errors)}"
+                raise RuntimeError(err_msg) from launch_exc
+            raise launch_exc
+        finally:
+            if lock_fd is not None:
+                if launch_succeeded or restoration_verified:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                    try:
+                        os.close(lock_fd)
+                    except OSError:
+                        pass
+
         result["outcome"] = "launched"
         result["exit_code"] = 0
         try:
@@ -535,6 +1705,9 @@ def _replace_supervisor_locked(
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["exit_code"] = 1
+    finally:
+        if admission_lock_entered:
+            admission_lock.__exit__(None, None, None)
     _write_evidence(evidence_path, result)
     return result
 
@@ -659,6 +1832,9 @@ def main(argv: list[str] | None = None) -> int:
                 "live_config": str(live_config_path),
                 "task_state_store": dict(rendered["task_state_store"]),
                 "supervisor_command": rendered["watchdog"]["supervisor_command"],
+                "execution_authorization_barrier_preflight": verify_execution_authorization_barriers(
+                    Path(identity["root"]), python_executable=python_executable,
+                ),
                 "repository_source_roots": {
                     repository_id: str(entry.get("local_path"))
                     for repository_id, entry in (

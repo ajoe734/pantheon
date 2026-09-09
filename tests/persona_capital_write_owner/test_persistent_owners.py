@@ -17,6 +17,10 @@ from services.deployment.service import (
     DeploymentPlanStore,
     DeploymentPlannerService,
 )
+from services.governance.test_approval_authority import (
+    SnapshotApprovalReader,
+    approval_snapshot,
+)
 from services.persona.write_owner import PersistentPersonaOwner, create_app
 from services.runtime_manager import RuntimeManagerService
 
@@ -329,16 +333,16 @@ def test_deployment_plan_write_is_read_by_fresh_owner_store(tmp_path: Path) -> N
     approval_path.write_text(
         json.dumps(
             {
-                "approval-owner-proof": {
-                    "decision_id": "approval-owner-proof",
-                    "target_id": "registry-owner-proof",
-                    "target_version": "1.0.0",
-                    "decision_state": "decided",
-                    "decision": "approved",
-                    "capital_pool_id": "pool-owner-proof",
-                    "persona_id": "persona-owner-proof",
-                    "tenant_id": "tenant-owner-proof",
-                }
+                "approval-owner-proof": approval_snapshot(
+                    decision_id="approval-owner-proof",
+                    tenant_id="tenant-owner-proof",
+                    target_type="registry_entry",
+                    target_id="registry-owner-proof",
+                    target_version="1.0.0",
+                    candidate_digest="sha256:owner-proof",
+                    capital_pool_id="pool-owner-proof",
+                    persona_id="persona-owner-proof",
+                )
             }
         ),
         encoding="utf-8",
@@ -347,6 +351,7 @@ def test_deployment_plan_write_is_read_by_fresh_owner_store(tmp_path: Path) -> N
         json.dumps(
             {
                 "registry-owner-proof": {
+                    "owner_tenant": "tenant-owner-proof",
                     "registry_id": "registry-owner-proof",
                     "artifact_type": "model_artifact",
                     "strategy_id": "strategy-owner-proof",
@@ -362,10 +367,19 @@ def test_deployment_plan_write_is_read_by_fresh_owner_store(tmp_path: Path) -> N
         ),
         encoding="utf-8",
     )
+    # Deployment reads Registry and Governance itself under its own scoped
+    # reader principal; the test only injects the transport, never a snapshot
+    # carried on the request body.
     planner = DeploymentPlannerService(
         plan_store=DeploymentPlanStore(str(plan_path)),
-        approval_store_path=approval_path,
-        registry_snapshot_path=registry_path,
+        registry_reader=lambda identity: json.loads(
+            registry_path.read_text(encoding="utf-8")
+        )[identity],
+        approval_reader=SnapshotApprovalReader(
+            lambda: json.loads(approval_path.read_text(encoding="utf-8"))[
+                "approval-owner-proof"
+            ]
+        ),
     )
 
     plan = planner.create_plan(

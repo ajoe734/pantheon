@@ -14,7 +14,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
+from copy import deepcopy
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / ".orchestrator"))
@@ -24,6 +26,29 @@ from development_bridge import dev_bridge_materialize
 
 
 class DevBridgeMaterializeModuleTests(unittest.TestCase):
+    def test_privileged_readback_requires_frozen_full_spec_policy(self) -> None:
+        from test_execution_authorization import ExecutionAuthorizationTestCase
+        import execution_authorization
+
+        fixture = ExecutionAuthorizationTestCase()
+        fixture.setUp()
+        task = deepcopy(fixture._granted_task())
+        task["execution_authorization"] = execution_authorization.pending_authorization_hold(fixture.policy)
+        bridge = deepcopy(task["dev_bridge"])
+        row = {
+            "task_id": task["id"], "owner": task["owner"], "reviewer": task["reviewer"],
+            "title": task["title"], "task_metadata": {"dev_bridge": bridge},
+        }
+        ai_status = dev_bridge_materialize._ai_status_module()
+        with mock.patch.object(ai_status, "_bridge_assignment_from_metadata", return_value=bridge):
+            receipt = dev_bridge_materialize.read_dev_bridge_materialized_batch({"tasks": [task]}, {"tasks": [row]})
+            self.assertEqual(receipt[0]["taskSpecHash"], fixture.policy["task_spec_hash"])
+            for policy in (None, {}, {**fixture.policy, "task_spec_hash": "0" * 64}, {**fixture.policy, "requires_execution_authorization": False}):
+                with self.subTest(policy=policy):
+                    task["execution_authorization"]["policy"] = policy
+                    with self.assertRaisesRegex(SystemExit, "execution-policy mismatch"):
+                        dev_bridge_materialize.read_dev_bridge_materialized_batch({"tasks": [task]}, {"tasks": [row]})
+
     def test_module_imports_with_no_circular_dependency(self) -> None:
         # No importlib.reload() here: reloading this module would rebind its
         # module-level _DEV_BRIDGE_MATERIALIZATION_LOCAL to a brand new

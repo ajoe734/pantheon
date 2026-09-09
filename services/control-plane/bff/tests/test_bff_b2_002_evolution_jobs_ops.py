@@ -145,12 +145,17 @@ class _EvolutionJobsOpsTestStore:
             return None
         return self._jobs.get(job_id)
 
+    def get_sentinel_finding(self, finding_id: Optional[str]) -> tuple[bool, Optional[dict[str, Any]]]:
+        return True, None
+
+    def dataset_source(self, dataset: str) -> str:
+        return "evolution_jobs_ops_test"
+
 
 def _fresh_client(td: str) -> TestClient:
     bff_main.read_store = _EvolutionJobsOpsTestStore()
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
     bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
-    bff_main._GOV_BFF_JOB_OVERLAY.clear()
     return TestClient(bff_main.app)
 
 
@@ -347,7 +352,7 @@ def test_bff_job_detail_found_via_overlay() -> None:
         try:
             client = _fresh_client(td)
             job_id = f"job-b2-{uuid.uuid4().hex[:8]}"
-            bff_main._GOV_BFF_JOB_OVERLAY[job_id] = {
+            bff_main.read_store._jobs[job_id] = {
                 "id": job_id,
                 "job_id": job_id,
                 "status": "running",
@@ -359,7 +364,6 @@ def test_bff_job_detail_found_via_overlay() -> None:
             assert "data" in body and "meta" in body
         finally:
             bff_main.read_store = original
-            bff_main._GOV_BFF_JOB_OVERLAY.clear()
 
 
 # ---------------------------------------------------------------------------

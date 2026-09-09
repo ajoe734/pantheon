@@ -26,6 +26,7 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
         """Verify the container healthcheck command succeeds without ModuleNotFoundError."""
         clean_env = os.environ.copy()
         clean_env.pop("PYTHONPATH", None)
+        clean_env["AGORA_RESEARCH_BACKEND_URL"] = "http://research-orchestrator-svc:8101"
 
         proc = subprocess.run(
             [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],
@@ -49,6 +50,7 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
         """Verify the launcher resolves repo imports even when executed from a foreign directory."""
         clean_env = os.environ.copy()
         clean_env.pop("PYTHONPATH", None)
+        clean_env["AGORA_RESEARCH_BACKEND_URL"] = "http://research-orchestrator-svc:8101"
 
         proc = subprocess.run(
             [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],
@@ -147,6 +149,7 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             )
             clean_env = os.environ.copy()
             clean_env["PYTHONPATH"] = tmpdir
+            clean_env["AGORA_RESEARCH_BACKEND_URL"] = "http://research-orchestrator-svc:8101"
 
             proc = subprocess.run(
                 [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],
@@ -164,6 +167,514 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             f"STDOUT: {proc.stdout}\nSTDERR: {proc.stderr}",
         )
         self.assertNotIn("Healthcheck OK", proc.stdout + proc.stderr)
+
+    def test_production_adapter_registry_wires_authentic_adapters(self) -> None:
+        """The production adapter registry must wire AuthenticStageAdapter with real mode
+        for all allowlisted stages, not synthetic DefaultAllowlistedAdapter.
+        """
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from agora.research.dispatcher import (
+            ALLOWLISTED_STAGE_BACKENDS,
+            AuthenticStageAdapter,
+            build_authentic_adapter_registry,
+        )
+
+        registry = build_authentic_adapter_registry()
+        for stage_type, backend in ALLOWLISTED_STAGE_BACKENDS.items():
+            adapter = registry.get(stage_type)
+            self.assertIsNotNone(adapter, f"Missing adapter for {stage_type}")
+            self.assertIsInstance(
+                adapter,
+                AuthenticStageAdapter,
+                f"Adapter for {stage_type} is not an AuthenticStageAdapter",
+            )
+            self.assertEqual(adapter.preferred_backend, backend)
+            self.assertEqual(adapter.mode, "real")
+
+    def test_research_store_construction_failure_is_not_swallowed(self) -> None:
+        """A required research store failure must propagate and fail startup, not be caught/swallowed."""
+        clean_env = os.environ.copy()
+        clean_env["AGORA_WORKSHOP_STORE_BACKEND"] = "memory"
+        clean_env["AGORA_GOVERNANCE_STORE_BACKEND"] = "memory"
+        clean_env["AGORA_RESEARCH_STORE_BACKEND"] = "invalid_unknown_backend"
+
+        proc = subprocess.run(
+            [sys.executable, str(LAUNCHER_PATH), "--once"],
+            cwd=str(REPO_ROOT),
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Unsupported AGORA_RESEARCH_STORE_BACKEND", proc.stderr + proc.stdout)
+
+    def test_healthcheck_subprocess_fails_when_research_client_cannot_construct(self) -> None:
+        """A container healthcheck must fail if required research backend clients cannot be constructed."""
+        clean_env = os.environ.copy()
+        clean_env.pop("PYTHONPATH", None)
+        clean_env["AGORA_RESEARCH_ADAPTER_MODE"] = "real"
+        clean_env["AGORA_RESEARCH_FAIL_BACKEND_CLIENT"] = "1"
+
+        proc = subprocess.run(
+            [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],
+            cwd=str(REPO_ROOT),
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Healthcheck failed", proc.stdout + proc.stderr)
+
+    def test_healthcheck_subprocess_fails_when_backend_url_unset_in_real_mode(self) -> None:
+        """A container healthcheck must fail if backend URL is absent in real adapter mode."""
+        clean_env = os.environ.copy()
+        clean_env.pop("PYTHONPATH", None)
+        clean_env.pop("AGORA_RESEARCH_BACKEND_URL", None)
+        for k in list(clean_env.keys()):
+            if k.startswith("AGORA_RESEARCH_") and k.endswith("_URL"):
+                clean_env.pop(k, None)
+        clean_env["AGORA_RESEARCH_ADAPTER_MODE"] = "real"
+
+        proc = subprocess.run(
+            [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],
+            cwd=str(REPO_ROOT),
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Healthcheck failed", proc.stdout + proc.stderr)
+        self.assertIn("neither base_url", proc.stderr + proc.stdout)
+
+    def test_e2e_bff_enqueue_separate_worker_restart_persistence(self) -> None:
+        """Prove BFF enqueue -> separate worker -> fresh read/restart parity across store reconstruction."""
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from types import SimpleNamespace
+        from agora.interaction.worker import AgoraInteractionWorker
+        from agora.research.dispatcher import (
+            AuthenticStageAdapter,
+            ResearchDispatcher,
+            build_authentic_adapter_registry,
+            build_canonical_research_backend_clients,
+        )
+        from agora.research.receipt import resolve_run_provenance
+        from agora.research.store import MemoryResearchPlanStore
+
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            storage_path = tmp.name
+
+            # 1. BFF creates plan, run, and enqueues to outbox in durable store
+            bff_store = MemoryResearchPlanStore(storage_path=storage_path)
+            plan_id = "plan-e2e-restart"
+            run_id = "run-e2e-restart"
+            trace_id = "trace-e2e-restart"
+            tenant_id = "pantheon-dev"
+            user_id = "agora-user-a"
+            stage_item = {
+                "stage_id": "stage-proto-1",
+                "stage_type": "prototype_backtest",
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+            }
+            plan = {
+                "plan_id": plan_id,
+                "strategy_id": "strat-e2e",
+                "lock_version": 2,
+                "stages": [stage_item],
+                "correlation_id": trace_id,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+            }
+            bff_store.create_plan(plan)
+            bff_store.create_run({
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": "stage-proto-1",
+                "stage_type": "prototype_backtest",
+                "execution_status": "queued",
+                "outcome": "inconclusive",
+                "correlation_id": trace_id,
+                "provenance": "unavailable",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+            })
+            bff_store.create_outbox_record({
+                "outbox_id": f"rob:{plan_id}:stage-proto-1:{run_id}",
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": "stage-proto-1",
+                "stage_type": "prototype_backtest",
+                "stage": stage_item,
+                "plan": plan,
+                "backend": "vectorbt",
+                "status": "queued",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "payload": {"plan": plan, "stage": stage_item},
+                "downstream_idempotency_key": f"idemp:{run_id}",
+            })
+            del bff_store
+
+            # 2. Separate worker opens the store from disk with authentic adapter and drains outbox
+            worker_store = MemoryResearchPlanStore(storage_path=storage_path)
+            recorded_requests = []
+
+            def recording_transport(req):
+                import json
+                body = json.loads(req.data.decode("utf-8")) if req.data else {}
+                recorded_requests.append({
+                    "url": req.full_url,
+                    "method": req.get_method(),
+                    "headers": dict(req.headers),
+                    "body": body,
+                })
+                return {
+                    "status": "succeeded",
+                    "outcome": "succeeded",
+                    "provenance": "real",
+                    "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
+                    "artifact_digest": "sha256:authentic_vectorbt_artifact_digest_12345",
+                    "metrics": [
+                        {"name": "sharpe", "value": 2.5, "category": "performance", "provenance": "real"}
+                    ],
+                    "receipt": {
+                        "receipt_id": f"rcpt-{body.get('run_id')}",
+                        "run_id": body.get("run_id"),
+                        "executor": "vectorbt_executor",
+                        "mode": "real",
+                        "correlation_id": body.get("correlation_id"),
+                        "completed_at": "2026-09-08T00:00:00Z",
+                        "backend_reference": f"vectorbt://runs/{body.get('run_id')}",
+                        "artifact_digest": "sha256:authentic_vectorbt_artifact_digest_12345",
+                        "spec_version": "1.0",
+                    },
+                }
+
+            backend_clients = build_canonical_research_backend_clients(
+                mode="real",
+                default_base_url="http://vectorbt:8000",
+                default_transport=recording_transport,
+            )
+            adapter_registry = build_authentic_adapter_registry(
+                mode="real",
+                execution_owners=backend_clients,
+            )
+            dispatcher = ResearchDispatcher(
+                store=worker_store,
+                adapter_registry=adapter_registry,
+            )
+            worker = AgoraInteractionWorker(
+                research_store=worker_store,
+                research_dispatcher=dispatcher,
+                worker_id="separate-worker-1",
+            )
+            drained = worker.drain_research_outbox()
+            self.assertGreaterEqual(drained, 1)
+            self.assertEqual(len(recorded_requests), 1)
+            self.assertIn("vectorbt", recorded_requests[0]["url"])
+            self.assertEqual(recorded_requests[0]["body"]["run_id"], run_id)
+            del worker
+            del dispatcher
+            del worker_store
+
+            # 3. Fresh read / restart: reconstruct store from disk and verify persistence and provenance
+            reconstructed_store = MemoryResearchPlanStore(storage_path=storage_path)
+            run = reconstructed_store.get_run(run_id)
+            self.assertIsNotNone(run)
+            self.assertEqual(run["execution_status"], "succeeded")
+            self.assertEqual(run["outcome"], "pass")
+            self.assertEqual(run["provenance"], "real")
+            self.assertEqual(run["executor"], "vectorbt_executor")
+
+            receipt = reconstructed_store.get_execution_receipt(run_id)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt["mode"], "real")
+            self.assertEqual(receipt["run_id"], run_id)
+            self.assertEqual(receipt["artifact_digest"], "sha256:authentic_vectorbt_artifact_digest_12345")
+            self.assertTrue(receipt["backend_reference"].startswith("vectorbt://runs/"))
+
+            prov, resolved_receipt = resolve_run_provenance(
+                reconstructed_store,
+                run,
+                expected_correlation_id=trace_id,
+                expected_owner="vectorbt_executor",
+            )
+            self.assertEqual(prov, "real")
+            self.assertIsNotNone(resolved_receipt)
+
+    def test_worker_outbox_fails_closed_on_absent_backend(self) -> None:
+        """Worker outbox draining must fail closed when authentic research backend is absent."""
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from agora.interaction.worker import AgoraInteractionWorker
+        from agora.research.dispatcher import (
+            ResearchDispatcher,
+            build_authentic_adapter_registry,
+            build_canonical_research_backend_clients,
+        )
+        from agora.research.store import MemoryResearchPlanStore
+
+        store = MemoryResearchPlanStore()
+        plan_id = "plan-absent-test"
+        run_id = "run-absent-test"
+        stage_item = {
+            "stage_id": "stage-proto-absent",
+            "stage_type": "prototype_backtest",
+            "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+        }
+        plan = {
+            "plan_id": plan_id,
+            "strategy_id": "strat-absent",
+            "lock_version": 1,
+            "stages": [stage_item],
+            "correlation_id": "corr-absent",
+            "tenant_id": "t1",
+            "user_id": "u1",
+        }
+        store.create_plan(plan)
+        store.create_run({
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "stage_id": "stage-proto-absent",
+            "stage_type": "prototype_backtest",
+            "execution_status": "queued",
+            "outcome": "inconclusive",
+            "correlation_id": "corr-absent",
+            "provenance": "unavailable",
+            "tenant_id": "t1",
+            "user_id": "u1",
+        })
+        store.create_outbox_record({
+            "outbox_id": f"rob:{plan_id}:stage-proto-absent:{run_id}",
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "stage_id": "stage-proto-absent",
+            "stage_type": "prototype_backtest",
+            "stage": stage_item,
+            "plan": plan,
+            "backend": "vectorbt",
+            "status": "queued",
+            "tenant_id": "t1",
+            "user_id": "u1",
+            "payload": {"plan": plan, "stage": stage_item},
+            "downstream_idempotency_key": f"idemp:{run_id}",
+        })
+
+        # Client built in clean environment without base_url or backend_fn
+        backend_clients = build_canonical_research_backend_clients(mode="real", allow_missing_endpoints=True)
+        adapter_registry = build_authentic_adapter_registry(
+            mode="real",
+            execution_owners=backend_clients,
+        )
+        dispatcher = ResearchDispatcher(
+            store=store,
+            adapter_registry=adapter_registry,
+        )
+        worker = AgoraInteractionWorker(
+            research_store=store,
+            research_dispatcher=dispatcher,
+            worker_id="absent-backend-worker",
+        )
+        worker.drain_research_outbox()
+
+        # Run must NOT succeed, and no real receipt must exist
+        run = store.get_run(run_id)
+        self.assertNotEqual(run.get("execution_status"), "succeeded")
+        receipt = store.get_execution_receipt(run_id)
+        self.assertIsNone(receipt)
+
+    def test_e2e_worker_real_http_backend_execution(self) -> None:
+        """Prove enqueue -> worker -> real HTTP backend -> receipt without mock transport."""
+        for path in (
+            str(REPO_ROOT),
+            str(REPO_ROOT / "services" / "control-plane" / "bff"),
+        ):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        import socket
+        import threading
+        import time
+        import urllib.request
+        import uvicorn
+        from services.research.main import app as research_app
+        from agora.interaction.worker import AgoraInteractionWorker
+        from agora.research.dispatcher import (
+            ResearchDispatcher,
+            build_authentic_adapter_registry,
+            build_canonical_research_backend_clients,
+        )
+        from agora.research.receipt import resolve_run_provenance
+        from agora.research.store import MemoryResearchPlanStore
+
+        # 1. Bind an ephemeral socket to find a free port, then start uvicorn
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        free_port = sock.getsockname()[1]
+        sock.close()
+
+        config = uvicorn.Config(research_app, host="127.0.0.1", port=free_port, log_level="error")
+        server = uvicorn.Server(config)
+        server_thread = threading.Thread(target=server.run, daemon=True)
+        server_thread.start()
+
+        server_base_url = f"http://127.0.0.1:{free_port}"
+
+        # Wait briefly for server ready
+        for _ in range(50):
+            try:
+                with urllib.request.urlopen(f"{server_base_url}/__health__", timeout=1) as probe:
+                    if probe.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.05)
+
+        old_vbt_env = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+        os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+        try:
+            worker_store = MemoryResearchPlanStore()
+            plan_id = "plan-real-http"
+            run_id = "run-real-http"
+            trace_id = "trace-real-http"
+            tenant_id = "pantheon-test"
+            user_id = "test-user"
+
+            stage_item = {
+                "stage_id": "stage-proto-http",
+                "stage_type": "prototype_backtest",
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+                "dataset": [
+                    {
+                        "symbol": "BTC-USD",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "open": 50000.0,
+                        "high": 50500.0,
+                        "low": 49500.0,
+                        "close": 50200.0,
+                        "volume": 120.0,
+                    },
+                    {
+                        "symbol": "BTC-USD",
+                        "timestamp": "2026-01-02T00:00:00Z",
+                        "open": 50200.0,
+                        "high": 51000.0,
+                        "low": 50000.0,
+                        "close": 50800.0,
+                        "volume": 150.0,
+                    },
+                ],
+            }
+            plan = {
+                "plan_id": plan_id,
+                "strategy_id": "strat-real-http",
+                "lock_version": 1,
+                "stages": [stage_item],
+                "correlation_id": trace_id,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+            }
+            worker_store.create_plan(plan)
+            worker_store.create_run({
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": "stage-proto-http",
+                "stage_type": "prototype_backtest",
+                "execution_status": "queued",
+                "outcome": "inconclusive",
+                "correlation_id": trace_id,
+                "provenance": "unavailable",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+            })
+            worker_store.create_outbox_record({
+                "outbox_id": f"rob:{plan_id}:stage-proto-http:{run_id}",
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": "stage-proto-http",
+                "stage_type": "prototype_backtest",
+                "stage": stage_item,
+                "plan": plan,
+                "backend": "vectorbt",
+                "status": "queued",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "payload": {"plan": plan, "stage": stage_item},
+                "downstream_idempotency_key": f"idemp:{run_id}",
+            })
+
+            # Build authentic backend clients hitting real HTTP backend without mock transport
+            backend_clients = build_canonical_research_backend_clients(
+                mode="real",
+                default_base_url=server_base_url,
+            )
+            adapter_registry = build_authentic_adapter_registry(
+                mode="real",
+                execution_owners=backend_clients,
+            )
+            dispatcher = ResearchDispatcher(
+                store=worker_store,
+                adapter_registry=adapter_registry,
+            )
+            worker = AgoraInteractionWorker(
+                research_store=worker_store,
+                research_dispatcher=dispatcher,
+                worker_id="real-http-worker",
+            )
+
+            # Drain outbox via real HTTP call to /stages/prototype_backtest/execute
+            drained = worker.drain_research_outbox()
+            self.assertGreaterEqual(drained, 1)
+
+            # Verify run outcome and provenance
+            run = worker_store.get_run(run_id)
+            self.assertIsNotNone(run)
+            self.assertEqual(run["execution_status"], "succeeded")
+            self.assertEqual(run["outcome"], "pass")
+            self.assertEqual(run["provenance"], "real")
+
+            # Verify receipt
+            receipt = worker_store.get_execution_receipt(run_id)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt["mode"], "real")
+            self.assertEqual(receipt["run_id"], run_id)
+            self.assertEqual(receipt["spec_version"], "1.0")
+            self.assertTrue(receipt["backend_reference"].startswith("research-orchestrator://stages/prototype_backtest/"))
+
+            prov, resolved_receipt = resolve_run_provenance(
+                worker_store,
+                run,
+                expected_correlation_id=trace_id,
+            )
+            self.assertEqual(prov, "real")
+            self.assertIsNotNone(resolved_receipt)
+        finally:
+            if old_vbt_env is None:
+                os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+            else:
+                os.environ["PANTHEON_VECTORBT_BACKEND"] = old_vbt_env
+            server.should_exit = True
+            server_thread.join(timeout=3)
 
 
 if __name__ == "__main__":

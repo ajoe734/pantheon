@@ -35,6 +35,46 @@ every file enumerated by plan section 5.
   hosted acceptance.
 - [SOURCE_MANIFEST.json](SOURCE_MANIFEST.json) — machine-readable provenance
   and SHA256 manifest for every source file this task delivered or references.
+- [EXECUTION_AUTHORIZATION_SA_SD.md](EXECUTION_AUTHORIZATION_SA_SD.md) — added
+  by task `OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001` (not this document's own
+  task): the repository-readable copy of the separately operator-approved
+  privileged-intake/execution-authorization plan, preserved byte-identically.
+  The [local tooling runbook](../../operations/management-ai-openclaw-dev-bridge.md)
+  records its provenance and operational grant command/receipt contract. This addition does not modify
+  `SOURCE_MANIFEST.json`'s existing frozen hashes or this task's own
+  evidence.
+- [ARCHIVE_RESURRECTION_SA_SD.md](ARCHIVE_RESURRECTION_SA_SD.md) — added
+  by task `OPS-ARCHIVE-RESURRECTION-CONTRACT-001` (not this document's own
+  task): the repository-readable copy of the separately operator-approved
+  archive resurrection recovery plan, preserved byte-identically (SHA256
+  `4a6862fd7465896da09381030dc6310d7efaf4468791c3ef55a327ca8453c9d8`).
+  The [local tooling runbook](../../operations/management-ai-openclaw-dev-bridge.md)
+  records its operational recovery and proof contract. This addition does not modify
+  `SOURCE_MANIFEST.json`'s existing frozen hashes or this task's own evidence.
+- [LEGACY_CLOSEOUT_RECONCILIATION.md](LEGACY_CLOSEOUT_RECONCILIATION.md) — added
+  by task `OPS-ARCHIVE-RESURRECTION-CONTRACT-001` (not this document's own
+  task): the repository-readable copy of the factual legacy closeout deduplication
+  and archive diagnosis report, preserved byte-identically (SHA256
+  `75d9435610d38771795c79a1c76a27fff23db96eec029e36ca6cc8bef6f335c3`).
+  This addition does not modify `SOURCE_MANIFEST.json`'s existing frozen hashes
+  or this task's own evidence.
+- [REVIEW_HANDOFF_RECOVERY_SA_SD.md](REVIEW_HANDOFF_RECOVERY_SA_SD.md) — added
+  by task `OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001` (not this document's own
+  task): the repository-readable copy of the separately operator-approved
+  reviewer-reopen/worker-recovery responsibility-transition classification
+  plan, preserved byte-identically (SHA256
+  `3fb778af7b4127b624d4b60d65bcd0471bfe181ee997ead78deb16a8c2484011`).
+- [REVIEW_HANDOFF_RECOVERY_RECHECK.md](REVIEW_HANDOFF_RECOVERY_RECHECK.md) —
+  added by task `OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001` (not this
+  document's own task): the repository-readable copy of the source
+  reproduction/non-duplication recheck for that same plan, preserved
+  byte-identically (SHA256
+  `3711b0820dbee4e88d7036a4ddc0da0b85674c7ac36d79b0882c39a603a0ffc0`).
+  The [local tooling runbook](../../operations/management-ai-openclaw-dev-bridge.md)
+  and `docs/deployment/evidence/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001/evidence.json`
+  record its operational classifier-repair contract and verification.
+  This addition does not modify `SOURCE_MANIFEST.json`'s existing frozen hashes
+  or this task's own evidence.
 
 ## Historical source snapshots (`archive/`)
 

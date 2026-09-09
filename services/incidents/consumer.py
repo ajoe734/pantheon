@@ -11,7 +11,8 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 from services.incident.evidence_collector import (
     EvidenceCollectionError,
@@ -74,6 +75,108 @@ class InfrastructureHealthIncidentResult:
     created: bool
 
 
+class DurableDeliveredIncidentsStore:
+    """Persistent on-disk set for delivered incident IDs."""
+
+    def __init__(self, file_path: Path | str) -> None:
+        self.file_path = Path(file_path)
+        self._ids: set[str] = set()
+        self.reload()
+
+    def reload(self) -> None:
+        if self.file_path.exists():
+            try:
+                with open(self.file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        self._ids = set(data)
+            except Exception:
+                pass
+
+    def _save(self) -> None:
+        try:
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.file_path.with_suffix(".tmp")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(sorted(list(self._ids)), f, indent=2)
+            temp_path.replace(self.file_path)
+        except Exception:
+            pass
+
+    def add(self, item: str) -> None:
+        self._ids.add(item)
+        self._save()
+
+    def clear(self) -> None:
+        self._ids.clear()
+        self._save()
+
+    def discard(self, item: str) -> None:
+        if item in self._ids:
+            self._ids.discard(item)
+            self._save()
+
+    def remove(self, item: str) -> None:
+        self._ids.remove(item)
+        self._save()
+
+    def update(self, items: Any) -> None:
+        self._ids.update(items)
+        self._save()
+
+    def __contains__(self, item: object) -> bool:
+        return item in self._ids
+
+    def __iter__(self):
+        return iter(self._ids)
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+
+class DurableDownstreamWorkStore:
+    """Persistent on-disk store for failed downstream work awaiting retry."""
+
+    def __init__(self, file_path: Path | str) -> None:
+        self.file_path = Path(file_path)
+
+    def get_pending_work(self) -> List[Dict[str, Any]]:
+        if not self.file_path.exists():
+            return []
+        try:
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+        return []
+
+    def record_pending_work(self, work_item: Dict[str, Any]) -> None:
+        items = self.get_pending_work()
+        filtered = [w for w in items if w.get("incident_id") != work_item.get("incident_id")]
+        filtered.append(work_item)
+        self._save(filtered)
+
+    def remove_pending_work(self, incident_id: str) -> None:
+        items = self.get_pending_work()
+        filtered = [w for w in items if w.get("incident_id") != incident_id]
+        self._save(filtered)
+
+    def clear(self) -> None:
+        self._save([])
+
+    def _save(self, items: List[Dict[str, Any]]) -> None:
+        try:
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.file_path.with_suffix(".tmp")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(items, f, indent=2)
+            temp_path.replace(self.file_path)
+        except Exception:
+            pass
+
+
 class ThresholdTelemetryIncidentConsumer:
     """Consume a threshold breach telemetry payload into IncidentStore."""
 
@@ -83,10 +186,127 @@ class ThresholdTelemetryIncidentConsumer:
         incident_store: IncidentStore,
         collector: Optional[PostmortemEvidenceCollector] = None,
         reference_validator: Any | None = None,
+        suggestion_consumer: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        downstream_work_store: Optional[Any] = None,
+        delivered_incident_ids: Optional[Any] = None,
     ) -> None:
         self._store = incident_store
         self._collector = collector or PostmortemEvidenceCollector()
         self._reference_validator = reference_validator
+        self._suggestion_consumer = suggestion_consumer
+        self._downstream_work_store = downstream_work_store
+        self._pending_downstream_work: List[Dict[str, Any]] = []
+        if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "get_pending_work"):
+            self._pending_downstream_work.extend(self._downstream_work_store.get_pending_work())
+        self._delivered_incident_ids = (
+            delivered_incident_ids if delivered_incident_ids is not None else set()
+        )
+
+    def attach_suggestion_consumer(self, consumer_fn: Callable[[Dict[str, Any]], Any]) -> None:
+        """Attach a downstream suggestion consumer callback (SD §6.4)."""
+        self._suggestion_consumer = consumer_fn
+
+    def _record_pending_downstream_work(
+        self,
+        payload: Mapping[str, Any],
+        incident: IncidentCase,
+        exc: Exception,
+    ) -> None:
+        work_item = {
+            "incident_id": incident.incident_id,
+            "payload": dict(payload),
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "last_error": str(exc),
+        }
+        existing_indices = [
+            i for i, w in enumerate(self._pending_downstream_work) if w.get("incident_id") == incident.incident_id
+        ]
+        if existing_indices:
+            for i in existing_indices:
+                self._pending_downstream_work[i] = work_item
+        else:
+            self._pending_downstream_work.append(work_item)
+        if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "record_pending_work"):
+            try:
+                self._downstream_work_store.record_pending_work(work_item)
+            except Exception:
+                pass
+
+    def retry_pending_downstream_work(self) -> int:
+        """Retry any pending downstream suggestion dispatches that failed previously."""
+        if not self._suggestion_consumer:
+            return 0
+        if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "get_pending_work"):
+            loaded = self._downstream_work_store.get_pending_work()
+            existing_ids = {w["incident_id"] for w in self._pending_downstream_work if "incident_id" in w}
+            for w in loaded:
+                if w.get("incident_id") and w["incident_id"] not in existing_ids:
+                    self._pending_downstream_work.append(w)
+        succeeded = 0
+        still_pending = []
+        for item in self._pending_downstream_work:
+            inc_id = item["incident_id"]
+            incident = self._store.get_incident(inc_id)
+            if incident is None:
+                still_pending.append(item)
+                continue
+            try:
+                self._dispatch_suggestion(item["payload"], incident)
+                self._delivered_incident_ids.add(inc_id)
+                if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
+                    self._downstream_work_store.remove_pending_work(inc_id)
+                succeeded += 1
+            except Exception:
+                still_pending.append(item)
+        self._pending_downstream_work = still_pending
+        return succeeded
+
+    def _dispatch_suggestion(self, payload: Mapping[str, Any], incident: IncidentCase) -> None:
+        if not self._suggestion_consumer:
+            return
+        event = _telemetry_event(payload) if isinstance(payload, Mapping) else {}
+        threshold = _threshold_snapshot(payload) if isinstance(payload, Mapping) else {}
+        strategy_id = (
+            str(payload.get("strategy_id") or "")
+            or str(event.get("strategy_id") or "")
+            or str(getattr(incident, "runtime_id", "") or "")
+        )
+        if not strategy_id:
+            return
+        correlation_id = str(
+            payload.get("correlation_id")
+            or payload.get("trace_id")
+            or event.get("correlation_id")
+            or event.get("trace_id")
+            or getattr(incident, "trace_id", "")
+            or ""
+        )
+        tenant_id = str(
+            payload.get("tenant_id")
+            or event.get("tenant_id")
+            or getattr(incident, "capital_pool_id", "")
+            or "default"
+        )
+        outcome_type = "drawdown_breach" if "drawdown" in str(threshold.get("metric_name", "")).lower() else "execution_drift"
+        outcome_event = {
+            "tenant_id": tenant_id,
+            "owner_user_id": payload.get("owner_user_id") or payload.get("user_id") or "telemetry-engine",
+            "strategy_id": strategy_id,
+            "outcome_type": outcome_type,
+            "period": "latest",
+            "correlation_id": correlation_id,
+            "title": f"Telemetry Incident: {incident.title}",
+            "rationale": f"Threshold breach on {threshold.get('metric_name')}: observed {threshold.get('observed_value')}, threshold {threshold.get('threshold_value')}",
+            "metrics": {
+                "observed_value": threshold.get("observed_value"),
+                "threshold_value": threshold.get("threshold_value"),
+                "metric_name": threshold.get("metric_name"),
+            },
+            "source_id": threshold.get("policy_source") or "telemetry-incident-consumer",
+            "source_type": "telemetry_engine",
+            "as_of": incident.created_at,
+        }
+        self._suggestion_consumer(outcome_event)
 
     def consume(self, payload: Mapping[str, Any]) -> ThresholdIncidentResult:
         try:
@@ -103,6 +323,23 @@ class ThresholdTelemetryIncidentConsumer:
         existing = self._store.get_incident(incident.incident_id)
         if existing is not None:
             _require_same_incident_identity(existing, incident)
+            if (
+                self._suggestion_consumer is not None
+                and existing.incident_id not in self._delivered_incident_ids
+            ):
+                try:
+                    self._dispatch_suggestion(payload, existing)
+                    self._delivered_incident_ids.add(existing.incident_id)
+                    if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
+                        self._downstream_work_store.remove_pending_work(existing.incident_id)
+                    self._pending_downstream_work = [
+                        w for w in self._pending_downstream_work if w.get("incident_id") != existing.incident_id
+                    ]
+                except Exception as exc:
+                    self._record_pending_downstream_work(payload, existing, exc)
+                    raise IncidentConsumerRetryableError(
+                        f"Downstream suggestion persistence failed for existing incident {existing.incident_id}: {exc}"
+                    ) from exc
             return ThresholdIncidentResult(incident=existing, created=False)
 
         try:
@@ -111,8 +348,40 @@ class ThresholdTelemetryIncidentConsumer:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
                 _require_same_incident_identity(existing, incident)
+                if (
+                    self._suggestion_consumer is not None
+                    and existing.incident_id not in self._delivered_incident_ids
+                ):
+                    try:
+                        self._dispatch_suggestion(payload, existing)
+                        self._delivered_incident_ids.add(existing.incident_id)
+                        if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
+                            self._downstream_work_store.remove_pending_work(existing.incident_id)
+                        self._pending_downstream_work = [
+                            w for w in self._pending_downstream_work if w.get("incident_id") != existing.incident_id
+                        ]
+                    except Exception as exc:
+                        self._record_pending_downstream_work(payload, existing, exc)
+                        raise IncidentConsumerRetryableError(
+                            f"Downstream suggestion persistence failed for existing incident {existing.incident_id}: {exc}"
+                        ) from exc
                 return ThresholdIncidentResult(incident=existing, created=False)
             raise IncidentConsumerError(str(exc)) from exc
+
+        if self._suggestion_consumer is not None:
+            try:
+                self._dispatch_suggestion(payload, created)
+                self._delivered_incident_ids.add(created.incident_id)
+                if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
+                    self._downstream_work_store.remove_pending_work(created.incident_id)
+                self._pending_downstream_work = [
+                    w for w in self._pending_downstream_work if w.get("incident_id") != created.incident_id
+                ]
+            except Exception as exc:
+                self._record_pending_downstream_work(payload, created, exc)
+                raise IncidentConsumerRetryableError(
+                    f"Downstream suggestion persistence failed for incident {created.incident_id}: {exc}"
+                ) from exc
 
         return ThresholdIncidentResult(incident=created, created=True)
 
