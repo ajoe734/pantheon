@@ -7514,17 +7514,44 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             )
 
     def test_pending_recovery_is_released_after_responsibility_moves_to_review(self) -> None:
+        self._assert_obsolete_recovery_preserves_instructions("in_progress", "review")
+
+    def test_pending_reviewer_recovery_preserves_new_owner_instructions(self) -> None:
+        self._assert_obsolete_recovery_preserves_instructions("review", "in_progress")
+
+    def test_obsolete_recovery_does_not_invent_missing_task_instructions(self) -> None:
+        self._assert_obsolete_recovery_preserves_instructions(
+            "in_progress", "review", with_instructions=False
+        )
+
+    def _assert_obsolete_recovery_preserves_instructions(
+        self, initial_status: str, successor_status: str, *, with_instructions: bool = True
+    ) -> None:
         state = self._state(healthy=False)
-        worker = self._worker()
+        seeded = supervisor.load_status(self.config)
+        seeded["tasks"][0]["status"] = initial_status
+        seeded["tasks"][0]["next"] = "Previous lane instructions before handoff."
+        supervisor.write_status(self.config, seeded, source="test-initial-lane")
+        worker = self._worker(agent_id="codex2" if initial_status == "review" else "codex")
+        if initial_status == "review":
+            worker["request_snapshot"]["reason"] = supervisor.REASON_REVIEW_READY
         receipt = supervisor.build_lost_lease_receipt(
             self.config,
             worker,
-            self.task,
+            seeded["tasks"][0],
             reason_kind="worker_process_missing",
             reason="worker disappeared",
         )
+        published: list[dict[str, object]] = []
+
+        def publish_and_drain(config: dict[str, object]) -> bool:
+            pending = supervisor.load_status(config).get("status_activity_outbox")
+            if isinstance(pending, dict):
+                published.extend(copy.deepcopy(pending.get("events") or []))
+            return self._drain_status_outbox(config)
+
         with mock.patch.object(
-            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+            supervisor, "sync_status_pipeline", side_effect=publish_and_drain
         ):
             self.assertTrue(
                 supervisor.persist_worker_recovery_receipt(
@@ -7532,13 +7559,18 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     receipt,
                     expected_owner="Codex",
                     expected_reviewer="Codex2",
-                    expected_status="in_progress",
+                    expected_status=initial_status,
                     expected_generation=1,
                 )
             )
             handed_off = supervisor.load_status(self.config)
             handed_off_task = handed_off["tasks"][0]
-            handed_off_task["status"] = "review"
+            handed_off_task["status"] = successor_status
+            instructions = "Successor: preserve the current source.\nResolve the exact rejection."
+            if with_instructions:
+                handed_off_task["next"] = instructions
+            else:
+                handed_off_task.pop("next", None)
             supervisor.write_status(
                 self.config, handed_off, source="test-owner-handoff"
             )
@@ -7552,12 +7584,36 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         resolved_receipt = resolved[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][
             receipt["receipt_id"]
         ]
-        self.assertEqual(resolved_task["status"], "review")
+        self.assertEqual(resolved_task["status"], successor_status)
         self.assertEqual(resolved_task["generation"], 2)
         self.assertEqual((resolved_task["owner"], resolved_task["reviewer"]), ("Codex", "Codex2"))
         self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, resolved_task)
         self.assertEqual(resolved_receipt["status"], "resolved")
         self.assertNotIn(receipt["receipt_id"], state[supervisor.WORKER_RECOVERY_RECEIPTS_KEY])
+        self.assertEqual("next" in resolved_task, with_instructions)
+        self.assertEqual(resolved_task.get("next"), instructions if with_instructions else None)
+        events = [
+            event for event in published
+            if event.get("type") == "worker_lost_lease_recovery_resolved"
+        ]
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event["recovery_receipt_id"], receipt["receipt_id"])
+        self.assertEqual(event["worker_recovery_receipt"], resolved_receipt)
+        self.assertEqual(
+            event["message"],
+            f"Supervisor released stale lost-lease fence {receipt['receipt_id']}: "
+            f"canonical responsibility moved from {receipt['recovery_role']} to "
+            f"{supervisor.task_current_dispatch_responsibility(self.config, resolved_task)}.",
+        )
+        with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+            self.assertFalse(
+                supervisor.resolve_obsolete_worker_recovery_receipt(
+                    self.config, receipt_id=receipt["receipt_id"], task_id="TASK-1"
+                )
+            )
+        sync.assert_not_called()
+        self.assertEqual(supervisor.load_status(self.config), resolved)
 
 
 class LostLeaseWorkspaceRecoveryTests(unittest.TestCase):
