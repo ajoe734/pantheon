@@ -113,6 +113,27 @@ ApprovalDecisions are not silently rewritten or extended by access revocation.
 
 ## Remaining acceptance boundary
 
+### Fresh deployment stimulus after terminal compensation
+
+The September 9 attempt reached `schedule_registration` and then compensated
+when the dev OpenClaw adapter lacked Gateway device pairing. Fixing access does
+not reopen that terminal reservation: both the idempotency key and normalized
+name resolve the old receipt. The official deployment wrapper now derives both
+from `github.run_id` plus `github.run_attempt` and passes them through the existing
+bootstrap CLI. Polling within an attempt remains idempotent; a new run/attempt
+gets a new Persona reservation and owner-generated business identities. It never
+resets the old ledger, reactivates a compensated binding, or weakens retry guards.
+The name/key are logged with the deployment, followed by the bootstrap's actual
+Persona/runtime/binding/plan readback. Both run identity inputs must be supplied
+together and numeric; direct identityless/manual CLI invocation retains its
+legacy baseline semantics. CI covers argument transport/freshness, the actual
+bootstrap client and guard/diagnostic/quarantine/compensation failure paths.
+
+This is a fresh paper-provisioning stimulus, not proof that all twelve loops ran.
+The separately authorized dev adapter `operator.admin` pairing must be checked
+through the real governed schedule path; a read-only Gateway RPC alone does not
+prove cron creation or terminal paper lifecycle.
+
 This repair's unit and isolated database fixtures are not hosted research,
 RuntimeBinding, paper trading or browser-journey receipts. Original Loops 1–12
 still require a new stimulus and each trigger/terminal/next-consumer/owner/reload
