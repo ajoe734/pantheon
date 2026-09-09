@@ -231,6 +231,9 @@ def persist_source_evidence_refs(
             "distillation_admissions": {},
         }
 
+    if len({record.tenant_id for record in source_records}) != 1:
+        raise EvidenceValidationError("An ingest evidence batch must have one tenant identity")
+
     connector = manager.get_connector(result.run.connector_id)
     source_records = [
         validate_external_source_record(record, connector=connector)
@@ -245,7 +248,7 @@ def persist_source_evidence_refs(
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
         source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
         source_owner = (
-            evidence_repository.get_source_record_by_dedupe_key(source_dedupe_key)
+            evidence_repository.get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=candidate_source.tenant_id)
             or source_owner_by_dedupe_key.get(source_dedupe_key)
             or candidate_source
         )

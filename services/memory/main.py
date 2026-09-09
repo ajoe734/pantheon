@@ -40,11 +40,132 @@ from services.persona.lesson_governance import (
 )
 
 
+from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+
+
 def _split_csv_values(values: Optional[List[str]]) -> List[str]:
     normalized: List[str] = []
     for value in values or []:
         normalized.extend(part.strip() for part in str(value).split(",") if part.strip())
     return normalized
+
+
+_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
+_MEMORY_WRITE_ROLES = (
+    "operator",
+    "admin",
+    "system",
+    "researcher",
+    "memory-writer",
+    "persona.admin",
+    "incident-svc",
+    "telemetry-svc",
+    "evolution-svc",
+    "trainer-svc",
+    "consultation-svc",
+    "research-svc",
+)
+_REQUIRED_JWT_CLAIMS = ("sub", "exp")
+_TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
+
+
+def _memory_auth_env() -> dict[str, str]:
+    return {
+        "PANTHEON_RUNTIME_AUTH_MODE": (
+            os.getenv("PANTHEON_MEMORY_AUTH_MODE")
+            or os.getenv("PANTHEON_RUNTIME_AUTH_MODE")
+            or "permissive"
+        ),
+        "PANTHEON_RUNTIME_JWT_SECRET": (
+            os.getenv("PANTHEON_MEMORY_JWT_SECRET")
+            or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", "")
+        ),
+        "PANTHEON_RUNTIME_JWT_ISSUER": (
+            os.getenv("PANTHEON_MEMORY_JWT_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", "")
+        ),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": (
+            os.getenv("PANTHEON_MEMORY_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", "")
+        ),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": (
+            os.getenv("PANTHEON_MEMORY_DEFAULT_ROLE")
+            or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator")
+        ),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": (
+            os.getenv("PANTHEON_MEMORY_MFA_REQUIRED")
+            or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false")
+        ),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": (
+            os.getenv("PANTHEON_MEMORY_ROLE_CLAIMS")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", "")
+        ),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": (
+            os.getenv("PANTHEON_MEMORY_MFA_CLAIMS")
+            or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", "")
+        ),
+        "PANTHEON_RUNTIME_MFA_VALUES": (
+            os.getenv("PANTHEON_MEMORY_MFA_VALUES")
+            or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", "")
+        ),
+    }
+
+
+def _require_verified_identity(ctx: AuthContext) -> None:
+    if ctx.token_kind != "jwt":
+        return
+    missing = [claim for claim in _REQUIRED_JWT_CLAIMS if not ctx.claims.get(claim)]
+    if not any(str(ctx.claims.get(name) or "").strip() for name in _TENANT_CLAIM_NAMES):
+        missing.append("tenant")
+    if not (ctx.claims.get("roles") or ctx.claims.get("role")):
+        missing.append("role")
+    if missing:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Verified JWT is missing required identity claims: {sorted(set(missing))}",
+        )
+
+
+def _reject_malformed_identity_claims(ctx: AuthContext) -> None:
+    if ctx.token_kind != "jwt":
+        return
+    sub = ctx.claims.get("sub")
+    if sub is not None and not str(sub).strip():
+        raise HTTPException(
+            status_code=403,
+            detail="Verified JWT 'sub' claim is present but blank/whitespace-only.",
+        )
+    for name in _TENANT_CLAIM_NAMES:
+        tenant = ctx.claims.get(name)
+        if tenant is not None and not str(tenant).strip():
+            raise HTTPException(
+                status_code=403,
+                detail=f"Verified JWT {name!r} claim is present but blank/whitespace-only.",
+            )
+
+
+def _authenticate_memory_request(
+    authorization: Optional[str],
+    *,
+    required_roles: Optional[Sequence[str]] = None,
+) -> Optional[AuthContext]:
+    env = _memory_auth_env()
+    mode = env.get("PANTHEON_RUNTIME_AUTH_MODE", "permissive").strip().lower()
+    if not authorization or not authorization.strip():
+        if mode == "strict":
+            raise HTTPException(status_code=401, detail="Unauthorized: missing Bearer token")
+        return None
+    try:
+        ctx = validate_request_auth(
+            authorization=authorization,
+            required_roles=required_roles,
+            env=env,
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    _reject_malformed_identity_claims(ctx)
+    _require_verified_identity(ctx)
+    return ctx
 
 app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
 STORE_BACKEND = os.getenv("PANTHEON_MEMORY_STORE_BACKEND", "json").strip().lower() or "json"
@@ -259,7 +380,21 @@ async def health():
 
 
 @app.post("/api/memory/entries", status_code=201)
-async def store_entry(payload: Dict[str, Any]):
+async def store_entry(
+    payload: Dict[str, Any],
+    authorization: Optional[str] = Header(default=None),
+):
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    if ctx is not None:
+        token_tenant = ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default"
+        payload_tenant = payload.get("tenant_id")
+        if payload_tenant and token_tenant != "*" and payload_tenant != token_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "tenant_forbidden", "message": "Payload tenant does not match verified token tenant"},
+            )
+        if not payload_tenant and token_tenant != "*":
+            payload["tenant_id"] = token_tenant
     try:
         entry = InstitutionalMemoryEntry.from_dict(payload)
         saved = _store().create(entry)
@@ -268,7 +403,17 @@ async def store_entry(payload: Dict[str, Any]):
     return {"entry_id": saved.entry_id}
 
 
-def _store_persona_payload(payload: Dict[str, Any]) -> Dict[str, str]:
+def _store_persona_payload(payload: Dict[str, Any], auth_ctx: Optional[AuthContext] = None) -> Dict[str, str]:
+    if auth_ctx is not None:
+        token_tenant = auth_ctx.claims.get("tenant_id") or auth_ctx.claims.get("tenant") or "default"
+        payload_tenant = payload.get("tenant_id")
+        if payload_tenant and token_tenant != "*" and payload_tenant != token_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "tenant_forbidden", "message": "Payload tenant does not match verified token tenant"},
+            )
+        if not payload_tenant and token_tenant != "*":
+            payload["tenant_id"] = token_tenant
     try:
         entry = PersonaMemoryEntry.from_dict(payload)
         saved = _persona_store().create(entry)
@@ -278,17 +423,30 @@ def _store_persona_payload(payload: Dict[str, Any]) -> Dict[str, str]:
 
 
 @app.post("/api/memory/persona-entries", status_code=201)
-async def store_persona_entry(payload: Dict[str, Any]):
-    return _store_persona_payload(payload)
+async def store_persona_entry(
+    payload: Dict[str, Any],
+    authorization: Optional[str] = Header(default=None),
+):
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    return _store_persona_payload(payload, auth_ctx=ctx)
 
 
 @app.post("/api/memory/writebacks/persona", status_code=201)
-async def writeback_persona_entry(payload: Dict[str, Any]):
-    return _store_persona_payload(payload)
+async def writeback_persona_entry(
+    payload: Dict[str, Any],
+    authorization: Optional[str] = Header(default=None),
+):
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    return _store_persona_payload(payload, auth_ctx=ctx)
 
 
 @app.post("/api/memory/writebacks/learn-feedback", status_code=201)
-async def writeback_learn_feedback(payload: Dict[str, Any], response: Response):
+async def writeback_learn_feedback(
+    payload: Dict[str, Any],
+    response: Response,
+    authorization: Optional[str] = Header(default=None),
+):
+    _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
     try:
         result = write_learn_feedback(
             payload,
@@ -317,7 +475,9 @@ async def list_entries(
     scope_filter: Optional[str] = Query(default=None),
     contributing_persona_id: Optional[str] = Query(default=None),
     active_only: bool = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
+    _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
     entries = _store().list(
         knowledge_type=knowledge_type,
         scope=scope,
@@ -329,7 +489,11 @@ async def list_entries(
 
 
 @app.get("/api/memory/entries/{entry_id}")
-async def get_entry(entry_id: str):
+async def get_entry(
+    entry_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
     entry = _store().get(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail={"error": "entry_not_found", "entry_id": entry_id})
@@ -350,14 +514,37 @@ async def retrieve_memory(
     scope_filter: Optional[str] = Query(default=None),
     tags: Optional[List[str]] = Query(default=None),
     limit: int = Query(default=10, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
 ):
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
     roles = _split_csv_values(actor_roles)
+    effective_actor_id = actor_id
+    effective_roles = roles
+
+    if ctx is not None:
+        if actor_id and actor_id != ctx.actor_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "unauthorized", "message": "actor_id does not match verified token identity"},
+            )
+        effective_actor_id = ctx.actor_id
+        if roles:
+            invalid_roles = set(roles) - ctx.roles
+            if invalid_roles:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": "unauthorized", "message": f"Requested roles {sorted(invalid_roles)} exceed verified token roles"},
+                )
+            effective_roles = [r for r in roles if r in ctx.roles]
+        else:
+            effective_roles = list(ctx.roles)
+
     tag_values = _split_csv_values(tags)
     resource = {"scope": scope}
     if persona_id:
         resource["persona_id"] = persona_id
     persona_relevance_scope = None
-    if "consultation_session" in roles and scope in {"persona", "both"}:
+    if "consultation_session" in effective_roles and scope in {"persona", "both"}:
         persona_relevance_scope = PersonaRelevanceScope.PERSONA_AND_COMMITTEE.value
         resource["relevance_scope"] = persona_relevance_scope
     context = {"session_id": session_id}
@@ -365,8 +552,8 @@ async def retrieve_memory(
         context["session_persona_id"] = session_persona_id
 
     decision = _authorize_memory_retrieve(
-        actor_id=actor_id,
-        actor_roles=roles,
+        actor_id=effective_actor_id,
+        actor_roles=effective_roles,
         resource=resource,
         context=context,
     )

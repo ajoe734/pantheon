@@ -474,3 +474,72 @@ def test_build_search_evidence_repository_invalid_backend():
     with mock.patch.dict("os.environ", {"SEARCH_EVIDENCE_BACKEND": "redis"}, clear=True):
         with pytest.raises(ValueError, match="must be jsonl or postgres"):
             build_search_evidence_repository(path)
+
+
+def test_postgres_read_only_reload_clears_tenant_scoped_records():
+    from services.search.pg_store import PostgresReadOnlyEvidenceRepository
+
+    # Initial state with a tenant-scoped record
+    _FakeEvidenceConnection.evidence_rows = [
+        (
+            "source_record",
+            {
+                "source_id": "src-scoped-1",
+                "connector_id": "conn-test",
+                "source_type": "paper",
+                "title": "Tenant Paper",
+                "content_ref": "ref://tenant",
+                "metadata": {"tenant_id": "tenant-a"},
+            },
+        )
+    ]
+    _FakeEvidenceConnection.statements = []
+    fake_psycopg, _conn = _fake_evidence_psycopg()
+
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        repo = PostgresReadOnlyEvidenceRepository(dsn="postgresql://search-reader@example/db")
+        assert repo.get_source_record("src-scoped-1", tenant_id="tenant-a") is not None
+
+        # Simulate deletion in Postgres
+        _FakeEvidenceConnection.evidence_rows = []
+        repo.reload()
+
+        assert repo.get_source_record("src-scoped-1", tenant_id="tenant-a") is None
+
+
+def test_real_postgres_read_only_reload_clears_deleted_tenanted_records():
+    dsn = os.getenv("SOURCE_INGEST_TEST_POSTGRES_DSN") or os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("SOURCE_INGEST_TEST_POSTGRES_DSN or TEST_DATABASE_URL is not configured")
+    psycopg = pytest.importorskip("psycopg")
+    from services.search.pg_store import PostgresReadOnlyEvidenceRepository
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    schema = f"search_del_{uuid.uuid4().hex[:16]}"
+    table = f"{schema}.source_evidence"
+    try:
+        owner_repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+        source = SourceRecord(
+            source_id="revoked-doc",
+            connector_id="conn-test",
+            source_type="internal_note",
+            title="Revoked Note",
+            content_ref="ref://revoked",
+            metadata={"tenant_id": "tenant-a"},
+        )
+        owner_repo.add_source_record(source)
+
+        reader_repo = PostgresReadOnlyEvidenceRepository(dsn=dsn, table=table)
+        assert reader_repo.get_source_record("revoked-doc", tenant_id="tenant-a") is not None
+
+        # Delete all records from table
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f"DELETE FROM {owner_repo.table}")
+
+        reader_repo.reload()
+        assert reader_repo.get_source_record("revoked-doc", tenant_id="tenant-a") is None
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+

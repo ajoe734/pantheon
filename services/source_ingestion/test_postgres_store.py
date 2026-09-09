@@ -314,3 +314,92 @@ def test_build_source_evidence_repository_invalid_backend():
     with mock.patch.dict("os.environ", {"SOURCE_INGEST_EVIDENCE_BACKEND": "redis"}, clear=True):
         with pytest.raises(ValueError, match="must be jsonl or postgres"):
             build_source_evidence_repository(path)
+
+
+def test_scoped_record_id_collision_safe():
+    from services.source_ingestion.pg_store import _scoped_record_id
+
+    # Legacy records without @ prefix stay bare
+    assert _scoped_record_id(None, "src-1") == "src-1"
+    assert _scoped_record_id(None, "t1:a:x") == "t1:a:x"
+    # Legacy records starting with @ are escaped
+    assert _scoped_record_id(None, "@t1:a:x") == "@@t1:a:x"
+
+    # Tenanted records have distinguished @t prefix
+    assert _scoped_record_id("a", "x") == "@t1:a:x"
+    assert _scoped_record_id("tenant-1", "src-1") == "@t8:tenant-1:src-1"
+
+    # No collision between legacy t1:a:x and tenanted ('a', 'x')
+    assert _scoped_record_id(None, "t1:a:x") != _scoped_record_id("a", "x")
+    # No collision between escaped legacy @t1:a:x and tenanted ('a', 'x')
+    assert _scoped_record_id(None, "@t1:a:x") != _scoped_record_id("a", "x")
+
+
+def test_postgres_write_failure_rolls_back_in_memory_state():
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    _FakeConnection.rows = []
+    _FakeConnection.statements = []
+    fake_psycopg, _conn = _make_fake_psycopg()
+
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        repo = PostgresSourceEvidenceRepository(dsn="postgresql://test@example/db", bootstrap=True)
+        source = SourceRecord(
+            source_id="fail-src",
+            connector_id="conn-test",
+            source_type="paper",
+            title="Fail Paper",
+            content_ref="ref://fail",
+            metadata={"tenant_id": "tenant-test", "source_dedupe_key": "dk-fail"},
+        )
+        with mock.patch.object(repo, "_upsert", side_effect=RuntimeError("disk write failed")):
+            with pytest.raises(RuntimeError, match="disk write failed"):
+                repo.add_source_record(source)
+
+        assert repo.get_source_record("fail-src", tenant_id="tenant-test") is None
+        assert repo.get_source_record_by_dedupe_key("dk-fail", tenant_id="tenant-test") is None
+
+
+def test_real_postgres_legacy_and_tenanted_record_coexistence():
+    dsn = os.getenv("SOURCE_INGEST_TEST_POSTGRES_DSN") or os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("SOURCE_INGEST_TEST_POSTGRES_DSN or TEST_DATABASE_URL is not configured")
+    psycopg = pytest.importorskip("psycopg")
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    schema = f"coexist_{uuid.uuid4().hex[:16]}"
+    table = f"{schema}.source_evidence"
+    try:
+        repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+        # Add legacy record whose ID could have collided with tenanted key
+        legacy = SourceRecord(
+            source_id="t1:a:x",
+            connector_id="conn-test",
+            source_type="internal_note",
+            title="Legacy Note",
+            content_ref="ref://legacy",
+        )
+        repo.add_source_record(legacy)
+
+        # Add tenanted record
+        tenanted = SourceRecord(
+            source_id="x",
+            connector_id="conn-test",
+            source_type="internal_note",
+            title="Tenanted Note",
+            content_ref="ref://tenanted",
+            metadata={"tenant_id": "a"},
+        )
+        repo.add_source_record(tenanted)
+
+        # Reload from database and verify both records survive without collision
+        reloaded = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=False)
+        assert reloaded.get_source_record("t1:a:x", tenant_id=None) is not None
+        assert reloaded.get_source_record("x", tenant_id="a") is not None
+        assert reloaded.get_source_record("t1:a:x", tenant_id=None).title == "Legacy Note"
+        assert reloaded.get_source_record("x", tenant_id="a").title == "Tenanted Note"
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
