@@ -761,6 +761,13 @@ def build_live_config(
     # the incumbent for promotion evidence, but deliberately do not merge it.
     del existing_live_config
     rendered = copy.deepcopy(repo_config)
+    # Keep lightweight interpreter preflights independent of runtime imports.
+    orchestrator_dir = str(Path(__file__).resolve().parents[1] / ".orchestrator")
+    if orchestrator_dir not in sys.path:
+        sys.path.insert(0, orchestrator_dir)
+    from supervisor_watchdog import validated_fleet_worker_cap
+
+    validated_fleet_worker_cap(rendered)
     validate_provider_accounts(rendered)
     apply_repository_source_roots(rendered, repository_source_roots)
     apply_repository_integration_roots(rendered, repository_integration_roots)

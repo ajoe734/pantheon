@@ -1348,6 +1348,9 @@ def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[st
 
 def validate_provider_accounts(config: dict[str, Any]) -> None:
     """Enforce the single authoritative account and capacity schema."""
+    from supervisor_watchdog import validated_fleet_worker_cap
+
+    validated_fleet_worker_cap(config)
     settings = ready_dispatch_settings(config)
     errors: list[str] = []
     retired_ready_keys = {

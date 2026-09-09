@@ -10,6 +10,10 @@ health. No historical provider matrix in this document is runtime truth.
 - `providers.<id>.account` is the sole account identity.
 - `ready_dispatcher.max_concurrent_per_account` is the sole account cap.
 - `ready_dispatcher.max_concurrent_workers` is the fleet-wide cap.
+  It is required and must be a JSON integer >= 0 (no strings, booleans,
+  fractions, null, or unlimited fallback). Watchdog derives its effective
+  worker ceiling from this same value: at cap 13, 13 live workers are legal
+  and 14 cause worker-count pressure. A cap of 0 admits no new workers.
 - `worker_slots` describes physical delivery topology; it does not create
   capacity.
 - A fresh provider probe may clear a runtime auth/quota pause. A missing or
@@ -18,6 +22,22 @@ health. No historical provider matrix in this document is runtime truth.
 The retired `disabled_agents`, `max_tasks_per_agent`,
 `max_tasks_per_agent_by_agent`, provider account aliases, and
 `max_concurrent_per_quota_group` fields are invalid in a running V2 config.
+
+`watchdog.max_active_workers` is retired with OPS-FLEET-CAP-CONTRACT-001;
+there is no compatibility window or legacy alias. Remove the field entirely,
+even if it equals the dispatcher cap. Missing the retired field is the valid
+shape; missing the authoritative dispatcher cap fails closed. Supervisor
+startup, watchdog settings, live-config rendering, and the drift CLI all use
+the same validator. Drift validation checks both repository and live shapes,
+including equally invalid values, and refuses `--fix` writes for invalid
+capacity contracts. Repair through a reviewed config and runtime promotion.
+The renderer validates the candidate and discards incumbent policy, so an old
+live watchdog field cannot survive promotion. Fleet capacity remains 13;
+account, agent, task, resource-lock, lease, and admission policies are unchanged.
+After independent review and merge, promote the exact accepted runtime and
+collect supervisor-health and watchdog dry-run evidence before claiming live
+activation. Do not edit the incumbent config or restart leased workers to
+prove a source change.
 
 ## Antigravity native invocation-log evidence
 

@@ -1,0 +1,144 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001-CI-RED-3E4C0D14BE0E",
+  "role": "diagnosis_and_evidence_tracking_only",
+  "checked_at": "2026-09-09T16:50:00Z",
+  "unblock_request": {
+    "repository_slug": "ajoe734/pantheon",
+    "pr": 5709,
+    "head_sha": "d4d961804af4f5c688c5a580fdc94a9132fd4131",
+    "base_sha": "15e2907b5dd0af53a2d6b773f1744d7c955336a7"
+  },
+  "root_cause": {
+    "summary": "services/governance/record_store.py replaced the previous ordinary temporary-file write with tempfile.NamedTemporaryFile, which creates a 0600-mode file. os.replace publishes that inode (including its restrictive mode) as the canonical record file with no mode restoration, so a readonly consumer running under a distinct UID loses read access it previously had at 0644/umask-derived modes.",
+    "qualified_report": "/tmp/governance_pr5709_persona_ci_regression.md",
+    "affected_file": "services/governance/record_store.py:225-240",
+    "affected_tests": [
+      "TestDecisionJournalReadOnlySnapshots.test_actual_readonly_mount_fresh_process_pending_snapshots_never_recover",
+      "TestDecisionJournalReadOnlySnapshots.test_actual_readonly_process_waits_for_same_writer_bundle_inode"
+    ],
+    "not_an_integrator_defect": true
+  },
+  "reproduction_evidence": {
+    "ci_workflow_run": "https://github.com/ajoe734/pantheon/actions/runs/34304100683/job/102317075569",
+    "ci_job": "Persona provisioning owner contracts",
+    "ci_result": "2 failed, 660 passed, 9 subtests passed, 220.81s, exit 1",
+    "exact_base_head_probe": {
+      "base_commit": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+      "base_result": "2 pass, exit 0, 2.814s",
+      "base_log": "/tmp/governance-ro-base-ci-probe.log",
+      "head_commit": "d4d961804af4f5c688c5a580fdc94a9132fd4131",
+      "head_result": "same 2 failures as CI, exit 1, 1.891s",
+      "head_log": "/tmp/governance-ro-head-ci-probe.log",
+      "docker_image": "pantheon-governance-contract:ci",
+      "docker_image_digest": "sha256:89cd105a560a71326ba6c077402126caecacaf71f5581a8c9465c4ee096b9ce2"
+    },
+    "standalone_mode_probe": {
+      "script": "/tmp/governance_record_mode_regression_probe.py",
+      "result_new_file_mode": {
+        "base": "0644",
+        "head": "0600"
+      },
+      "result_replace_existing_mode": {
+        "base": "0644",
+        "head": "0600"
+      }
+    },
+    "downloaded_logs": [
+      "/tmp/governance-pr5709-persona-ci-failure.log",
+      "/tmp/governance-pr5709-persona-ci-metadata.json"
+    ]
+  },
+  "source_fix_ownership": {
+    "owning_task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+    "owning_task_status": "done",
+    "owning_task_owner": "Claude",
+    "generation": 11,
+    "terminal_outcome": "completed",
+    "recorded_at": "2026-09-09T04:32:58Z",
+    "note": "Parent task implemented the corrective fix in services/governance/record_store.py, eliminating the process-global umask race by creating files with os.open(O_CREAT | O_EXCL, mode=0o666) letting kernel umask apply, and ordering fchmod on open fd before file durability fsync, atomic replace, and directory fsync."
+  },
+  "initial_pr_state_at_diagnosis": {
+    "checked_at": "2026-09-09T03:20:00Z",
+    "state": "OPEN",
+    "head_ref_oid": "d4d961804af4f5c688c5a580fdc94a9132fd4131",
+    "merged_at": null,
+    "status_check_rollup": {
+      "Persona provisioning owner contracts": "FAILURE",
+      "Pantheon canonical review gate": "FAILURE",
+      "Commit trailers": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS",
+      "Python packaging provision": "SUCCESS",
+      "Smoke acceptance": "SUCCESS"
+    },
+    "conclusion": "At initial check, PR #5709 was stranded at head d4d961804 with Persona provisioning owner contracts failing due to 0600 file-mode regression."
+  },
+  "final_source_delivery": {
+    "repository_slug": "ajoe734/pantheon",
+    "pr": 5709,
+    "headRefOid": "05e8869a3ff687887282e3aeaa3457d1f289fd55",
+    "mergeCommit": {
+      "oid": "8e91733aca2243d22b38c4efbfa3a80ef548efba"
+    },
+    "mergedAt": "2026-09-09T04:31:10Z",
+    "state": "MERGED",
+    "url": "https://github.com/ajoe734/pantheon/pull/5709",
+    "status_check_rollup": {
+      "Persona provisioning owner contracts": "SUCCESS",
+      "Commit trailers": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS",
+      "Python packaging provision": "SUCCESS",
+      "Smoke acceptance": "SUCCESS",
+      "Publish canonical review status": "SUCCESS"
+    }
+  },
+  "parent_task_status": {
+    "task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+    "generation": 11,
+    "status": "done",
+    "terminal_outcome": "completed",
+    "recorded_at": "2026-09-09T04:32:58Z"
+  },
+  "independent_final_verification": {
+    "report": "/tmp/governance_final_05e8869_review_20260909/review.md",
+    "head_sha": "05e8869a3ff687887282e3aeaa3457d1f289fd55",
+    "merge_sha": "8e91733aca2243d22b38c4efbfa3a80ef548efba",
+    "record_store_sha256": "6e45e7ed541c4337e5c9cd34ee09aeb8ef1a129b058df013b665090a427e889d",
+    "merge_identical": true,
+    "probe_cases_passed": 6,
+    "probe_case_count": 6,
+    "probe_results_file": "/tmp/governance_final_05e8869_review_20260909/results.json",
+    "canonical_snapshot_file": "/tmp/governance_final_05e8869_review_20260909/canonical.json",
+    "binding_file": "/tmp/governance_final_05e8869_review_20260909/binding.json",
+    "conclusion": "Verified identical final head and merge commit source, AST-extracted JSON owner class execution, zero umask calls, fchmod on open fd before durability fsync, atomic replace, and directory fsync."
+  },
+  "acceptance_criteria_evaluation": {
+    "criterion_1": {
+      "criterion": "Root cause for GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 integration blocker is documented",
+      "status": "SATISFIED",
+      "evidence": "Documented in root_cause and reproduction_evidence. Confirmed NamedTemporaryFile 0600 mode narrowing on atomic replacement broke readonly UID consumers."
+    },
+    "criterion_2": {
+      "criterion": "Original PR is updated or superseded and no longer stranded",
+      "status": "SATISFIED",
+      "evidence": "PR #5709 was updated to 05e8869a3ff687887282e3aeaa3457d1f289fd55, passed all required CI checks including Persona provisioning owner contracts (SUCCESS), and merged into dev as 8e91733aca2243d22b38c4efbfa3a80ef548efba."
+    }
+  },
+  "actions_not_taken": [
+    "did not edit scripts/git/auto_integrator.py",
+    "did not broaden credential or sandbox access",
+    "did not implement a duplicate storage patch in this task",
+    "did not create another task",
+    "did not retry or cancel the CI run",
+    "did not relax readonly mounts or capability drops",
+    "did not alter gates",
+    "did not claim product deployment"
+  ],
+  "resolution": {
+    "state": "source_pr_merged_original_blocker_resolved",
+    "original_head_changed_by_this_task": false,
+    "integrator_code_change_required": false,
+    "summary": "Original CI blocker has genuinely cleared. PR #5709 was updated to 05e8869a3ff687887282e3aeaa3457d1f289fd55 with verified file-mode fix, passed all CI checks including Persona provisioning owner contracts, and was merged into dev as 8e91733aca2243d22b38c4efbfa3a80ef548efba. Parent task GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 is canonical done (generation 11).",
+    "limitations": "Hosted acceptance is not claimed. No approval evidence was fabricated or replaced; no branch protection or runtime permissions were changed."
+  },
+  "next": "Evidence updated to reflect merged PR #5709 and completed parent task. Ready for independent review by Codex and final closeout."
+}
