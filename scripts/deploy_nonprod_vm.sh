@@ -3227,6 +3227,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # the compose default (`unknown`) and make the exact-SHA readiness gate
     # impossible to satisfy.
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
+    # Runtime authority reads and the durable outbox consumer must use the
+    # same tenant as the BFF that creates the dev DeploymentPlans. Otherwise
+    # healthy workers poll the generic Compose tenant (default) indefinitely.
+    export PANTHEON_DEPLOYMENT_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}"
     # Dev deploys activate the required persistent root compose profile: openclaw.
     # Dormant smoke profiles (e.g. dormant-smoke for MLflow/FinRL/RLlib/Ray-Tune/Qlib/TRL/experiments),
     # one-off smoke profiles (activation-ready-smoke, openclaw-activation-ready-e2e, smoke, source-search-bounded),
