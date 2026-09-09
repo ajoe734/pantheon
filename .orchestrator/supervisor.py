@@ -3321,6 +3321,8 @@ def start_worker_for_request(
             _discard_unlaunched_runtime_phase_intent(config, state)
         raise
     if not result.ok:
+        if (result.metadata.get("auth_probe") or {}).get("status") == "auth_retry_after":
+            return False, result.error, result.as_dict()
         failure_run_id = (
             f"{event_id_for_log or queue_event_id}-attempt-{max(1, int(attempt_count))}"
         )
@@ -3888,6 +3890,21 @@ def process_queue(
         record["attempt_count"] = attempt_count
         record["last_attempt_at"] = utc_now()
         if not ok:
+            auth_probe = ((delivery or {}).get("metadata") or {}).get("auth_probe")
+            if isinstance(auth_probe, dict) and auth_probe.get("status") == "auth_retry_after":
+                # A launch-time refresh failure is the same observation as a
+                # probe failure. Keep the existing intent behind health admission;
+                # do not reinterpret OAuth 429 as authenticated model capacity.
+                apply_delivery_health_observations(config, state, [{
+                    "endpoint_id": request.agent_id,
+                    "account_id": agent_account_id(config, request.agent_id),
+                    "probe": auth_probe,
+                }])
+                record["status"] = "pending"
+                record["last_wait_reason"] = "endpoint_retry_after"
+                record["error"] = auth_probe.get("error")
+                changed = True
+                continue
             failure_run_id = (
                 f"{event_id}-attempt-{max(1, int(record.get('attempt_count', 0)))}"
             )
