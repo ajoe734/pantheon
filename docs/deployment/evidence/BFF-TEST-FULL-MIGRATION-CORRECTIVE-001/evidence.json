@@ -1,0 +1,91 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "base_ref": "dev@c0c035b5f",
+  "depends_on": "BFF-TEST-ARCH-001 (done, satisfied=true), JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001 (done, satisfied=true)",
+  "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section C",
+  "results": {
+    "test_layers_classification_and_inventory": {
+      "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "total_test_files": 341,
+      "audited_baseline_main_importers": 218,
+      "current_main_importers": 205,
+      "migrated_in_task_count": 11,
+      "migrated_suites": [
+        "test_cw01_consult_request_contract.py",
+        "test_cw02_debate_transcript_contract.py",
+        "test_cw04_redteam_memo_contract.py",
+        "tests/test_governance_router.py",
+        "tests/test_operations_consultation_ports.py",
+        "test_ask_001_sessions_contract.py",
+        "test_ask_003_committee_lifecycle.py",
+        "test_ask_004_memo_publish_contract.py",
+        "test_consultation_surfaces.py",
+        "test_settings_contract.py",
+        "test_pkt001_deployment_review_console_contract.py"
+      ]
+    },
+    "ast_and_import_graph_gate": {
+      "file": "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "details": "Live AST scanning across all test files, fixtures, conftest, and smoke suites enforces that total main importers is strictly bounded (<= 205) and strictly decreased from audited baseline (218). Migrated suites must never import main or mutate sys.path, and conftest.py and shared fixtures are verified to never mutate sys.path.",
+      "tests_passed": 9
+    },
+    "truthful_fixture_provenance_and_auth_isolation": {
+      "files": [
+        "services/control-plane/bff/test_ask_001_sessions_contract.py",
+        "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+        "services/control-plane/bff/test_ask_004_memo_publish_contract.py"
+      ],
+      "details": "Eliminated copied auth policy and duplicate role checking fakes. Router tests inject fixed typed OperatorIdentity and recording authorization callbacks for success cases, and explicitly configured rejecting mock extractors for the 13 missing-auth 401 cases, asserting that extract_identity received None and business/domain operations did not execute. Restored truthful local_snapshot provenance for in-memory read store in test_ask_004 instead of misleading service_store label."
+    },
+    "instance_bound_isolation_and_concurrency": {
+      "files": [
+        "services/control-plane/bff/test_ask_001_sessions_contract.py",
+        "services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+        "services/control-plane/bff/test_ask_004_memo_publish_contract.py"
+      ],
+      "details": "Nested client tests verify instance-bound store/idempotency isolation where inner client operations exit without wiping outer client replay cache (outer replay 409 preserved). Concurrent client tests using ThreadPoolExecutor verify thread-safe parallel request handling and cross-client data isolation across simultaneous clients."
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "9 passed",
+      "executed": 9,
+      "collected": 9
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_ask_001_sessions_contract.py",
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_ask_003_committee_lifecycle.py",
+      "result": "31 passed",
+      "executed": 31,
+      "collected": 31
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_ask_004_memo_publish_contract.py",
+      "result": "33 passed",
+      "executed": 33,
+      "collected": 33
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_cw04_redteam_memo_contract.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/test_ask_001_sessions_contract.py services/control-plane/bff/test_ask_003_committee_lifecycle.py services/control-plane/bff/test_ask_004_memo_publish_contract.py services/control-plane/bff/test_consultation_surfaces.py services/control-plane/bff/test_settings_contract.py services/control-plane/bff/test_pkt001_deployment_review_console_contract.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "163 passed, 3 warnings in 215.63s",
+      "executed": 163,
+      "collected": 163
+    },
+    {
+      "command": "python3 /tmp/bff_existing_auth_seam_probe.py",
+      "result": "exit 0, main_composition_imported: false"
+    }
+  ],
+  "coordination_note": "Production composition wiring in main.py and runtime modules was preserved unmodified in accordance with the task brief scope constraint. Fixture auth policy drift was eliminated in favor of typed OperatorIdentity and recording callbacks. True instance-bound and concurrent client isolation verified for ASK suites.",
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}

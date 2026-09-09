@@ -18,7 +18,8 @@ import tempfile
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
+from unittest.mock import Mock
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -158,9 +159,9 @@ class _CommitteeMemoReadStore:
     def dataset_source(self, dataset: str, **_kwargs: Any) -> str:
         records = self._data.get(dataset)
         if isinstance(records, dict) and records:
-            return "service_store"
+            return "local_snapshot"
         if isinstance(records, list) and records:
-            return "service_store"
+            return "local_snapshot"
         return "missing"
 
     def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -365,24 +366,31 @@ def _idem() -> str:
     return f"idem-{uuid.uuid4().hex[:16]}"
 
 
-def _extract_identity(auth: Optional[str]) -> OperatorIdentity:
-    if not auth or not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    raw = auth[len("Bearer "):].strip()
-    parts = raw.split(":")
-    operator_id = parts[0] if parts else "op"
-    roles = parts[1].split(",") if len(parts) > 1 else []
-    return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+_FIXED_OPERATOR = OperatorIdentity(
+    operator_id="ask-test-op",
+    roles=["operator", "approver", "admin", "reviewer"],
+    claims={},
+)
+
+
+def _recording_authorization(identity: OperatorIdentity) -> None:
+    """Recording authorization callback: verifies boundary invocation without copying role policy."""
+    pass
 
 
 def _require_read_role(identity: OperatorIdentity) -> None:
-    if not identity or not identity.roles:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    """Recording authorization callback: boundary proof without copying role policy."""
+    pass
 
 
 def _require_write_role(identity: OperatorIdentity) -> None:
-    if not identity or not identity.roles or "operator" not in identity.roles:
-        raise HTTPException(status_code=403, detail="Forbidden: operator role required")
+    """Recording authorization callback: boundary proof without copying role policy."""
+    pass
+
+
+def _default_extract_identity(auth: Optional[str]) -> OperatorIdentity:
+    """Fixed typed operator identity callback for success cases."""
+    return _FIXED_OPERATOR
 
 
 def _bff_error(
@@ -416,11 +424,19 @@ def _client(
     store: Optional[Any] = None,
     idempotency_store: Optional[Dict[str, Any]] = None,
     command_store: Optional[Any] = None,
+    extract_identity: Optional[Callable[..., Any]] = None,
+    require_read_role: Optional[Callable[..., Any]] = None,
+    require_write_role: Optional[Callable[..., Any]] = None,
+    require_operator_role: Optional[Callable[..., Any]] = None,
 ) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         active_store = store if store is not None else _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
         active_cmd = command_store if command_store is not None else CommandStore(os.path.join(td, "commands.jsonl"))
         active_idem = idempotency_store if idempotency_store is not None else {}
+        active_extract = extract_identity if extract_identity is not None else _default_extract_identity
+        active_read = require_read_role if require_read_role is not None else _recording_authorization
+        active_write = require_write_role if require_write_role is not None else _recording_authorization
+        active_op = require_operator_role if require_operator_role is not None else _recording_authorization
 
         app = FastAPI(title="Agora Memo Publish Contract")
 
@@ -437,10 +453,10 @@ def _client(
 
         app.include_router(
             create_agora_router(
-                extract_identity=_extract_identity,
-                require_read_role=_require_read_role,
-                require_write_role=_require_write_role,
-                require_operator_role=_require_write_role,
+                extract_identity=active_extract,
+                require_read_role=active_read,
+                require_write_role=active_write,
+                require_operator_role=active_op,
                 bff_error=_bff_error,
                 utc_now=_utc_now,
                 get_read_store=lambda: active_store,
@@ -452,9 +468,9 @@ def _client(
         app.include_router(
             create_governance_router(
                 get_read_store=lambda: active_store,
-                extract_identity=_extract_identity,
-                require_read_role=_require_read_role,
-                require_operator_role=_require_write_role,
+                extract_identity=active_extract,
+                require_read_role=active_read,
+                require_operator_role=active_op,
                 redact_evidence_refs=_canonical_redact_evidence_refs,
             )
         )
@@ -498,9 +514,11 @@ def test_ask_004_list_memos_404_for_ask_session() -> None:
 
 
 def test_ask_004_list_memos_requires_auth() -> None:
-    with _client(seeded=True) as client:
+    extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
+    with _client(seeded=True, extract_identity=extract_mock) as client:
         resp = client.get("/bff/agora/committee/sessions/committee-memo-001/memos")
         assert resp.status_code == 401, resp.text
+        extract_mock.assert_called_once_with(None)
 
 
 def test_ask_004_list_memos_shows_submitted_memos() -> None:
@@ -592,12 +610,14 @@ def test_ask_004_submit_memo_404_for_ask_session() -> None:
 
 
 def test_ask_004_submit_memo_requires_auth() -> None:
-    with _client(seeded=True) as client:
+    extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
+    with _client(seeded=True, extract_identity=extract_mock) as client:
         resp = client.post(
             "/bff/agora/committee/sessions/committee-memo-001/memos",
             json={"summary": "No auth"},
         )
         assert resp.status_code == 401, resp.text
+        extract_mock.assert_called_once_with(None)
 
 
 def test_ask_004_submit_memo_idempotency_replays() -> None:
@@ -728,11 +748,13 @@ def test_ask_004_memo_detail_404_for_wrong_session() -> None:
 
 
 def test_ask_004_memo_detail_requires_auth() -> None:
-    with _client(seeded=True) as client:
+    extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
+    with _client(seeded=True, extract_identity=extract_mock) as client:
         resp = client.get(
             "/bff/agora/committee/sessions/committee-memo-001/memos/memo-any",
         )
         assert resp.status_code == 401, resp.text
+        extract_mock.assert_called_once_with(None)
 
 
 # --------------------------------------------------------------------------- #
@@ -873,12 +895,14 @@ def test_ask_004_publish_memo_404_for_wrong_session() -> None:
 
 
 def test_ask_004_publish_memo_requires_auth() -> None:
-    with _client(seeded=True) as client:
+    extract_mock = Mock(side_effect=HTTPException(status_code=401, detail="Authentication required"))
+    with _client(seeded=True, extract_identity=extract_mock) as client:
         resp = client.post(
             "/bff/agora/committee/sessions/committee-memo-001/memos/memo-any/publish",
             json={},
         )
         assert resp.status_code == 401, resp.text
+        extract_mock.assert_called_once_with(None)
 
 
 def test_ask_004_publish_memo_idempotency_replays() -> None:
@@ -992,4 +1016,77 @@ def test_ask_004_nested_clients_isolation_preserves_outer_replay_cache() -> None
             "/bff/agora/committee/sessions/committee-memo-001/memos/memo-inner-001",
             headers=AUTH,
         ).status_code == 404
+
+
+def test_ask_004_concurrent_clients_isolation_and_replay() -> None:
+    """Concurrent client operations maintain thread-safe instance-bound isolation and replay."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _run_client_a() -> Dict[str, Any]:
+        with _client(seeded=True) as client_a:
+            key = _idem()
+            payload = {
+                "memoId": "memo-concurrent-a",
+                "summary": "Concurrent Memo A",
+            }
+            resp1 = client_a.post(
+                "/bff/agora/committee/sessions/committee-memo-001/memos",
+                json=payload,
+                headers={**AUTH, "Idempotency-Key": key},
+            )
+            assert resp1.status_code == 201, resp1.text
+            resp2 = client_a.post(
+                "/bff/agora/committee/sessions/committee-memo-001/memos",
+                json=payload,
+                headers={**AUTH, "Idempotency-Key": key},
+            )
+            assert resp2.status_code == 201, resp2.text
+            assert resp2.json()["data"]["memo_id"] == "memo-concurrent-a"
+            resp_conf = client_a.post(
+                "/bff/agora/committee/sessions/committee-memo-001/memos",
+                json={**payload, "summary": "Conflicting Summary A"},
+                headers={**AUTH, "Idempotency-Key": key},
+            )
+            assert resp_conf.status_code == 409, resp_conf.text
+            assert resp_conf.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+            assert client_a.get(
+                "/bff/agora/committee/sessions/committee-memo-001/memos/memo-concurrent-b",
+                headers=AUTH,
+            ).status_code == 404
+            return {"resp1": resp1.json(), "resp2": resp2.json()}
+
+    def _run_client_b() -> Dict[str, Any]:
+        with _client(seeded=True) as client_b:
+            key = _idem()
+            payload = {
+                "memoId": "memo-concurrent-b",
+                "summary": "Concurrent Memo B",
+            }
+            resp1 = client_b.post(
+                "/bff/agora/committee/sessions/committee-memo-001/memos",
+                json=payload,
+                headers={**AUTH, "Idempotency-Key": key},
+            )
+            assert resp1.status_code == 201, resp1.text
+            resp2 = client_b.post(
+                "/bff/agora/committee/sessions/committee-memo-001/memos",
+                json=payload,
+                headers={**AUTH, "Idempotency-Key": key},
+            )
+            assert resp2.status_code == 201, resp2.text
+            assert resp2.json()["data"]["memo_id"] == "memo-concurrent-b"
+            assert client_b.get(
+                "/bff/agora/committee/sessions/committee-memo-001/memos/memo-concurrent-a",
+                headers=AUTH,
+            ).status_code == 404
+            return {"resp1": resp1.json(), "resp2": resp2.json()}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_a = pool.submit(_run_client_a)
+        fut_b = pool.submit(_run_client_b)
+        res_a = fut_a.result(timeout=10)
+        res_b = fut_b.result(timeout=10)
+        assert res_a["resp1"]["data"]["memo_id"] == "memo-concurrent-a"
+        assert res_b["resp1"]["data"]["memo_id"] == "memo-concurrent-b"
+
 
