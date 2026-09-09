@@ -13,6 +13,7 @@ from typing import Any, Mapping
 from common import display_name_for, utc_now
 from dispatch_policy import REASON_REVIEW_READY
 from rewrite.task_identity import task_generation
+from task_archive import is_terminal_task
 
 
 WORKER_RECOVERY_TASK_KEY = "worker_recovery"
@@ -441,19 +442,14 @@ def _prune_worker_recovery_receipts(
         return
     protected = {current_receipt_id} if current_receipt_id in receipts else set()
     for task in status.get("tasks", []) or []:
-        pointer = task.get(WORKER_RECOVERY_TASK_KEY)
-        if not isinstance(pointer, Mapping):
+        if not isinstance(task, dict) or is_terminal_task(task):
             continue
-        receipt_id = str(pointer.get("receipt_id") or "")
-        receipt = receipts.get(receipt_id)
-        pointer_status = str(pointer.get("status") or "")
-        if (
-            receipt_id
-            and pointer_status in {"pending", "reassigned"}
-            and isinstance(receipt, Mapping)
-            and str(receipt.get("status") or "") == pointer_status
-        ):
-            protected.add(receipt_id)
+        # Materialization ends assignment fencing, not source continuity.
+        # Keep each live task's current canonical context even while held or
+        # after a lane handoff; never retain its entire previous-receipt chain.
+        receipt = _canonical_worker_recovery_receipt(status, task)
+        if receipt is not None:
+            protected.add(receipt["receipt_id"])
     prunable = sorted(
         (receipt_id for receipt_id in receipts if receipt_id not in protected),
         key=lambda receipt_id: (
@@ -489,39 +485,44 @@ def worker_recovery_responsibility_is_obsolete(
     return task_current_dispatch_responsibility(config, task) != recovery_role
 
 
-def task_has_pending_worker_recovery(task: Mapping[str, Any] | None) -> bool:
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping):
+def _task_worker_recovery_fence_matches(
+    task: Mapping[str, Any] | None, *, statuses: frozenset[str]
+) -> bool:
+    """One pointer policy for dispatch and Human/Ops assignment admission.
+
+    Only an active lifecycle fences assignment. Its relevant authority epoch
+    must be a positive canonical integer; malformed active authority fails
+    closed, while unrelated historical epochs cannot reactivate a resolved
+    receipt. Full receipt validation remains the transition owner's job.
+    """
+
+    if not isinstance(task, Mapping):
         return False
-    try:
-        fence_generation = int(pointer.get("fence_generation") or 0)
-    except (TypeError, ValueError):
+    pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+    if not isinstance(pointer, Mapping) or not str(
+        pointer.get("receipt_id") or ""
+    ).strip():
+        return False
+    status = str(pointer.get("status") or "").strip()
+    if status not in statuses:
+        return False
+    authority_key = "fence_generation" if status == "pending" else "replacement_generation"
+    authority_generation = pointer.get(authority_key)
+    generation = task.get("generation", 1)
+    if any(type(value) is not int or value < 1 for value in (authority_generation, generation)):
         return True
-    return bool(
-        str(pointer.get("receipt_id") or "")
-        and str(pointer.get("status") or "") == "pending"
-        and fence_generation == task_generation(task)
-    )
+    return authority_generation == generation
+
+
+def task_has_pending_worker_recovery(task: Mapping[str, Any] | None) -> bool:
+    return _task_worker_recovery_fence_matches(task, statuses=frozenset({"pending"}))
 
 
 def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
     """Whether typed recovery still uniquely owns assignment mutation."""
 
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping) or not str(
-        pointer.get("receipt_id") or ""
-    ):
-        return False
-    try:
-        fence_generation = int(pointer.get("fence_generation") or 0)
-        replacement_generation = int(pointer.get("replacement_generation") or 0)
-    except (TypeError, ValueError):
-        return True
-    status = str(pointer.get("status") or "")
-    generation = task_generation(task)
-    return bool(
-        (status == "pending" and fence_generation == generation)
-        or (status == "reassigned" and replacement_generation == generation)
+    return _task_worker_recovery_fence_matches(
+        task, statuses=frozenset({"pending", "reassigned"})
     )
 
 
