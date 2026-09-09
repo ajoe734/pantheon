@@ -120,11 +120,9 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
                 "delivery": {"launch_receipt": {"worker": worker}}}}}
                 if receipt_in_phase else {"workers": {run_id: worker}})
             # Production V2 workers read their launch receipt from the
-            # worker-runtime state file, not the retired `.orchestrator` leaf.
-            wr.write_json(
-                central / ".orchestrator" / "worker-runtime" / "state.json",
-                runtime_state,
-            )
+            # worker-runtime state file, not the retired `.orchestrator` leaf;
+            # resolve it the same way worker_runner does.
+            wr.write_json(wr.runtime_state_marker_path(central), runtime_state)
         if during_run:
             during_run(proc, journal, state)
         stdout, stderr = proc.communicate(timeout=timeout)

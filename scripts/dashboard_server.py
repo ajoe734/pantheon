@@ -21,6 +21,16 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
 from common import load_config, read_activity_log_tail_bytes
 
 
+def _runtime_source_file(repo_root: Path, name: str) -> Path:
+    """Prefer the current ``worker-runtime`` layout; the retired flat path is
+    used only while it still holds the real regular file (never a fence)."""
+    modern = repo_root / ".orchestrator" / "worker-runtime" / name
+    legacy = repo_root / ".orchestrator" / name
+    if modern.is_file() or not legacy.is_file():
+        return modern
+    return legacy
+
+
 DASHBOARD_REFRESH_ACTOR_ENV = "PANTHEON_DASHBOARD_REFRESH_ACTOR"
 DASHBOARD_REFRESH_ACTOR_DEFAULT = "Human/ops"
 WORKER_CONTEXT_ENV_NAMES = (
@@ -216,8 +226,8 @@ def main() -> None:
         "/ai-activity-log.jsonl": repo_root / "ai-activity-log.jsonl",
         "/current-work.md": repo_root / "current-work.md",
         "/dashboard-bundle.json": repo_root / "dashboard-bundle.json",
-        "/orchestrator-state.json": repo_root / ".orchestrator" / "state.json",
-        "/approval-queue.json": repo_root / ".orchestrator" / "approval-queue.json",
+        "/orchestrator-state.json": _runtime_source_file(repo_root, "state.json"),
+        "/approval-queue.json": _runtime_source_file(repo_root, "approval-queue.json"),
     }
     # Serve only the last 500 lines of the activity log to keep payload small
     NoCacheRequestHandler.tail_line_map = {

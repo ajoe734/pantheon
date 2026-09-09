@@ -419,7 +419,14 @@ else
   log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
 fi
 
-log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
+# Promotion drains (SIGTERMs) every live worker and the replacement supervisor
+# re-dispatches each one from scratch, so a promotion landing mid-task throws
+# that work away. Give live workers a bounded chance to finish first; the
+# promoter still drains authoritatively once the wait is exhausted.
+# Override with PANTHEON_PROMOTE_WAIT_FOR_IDLE_SECONDS=0 for an urgent cutover.
+PROMOTE_WAIT_FOR_IDLE_SECONDS="${PANTHEON_PROMOTE_WAIT_FOR_IDLE_SECONDS:-900}"
+
+log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT wait_for_idle=${PROMOTE_WAIT_FOR_IDLE_SECONDS}s"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
   --live-config "$LIVE_CONFIG" \
@@ -428,7 +435,8 @@ if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --repository-source-root "pantheon=$DEV_ROOT" \
   --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
   --repository-integration-root "pantheon=$pantheon_integration_root" \
-  --repository-integration-root "execute_plans=$execute_plans_integration_root"; then
+  --repository-integration-root "execute_plans=$execute_plans_integration_root" \
+  --wait-for-idle-seconds "$PROMOTE_WAIT_FOR_IDLE_SECONDS"; then
   log "FATAL: supervisor replacement failed"
   exit 1
 fi

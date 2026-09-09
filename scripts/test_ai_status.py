@@ -18388,5 +18388,91 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertNotIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
 
 
+class RuntimeSourceFenceResolutionTests(unittest.TestCase):
+    """Retired ``.orchestrator/{state,approval-queue}.json`` paths may carry a
+    promotion fence (directory, or FIFO from older promotions).  The resolvers
+    must never hand one back: opening a FIFO blocks forever."""
+
+    def test_resolvers_skip_retired_path_fences(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            self.assertEqual(ai_status.resolve_orchestrator_state_file(root), modern / "state.json")
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root), modern / "approval-queue.json"
+            )
+
+    def test_resolvers_default_to_modern_layout_when_only_fences_remain(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            orch.mkdir()
+            os.mkfifo(str(orch / "state.json"), 0o600)
+            (orch / "approval-queue.json").mkdir()
+
+            self.assertEqual(
+                ai_status.resolve_orchestrator_state_file(root),
+                orch / "worker-runtime" / "state.json",
+            )
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root),
+                orch / "worker-runtime" / "approval-queue.json",
+            )
+
+    def test_real_legacy_files_still_win_while_modern_layout_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "approval-queue.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(ai_status.resolve_orchestrator_state_file(root), orch / "state.json")
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root), orch / "approval-queue.json"
+            )
+
+    def test_load_config_rebinds_bound_state_paths_that_became_fences(self) -> None:
+        # The supervisor binds ORCHESTRATOR_STATE_FILE once at boot; a later
+        # storage migration fenced that path and the dashboard refresh then
+        # blocked on it (2026-09-08).  load_config must re-resolve instead.
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir).resolve()
+            orch = root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            saved = (
+                ai_status.STATUS_ROOT,
+                ai_status.ORCHESTRATOR_STATE_FILE,
+                ai_status.APPROVAL_QUEUE_FILE,
+            )
+            try:
+                ai_status.STATUS_ROOT = root
+                ai_status.ORCHESTRATOR_STATE_FILE = orch / "state.json"
+                ai_status.APPROVAL_QUEUE_FILE = orch / "approval-queue.json"
+                paths = ai_status.load_config()["paths"]
+            finally:
+                (
+                    ai_status.STATUS_ROOT,
+                    ai_status.ORCHESTRATOR_STATE_FILE,
+                    ai_status.APPROVAL_QUEUE_FILE,
+                ) = saved
+
+            self.assertEqual(paths["state_file"], str(modern / "state.json"))
+            self.assertEqual(paths["approval_queue"], str(modern / "approval-queue.json"))
+
+
 if __name__ == "__main__":
     unittest.main()
