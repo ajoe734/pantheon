@@ -8,6 +8,7 @@ human gate decisions, and consultation handoffs.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import multiprocessing as mp
 import os
@@ -128,6 +129,9 @@ def _mp_mounted_freeze_worker(
     worker_id: int,
     shared_freeze_id: str,
     barrier: Any,
+    step_barrier: Any,
+    post_read_event: Any,
+    verify_done_event: Any,
     error_queue: Any,
 ) -> None:
     try:
@@ -153,7 +157,7 @@ def _mp_mounted_freeze_worker(
         )
         assert resp["status"] == "requested"
 
-        # Phase 2: Controlled interleaving transitions on shared freeze order
+        # Phase 2: Controlled transitions on shared freeze order with command-wide lock verification
         barrier.wait(timeout=10)
         if worker_id == 0:
             res_init = main.record_freeze_order(
@@ -172,6 +176,17 @@ def _mp_mounted_freeze_worker(
 
         barrier.wait(timeout=10)
         if worker_id == 1:
+            orig_get = store.get
+
+            def post_read_hook(record_id: str) -> Any:
+                rec = orig_get(record_id)
+                if record_id == shared_freeze_id:
+                    post_read_event.set()
+                    if not verify_done_event.wait(timeout=5):
+                        error_queue.put("Worker 1 timed out waiting for verify_done_event")
+                return rec
+
+            store.get = post_read_hook
             res_act = main.record_freeze_order(
                 body={
                     "freeze_order_id": shared_freeze_id,
@@ -185,9 +200,24 @@ def _mp_mounted_freeze_worker(
                 x_mfa_token=None,
             )
             assert res_act["status"] == "active"
+            step_barrier.wait(timeout=10)
+        elif worker_id == 2:
+            if not post_read_event.wait(timeout=5):
+                error_queue.put("Worker 2 timed out waiting for post_read_event")
+            else:
+                flock_path = Path(path_str).with_name(f".{Path(path_str).name}.flock")
+                fd = os.open(str(flock_path), os.O_CREAT | os.O_RDWR, 0o666)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    error_queue.put("Worker 2: command-wide lock was not held by worker 1 at post-read/pre-write boundary")
+                except (BlockingIOError, OSError):
+                    pass
+                finally:
+                    os.close(fd)
+                verify_done_event.set()
 
-        barrier.wait(timeout=10)
-        if worker_id == 2:
+            step_barrier.wait(timeout=10)
             res_rel = main.record_freeze_order(
                 body={
                     "freeze_order_id": shared_freeze_id,
@@ -201,6 +231,8 @@ def _mp_mounted_freeze_worker(
                 x_mfa_token=None,
             )
             assert res_rel["status"] == "released"
+        else:
+            step_barrier.wait(timeout=10)
 
         barrier.wait(timeout=10)
         # All workers verify that transition from terminal state raises 400
@@ -230,6 +262,9 @@ def _mp_mounted_rollback_worker(
     worker_id: int,
     shared_rb_id: str,
     barrier: Any,
+    step_barrier: Any,
+    post_read_event: Any,
+    verify_done_event: Any,
     error_queue: Any,
 ) -> None:
     try:
@@ -255,7 +290,7 @@ def _mp_mounted_rollback_worker(
         )
         assert resp["status"] == "initiated"
 
-        # Phase 2: Controlled interleaving transitions on shared rollback record
+        # Phase 2: Controlled transitions on shared rollback record with command-wide lock verification
         barrier.wait(timeout=10)
         if worker_id == 0:
             res_init = main.record_rollback(
@@ -274,6 +309,17 @@ def _mp_mounted_rollback_worker(
 
         barrier.wait(timeout=10)
         if worker_id == 1:
+            orig_get = store.get
+
+            def post_read_hook(record_id: str) -> Any:
+                rec = orig_get(record_id)
+                if record_id == shared_rb_id:
+                    post_read_event.set()
+                    if not verify_done_event.wait(timeout=5):
+                        error_queue.put("Worker 1 timed out waiting for verify_done_event")
+                return rec
+
+            store.get = post_read_hook
             res_appr = main.record_rollback(
                 body={
                     "rollback_id": shared_rb_id,
@@ -287,9 +333,24 @@ def _mp_mounted_rollback_worker(
                 x_mfa_token=None,
             )
             assert res_appr["status"] == "approved"
+            step_barrier.wait(timeout=10)
+        elif worker_id == 2:
+            if not post_read_event.wait(timeout=5):
+                error_queue.put("Worker 2 timed out waiting for post_read_event")
+            else:
+                flock_path = Path(path_str).with_name(f".{Path(path_str).name}.flock")
+                fd = os.open(str(flock_path), os.O_CREAT | os.O_RDWR, 0o666)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    error_queue.put("Worker 2: command-wide lock was not held by worker 1 at post-read/pre-write boundary")
+                except (BlockingIOError, OSError):
+                    pass
+                finally:
+                    os.close(fd)
+                verify_done_event.set()
 
-        barrier.wait(timeout=10)
-        if worker_id == 2:
+            step_barrier.wait(timeout=10)
             res_comp = main.record_rollback(
                 body={
                     "rollback_id": shared_rb_id,
@@ -303,6 +364,8 @@ def _mp_mounted_rollback_worker(
                 x_mfa_token=None,
             )
             assert res_comp["status"] == "completed"
+        else:
+            step_barrier.wait(timeout=10)
 
         barrier.wait(timeout=10)
         # All workers verify that transition from terminal status 'completed' raises 400
@@ -332,6 +395,8 @@ def _mp_mounted_human_gate_worker(
     worker_id: int,
     shared_decision_id: str,
     barrier: Any,
+    shared_snapshot_ready: Any,
+    worker_0_committed: Any,
     result_queue: Any,
 ) -> None:
     try:
@@ -384,26 +449,64 @@ def _mp_mounted_human_gate_worker(
             create_status = exc.status_code
 
         # Step 2: Concurrent signatures with CAS conflict handling
+        # Force independent mounted signing handlers to share the expected snapshot
         barrier.wait(timeout=10)
-        role = "approver" if worker_id == 0 else "operator"
         cas_conflict_observed = False
         sign_success = False
-        for attempt in range(5):
+
+        if worker_id == 1:
+            orig_require = api.store.require
+            stale_active = [True]
+            stale_snapshot = None
+
+            def require_shared(dec_id: str) -> Any:
+                nonlocal stale_snapshot
+                if stale_active[0]:
+                    if stale_snapshot is None:
+                        stale_snapshot = orig_require(dec_id)
+                        shared_snapshot_ready.set()
+                        if not worker_0_committed.wait(timeout=10):
+                            raise RuntimeError("Worker 1 timed out waiting for worker 0 to commit")
+                    return stale_snapshot
+                return orig_require(dec_id)
+
+            api.store.require = require_shared
+
             try:
                 main.sign_human_gate(
                     decision_id=shared_decision_id,
-                    body={"role": role},
-                    authorization=_jwt_headers(f"signer-{worker_id}", role, mfa=True),
+                    body={"role": "operator"},
+                    authorization=_jwt_headers("signer-1", "operator", mfa=True),
                     x_mfa_token=None,
                 )
-                sign_success = True
-                break
             except HTTPException as exc:
                 if exc.status_code == 409 and "concurrently" in str(exc.detail):
                     cas_conflict_observed = True
-                    time.sleep(0.02)
-                    continue
-                raise
+                else:
+                    raise
+            finally:
+                stale_active[0] = False
+
+            if cas_conflict_observed:
+                # Explicit retry from fresh state without sleep synchronization
+                main.sign_human_gate(
+                    decision_id=shared_decision_id,
+                    body={"role": "operator"},
+                    authorization=_jwt_headers("signer-1", "operator", mfa=True),
+                    x_mfa_token=None,
+                )
+                sign_success = True
+        elif worker_id == 0:
+            if not shared_snapshot_ready.wait(timeout=10):
+                raise RuntimeError("Worker 0 timed out waiting for shared snapshot capture")
+            main.sign_human_gate(
+                decision_id=shared_decision_id,
+                body={"role": "approver"},
+                authorization=_jwt_headers("signer-0", "approver", mfa=True),
+                x_mfa_token=None,
+            )
+            sign_success = True
+            worker_0_committed.set()
 
         # Step 3: Duplicate signature by same actor -> 409
         barrier.wait(timeout=10)
@@ -412,8 +515,8 @@ def _mp_mounted_human_gate_worker(
             try:
                 main.sign_human_gate(
                     decision_id=shared_decision_id,
-                    body={"role": role},
-                    authorization=_jwt_headers(f"signer-{worker_id}", role, mfa=True),
+                    body={"role": "approver"},
+                    authorization=_jwt_headers("signer-0", "approver", mfa=True),
                     x_mfa_token=None,
                 )
             except HTTPException as exc:
@@ -901,6 +1004,9 @@ def test_mounted_freeze_orders_command_isolation_multiprocess(tmp_path: Path) ->
     store_file = tmp_path / "mounted_freeze_orders.json"
     process_count = 3
     barrier = mp.Barrier(process_count)
+    step_barrier = mp.Barrier(process_count)
+    post_read_event = mp.Event()
+    verify_done_event = mp.Event()
     error_queue = mp.Queue()
     shared_freeze_id = "freeze-mounted-shared-001"
 
@@ -908,7 +1014,16 @@ def test_mounted_freeze_orders_command_isolation_multiprocess(tmp_path: Path) ->
     for wid in range(process_count):
         p = mp.Process(
             target=_mp_mounted_freeze_worker,
-            args=(str(store_file), wid, shared_freeze_id, barrier, error_queue),
+            args=(
+                str(store_file),
+                wid,
+                shared_freeze_id,
+                barrier,
+                step_barrier,
+                post_read_event,
+                verify_done_event,
+                error_queue,
+            ),
         )
         processes.append(p)
         p.start()
@@ -946,6 +1061,9 @@ def test_mounted_rollbacks_command_isolation_multiprocess(tmp_path: Path) -> Non
     store_file = tmp_path / "mounted_rollbacks.json"
     process_count = 3
     barrier = mp.Barrier(process_count)
+    step_barrier = mp.Barrier(process_count)
+    post_read_event = mp.Event()
+    verify_done_event = mp.Event()
     error_queue = mp.Queue()
     shared_rb_id = "rollback-mounted-shared-001"
 
@@ -953,7 +1071,16 @@ def test_mounted_rollbacks_command_isolation_multiprocess(tmp_path: Path) -> Non
     for wid in range(process_count):
         p = mp.Process(
             target=_mp_mounted_rollback_worker,
-            args=(str(store_file), wid, shared_rb_id, barrier, error_queue),
+            args=(
+                str(store_file),
+                wid,
+                shared_rb_id,
+                barrier,
+                step_barrier,
+                post_read_event,
+                verify_done_event,
+                error_queue,
+            ),
         )
         processes.append(p)
         p.start()
@@ -989,16 +1116,34 @@ def test_mounted_human_gates_command_isolation_multiprocess(tmp_path: Path) -> N
     """Mounted human_gate endpoints prove duplicate conflict, concurrent CAS signatures, and duplicate actor rejection across processes."""
     store_file = tmp_path / "mounted_human_gates.json"
     barrier = mp.Barrier(2)
+    shared_snapshot_ready = mp.Event()
+    worker_0_committed = mp.Event()
     result_queue = mp.Queue()
     shared_decision_id = "hgd-mounted-mp-001"
 
     p0 = mp.Process(
         target=_mp_mounted_human_gate_worker,
-        args=(str(store_file), 0, shared_decision_id, barrier, result_queue),
+        args=(
+            str(store_file),
+            0,
+            shared_decision_id,
+            barrier,
+            shared_snapshot_ready,
+            worker_0_committed,
+            result_queue,
+        ),
     )
     p1 = mp.Process(
         target=_mp_mounted_human_gate_worker,
-        args=(str(store_file), 1, shared_decision_id, barrier, result_queue),
+        args=(
+            str(store_file),
+            1,
+            shared_decision_id,
+            barrier,
+            shared_snapshot_ready,
+            worker_0_committed,
+            result_queue,
+        ),
     )
     p0.start()
     p1.start()
@@ -1017,7 +1162,10 @@ def test_mounted_human_gates_command_isolation_multiprocess(tmp_path: Path) -> N
     create_statuses = {results[0]["create_status"], results[1]["create_status"]}
     assert create_statuses == {201, 409}
 
-    # Both workers succeeded signing
+    # Worker 1 observed 409 concurrent conflict on shared snapshot
+    assert results[1]["cas_conflict_observed"] is True
+
+    # Both workers succeeded signing (worker 1 after explicit retry from fresh state)
     assert results[0]["sign_success"] is True
     assert results[1]["sign_success"] is True
 

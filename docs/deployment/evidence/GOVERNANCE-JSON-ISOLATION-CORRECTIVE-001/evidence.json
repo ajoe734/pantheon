@@ -25,7 +25,7 @@
     },
     "multiprocess_concurrency": {
       "status": "satisfied",
-      "implementation": "services/governance/record_store.py: Independent OS processes writing distinct records concurrently coordinate via POSIX file locking on .<storage_name>.flock, preserving 100% of all distinct records without dropping or corrupting data."
+      "implementation": "services/governance/record_store.py: Independent OS processes writing distinct records concurrently coordinate via POSIX file locking on .<storage_name>.json.flock, preserving 100% of all distinct records without dropping or corrupting data."
     },
     "insert_if_absent_duplicate_rejection": {
       "status": "satisfied",
@@ -48,14 +48,14 @@
       "backend_call_site_inventory": {
         "freeze_orders": {
           "backend": "json (JsonGovernanceRecordStore)",
-          "store_path": "data/governance/freeze_orders.json",
-          "flock_path": "data/governance/.freeze_orders.flock",
+          "store_path": "GOVERNANCE_DATA_DIR/freeze_orders.json (default: data/governance/freeze_orders.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.freeze_orders.json.flock (default: data/governance/.freeze_orders.json.flock)",
           "mounted_handlers": [
-            "POST /api/v1/governance/freeze (main.record_freeze_order)"
+            "POST /api/governance/freeze-orders (main.record_freeze_order)"
           ],
           "command_locks": [
-            "store.lock() (POSIX file lock + in-process store lock)",
-            "_freeze_command_lock (in-process asyncio command lock at main.py:1044)"
+            "store.lock() (POSIX file lock on .freeze_orders.json.flock + in-process store RLock)",
+            "_freeze_order_lock (in-process threading.Lock at main.py:446)"
           ],
           "tests": [
             "services/governance/test_record_store_isolation.py::test_mounted_consumer_freeze_orders_multiprocess",
@@ -66,14 +66,14 @@
         },
         "rollbacks": {
           "backend": "json (JsonGovernanceRecordStore)",
-          "store_path": "data/governance/rollbacks.json",
-          "flock_path": "data/governance/.rollbacks.flock",
+          "store_path": "GOVERNANCE_DATA_DIR/rollbacks.json (default: data/governance/rollbacks.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.rollbacks.json.flock (default: data/governance/.rollbacks.json.flock)",
           "mounted_handlers": [
-            "POST /api/v1/governance/rollbacks (main.record_rollback)"
+            "POST /api/governance/rollbacks (main.record_rollback)"
           ],
           "command_locks": [
-            "store.lock() (POSIX file lock + in-process store lock)",
-            "_rollback_command_lock (in-process asyncio command lock at main.py:1176)"
+            "store.lock() (POSIX file lock on .rollbacks.json.flock + in-process store RLock)",
+            "_rollback_lock (in-process threading.Lock at main.py:447)"
           ],
           "tests": [
             "services/governance/test_record_store_isolation.py::test_mounted_consumer_rollbacks_multiprocess",
@@ -84,16 +84,17 @@
         },
         "human_gate_decisions": {
           "backend": "json (JsonGovernanceRecordStore via GovernanceHumanGateDecisionStore)",
-          "store_path": "data/governance/human_gate_decisions.json",
-          "flock_path": "data/governance/.human_gate_decisions.flock",
+          "store_path": "GOVERNANCE_DATA_DIR/human_gate_decisions.json (default: data/governance/human_gate_decisions.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.human_gate_decisions.json.flock (default: data/governance/.human_gate_decisions.json.flock)",
           "mounted_handlers": [
-            "POST /api/v1/governance/human-gates (main.create_human_gate)",
-            "POST /api/v1/governance/human-gates/{gate_id}/sign (main.sign_human_gate)",
-            "POST /api/v1/governance/human-gates/{gate_id}/revoke (main.revoke_human_gate)"
+            "POST /api/governance/human-gates (main.create_human_gate)",
+            "POST /api/governance/human-gates/{decision_id}/signatures (main.sign_human_gate)",
+            "POST /api/governance/human-gates/{decision_id}/revoke (main.revoke_human_gate)"
           ],
           "concurrency_control": [
-            "insert_if_absent on creation (rejects duplicate gate_id with HTTP 409 conflict)",
-            "put_if_matches CAS on signatures/revocations (rejects concurrent mismatch with HTTP 409 conflict, enabling client retry)"
+            "insert_if_absent on creation (rejects duplicate decision_id with HTTP 409 conflict)",
+            "put_if_matches CAS on signatures/revocations (rejects concurrent mismatch with HTTP 409 conflict, enabling client retry from fresh state)",
+            "_human_gate_lock (in-process threading.Lock at main.py:448)"
           ],
           "tests": [
             "services/governance/test_record_store_isolation.py::test_mounted_consumer_human_gates_multi_instance",
@@ -103,22 +104,24 @@
           ]
         },
         "consultation_handoffs": {
-          "backend": "json (JsonGovernanceRecordStore via ConsultationHandoffStore)",
-          "store_path": "data/governance/consultation_handoffs.json",
-          "flock_path": "data/governance/.consultation_handoffs.flock",
+          "backend": "json (JsonGovernanceRecordStore via build_governance_record_store)",
+          "store_path": "GOVERNANCE_DATA_DIR/consultation_handoffs.json (default: data/governance/consultation_handoffs.json)",
+          "flock_path": "GOVERNANCE_DATA_DIR/.consultation_handoffs.json.flock (default: data/governance/.consultation_handoffs.json.flock)",
           "mounted_handlers": [
-            "POST /api/v1/governance/consultation-handoffs (main.create_consultation_handoff)"
+            "POST /api/governance/consultation-handoffs (main.accept_consultation_handoff)"
           ],
           "concurrency_control": [
             "insert_if_absent idempotency (exact replay returns 200 with matching payload, duplicate mismatch returns HTTP 409 conflict)"
           ],
           "tests": [
             "services/governance/test_record_store_isolation.py::test_mounted_consumer_consultation_handoff_multi_instance",
-            "services/governance/test_consultation_handoff.py::test_create_consultation_handoff_success",
-            "services/governance/test_consultation_handoff.py::test_create_consultation_handoff_idempotency_duplicate_success",
-            "services/governance/test_consultation_handoff.py::test_create_consultation_handoff_conflict_rejected"
+            "services/governance/test_consultation_handoff.py::test_handoff_is_durable_exact_and_idempotent",
+            "services/governance/test_consultation_handoff.py::test_handoff_fails_closed_on_identity_and_tenant",
+            "services/governance/test_consultation_handoff.py::test_handoff_rejects_wrong_idempotency_binding",
+            "services/governance/test_consultation_handoff.py::test_handoff_rejects_published_token_in_enforced_posture",
+            "services/governance/test_consultation_handoff.py::test_consultation_handoff_multi_instance_isolation"
           ],
-          "coverage_note": "Consultation handoff HTTP route tests cover sequential operations, idempotent replays, and conflict rejection. Controlled multi-instance concurrent insertion semantics are verified by test_mounted_consumer_consultation_handoff_multi_instance."
+          "coverage_note": "Consultation handoff HTTP route tests cover sequential operations, idempotent replays, security failures, and conflict rejection. Controlled multi-instance concurrent insertion semantics are verified by test_mounted_consumer_consultation_handoff_multi_instance."
         }
       }
     }
@@ -190,7 +193,21 @@
       }
     ],
     "total_tests_passed": 139,
-    "total_tests_skipped": 3
+    "total_tests_skipped": 3,
+    "mutation_probe": {
+      "runner": ".venv-pantheon/bin/python3 /tmp/governance_r1_lock_coverage_probe.py",
+      "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 /tmp/governance_r1_lock_coverage_probe.py",
+      "result": "PASSED (both test_mounted_freeze_orders_command_isolation_multiprocess and test_mounted_rollbacks_command_isolation_multiprocess fail with AssertionError when JsonGovernanceRecordStore.lock is made nullcontext, proving command-wide lock coverage)",
+      "exit_code": 0
+    },
+    "tested_source_hashes": {
+      "services/governance/record_store.py": "42b82dc679d1dfdf6b851b7b844840cc9fae9d311d82e9798260a310380d0e4a",
+      "services/governance/main.py": "9fe9c9db46abc8d0a2dfe982ac15388a40890925d09cf152e22a0654d2230293",
+      "services/governance/test_record_store_isolation.py": "f6814de0af36a533698209aac6ac60eae74d5ee70817d4bbc16e95621e7dd4f5",
+      "services/governance/test_freeze_rollback_store.py": "998686d1658aa8559d835b89c71f9c1c4e4636c9b4bda6584c4a457377605e13",
+      "services/governance/test_consultation_handoff.py": "5a078f85f2a9d13a371da4a3044c6d473c9cb5672d025e3c27eb04f3d4e4df2d",
+      "services/governance/test_human_gate_api.py": "a16cc3a81ed825408d107741ee2e1f5a7d8c965ece8582097b3ab56f26f19580"
+    }
   },
   "artifacts": [
     "services/governance/record_store.py",

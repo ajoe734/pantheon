@@ -293,21 +293,23 @@ def test_mounted_human_gate_interleaved_conflict_isolation(tmp_path, monkeypatch
     )
     assert len(s_a["signatures"]) == 1
 
-    # Instance B attempting to append signature based on stale snapshot receives CAS conflict
+    # Instance B uses mounted signing handler sharing the expected snapshot to prove 409 conflict
     monkeypatch.setattr(main, "human_gate_record_store", records_b)
     monkeypatch.setattr(main, "human_gate_api", api_b)
-    with pytest.raises(SignoffApiError) as cas_exc:
-        api_b.store.put_if_matches(
-            snapshot_b,
-            snapshot_b.with_signature(
-                s_a["signatures"][0]
-                if isinstance(s_a["signatures"][0], HumanGateSignature)
-                else HumanGateSignature.from_dict(s_a["signatures"][0])
-            ),
+    orig_require_b = api_b.store.require
+    api_b.store.require = lambda dec_id: snapshot_b
+    with pytest.raises(HTTPException) as cas_exc:
+        main.sign_human_gate(
+            decision_id=decision_id,
+            body={"role": "operator"},
+            authorization=_headers("operator-1", "operator", mfa=True)["Authorization"],
+            x_mfa_token=None,
         )
-    assert "human gate changed concurrently" in str(cas_exc.value)
+    assert cas_exc.value.status_code == 409
+    assert "human gate changed concurrently" in str(cas_exc.value.detail)
 
-    # Instance B uses mounted handler, which rereads canonical decision under coordination and appends operator signature
+    # Explicit retry from fresh state without sleep synchronization
+    api_b.store.require = orig_require_b
     s_b = main.sign_human_gate(
         decision_id=decision_id,
         body={"role": "operator"},
