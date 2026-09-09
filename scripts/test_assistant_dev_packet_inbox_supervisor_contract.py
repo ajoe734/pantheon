@@ -29,8 +29,12 @@ def test_supervisor_drains_assistant_dev_inbox_after_hot_dispatch() -> None:
 def test_supervisor_bridge_import_uses_local_tooling_only() -> None:
     source = SUPERVISOR.read_text(encoding="utf-8")
 
-    assert 'tooling_dir = THIS_DIR' in source
-    assert 'repo_tooling_dir = repo_root / ".orchestrator"' in source
+    tooling_helper = source[
+        source.index("def assistant_dev_bridge_tooling_dirs"):
+        source.index("def assistant_dev_bridge_allowed_repositories")
+    ]
+    assert 'return [THIS_DIR]' in tooling_helper
+    assert 'repo_root / ".orchestrator"' not in tooling_helper
     assert "tooling_dirs = assistant_dev_bridge_tooling_dirs(repo_root)" in source
     assert "for tooling_dir in reversed(tooling_dirs):" in source
     assert '"searched_tooling_dirs": [str(path) for path in tooling_dirs]' in source

@@ -62,7 +62,10 @@ class RegistryStore:
     """Thread-safe in-memory registry entry store."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # Admission callbacks execute under the owner CAS lock and may perform
+        # read-only lineage lookups in this same store. Reentrancy lets that
+        # thread read its approved parent while still serializing other writers.
+        self._lock = threading.RLock()
         # registry_id -> RegistryEntry
         self._entries: dict[str, RegistryEntry] = {}
         # strategy_id -> list of registry_ids (for index)
@@ -767,4 +770,3 @@ def reset_store() -> None:
     global _default_store
     with _store_lock:
         _default_store = None
-

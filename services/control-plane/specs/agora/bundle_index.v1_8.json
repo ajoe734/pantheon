@@ -3,7 +3,7 @@
   "extends": {
     "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_7.json",
     "bundle_version": "1.7",
-    "bundle_index_sha256": "bf5290191e8fd651c21583ef68b67d119c0da8b51c20a53483c76680146ec69f"
+    "bundle_index_sha256": "f63a9cd19dece691afbffade13899082f4c463472d59db9592a852408befbd8b"
   },
   "files": {
     "specs/agora/v9/workshop_live_operations.schema.json": "602828f57d03b168c2ea5f6375ab0b141d39635f70ee5140db21f5d7a253fc06",

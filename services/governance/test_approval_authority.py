@@ -32,8 +32,8 @@ class SnapshotApprovalReader:
             raise ApprovalInvalid('Governance exact decision ID mismatch')
         return evidence
 
-    def verify(self, decision_id, *, expected, now=None):
-        return self.get(decision_id).require_valid(expected=expected, now=now)
+    def verify(self, decision_id, *, expected, now=None, usage_context=None):
+        return self.get(decision_id).require_valid(expected=expected, now=now, usage_context=usage_context)
 
 
 def registry_approval_fixture(entry, *, approver='unit-reviewer', decision_id='approval-unit'):

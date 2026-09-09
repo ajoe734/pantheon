@@ -2413,7 +2413,11 @@ class RealGitExactHeadIntegrationTests(unittest.TestCase):
 
 
 FAKE_GH = r"""#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$GH_LOG"
+if [[ "${GH_AUTH_FAIL:-0}" == "1" ]]; then
+  echo "gh: authentication failed" >&2
+  exit 4
+fi
+printf '%s\n' "$*" >> "$GH_LOG"
 if [[ "$1 $2" == "pr list" ]]; then
   if [[ "${GH_PR_LIST_FAIL:-0}" == "1" ]]; then
     exit 1
@@ -2763,6 +2767,198 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertNotIn("--disable-auto", calls)
         self.assertIn("auto-merge was already off", proc.stdout)
+
+    def _run_finalize_linked_worktree(
+        self,
+        task: Mapping[str, Any],
+        *,
+        auto_merge_state: str = "off",
+        existing_pr: bool = False,
+        protect_config: bool = True,
+        auth_fails: bool = False,
+        remote_rejects: bool = False,
+        on_wrong_branch: bool = False,
+        zero_commits_ahead: bool = False,
+    ) -> tuple[subprocess.CompletedProcess[str], str, Path, Path, bytes]:
+        tmp = Path(tempfile.mkdtemp(prefix="task-finalize-gate-wt-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        origin = tmp / "origin.git"
+        self._git(["init", "--bare", "--initial-branch=dev", str(origin)], cwd=tmp)
+
+        central = tmp / "central"
+        self._git(["init", "--initial-branch=dev", str(central)], cwd=tmp)
+        self._git(["config", "user.email", "gate@example.test"], cwd=central)
+        self._git(["config", "user.name", "Gate Fixture"], cwd=central)
+        self._git(["remote", "add", "origin", str(origin)], cwd=central)
+
+        helpers = central / "scripts" / "git"
+        helpers.mkdir(parents=True)
+        source = Path(__file__).resolve().parent
+        for name in (
+            "check_commit_trailers.py",
+            "safe_pr.sh",
+            "task_finalize.sh",
+            "task_review_merge_gate.py",
+            "worker_commit.py",
+        ):
+            (helpers / name).write_text((source / name).read_text(encoding="utf-8"), encoding="utf-8")
+        orchestrator = central / ".orchestrator"
+        orchestrator.mkdir()
+        (orchestrator / "common.py").write_text(
+            (source.parents[1] / ".orchestrator" / "common.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (helpers / "check_commit_trailers.py").chmod(0o755)
+        (helpers / "safe_pr.sh").chmod(0o755)
+        (helpers / "task_finalize.sh").chmod(0o755)
+        (helpers / "worker_commit.py").chmod(0o755)
+        (central / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        self._git(["add", "-A"], cwd=central)
+        self._git(["commit", "-m", "base", "--no-verify"], cwd=central)
+        self._git(["push", "-u", "origin", "dev"], cwd=central)
+
+        if remote_rejects:
+            hook = origin / "hooks" / "pre-receive"
+            hook.write_text("#!/bin/sh\necho 'remote push rejected' >&2\nexit 1\n", encoding="utf-8")
+            hook.chmod(0o755)
+
+        worktree = tmp / "worktree"
+        branch_name = f"task/{task['id']}"
+        self._git(["worktree", "add", "-b", branch_name, str(worktree)], cwd=central)
+        if not zero_commits_ahead:
+            (worktree / "delivery.txt").write_text("delivered\n", encoding="utf-8")
+            self._git(["add", "delivery.txt"], cwd=worktree)
+            self._git(["commit", "-m", f"{task['id']}: deliver", "--no-verify"], cwd=worktree)
+
+        if on_wrong_branch:
+            self._git(["checkout", "-b", "wrong-branch"], cwd=worktree)
+
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "gh").write_text(FAKE_GH, encoding="utf-8")
+        (bin_dir / "gh").chmod(0o755)
+
+        env = self._fake_gh_env(
+            tmp,
+            worktree,
+            auto_merge_state=auto_merge_state,
+            revoke_fails=False,
+            existing_pr=existing_pr,
+        )
+        if auth_fails:
+            env["GH_AUTH_FAIL"] = "1"
+
+        config_file = central / ".git" / "config"
+        config_bytes = config_file.read_bytes()
+        if protect_config:
+            config_file.chmod(0o444)
+            (central / ".git").chmod(0o555)
+
+            def _restore() -> None:
+                try:
+                    (central / ".git").chmod(0o755)
+                    config_file.chmod(0o644)
+                except OSError:
+                    pass
+            self.addCleanup(_restore)
+
+        proc = subprocess.run(
+            ["bash", "scripts/git/task_finalize.sh", str(task["id"])],
+            cwd=str(worktree),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        log_content = (tmp / "gh.log").read_text(encoding="utf-8") if (tmp / "gh.log").exists() else ""
+        return proc, log_content, central, origin, config_bytes
+
+    def test_task_finalize_linked_worktree_with_protected_config_succeeds(self) -> None:
+        task = task_row(id="ABC-001", status="in_progress")
+        proc, calls, central, origin, config_bytes = self._run_finalize_linked_worktree(task)
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("auto-merge was already off", proc.stdout)
+        self.assertIn("pr create", calls)
+        # Verify protected config was never modified
+        self.assertEqual((central / ".git" / "config").read_bytes(), config_bytes)
+        # Verify explicit task branch was pushed to origin
+        out = subprocess.run(
+            ["git", "rev-parse", "refs/heads/task/ABC-001"],
+            cwd=str(origin),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertTrue(out.stdout.strip())
+        # Verify dev ref on origin was not modified
+        dev_out = subprocess.run(
+            ["git", "rev-parse", "refs/heads/dev"],
+            cwd=str(origin),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertTrue(dev_out.stdout.strip())
+
+    def test_task_finalize_linked_worktree_existing_pr_reuse(self) -> None:
+        task = task_row(id="ABC-001", status="in_progress")
+        proc, calls, central, origin, config_bytes = self._run_finalize_linked_worktree(
+            task,
+            existing_pr=True,
+            auto_merge_state="armed",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("pr create", calls)
+        self.assertIn("pr merge 1 --disable-auto", calls)
+        self.assertIn("standing auto-merge request revoked and verified off", proc.stdout)
+        self.assertEqual((central / ".git" / "config").read_bytes(), config_bytes)
+
+    def test_task_finalize_linked_worktree_fails_on_wrong_branch(self) -> None:
+        task = task_row(id="ABC-001", status="in_progress")
+        proc, calls, central, origin, config_bytes = self._run_finalize_linked_worktree(
+            task,
+            on_wrong_branch=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("ERROR: not on task/ABC-001", proc.stderr)
+        self.assertNotIn("→ push", proc.stdout)
+        self.assertNotIn("pr create", calls)
+
+    def test_task_finalize_linked_worktree_fails_on_zero_commits_ahead(self) -> None:
+        task = task_row(id="ABC-001", status="in_progress")
+        proc, calls, central, origin, config_bytes = self._run_finalize_linked_worktree(
+            task,
+            zero_commits_ahead=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("nothing to PR", proc.stderr)
+        self.assertNotIn("→ push", proc.stdout)
+        self.assertNotIn("pr create", calls)
+
+    def test_task_finalize_linked_worktree_fails_on_remote_push_failure(self) -> None:
+        task = task_row(id="ABC-001", status="in_progress")
+        proc, calls, central, origin, config_bytes = self._run_finalize_linked_worktree(
+            task,
+            remote_rejects=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("open PR", proc.stdout)
+        self.assertNotIn("pr create", calls)
+
+    def test_task_finalize_linked_worktree_fails_on_auth_failure(self) -> None:
+        task = task_row(id="ABC-001", status="in_progress")
+        proc, calls, central, origin, config_bytes = self._run_finalize_linked_worktree(
+            task,
+            auth_fails=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("refusing to push", proc.stderr)
+        self.assertNotIn("→ push", proc.stdout)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,9 @@
 Worktree preparation, safe reuse/refresh, dirt classification, dirty
 archive, registered-lease cleanup, and orphan pruning for worker
 worktrees, moved out of .orchestrator/supervisor.py. Operates on
-explicit config/state/path inputs and git worktree state only; it does
-not read or write canonical task records and does not decide dispatch.
+explicit config/state/path inputs and git worktree state. Recovery reads
+canonical eligibility and delegates receipt publication to the supervisor's
+existing TaskStore transaction; it never owns task transitions or dispatch.
 supervisor.py retains cycle timing (interval gating in its callers),
 worker task-brief/context materialization, and tree-guard policy.
 
@@ -18,22 +19,27 @@ supervisor.py's top level without a circular import.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
-import shutil
+import stat
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from adapters.base import DeliveryRequest
 from common import (
+    _fsync_directory,
     config_path,
+    durable_write_bytes,
     first_symlink_component,
     load_status,
     normalize_github_repo_slug,
+    read_regular_file_bytes,
+    read_regular_file_snapshot,
     utc_now,
 )
 from dispatch_policy import (
@@ -52,7 +58,10 @@ from multi_repo_registry import (
     validate_task_repository_scope,
 )
 from rewrite.task_identity import task_generation
-from rewrite.worker_recovery import _canonical_worker_recovery_receipt
+from rewrite.worker_recovery import (
+    _canonical_worker_recovery_receipt,
+    worker_recovery_workspace_facts,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -715,7 +724,7 @@ def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
     return proc.returncode == 0
 
 
-def _lost_lease_replacement_may_adopt_worktree(
+def _lost_lease_replacement_may_recover_worktree(
     config: dict[str, Any],
     state: dict[str, Any],
     request: DeliveryRequest,
@@ -729,7 +738,7 @@ def _lost_lease_replacement_may_adopt_worktree(
     queue_event_id: str | None,
     target_agent: str | None,
 ) -> bool:
-    """True only for the exact fenced replacement and its registered worktree.
+    """Authorize WIP quarantine only for the exact fenced replacement.
 
     A receipt only reaches ``reassigned`` after `_persist_task_reassignment_locked`
     CAS'd it out of ``pending``, and it only reaches ``pending`` after
@@ -785,20 +794,19 @@ def _lost_lease_replacement_may_adopt_worktree(
         return False
     if replacement_generation != generation or request_generation != generation:
         return False
-    role = str(receipt.get("recovery_role") or "owner")
-    expected_actor = str(
-        replacement.get("agent")
-        or (
-            replacement.get("reviewer")
-            if role == "reviewer"
-            else replacement.get("owner")
-        )
-        or ""
-    )
+    role = str(receipt.get("recovery_role") or "")
+    if (
+        role not in {"owner", "reviewer"}
+        or supervisor.task_current_dispatch_responsibility(config, task) != role
+        or replacement.get("role") != role
+    ):
+        return False
+    expected_actor = str(replacement.get("agent") or "")
     actual_actor = supervisor.canonical_agent_name(config, str(target_agent or ""))
     if (
         not expected_actor
         or supervisor.canonical_agent_name(config, expected_actor) != actual_actor
+        or supervisor.canonical_agent_name(config, str(task.get(role) or "")) != actual_actor
         or str(replacement.get("owner") or "") != str(task.get("owner") or "")
         or str(replacement.get("reviewer") or "")
         != str(task.get("reviewer") or "")
@@ -873,7 +881,6 @@ def _refresh_reused_worker_worktree(
     *,
     task_id: str | None = None,
     branch: str | None = None,
-    allow_dirty_wip_adoption: bool = False,
 ) -> tuple[bool, str]:
     """Fast-forward a reused worker worktree to the cycle's pinned base SHA.
 
@@ -887,13 +894,11 @@ def _refresh_reused_worker_worktree(
     `git merge --ff-only <base-sha>`. Never auto-resolve a real merge — if the branch genuinely
     diverged, leave it for the worker to handle. Dirty reused worktrees are
     blocked before dispatch so workers cannot inherit unrelated staged or
-    tracked changes, unless `allow_dirty_wip_adoption` proves this is the
-    exact fenced lost-lease replacement taking over its own task's worktree;
-    that WIP is left untouched (no reset/clean/stash/commit) and dispatch
-    proceeds without the base-SHA refresh below.
+    tracked changes. A qualified lost-lease replacement quarantines its WIP
+    through the single recovery path before reaching this ordinary refresh.
     """
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain", "--untracked-files=all"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -901,19 +906,16 @@ def _refresh_reused_worker_worktree(
     )
     scratch_restored = False
     index_restored = False
+    if status_proc.returncode != 0:
+        return False, "worktree_status_failed"
     if status_proc.returncode == 0 and status_proc.stdout.strip():
         classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
         if classification == "real":
-            if allow_dirty_wip_adoption:
-                return True, "adopted_lost_lease_dirty_wip"
             index_split_paths = _staged_index_split_paths_matching_head(worktree_path)
             if index_split_paths and _restore_reused_index_split(worktree_path, index_split_paths):
                 index_restored = True
-            # No restorable staged index-split (or a failed restore) is NOT fatal:
-            # fall through to re-classify and anchor genuine task WIP below instead
-            # of hard-blocking dispatch forever. The previous early return here made
-            # the auto-anchor unreachable for plain unstaged real dirt -- the common
-            # case (a superseded run leaves modified-but-unstaged task files).
+            # Repair only the index split; genuine source WIP still blocks an
+            # ordinary dispatch. The supervisor never invents an anchor commit.
             status_proc = subprocess.run(
                 ["git", "status", "--porcelain", "--untracked-files=all"],
                 cwd=worktree_path,
@@ -935,15 +937,14 @@ def _refresh_reused_worker_worktree(
         # worktree instead of jamming dispatch on regenerable bookkeeping churn.
         if scratch_paths:
             _restore_reusable_scratch(worktree_path, scratch_paths)
-            verify_untracked = "all" if index_restored else "no"
             verify_proc = subprocess.run(
-                ["git", "status", "--porcelain", f"--untracked-files={verify_untracked}"],
+                ["git", "status", "--porcelain", "--untracked-files=all"],
                 cwd=worktree_path,
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            if verify_proc.returncode == 0 and verify_proc.stdout.strip():
+            if verify_proc.returncode != 0 or verify_proc.stdout.strip():
                 return False, "skipped_dirty_worktree"
             scratch_restored = True
 
@@ -971,7 +972,9 @@ def _refresh_reused_worker_worktree(
         suffix = f"+{'+'.join(status_suffixes)}" if status_suffixes else ""
         return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
     details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
-    return False, f"non_fast_forward: {details}"
+    if worker_worktree_base_relation(worktree_path, base_sha) == "diverged":
+        return False, "skipped_non_fast_forward"
+    return False, f"merge_failed: {details}"
 
 
 def _recovery_worktree_archive_root(config: dict[str, Any]) -> Path:
@@ -984,145 +987,239 @@ def _recovery_worktree_archive_root(config: dict[str, Any]) -> Path:
     return archive_root.resolve()
 
 
-def _recovery_worktree_has_stale_adopted_wip(
-    state: dict[str, Any],
-    *,
-    task_id: str,
-    worktree_path: Path,
-    recovery_receipt_id: str | None = None,
-) -> bool:
-    """Return whether a prior lost-lease replacement already adopted WIP.
-
-    Dirty-WIP adoption is intentionally a one-shot handoff.  A second lost
-    lease must not keep inheriting the same rejected tree indefinitely; it must
-    archive the snapshot and start from the pinned base instead.
-    """
-
-    leases = (state.get("worker_worktrees") or {}).get("leases") or {}
-    lease = leases.get(task_id)
-    if not isinstance(lease, Mapping):
-        return False
-    try:
-        leased_path = Path(str(lease.get("path") or "")).expanduser().resolve()
-    except (OSError, RuntimeError, ValueError):
-        return False
-    if leased_path != worktree_path.resolve():
-        return False
-    current_receipt = str(recovery_receipt_id or "").strip()
-    prior_receipt = str(
-        lease.get("recovery_receipt_id")
-        or lease.get("dirty_wip_adoption_receipt_id")
-        or ""
-    ).strip()
-    # A duplicate dispatch for the same recovery receipt is the same handoff
-    # and may continue using its adopted WIP. A later receipt means the prior
-    # handoff has ended; archive/reset before another worker touches the tree.
-    # An empty current receipt is ordinary reuse and cannot inherit recovery
-    # WIP either.
-    return bool(prior_receipt and prior_receipt != current_receipt)
-
-
-def _replace_recovery_worktree_from_base(
+def _quarantine_recovery_worktree(
     repo_root: Path,
     worktree_path: Path,
     *,
     branch: str,
-    base_sha: str,
     archive_root: Path,
     task_id: str,
+    repository_id: str,
     max_file_bytes: int,
-) -> tuple[bool, str, Path | None, str | None]:
-    """Archive a stale recovery tree and recreate its task branch at base.
+    publish_archive: Callable[[dict[str, Any]], bool],
+    existing_archive: Mapping[str, Any] | None = None,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Quarantine WIP without changing the committed task branch.
 
-    The old worktree is preserved as a patch/file archive and its previous
-    branch tip is retained under a private recovery ref before the task branch
-    is reset to the immutable cycle base.  This keeps rejected WIP recoverable
-    without allowing it to become the next worker's source tree.
+    The canonical recovery receipt records the complete archive BEFORE any
+    source restoration. Retrying that exact binding resumes the same operation;
+    ignored files, committed source, and other worktrees are never removed.
     """
-
-    branch_ref = f"refs/heads/{branch}"
-    old_head = subprocess.run(
-        ["git", "rev-parse", "--verify", f"{branch_ref}^{{commit}}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    old_sha = str(old_head.stdout or "").strip()
-    if old_head.returncode != 0 or not old_sha:
-        return False, "recovery_branch_tip_unresolved", None, None
-
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    ref_slug = _task_id_slug(task_id)
-    recovery_ref = f"refs/pantheon/recovery/{ref_slug}/{stamp}-{os.getpid()}"
-    backup = subprocess.run(
-        ["git", "update-ref", recovery_ref, branch_ref],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if backup.returncode != 0:
-        return False, "recovery_branch_backup_failed", None, None
-
-    archive_dir = _archive_dirty_worktree(
-        worktree_path,
-        archive_root,
-        reason="recovery_replacement_stale_dirty_wip",
-        max_file_bytes=max_file_bytes,
-    )
-    if archive_dir is None:
-        subprocess.run(
-            ["git", "update-ref", recovery_ref],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
+    def git(*args: str, raw: bool = False) -> subprocess.CompletedProcess[Any]:
+        return subprocess.run(
+            ["git", "-C", str(worktree_path), *args],
+            capture_output=True, text=not raw, check=False,
         )
-        return False, "recovery_wip_archive_failed", None, None
 
+    head = git("rev-parse", "--verify", "HEAD^{commit}")
+    checked_branch = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    if head.returncode or checked_branch.returncode or checked_branch.stdout.strip() != branch:
+        return False, "recovery_branch_identity_mismatch", None
+    current_head = head.stdout.strip()
+    source_head = current_head
+    binding = dict(existing_archive) if existing_archive is not None else None
     try:
-        manifest_path = archive_dir / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["preserved_branch_ref"] = recovery_ref
-        manifest["preserved_branch_head"] = old_sha
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        if binding is None:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            ref_slug = _task_id_slug(task_id)
+            recovery_ref = f"refs/pantheon/recovery/{ref_slug}/{stamp}-{os.getpid()}-{time.time_ns()}"
+            backup = subprocess.run(
+                ["git", "-C", str(repo_root), "update-ref", recovery_ref, source_head, ""],
+                capture_output=True, text=True, check=False,
+            )
+            if backup.returncode:
+                return False, "recovery_branch_backup_failed", None
+            archive_dir = _archive_dirty_worktree(
+                worktree_path, archive_root,
+                reason="recovery_uncommitted_wip_quarantine",
+                max_file_bytes=max_file_bytes,
+            )
+            if archive_dir is None:
+                return False, "recovery_wip_archive_failed", None
+            binding = {
+                "repository_id": repository_id,
+                "workspace_path": str(worktree_path),
+                "branch": branch,
+                "source_head": source_head,
+                "archive_path": str(archive_dir),
+                "preserved_branch_ref": recovery_ref,
+            }
+            manifest_path = archive_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.update(preserved_branch_ref=recovery_ref, preserved_branch_head=source_head)
+            durable_write_bytes(
+                manifest_path,
+                (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+            )
+        else:
+            source_head = str(binding.get("source_head") or "")
+            archive_dir = Path(str(binding.get("archive_path") or ""))
+            if (
+                binding.get("repository_id") != repository_id
+                or binding.get("branch") != branch
+                or re.fullmatch(r"[0-9a-f]{40,64}", source_head) is None
+                or Path(str(binding.get("workspace_path") or "")).resolve() != worktree_path.resolve()
+                or not archive_dir.resolve().is_relative_to(archive_root.resolve())
+                or archive_dir.resolve() == archive_root.resolve()
+                or first_symlink_component(archive_dir) is not None
+                or not str(binding.get("preserved_branch_ref") or "").startswith(
+                    f"refs/pantheon/recovery/{_task_id_slug(task_id)}/"
+                )
+            ):
+                return False, "recovery_archive_binding_mismatch", binding
+            manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+
+        if not isinstance(manifest, dict) or manifest.get("complete") is not True:
+            return False, "recovery_wip_archive_incomplete", binding
+        if (
+            manifest.get("preserved_branch_head") != source_head
+            or manifest.get("preserved_branch_ref") != binding["preserved_branch_ref"]
+            or Path(str(manifest.get("worktree_path") or "")).resolve() != worktree_path.resolve()
+        ):
+            return False, "recovery_archive_identity_mismatch", binding
+        preserved = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--verify",
+             f"{binding['preserved_branch_ref']}^{{commit}}"],
+            capture_output=True, text=True, check=False,
         )
-    except (OSError, ValueError):
-        # The patch/file archive remains useful even if the optional metadata
-        # enrichment fails; do not silently discard the recovery ref.
-        pass
-
-    removed = _remove_worker_worktree(repo_root, worktree_path, force=True)
-    if removed.returncode != 0:
-        return False, "recovery_worktree_remove_failed", archive_dir, recovery_ref
-
-    reset = subprocess.run(
-        ["git", "update-ref", branch_ref, base_sha],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if reset.returncode != 0:
-        # Keep the branch recoverable at its old tip if resetting the task
-        # branch fails after the worktree was removed.
-        subprocess.run(
-            ["git", "update-ref", branch_ref, old_sha],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
+        if preserved.returncode or preserved.stdout.strip() != source_head:
+            return False, "recovery_source_ref_mismatch", binding
+        current_status = git("status", "--porcelain", "--untracked-files=all")
+        current_diff = git("diff", "--binary", raw=True)
+        current_staged = git("diff", "--cached", "--binary", raw=True)
+        current_untracked = git("ls-files", "--others", "--exclude-standard", "-z")
+        if any(item.returncode for item in (current_status, current_diff, current_staged, current_untracked)):
+            return False, "recovery_source_read_failed", binding
+        if current_head != source_head:
+            # A completed quarantine may have reached the ordinary fast-forward
+            # before preparation was interrupted. Validate the historical
+            # archive without rewriting that legitimate committed advancement.
+            # Dirty continuation still requires the exact archived source HEAD.
+            ancestry = git("merge-base", "--is-ancestor", source_head, current_head)
+            if current_status.stdout.strip() or ancestry.returncode != 0:
+                return False, "recovery_branch_changed_after_archive", binding
+        untracked_paths = manifest["untracked_paths"]
+        checksums = manifest["file_checksums"]
+        file_modes = manifest["file_modes"]
+        archive_checksums = manifest["archive_checksums"]
+        if (
+            not isinstance(untracked_paths, list)
+            or not isinstance(checksums, dict)
+            or not isinstance(file_modes, dict)
+            or not isinstance(archive_checksums, dict)
+            or not all(isinstance(path, str) for path in untracked_paths)
+            or len(set(untracked_paths)) != len(untracked_paths)
+            or not set(untracked_paths).issubset(checksums)
+            or set(file_modes) != set(checksums)
+        ):
+            return False, "recovery_archive_invalid", binding
+        archived_bytes: dict[str, bytes] = {}
+        for name in ("status.txt", "diff.patch", "diff-staged.patch", "untracked-files.txt"):
+            payload = read_regular_file_bytes(archive_dir / name, source="recovery archive")
+            if hashlib.sha256(payload).hexdigest() != archive_checksums.get(name):
+                return False, "recovery_archive_checksum_mismatch", binding
+            archived_bytes[name] = payload
+        for rel_path, checksum in checksums.items():
+            if (
+                not isinstance(rel_path, str) or not rel_path
+                or Path(rel_path).is_absolute() or ".." in Path(rel_path).parts
+                or not isinstance(checksum, str) or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+                or not isinstance(file_modes[rel_path], int)
+            ):
+                return False, "recovery_archive_invalid", binding
+            archived = archive_dir / "files" / rel_path
+            if not archived.resolve().is_relative_to((archive_dir / "files").resolve()):
+                return False, "recovery_archive_invalid", binding
+            payload, archived_stat = read_regular_file_snapshot(archived, source="recovery archive")
+            if (
+                hashlib.sha256(payload).hexdigest() != checksum
+                or stat.S_IMODE(archived_stat.st_mode) != file_modes[rel_path]
+            ):
+                return False, "recovery_archive_checksum_mismatch", binding
+        same_snapshot = (
+            current_status.stdout.encode("utf-8") == archived_bytes["status.txt"]
+            and current_diff.stdout == archived_bytes["diff.patch"]
+            and current_staged.stdout == archived_bytes["diff-staged.patch"]
         )
-        return False, "recovery_branch_reset_failed", archive_dir, recovery_ref
+        remaining_untracked = [item for item in current_untracked.stdout.split("\0") if item]
+        resumed_after_restore = (
+            existing_archive is not None
+            and not current_diff.stdout and not current_staged.stdout
+            and set(remaining_untracked).issubset(untracked_paths)
+        )
+        if not same_snapshot and not resumed_after_restore:
+            return False, "recovery_wip_changed_after_archive", binding
+        checked_paths = list(checksums) if same_snapshot else remaining_untracked
+        for rel_path in checked_paths:
+            source = worktree_path / rel_path
+            if not source.resolve().is_relative_to(worktree_path.resolve()):
+                return False, "recovery_wip_changed_after_archive", binding
+            payload, source_stat = read_regular_file_snapshot(source, source="recovery WIP")
+            if (hashlib.sha256(payload).hexdigest() != checksums[rel_path]
+                    or stat.S_IMODE(source_stat.st_mode) != file_modes[rel_path]):
+                return False, "recovery_wip_changed_after_archive", binding
+        verified_head = git("rev-parse", "HEAD")
+        if verified_head.returncode or verified_head.stdout.strip() != current_head:
+            return False, "recovery_branch_changed_after_archive", binding
+        if not publish_archive(binding):
+            return False, "recovery_archive_publication_failed", binding
 
-    return True, "replaced_from_base", archive_dir, recovery_ref
+        # Publication can block on canonical persistence and projection. A
+        # source or index edit during that interval must not be overwritten by
+        # restoration from the earlier archive.
+        published_status = git("status", "--porcelain", "--untracked-files=all")
+        published_diff = git("diff", "--binary", raw=True)
+        published_staged = git("diff", "--cached", "--binary", raw=True)
+        published_untracked = git("ls-files", "--others", "--exclude-standard", "-z")
+        published_branch = git("symbolic-ref", "--quiet", "--short", "HEAD")
+        published_head = git("rev-parse", "HEAD")
+        if any(item.returncode for item in (
+            published_status, published_diff, published_staged,
+            published_untracked, published_branch, published_head,
+        )):
+            return False, "recovery_source_read_failed", binding
+        if (published_head.stdout.strip() != current_head
+                or published_branch.stdout.strip() != branch):
+            return False, "recovery_branch_changed_after_publication", binding
+        if any(before.stdout != after.stdout for before, after in (
+            (current_status, published_status), (current_diff, published_diff),
+            (current_staged, published_staged), (current_untracked, published_untracked),
+        )):
+            return False, "recovery_wip_changed_after_publication", binding
+        for rel_path in checked_paths:
+            source = worktree_path / rel_path
+            if not source.resolve().is_relative_to(worktree_path.resolve()):
+                return False, "recovery_wip_changed_after_publication", binding
+            payload, source_stat = read_regular_file_snapshot(source, source="recovery WIP")
+            if (hashlib.sha256(payload).hexdigest() != checksums[rel_path]
+                    or stat.S_IMODE(source_stat.st_mode) != file_modes[rel_path]):
+                return False, "recovery_wip_changed_after_publication", binding
+
+        # This restores only tracked/indexed source. Unlike removing a whole
+        # worktree, it leaves ignored local files and all commits untouched.
+        if same_snapshot and (current_diff.stdout or current_staged.stdout):
+            restored = git("restore", f"--source={source_head}", "--staged", "--worktree", "--", ".")
+            if restored.returncode:
+                return False, "recovery_wip_restore_failed", binding
+        for rel_path in remaining_untracked:
+            source = worktree_path / rel_path
+            payload, source_stat = read_regular_file_snapshot(source, source="recovery WIP")
+            if (hashlib.sha256(payload).hexdigest() != checksums[rel_path]
+                    or stat.S_IMODE(source_stat.st_mode) != file_modes[rel_path]):
+                return False, "recovery_untracked_changed_after_archive", binding
+            source.unlink()  # Exact file already durably archived and published.
+        final_status = git("status", "--porcelain", "--untracked-files=all")
+        final_head = git("rev-parse", "HEAD")
+        if (final_status.returncode or final_head.returncode
+                or final_status.stdout.strip() or final_head.stdout.strip() != current_head):
+            return False, "recovery_wip_restore_incomplete", binding
+        return True, "quarantined_wip", binding
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False, "recovery_wip_archive_unavailable", binding
 
 
 def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
-    """Describe a task branch's relationship to one immutable base snapshot."""
+    """Describe ancestry, distinguishing a negative answer from Git failure."""
 
     head_contains_base = subprocess.run(
         ["git", "merge-base", "--is-ancestor", base_sha, "HEAD"],
@@ -1133,6 +1230,8 @@ def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
     )
     if head_contains_base.returncode == 0:
         return "contains_base"
+    if head_contains_base.returncode != 1:
+        return "base_relation_failed"
     head_is_base_ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", "HEAD", base_sha],
         cwd=worktree_path,
@@ -1142,6 +1241,8 @@ def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
     )
     if head_is_base_ancestor.returncode == 0:
         return "behind_base"
+    if head_is_base_ancestor.returncode != 1:
+        return "base_relation_failed"
     return "diverged"
 
 
@@ -1156,9 +1257,9 @@ def prepare_worker_workspace(
 ) -> tuple[bool, str | None]:
     """Lease one isolated task worktree from a cycle-pinned repository base."""
 
-    # This marker is supervisor-derived authority, never queue input. Strip any
-    # inherited/request-supplied value before independently proving adoption.
-    request.metadata.pop("fenced_dirty_wip_adoption", None)
+    # Workspace provenance is projected from the canonical receipt, never
+    # accepted as queue-supplied filesystem or cleanup authority.
+    request.metadata.pop("recovery_workspace", None)
     settings = worker_worktree_settings(config)
     workspace_task_id = worker_workspace_task_id(request)
     if not workspace_task_id:
@@ -1246,10 +1347,7 @@ def prepare_worker_workspace(
             validate_worker_workspace_binding(
                 source_root,
                 workspace_path,
-                expected_branch=str(
-                    request.metadata.get("workspace_branch")
-                    or worker_task_branch(config, workspace_task_id)
-                ),
+                expected_branch=worker_task_branch(config, workspace_task_id),
             )
         except RuntimeError as exc:
             message = (
@@ -1270,19 +1368,8 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        request.metadata.update(
-            {
-                "workspace_mode": "isolated_worktree",
-                "workspace_path": str(workspace_path),
-                "workspace_repository_id": repository_id,
-                "workspace_source_root": str(source_root),
-                "workspace_base_ref": base_ref,
-                "workspace_base_sha": base_sha,
-                "workspace_base_fetched_at": base_fetched_at,
-                "workspace_base_relation": worker_worktree_base_relation(workspace_path, base_sha),
-            }
-        )
-        return True, None
+        # A bound request still goes through the same reuse/recovery checks.
+        # Binding a path cannot bypass dirty-worktree admission.
 
     status_root = config_path(config, "status_file").parents[0].resolve()
     repo_root = source_root
@@ -1295,8 +1382,7 @@ def prepare_worker_workspace(
     )
     reused = False
     creation_origin: str | None = None
-    recovery_wip_archive: Path | None = None
-    recovery_wip_ref: str | None = None
+    recovery_workspace: dict[str, str] = {}
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     if not isinstance(leases, dict):
         leases = {}
@@ -1305,155 +1391,63 @@ def prepare_worker_workspace(
     existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
     if existing:
         worktree_path = existing
-        stale_adopted_wip = _recovery_worktree_has_stale_adopted_wip(
-            state,
+        reused = True
+        recovery_eligible = _lost_lease_replacement_may_recover_worktree(
+            config, state, request,
             task_id=workspace_task_id,
+            repository_id=repository_id,
+            source_root=repo_root,
+            branch=branch,
             worktree_path=worktree_path,
-            recovery_receipt_id=str(
-                request.metadata.get("recovery_receipt_id") or ""
-            ),
+            base_ref=base_ref,
+            queue_event_id=queue_event_id,
+            target_agent=target_agent,
         )
-        if stale_adopted_wip and _git_dirty_entries(worktree_path):
-            active_roots = active_worker_workspace_roots(config, state)
-            if any(_paths_overlap(worktree_path, active) for active in active_roots):
-                message = (
-                    f"Cannot replace recovery worktree for {workspace_task_id}: "
-                    f"{worktree_path} is still owned by an active worker."
-                )
-                write_activity_log(
-                    config,
-                    {
-                        "type": "dispatch_blocked_worktree_lease",
-                        "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
-                        "target_agent": target_agent,
-                        "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_branch": branch,
-                        "workspace_path": str(worktree_path),
-                        "refresh_status": "active_stale_adopted_wip",
-                    },
-                )
-                return False, message
-            cleanup_settings = worktree_cleanup_settings(config)
-            replaced, replace_status, archive_dir, recovery_ref = (
-                _replace_recovery_worktree_from_base(
-                    repo_root,
-                    worktree_path,
+        if recovery_eligible:
+            supervisor = _supervisor_module()
+            status = load_status(config)
+            task = supervisor.task_index_from_status(config, status).get(workspace_task_id)
+            receipt = _canonical_worker_recovery_receipt(status, task) if task else None
+            if receipt is None or receipt.get("receipt_id") != request.metadata.get("recovery_receipt_id"):
+                return False, "Recovery receipt changed before workspace preparation."
+            recovery_workspace = worker_recovery_workspace_facts(receipt.get("workspace"))
+            if recovery_workspace or _git_dirty_entries(worktree_path):
+                active_roots = active_worker_workspace_roots(config, state)
+                if any(_paths_overlap(worktree_path, active) for active in active_roots):
+                    return False, f"Cannot quarantine active worker workspace {worktree_path}."
+                cleanup_settings = worktree_cleanup_settings(config)
+                recovered, recovery_status, binding = _quarantine_recovery_worktree(
+                    repo_root, worktree_path,
                     branch=branch,
-                    base_sha=base_sha,
                     archive_root=_recovery_worktree_archive_root(config),
                     task_id=workspace_task_id,
+                    repository_id=repository_id,
                     max_file_bytes=int(cleanup_settings["archive_max_file_bytes"]),
-                )
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_worktree_replaced_after_recovery_wip",
-                    "task_id": request.task_id,
-                    "workspace_task_id": workspace_task_id,
-                    "target_agent": target_agent,
-                    "queue_event_id": queue_event_id,
-                    "workspace_branch": branch,
-                    "workspace_path": str(worktree_path),
-                    "workspace_base_sha": base_sha,
-                    "replace_ok": replaced,
-                    "replace_status": replace_status,
-                    "archive_path": str(archive_dir) if archive_dir else None,
-                    "preserved_branch_ref": recovery_ref,
-                },
-            )
-            if not replaced:
-                return False, (
-                    f"Cannot replace stale recovery worktree for {workspace_task_id}: "
-                    f"{replace_status}."
-                )
-            recovery_wip_archive = archive_dir
-            recovery_wip_ref = recovery_ref
-            leases.pop(workspace_task_id, None)
-        else:
-            reused = True
-            lost_lease_wip_adoption = _lost_lease_replacement_may_adopt_worktree(
-                config,
-                state,
-                request,
-                task_id=workspace_task_id,
-                repository_id=repository_id,
-                source_root=repo_root,
-                branch=branch,
-                worktree_path=worktree_path,
-                base_ref=base_ref,
-                queue_event_id=queue_event_id,
-                target_agent=target_agent,
-            )
-            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                worktree_path,
-                base_sha,
-                task_id=workspace_task_id,
-                branch=branch,
-                allow_dirty_wip_adoption=lost_lease_wip_adoption,
-            )
-            if refresh_status == "adopted_lost_lease_dirty_wip":
-                request.metadata["fenced_dirty_wip_adoption"] = {
-                    "receipt_id": str(
-                        request.metadata.get("recovery_receipt_id") or ""
+                    existing_archive=recovery_workspace or None,
+                    publish_archive=lambda facts: supervisor.persist_worker_recovery_workspace(
+                        config,
+                        task_id=workspace_task_id,
+                        receipt_id=str(request.metadata["recovery_receipt_id"]),
+                        expected_generation=request.metadata["task_generation"],
+                        workspace=facts,
                     ),
-                    "task_id": workspace_task_id,
-                    "task_generation": request.metadata.get("task_generation"),
-                    "queue_event_id": queue_event_id,
-                    "repository_id": repository_id,
-                    "branch": branch,
-                    "workspace_path": str(worktree_path),
-                }
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_worktree_refreshed",
-                    "task_id": request.task_id,
-                    "target_agent": target_agent,
-                    "queue_event_id": queue_event_id,
-                    "workspace_branch": branch,
-                    "workspace_path": str(worktree_path),
-                    "status_root": str(status_root),
-                    "workspace_source_root": str(repo_root),
-                    "workspace_repository_id": repository_id,
-                    "workspace_base_ref": base_ref,
-                    "workspace_base_sha": base_sha,
-                    "refresh_ok": refresh_ok,
-                    "refresh_status": refresh_status,
-                    "recovery_receipt_id": (
-                        request.metadata.get("recovery_receipt_id")
-                        if refresh_status == "adopted_lost_lease_dirty_wip"
-                        else None
-                    ),
-                },
-            )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-                message = (
-                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
-                    "Clean or remove that worktree before dispatch."
                 )
                 write_activity_log(
                     config,
                     {
-                        "type": "dispatch_blocked_worktree_lease",
+                        "type": "worker_recovery_workspace_quarantine",
                         "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
                         "target_agent": target_agent,
                         "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_branch": branch,
-                        "workspace_path": str(worktree_path),
-                        "status_root": str(status_root),
-                        "workspace_source_root": str(repo_root),
-                        "base_sha": base_sha,
-                        "refresh_status": refresh_status,
+                        "recovery_receipt_id": request.metadata["recovery_receipt_id"],
+                        "recovery_ok": recovered,
+                        "recovery_status": recovery_status,
+                        "workspace": binding,
                     },
                 )
-                return False, message
-
+                if not recovered:
+                    return False, f"Cannot quarantine recovery WIP for {workspace_task_id}: {recovery_status}."
+                recovery_workspace = worker_recovery_workspace_facts(binding)
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
             message = (
@@ -1501,45 +1495,43 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        if creation_origin != "base_snapshot":
-            # A local or remote task branch can outlive its old worktree.  Do
-            # the same safe ff-only refresh used for an existing worktree,
-            # but never fetch a moving ref again in this cycle.
-            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                worktree_path,
-                base_sha,
-                task_id=workspace_task_id,
-                branch=branch,
+
+    # Reused and recreated task branches share exactly one refresh/admission
+    # policy. Only a brand-new branch created at the pinned base needs no merge.
+    if reused or creation_origin != "base_snapshot":
+        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+            worktree_path, base_sha, task_id=workspace_task_id, branch=branch,
+        )
+        write_activity_log(config, {
+            "type": "worker_worktree_refreshed",
+            "task_id": request.task_id,
+            "target_agent": target_agent,
+            "queue_event_id": queue_event_id,
+            "workspace_branch": branch,
+            "workspace_path": str(worktree_path),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
+            "workspace_repository_id": repository_id,
+            "workspace_base_ref": base_ref,
+            "workspace_base_sha": base_sha,
+            "refresh_ok": refresh_ok,
+            "refresh_status": refresh_status,
+        })
+        if not refresh_ok and refresh_status != "skipped_non_fast_forward":
+            return False, (
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                f"worktree {worktree_path} refresh failed ({refresh_status})."
             )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_worktree_refreshed",
-                    "task_id": request.task_id,
-                    "target_agent": target_agent,
-                    "queue_event_id": queue_event_id,
-                    "workspace_branch": branch,
-                    "workspace_path": str(worktree_path),
-                    "status_root": str(status_root),
-                    "workspace_source_root": str(repo_root),
-                    "workspace_repository_id": repository_id,
-                    "workspace_base_ref": base_ref,
-                    "workspace_base_sha": base_sha,
-                    "refresh_ok": refresh_ok,
-                    "refresh_status": refresh_status,
-                },
-            )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-                message = (
-                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"new worktree {worktree_path} could not be refreshed safely."
-                )
-                return False, message
 
     base_relation = (
         "exact_base" if not reused and creation_origin == "base_snapshot"
         else worker_worktree_base_relation(worktree_path, base_sha)
     )
+    if base_relation == "base_relation_failed":
+        return False, (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"worktree {worktree_path} base_relation_failed."
+        )
 
     request.metadata.update(
         {
@@ -1580,27 +1572,23 @@ def prepare_worker_workspace(
         "last_used_at": utc_now(),
         "materialized_context_files": materialized_context_files,
     }
-    if adopted_dirty_wip_receipt_id := str(
+    if recovery_receipt_id := str(
         request.metadata.get("recovery_receipt_id") or ""
     ).strip():
-        # Persist every recovery handoff, including a clean one. This closes
-        # the legacy gap where an adopted tree had no durable receipt and a
-        # later lost lease could inherit it again.
-        leases[workspace_task_id]["recovery_receipt_id"] = (
-            adopted_dirty_wip_receipt_id
-        )
+        leases[workspace_task_id]["recovery_receipt_id"] = recovery_receipt_id
         leases[workspace_task_id]["recovery_started_at"] = utc_now()
-        if request.metadata.get("fenced_dirty_wip_adoption"):
-            leases[workspace_task_id]["dirty_wip_adoption_receipt_id"] = (
-                adopted_dirty_wip_receipt_id
-            )
-            leases[workspace_task_id]["dirty_wip_adopted_at"] = utc_now()
-    if recovery_wip_archive is not None:
-        leases[workspace_task_id]["replaced_recovery_wip_archive"] = str(
-            recovery_wip_archive
+    if recovery_workspace:
+        request.metadata["recovery_workspace"] = recovery_workspace
+        provenance_text = (
+            "\n\nRecovery workspace provenance (advisory, not delivery approval):\n"
+            + json.dumps(recovery_workspace, sort_keys=True)
+            + "\nThe committed task branch is preserved. Uncommitted WIP was quarantined; "
+            "inspect its manifest and binary patches before selectively restoring changes. "
+            "Do not treat the archived WIP or preserved source head as accepted delivery.\n"
         )
-    if recovery_wip_ref is not None:
-        leases[workspace_task_id]["replaced_recovery_wip_ref"] = recovery_wip_ref
+        if provenance_text not in request.message:
+            request.message += provenance_text
+        leases[workspace_task_id]["recovery_workspace"] = recovery_workspace
     write_activity_log(
         config,
         {
@@ -1720,20 +1708,6 @@ def active_worker_workspace_roots(config: dict[str, Any], state: dict[str, Any])
     return roots
 
 
-def _status_changed_paths(porcelain_status: str) -> list[str]:
-    paths: list[str] = []
-    seen: set[str] = set()
-    for line in porcelain_status.splitlines():
-        if not line.strip():
-            continue
-        body = line[3:] if len(line) > 3 else line.strip()
-        path = body.split(" -> ")[-1].strip().strip('"')
-        if path and path not in seen:
-            seen.add(path)
-            paths.append(path)
-    return paths
-
-
 def _archive_dirty_worktree(
     worktree_path: Path,
     archive_root: Path,
@@ -1741,6 +1715,7 @@ def _archive_dirty_worktree(
     reason: str,
     max_file_bytes: int,
 ) -> Path | None:
+    """Snapshot source WIP; an incomplete archive never authorizes disposal."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", worktree_path.name).strip("-") or "worktree"
     archive_dir = archive_root / f"{slug}-{timestamp}-{os.getpid()}"
@@ -1748,71 +1723,129 @@ def _archive_dirty_worktree(
     while archive_dir.exists():
         suffix += 1
         archive_dir = archive_root / f"{slug}-{timestamp}-{os.getpid()}-{suffix}"
-    try:
-        archive_dir.mkdir(parents=True)
-    except OSError:
-        return None
 
-    def run_git(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def run_git(args: list[str], *, raw: bool = False) -> subprocess.CompletedProcess[Any]:
         return subprocess.run(
             ["git", "-C", str(worktree_path), *args],
-            capture_output=True,
-            text=True,
-            check=False,
+            capture_output=True, text=not raw, check=False,
         )
 
-    status_proc = run_git(["status", "--porcelain", "--untracked-files=all"])
-    diff_proc = run_git(["diff", "--binary"])
-    staged_diff_proc = run_git(["diff", "--cached", "--binary"])
-    untracked_proc = run_git(["ls-files", "--others", "--exclude-standard"])
+    try:
+        if first_symlink_component(archive_dir) is not None:
+            return None
+        # Durable file replacement fsyncs its immediate parent; newly created
+        # ancestor directories must also be published before disposal is safe.
+        directories_to_sync: set[Path] = set()
+        directory = archive_dir
+        while not directory.exists():
+            directories_to_sync.add(directory.parent)
+            directory = directory.parent
+        archive_dir.mkdir(parents=True)
+        status_proc = run_git(["status", "--porcelain", "--untracked-files=all"])
+        # Text-mode pipes normalize CRLF, losing distinct staged bytes even
+        # when the working-tree copy is preserved separately.
+        diff_proc = run_git(["diff", "--binary"], raw=True)
+        staged_diff_proc = run_git(["diff", "--cached", "--binary"], raw=True)
+        untracked_proc = run_git(["ls-files", "--others", "--exclude-standard", "-z"])
+        commands = {
+            "status": status_proc, "diff": diff_proc,
+            "diff_staged": staged_diff_proc, "untracked": untracked_proc,
+        }
+        archive_checksums: dict[str, str] = {}
+        for name, result in (
+            ("status.txt", status_proc), ("diff.patch", diff_proc),
+            ("diff-staged.patch", staged_diff_proc),
+        ):
+            payload = result.stdout if isinstance(result.stdout, bytes) else (result.stdout or "").encode("utf-8")
+            durable_write_bytes(archive_dir / name, payload)
+            archive_checksums[name] = hashlib.sha256(payload).hexdigest()
+        untracked_paths = [path for path in untracked_proc.stdout.split("\0") if path]
+        untracked_payload = "\n".join(untracked_paths).encode("utf-8")
+        durable_write_bytes(archive_dir / "untracked-files.txt", untracked_payload)
+        archive_checksums["untracked-files.txt"] = hashlib.sha256(untracked_payload).hexdigest()
 
-    (archive_dir / "status.txt").write_text(status_proc.stdout or status_proc.stderr or "", encoding="utf-8")
-    (archive_dir / "diff.patch").write_text(diff_proc.stdout or diff_proc.stderr or "", encoding="utf-8")
-    (archive_dir / "diff-staged.patch").write_text(
-        staged_diff_proc.stdout or staged_diff_proc.stderr or "",
-        encoding="utf-8",
-    )
-    (archive_dir / "untracked-files.txt").write_text(
-        untracked_proc.stdout or untracked_proc.stderr or "",
-        encoding="utf-8",
-    )
+        copied: list[str] = []
+        skipped: list[str] = []
+        deleted: list[str] = []
+        checksums: dict[str, str] = {}
+        file_modes: dict[str, int] = {}
+        entries = _git_dirty_entries(worktree_path)
+        complete = all(result.returncode == 0 for result in commands.values())
+        if status_proc.stdout.strip() and not entries:
+            complete = False
+        files_root = archive_dir / "files"
+        for entry in entries:
+            rel_path = entry["path"]
+            source = worktree_path / rel_path
+            if (
+                Path(rel_path).is_absolute()
+                or ".." in Path(rel_path).parts
+                or first_symlink_component(source) is not None
+                or not source.resolve().is_relative_to(worktree_path.resolve())
+            ):
+                skipped.append(f"{rel_path}\tunsupported_path")
+                continue
+            if not source.exists() and "D" in entry["status"]:
+                deleted.append(rel_path)
+                continue
+            try:
+                if not source.is_file():
+                    skipped.append(f"{rel_path}\tunsupported_file")
+                    continue
+                size = source.stat().st_size
+                if max_file_bytes > 0 and size > max_file_bytes:
+                    skipped.append(f"{rel_path}\ttoo_large:{size}")
+                    continue
+                archived_bytes, source_stat = read_regular_file_snapshot(source, source="worktree archive")
+                if max_file_bytes > 0 and len(archived_bytes) > max_file_bytes:
+                    skipped.append(f"{rel_path}\ttoo_large:{len(archived_bytes)}")
+                    continue
+                destination = files_root / rel_path
+                directory = destination.parent
+                while directory != archive_dir:
+                    directories_to_sync.add(directory.parent)
+                    directory = directory.parent
+                mode = stat.S_IMODE(source_stat.st_mode)
+                durable_write_bytes(destination, archived_bytes, mode=mode)
+                verified_bytes, verified_stat = read_regular_file_snapshot(source, source="worktree archive")
+                if verified_bytes != archived_bytes or stat.S_IMODE(verified_stat.st_mode) != mode:
+                    skipped.append(f"{rel_path}\tchanged_during_archive")
+                    continue
+                checksums[rel_path] = hashlib.sha256(archived_bytes).hexdigest()
+                file_modes[rel_path] = mode
+                copied.append(rel_path)
+            except (OSError, RuntimeError):
+                skipped.append(rel_path)
 
-    copied: list[str] = []
-    skipped: list[str] = []
-    files_root = archive_dir / "files"
-    for rel_path in _status_changed_paths(status_proc.stdout):
-        source = worktree_path / rel_path
-        if not source.exists() or not source.is_file():
-            skipped.append(rel_path)
-            continue
-        try:
-            size = source.stat().st_size
-        except OSError:
-            skipped.append(rel_path)
-            continue
-        if max_file_bytes > 0 and size > max_file_bytes:
-            skipped.append(f"{rel_path}\ttoo_large:{size}")
-            continue
-        destination = files_root / rel_path
-        try:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
-            copied.append(rel_path)
-        except OSError:
-            skipped.append(rel_path)
-
-    (archive_dir / "copied-files.txt").write_text("\n".join(copied) + ("\n" if copied else ""), encoding="utf-8")
-    (archive_dir / "skipped-files.txt").write_text("\n".join(skipped) + ("\n" if skipped else ""), encoding="utf-8")
-    manifest = {
-        "archived_at": utc_now(),
-        "worktree_path": str(worktree_path),
-        "reason": reason,
-        "status_returncode": status_proc.returncode,
-        "copied_files": copied,
-        "skipped_files": skipped,
-    }
-    (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return archive_dir
+        complete = complete and not skipped and set(untracked_paths).issubset(checksums)
+        durable_write_bytes(archive_dir / "copied-files.txt", "\n".join(copied).encode("utf-8"))
+        durable_write_bytes(archive_dir / "skipped-files.txt", "\n".join(skipped).encode("utf-8"))
+        manifest = {
+            "archived_at": utc_now(),
+            "worktree_path": str(worktree_path),
+            "reason": reason,
+            "status_returncode": status_proc.returncode,
+            "command_returncodes": {name: result.returncode for name, result in commands.items()},
+            "complete": complete,
+            "copied_files": copied,
+            "skipped_files": skipped,
+            "deleted_files": deleted,
+            "file_checksums": checksums,
+            "file_modes": file_modes,
+            "archive_checksums": archive_checksums,
+            "untracked_paths": untracked_paths,
+        }
+        durable_write_bytes(
+            archive_dir / "manifest.json",
+            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        for directory in sorted(directories_to_sync, key=lambda path: len(path.parts), reverse=True):
+            _fsync_directory(directory)
+        return archive_dir if complete else None
+    except (OSError, ValueError, RuntimeError):
+        # Preserve any partial archive for inspection; the caller must leave
+        # the source untouched when no completed archive is returned.
+        return None
 
 
 def _merged_task_branches(repo_root: Path, base_ref: str) -> set[str]:

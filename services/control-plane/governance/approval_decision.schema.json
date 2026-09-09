@@ -244,6 +244,40 @@
       "type": "object",
       "description": "Additional metadata for downstream consumers."
     },
+    "authorization_scope": {
+      "type": "object",
+      "description": "Owner-stamped usage bound derived from the verified proposing principal. Never client-settable. Consumers must present an explicit usage context inside this scope; absent scope means an unscoped approval.",
+      "required": [
+        "environment",
+        "allowed_target_stages",
+        "max_capital_scale_pct"
+      ],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowed_target_stages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "canary",
+              "live"
+            ]
+          }
+        },
+        "max_capital_scale_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
     "version": {
       "type": "integer",
       "minimum": 1

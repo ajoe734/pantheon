@@ -777,6 +777,12 @@ def setup_compensation_fixture(
 ) -> tuple[Path, Path, Path]:
     lease_ctrl = tmp / "lease-controller"
     subprocess.run(["git", "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
+    # A shallow source checkout may contain the pinned commit only in
+    # FETCH_HEAD. Local clone does not necessarily carry that unadvertised
+    # object; explicitly fetch from the local source, never from the network.
+    present = subprocess.run(["git", "-C", str(lease_ctrl), "cat-file", "-e", f"{PINNED_LEASE_CONTROLLER_SHA}^{{commit}}"], capture_output=True)
+    if present.returncode:
+        subprocess.run(["git", "-C", str(lease_ctrl), "fetch", "--no-tags", "--depth=1", str(REPO_ROOT), PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL)
     subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "init"], check=True)
     subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
     subprocess.run(["git", "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

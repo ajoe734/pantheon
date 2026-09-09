@@ -100,15 +100,12 @@ class AgoraStore:
         self._audit_events = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.audit_events", owner_service="agora-svc", bootstrap=bootstrap
         )
-        self._journal = PostgresJsonOwnerStore(
-            dsn=self.dsn, table=f"{self.schema}.journal_entries", owner_service="agora-svc", bootstrap=bootstrap
-        )
-        self._journal_audit = PostgresJsonOwnerStore(
-            dsn=self.dsn, table=f"{self.schema}.journal_audit", owner_service="agora-svc", bootstrap=bootstrap
-        )
-        self._journal_idempotency = PostgresJsonOwnerStore(
-            dsn=self.dsn, table=f"{self.schema}.journal_idempotency", owner_service="agora-svc", bootstrap=bootstrap
-        )
+        # JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001:
+        # Decision Journal writer slice is retired from AgoraStore.
+        # Canonical durable owner is services.governance.decision_journal.
+        self._journal = None
+        self._journal_audit = None
+        self._journal_idempotency = None
         self._workshops = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.workshops", owner_service="agora-svc", bootstrap=bootstrap
         )
@@ -739,123 +736,39 @@ class AgoraStore:
         return rows
 
     # -------------------------------------------------------------------------
-    # Decision Journal
+    # Decision Journal (RETIRED: JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001)
     # -------------------------------------------------------------------------
     def create_journal_entry(
         self,
-        entry_id: str,
-        title: str,
-        decision: str,
-        actor_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        created_at: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> DictRecord:
-        now = created_at or _utc_now_rfc3339()
-        p = payload or {}
-        entry = DictRecord({
-            "id": entry_id,
-            "entryId": entry_id,
-            "title": title,
-            "decision": decision,
-            "author": actor_id,
-            "category": str(p.get("category") or "strategy"),
-            "contextRefs": list(p.get("contextRefs") or p.get("context_refs") or []),
-            "tags": list(p.get("tags") or []),
-            "visibility": str(p.get("visibility") or "public"),
-            "version": 1,
-            "createdAt": now,
-            "updatedAt": now,
-            "canonicalWriteAuthority": "agora_journal_service",
-            "persistenceMode": "owner_store",
-        })
-        self._journal.put(entry_id, entry)
-        return entry
+        raise RuntimeError(
+            "Agora decision journal writer slice is retired; "
+            "use canonical governance decision journal owner (services.governance.decision_journal)."
+        )
 
     def get_journal_entry(self, entry_id: str) -> Optional[DictRecord]:
-        data = self._journal.get(entry_id)
-        return DictRecord(data) if data else None
+        raise RuntimeError(
+            "Agora decision journal writer slice is retired; "
+            "use canonical governance decision journal owner (services.governance.decision_journal)."
+        )
 
     def list_journal_entries(self) -> List[DictRecord]:
-        rows = [DictRecord(r) for r in self._journal.list_all()]
-        rows.sort(key=lambda j: j.get("createdAt", ""), reverse=True)
-        return rows
+        raise RuntimeError(
+            "Agora decision journal writer slice is retired; "
+            "use canonical governance decision journal owner (services.governance.decision_journal)."
+        )
 
     def patch_journal_entry(
         self,
-        entry_id: str,
-        patch: Dict[str, Any],
-        actor_id: str,
-        idempotency_key: str,
-        correlation_id: Optional[str] = None,
-        patched_at: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> Optional[DictRecord]:
-        request_hash = hashlib.sha256(
-            json.dumps({"patch": patch, "actor_id": actor_id}, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-
-        idem = self._journal_idempotency.get(idempotency_key)
-        if idem:
-            if idem.get("request_hash") == request_hash:
-                current_entry = self.get_journal_entry(entry_id)
-                return DictRecord({
-                    "status": "replayed",
-                    "entry": current_entry,
-                    "audit": idem.get("audit"),
-                    "existing_patch_id": idem.get("patch_id"),
-                })
-            else:
-                return DictRecord({"status": "conflict"})
-
-        current = self.get_journal_entry(entry_id)
-        if not current:
-            return None
-
-        now = patched_at or _utc_now_rfc3339()
-        changed_fields = [k for k, v in patch.items() if current.get(k) != v]
-        old_values = {k: current.get(k) for k in changed_fields}
-        new_values = {k: patch.get(k) for k in changed_fields}
-
-        current.update(patch)
-        current["version"] = int(current.get("version", 1)) + 1
-        current["updatedAt"] = now
-        self._journal.put(entry_id, current)
-
-        audit_id = f"aud-j-{uuid.uuid4().hex[:12]}"
-        audit = DictRecord({
-            "id": audit_id,
-            "auditId": audit_id,
-            "action": "agora.journal.merge_patch",
-            "target": {"type": "decision_journal_entry", "id": entry_id},
-            "actorId": actor_id,
-            "correlationId": correlation_id,
-            "idempotencyKey": idempotency_key,
-            "recordedAt": now,
-            "canonicalWriteAuthority": "agora_journal_service",
-            "persistenceMode": "owner_store",
-            "diff": {
-                "changedFields": changed_fields,
-                "oldValues": old_values,
-                "newValues": new_values,
-            },
-        })
-        self._journal_audit.put(audit_id, audit)
-
-        self._journal_idempotency.put(
-            idempotency_key,
-            {
-                "idempotency_key": idempotency_key,
-                "request_hash": request_hash,
-                "patch_id": audit_id,
-                "status": "updated",
-                "audit": dict(audit),
-            },
+        raise RuntimeError(
+            "Agora decision journal writer slice is retired; "
+            "use canonical governance decision journal owner (services.governance.decision_journal)."
         )
-
-        return DictRecord({
-            "status": "updated",
-            "entry": current,
-            "audit": audit,
-        })
 
     # -------------------------------------------------------------------------
     # Strategy Workshops, Proposals & Interactions
