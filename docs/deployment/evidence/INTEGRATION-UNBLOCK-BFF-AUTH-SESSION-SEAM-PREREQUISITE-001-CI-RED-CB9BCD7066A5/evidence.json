@@ -1,0 +1,92 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-AUTH-SESSION-SEAM-PREREQUISITE-001-CI-RED-CB9BCD7066A5",
+  "role": "diagnosis_and_evidence_tracking_only",
+  "checked_at": "2026-09-09T17:58:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "unblock_request": {
+    "command_runtime_sha": "7ab59e582e369580b138693c52c32265f474bdc9",
+    "head_sha": "f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d",
+    "pr": 5728,
+    "repository_slug": "ajoe734/pantheon",
+    "request_sha256": "92e454982c10781067d228ef67ab09870845258d50b15234e2babda956fbdace",
+    "source_task_generation": 3,
+    "source_task_id": "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001"
+  },
+  "source_canonical_review": {
+    "status": "review_approved",
+    "reviewer": "Codex",
+    "recorded_at": "2026-09-09T17:49:56Z",
+    "review_file": "docs/deployment/evidence/BFF-AUTH-SESSION-SEAM-PREREQUISITE-001/evidence.json",
+    "review_verdict": "Independent exact-head review PASS: PR #5728 head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d, frozen dev base 17bc3c5588da9613586ddd83b5893ee8278f9756, manifest blob c6f27c5d2336c73c495284bfc82026893ee91114 verified; only five declared artifacts changed and worktree clean."
+  },
+  "root_cause": {
+    "summary": "In workflow branch-ci.yml, job 'Smoke acceptance' step 'Provision real worker sandbox' executes 'sudo apt-get update'. GitHub Actions ubuntu-latest runners include /etc/apt/sources.list.d/google-chrome.list pointing to https://dl.google.com/linux/chrome-stable/deb. At 2026-09-09T17:27:58Z, Google published a new Release file declaring main/binary-amd64/Packages.gz with MD5 2fc39e32c7bdf718a907c390338392ea and SHA256 233e56de019b57db89238fa7bcc3647718dbbea3a40c2dc1c633a8c8952aa9e9, but Google's CDN edge continued serving the previous Packages.gz (last modified 09:41:12 GMT) with MD5 2ce0a26fc7a49a488341fc13c6d05b52 and SHA256 bc1428ab27c6d76ee9bb76de07f1ded0ddb4aaabd958fc72855634ef5894a4b3. The resulting Hash Sum mismatch caused apt-get update to exit with code 100 before test execution began.",
+    "affected_workflow_step": ".github/workflows/branch-ci.yml:242 (sudo apt-get update)",
+    "ci_workflow_run": "https://github.com/ajoe734/pantheon/actions/runs/34384571777/job/102578346998",
+    "ci_job": "Smoke acceptance",
+    "not_an_integrator_defect": true,
+    "not_a_source_defect": true
+  },
+  "reproduction_evidence": {
+    "ci_exit_code": 100,
+    "ci_error_message": "E: Failed to fetch https://dl.google.com/linux/chrome-stable/deb/dists/stable/main/binary-amd64/Packages.gz Hash Sum mismatch",
+    "google_cdn_probe": {
+      "release_file_url": "https://dl.google.com/linux/chrome-stable/deb/dists/stable/Release",
+      "release_last_modified": "Wed, 09 Sep 2026 17:27:58 GMT",
+      "release_packages_gz_expected_md5": "2fc39e32c7bdf718a907c390338392ea",
+      "release_packages_gz_expected_sha256": "233e56de019b57db89238fa7bcc3647718dbbea3a40c2dc1c633a8c8952aa9e9",
+      "packages_gz_url": "https://dl.google.com/linux/chrome-stable/deb/dists/stable/main/binary-amd64/Packages.gz",
+      "packages_gz_last_modified": "Wed, 09 Sep 2026 09:41:12 GMT",
+      "packages_gz_actual_md5": "2ce0a26fc7a49a488341fc13c6d05b52",
+      "packages_gz_actual_sha256": "bc1428ab27c6d76ee9bb76de07f1ded0ddb4aaabd958fc72855634ef5894a4b3",
+      "uncompressed_packages_sha256": "9dac1fca508f39a717b07183046f603c2fe914b4c92e84245998bfe8795b548a",
+      "uncompressed_packages_gzipped_sha256": "233e56de019b57db89238fa7bcc3647718dbbea3a40c2dc1c633a8c8952aa9e9",
+      "proof_of_cdn_desync": "Uncompressed Packages file on dl.google.com matches Release file hashes when gzipped locally, confirming origin server uploaded new Packages but CDN edge serves stale Packages.gz."
+    }
+  },
+  "live_pr": {
+    "number": 5728,
+    "url": "https://github.com/ajoe734/pantheon/pull/5728",
+    "state": "OPEN",
+    "headRefName": "task/BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+    "headRefOid": "f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d",
+    "baseRefName": "dev",
+    "status_check_rollup": {
+      "Commit trailers": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS",
+      "Python packaging provision": "SUCCESS",
+      "Persona provisioning owner contracts": "SUCCESS",
+      "Canonical Review Gate": "SUCCESS",
+      "Smoke acceptance": "FAILURE",
+      "Pantheon canonical review gate": "FAILURE"
+    }
+  },
+  "actions_not_taken": [
+    "did not edit scripts/git/auto_integrator.py",
+    "did not broaden credential or sandbox access",
+    "did not edit .github/workflows/branch-ci.yml without scope authorization",
+    "did not mutate or invalidate approved PR #5728 head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d",
+    "did not fabricate review or approval evidence"
+  ],
+  "acceptance_criteria_evaluation": {
+    "criterion_1": {
+      "criterion": "Root cause for BFF-AUTH-SESSION-SEAM-PREREQUISITE-001 integration blocker is documented",
+      "status": "SATISFIED",
+      "evidence": "Root cause comprehensively documented with exact HTTP headers, byte checksums, CI runner log lines, and reproducible curl verification."
+    },
+    "criterion_2": {
+      "criterion": "Original PR is updated or superseded and no longer stranded",
+      "status": "PENDING_EXTERNAL_CDN_SYNC",
+      "evidence": "PR #5728 head is approved and immutable. Rerun of failed Smoke acceptance job will unstrand PR #5728 as soon as dl.google.com CDN edge desync clears."
+    }
+  },
+  "resolution": {
+    "state": "diagnosed_external_dependency_blocker",
+    "original_head_changed_by_this_task": false,
+    "integrator_code_change_required": false,
+    "summary": "Integration blocker for BFF-AUTH-SESSION-SEAM-PREREQUISITE-001 is diagnosed as an upstream Google Chrome apt repository CDN desynchronization during package index update. PR #5728 code is fully verified and approved by Codex. Once the external dl.google.com CDN edge serves the updated Packages.gz, a rerun of failed job in run 34384571777 will turn required checks green, enabling normal auto_integrator completion.",
+    "limitations": "PR #5728 cannot merge until required status check Smoke acceptance succeeds. Neither code change to auto_integrator.py nor PR #5728 head mutation is appropriate."
+  },
+  "next": "Monitor dl.google.com Packages.gz checksum; rerun failed Smoke acceptance job on run 34384571777 once edge sync completes, or record external blocker if propagation exceeds cycle timeout."
+}
