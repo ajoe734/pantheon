@@ -66,6 +66,22 @@ DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset()
 _SENTINEL = object()
 
 
+def fleet_capacity_errors(repo_cfg: dict, live_cfg: dict) -> list[dict[str, str]]:
+    """Validate both sides, even when equally invalid or allowlisted."""
+    orchestrator_dir = str(Path(__file__).resolve().parents[1] / ".orchestrator")
+    if orchestrator_dir not in sys.path:
+        sys.path.insert(0, orchestrator_dir)
+    from supervisor_watchdog import validated_fleet_worker_cap
+
+    errors = []
+    for source, config in (("repo", repo_cfg), ("live", live_cfg)):
+        try:
+            validated_fleet_worker_cap(config)
+        except ValueError as exc:
+            errors.append({"source": source, "error": str(exc)})
+    return errors
+
+
 def get_dotted(data: dict, path: str):
     cur = data
     for part in path.split("."):
@@ -309,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     live_cfg = _load(live_path)
 
     report = find_drift(repo_cfg, live_cfg)
+    capacity_errors = fleet_capacity_errors(repo_cfg, live_cfg)
     repository_source_roots = parse_repository_source_roots(args.repository_source_root)
     repository_source_drift = find_repository_source_drift(
         live_cfg, repository_source_roots
@@ -324,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         behind = git_commits_behind(Path(args.dev_root), args.ref)
 
     fixed = []
-    if args.fix and report["drift"]:
+    if args.fix and report["drift"] and not capacity_errors:
         for item in report["drift"]:
             set_dotted(live_cfg, item["path"], item["repo"])
             fixed.append(item["path"])
@@ -338,24 +355,28 @@ def main(argv: list[str] | None = None) -> int:
         (bool(report["drift"]) and not args.fix)
         or bool(repository_source_drift)
         or bool(repository_integration_drift)
+        or bool(capacity_errors)
     )
     exit_code = 1 if (drift_fail or behind_fail) else 0
 
     if args.json:
-        print(json.dumps({**report, "repository_source_drift": repository_source_drift,
+        print(json.dumps({**report, "fleet_capacity_errors": capacity_errors,
+                          "repository_source_drift": repository_source_drift,
                           "repository_integration_drift": repository_integration_drift,
                           "dev_root_behind": behind,
                           "fixed": fixed, "exit_code": exit_code}, indent=2))
         return exit_code
 
     if report["drift"]:
-        label = "FIXED" if args.fix else "DRIFT"
+        label = "FIXED" if fixed else "DRIFT"
         for d in report["drift"]:
             print(f"[{label}] {d['path']}: repo={d['repo']!r} live={d['live']!r}")
     for d in report["intentional"]:
         print(f"[override] {d['path']}: repo={d['repo']!r} live={d['live']!r} (allowlisted env override)")
     for d in report["missing"]:
         print(f"[missing] {d['path']}: repo={d['repo']!r} live={d['live']!r}")
+    for item in capacity_errors:
+        print(f"[FLEET_CAPACITY_INVALID] {item['source']}: {item['error']}")
     for item in repository_source_drift:
         print(
             "[SOURCE_ROOT_DRIFT] "
