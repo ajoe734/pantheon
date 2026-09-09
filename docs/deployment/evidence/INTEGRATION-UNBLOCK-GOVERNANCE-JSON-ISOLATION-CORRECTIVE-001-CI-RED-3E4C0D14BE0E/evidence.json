@@ -1,0 +1,75 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001-CI-RED-3E4C0D14BE0E",
+  "role": "diagnosis_and_evidence_tracking_only",
+  "checked_at": "2026-09-09T00:00:00Z",
+  "unblock_request": {
+    "repository_slug": "ajoe734/pantheon",
+    "pr": 5709,
+    "head_sha": "d4d961804af4f5c688c5a580fdc94a9132fd4131",
+    "base_sha": "15e2907b5dd0af53a2d6b773f1744d7c955336a7"
+  },
+  "root_cause": {
+    "summary": "services/governance/record_store.py replaced the previous ordinary temporary-file write with tempfile.NamedTemporaryFile, which creates a 0600-mode file. os.replace publishes that inode (including its restrictive mode) as the canonical record file with no mode restoration, so a readonly consumer running under a distinct UID loses read access it previously had at 0644/umask-derived modes.",
+    "qualified_report": "/tmp/governance_pr5709_persona_ci_regression.md",
+    "affected_file": "services/governance/record_store.py:225-240",
+    "affected_tests": [
+      "TestDecisionJournalReadOnlySnapshots.test_actual_readonly_mount_fresh_process_pending_snapshots_never_recover",
+      "TestDecisionJournalReadOnlySnapshots.test_actual_readonly_process_waits_for_same_writer_bundle_inode"
+    ],
+    "not_an_integrator_defect": true
+  },
+  "reproduction_evidence": {
+    "ci_workflow_run": "https://github.com/ajoe734/pantheon/actions/runs/34304100683/job/102317075569",
+    "ci_job": "Persona provisioning owner contracts",
+    "ci_result": "2 failed, 660 passed, 9 subtests passed, 220.81s, exit 1",
+    "exact_base_head_probe": {
+      "base_commit": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+      "base_result": "2 pass, exit 0, 2.814s",
+      "base_log": "/tmp/governance-ro-base-ci-probe.log",
+      "head_commit": "d4d961804af4f5c688c5a580fdc94a9132fd4131",
+      "head_result": "same 2 failures as CI, exit 1, 1.891s",
+      "head_log": "/tmp/governance-ro-head-ci-probe.log",
+      "docker_image": "pantheon-governance-contract:ci",
+      "docker_image_digest": "sha256:89cd105a560a71326ba6c077402126caecacaf71f5581a8c9465c4ee096b9ce2"
+    },
+    "standalone_mode_probe": {
+      "script": "/tmp/governance_record_mode_regression_probe.py",
+      "result_new_file_mode": {"base": "0644", "head": "0600"},
+      "result_replace_existing_mode": {"base": "0644", "head": "0600"}
+    },
+    "downloaded_logs": [
+      "/tmp/governance-pr5709-persona-ci-failure.log",
+      "/tmp/governance-pr5709-persona-ci-metadata.json"
+    ]
+  },
+  "source_fix_ownership": {
+    "owning_task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+    "owning_task_status_at_check": "in_progress",
+    "owning_task_owner": "Claude",
+    "note": "The original task's canonical `next` field already carries this exact regression as required corrective scope: fix JsonGovernanceRecordStore._save to preserve intended readable file modes across replacement while retaining unique temp files, locks, atomic replace, and fsync; no chmod-only fixture workaround, mount relaxation, or duplicate storage patch."
+  },
+  "current_pr_state_at_check": {
+    "checked_at": "2026-09-09T03:20:00Z",
+    "state": "OPEN",
+    "head_ref_oid": "d4d961804af4f5c688c5a580fdc94a9132fd4131",
+    "merged_at": null,
+    "status_check_rollup": {
+      "Persona provisioning owner contracts": "FAILURE",
+      "Pantheon canonical review gate": "FAILURE",
+      "Commit trailers": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS",
+      "Python packaging provision": "SUCCESS",
+      "Smoke acceptance": "SUCCESS"
+    },
+    "conclusion": "PR #5709 head is unchanged since the qualified diagnosis and remains CI-red on the exact same regression. The original PR is still stranded; acceptance criterion 'Original PR is updated or superseded and no longer stranded' is not yet satisfied."
+  },
+  "actions_not_taken": [
+    "did not edit scripts/git/auto_integrator.py",
+    "did not broaden credential or sandbox access",
+    "did not implement a duplicate storage patch in this task",
+    "did not create another task",
+    "did not retry or cancel the CI run",
+    "did not relax readonly mounts or capability drops"
+  ],
+  "next": "Waiting on GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 (owner Claude) to land the record_store._save file-mode fix and push a new head to PR #5709 that passes the Persona provisioning owner contracts job before this task's acceptance criteria can be satisfied."
+}
