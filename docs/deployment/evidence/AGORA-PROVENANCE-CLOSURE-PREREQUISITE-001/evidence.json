@@ -54,7 +54,7 @@
       {
         "command": ".venv-pantheon/bin/python3 -m pytest docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py scripts/test_agora_v1_12_candidate_bundle.py",
         "exit_code": 1,
-        "result": "97 passed, 3 failed in 69.11s (scripts/test_agora_v1_7_bundle.py::test_v1_7_bundle_extends_frozen_v1_6_exact_bytes due to sibling test frozen hash assertion on v1_6; and 2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base)"
+        "result": "102 passed, 3 failed in 104.11s (scripts/test_agora_v1_7_bundle.py::test_v1_7_bundle_extends_frozen_v1_6_exact_bytes due to sibling test frozen hash assertion on v1_6; and 2 pre-existing route parity failures in v1_7/v1_8 reproducing at frozen base)"
       },
       {
         "command": ".venv-pantheon/bin/python3 /tmp/agora_producer_pre_review_probe.py",
