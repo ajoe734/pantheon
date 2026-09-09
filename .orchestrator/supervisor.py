@@ -115,7 +115,7 @@ from rewrite.worker_workspace import (
     _git_ref_exists,
     _git_resolve_commit,
     _git_worktree_records,
-    _lost_lease_replacement_may_adopt_worktree,
+    _lost_lease_replacement_may_recover_worktree,
     _merged_task_branches,
     _path_is_within,
     _paths_overlap,
@@ -126,7 +126,6 @@ from rewrite.worker_workspace import (
     _restore_reusable_scratch,
     _scan_process_paths_in_root,
     _staged_index_split_paths_matching_head,
-    _status_changed_paths,
     _task_id_slug,
     _worker_worktree_base_root,
     _worktree_last_activity_epoch,
@@ -204,11 +203,14 @@ from rewrite.worker_recovery import (
     _worker_recovery_activity_event,
     _worker_recovery_pointer,
     build_lost_lease_receipt,
+    capture_worker_recovery_continuation,
     count_lost_worker_recovery_outcome,
     task_has_active_worker_recovery,
     task_has_pending_worker_recovery,
     validate_lost_lease_receipt,
+    worker_recovery_continuation_text,
     worker_recovery_responsibility_is_obsolete,
+    worker_recovery_workspace_facts,
 )
 
 # Review-decision-intent lost-lease recovery (this module's own; not a
@@ -2612,13 +2614,32 @@ def build_request(
     context_files = event.get("context_files")
     if context_files is None:
         context_files = worker_execution_context_files(event.get("task_id"))
+    message = event["message"]
+    if recovery_receipt_id and config.get("paths", {}).get("status_file"):
+        # Read advisory history from the canonical receipt, never from an
+        # untrusted queue snapshot. The same prompt reaches workers with a
+        # tracked brief and workers in an external delivery repository.
+        status = load_status(config)
+        task = task_index_from_status(config, status).get(str(event.get("task_id") or ""))
+        if task is not None:
+            continuation = worker_recovery_continuation_text(
+                config,
+                status,
+                task,
+                receipt_id=recovery_receipt_id,
+                generation=event.get("task_generation"),
+                actor=canonical_agent_name(config, str(event.get("target_agent") or "")),
+                role="reviewer" if event.get("reason") == REASON_REVIEW_READY else "owner",
+            )
+            if continuation:
+                message += "\n\n" + continuation + "\n"
     return DeliveryRequest(
         agent_id=agent["id"],
         provider=agent.get("provider", agent["id"]),
         delivery_mode=config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
             "delivery_mode", str(agent.get("adapter") or "")
         ),
-        message=event["message"],
+        message=message,
         task_id=event.get("task_id"),
         reason=event.get("reason"),
         context_files=context_files,
@@ -2773,40 +2794,6 @@ _GENERATED_WORKER_TASK_BRIEF_MARKER = (
 )
 
 
-def _remove_legacy_generated_task_briefs(
-    workspace_path: Path,
-    candidates: list[str],
-) -> list[str]:
-    """Remove only untracked fallback files left by the old dispatch path."""
-
-    removed: list[str] = []
-    for candidate in candidates:
-        path = workspace_path / candidate
-        if not path.is_file():
-            continue
-        tracked = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", candidate],
-            cwd=workspace_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if tracked.returncode == 0:
-            continue
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
-        if _GENERATED_WORKER_TASK_BRIEF_MARKER not in content:
-            continue
-        try:
-            path.unlink()
-        except OSError:
-            continue
-        removed.append(candidate)
-    return removed
-
-
 def _replace_request_context_path(
     request: DeliveryRequest,
     source_path: str,
@@ -2916,14 +2903,6 @@ def materialize_worker_context_files(
             _replace_request_context_path(request, rel_value, tracked_context)
             continue
 
-        removed_legacy = _remove_legacy_generated_task_briefs(
-            workspace_path,
-            candidates,
-        )
-        if removed_legacy:
-            request.metadata["removed_legacy_generated_context_files"] = (
-                removed_legacy
-            )
         generated_context = _generated_worker_task_brief_path(request.task_id)
         destination = workspace_path / generated_context
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -3165,7 +3144,6 @@ def check_worker_tree_clean(
     target_agent: str | None,
     queue_event_id: str | None,
     cwd: Path | None = None,
-    fenced_dirty_wip_adoption: Mapping[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
     settings = worker_tree_guard_settings(config)
     if not settings.get("enabled"):
@@ -3187,41 +3165,6 @@ def check_worker_tree_clean(
     if not blocking_entries:
         return True, None
 
-    adoption = (
-        fenced_dirty_wip_adoption
-        if isinstance(fenced_dirty_wip_adoption, Mapping)
-        else {}
-    )
-    adoption_path = str(adoption.get("workspace_path") or "")
-    try:
-        adoption_path_matches = bool(
-            cwd and adoption_path and Path(adoption_path).resolve() == cwd.resolve()
-        )
-    except (OSError, RuntimeError, ValueError):
-        adoption_path_matches = False
-    if (
-        str(adoption.get("task_id") or "") == str(task_id or "")
-        and str(adoption.get("queue_event_id") or "") == str(queue_event_id or "")
-        and str(adoption.get("receipt_id") or "").startswith("lost-lease-")
-        and adoption_path_matches
-    ):
-        write_activity_log(
-            config,
-            {
-                "type": "dispatch_adopted_lost_lease_dirty_tree",
-                "task_id": task_id,
-                "target_agent": target_agent,
-                "queue_event_id": queue_event_id,
-                "recovery_receipt_id": adoption.get("receipt_id"),
-                "workspace_path": str(cwd) if cwd else None,
-                "blocking_paths": [entry["path"] for entry in blocking_entries],
-                "message": (
-                    "Allowed the exact fenced lost-lease replacement to inherit "
-                    "its registered task worktree without changing dirty WIP."
-                ),
-            },
-        )
-        return True, None
 
     display_entries = [f"{entry['status']} {entry['path']}" for entry in blocking_entries[:20]]
     remaining = max(0, len(blocking_entries) - len(display_entries))
@@ -3913,11 +3856,6 @@ def process_queue(
             target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
             queue_event_id=str(event_id or ""),
             cwd=Path(str(workspace_path)) if workspace_path else None,
-            fenced_dirty_wip_adoption=(
-                request_metadata.get("fenced_dirty_wip_adoption")
-                if isinstance(request_metadata, dict)
-                else None
-            ),
         )
         if not guard_ok:
             record["status"] = "pending"
@@ -9291,6 +9229,11 @@ def _persist_worker_recovery_receipt_locked(
     canonical["fence_generation"] = expected_generation + 1
     canonical["last_attempt_at"] = timestamp
     canonical["attempt_count"] = max(1, int(canonical.get("attempt_count", 0) or 0))
+    previous = canonical.get("previous")
+    canonical["previous"] = {
+        **(dict(previous) if isinstance(previous, Mapping) else {}),
+        "continuation": capture_worker_recovery_continuation(status, task),
+    }
     if existing is not None:
         canonical["previous_receipt_id"] = existing.get("receipt_id")
     receipts[receipt_id] = canonical
@@ -9305,11 +9248,6 @@ def _persist_worker_recovery_receipt_locked(
     task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
     task["generation"] = expected_generation + 1
     task["last_update"] = timestamp
-    if canonical_status == "pending":
-        task["next"] = (
-            f"Supervisor fenced lost worker lease {receipt_id}; waiting for an eligible "
-            "configured fallback assignment."
-        )
     event = _worker_recovery_activity_event(
         canonical,
         event_type=(
@@ -9319,7 +9257,7 @@ def _persist_worker_recovery_receipt_locked(
         ),
         timestamp=timestamp,
         message=(
-            str(task.get("next") or "")
+            f"Supervisor fenced lost worker lease {receipt_id}; waiting for an eligible configured fallback assignment."
             if canonical_status == "pending"
             else f"Supervisor fenced lost worker lease {receipt_id}; recovery is {canonical_status}."
         ),
@@ -9361,6 +9299,85 @@ def persist_worker_recovery_receipt(
     if not applied:
         return False
     return sync_status_pipeline(config)
+
+
+def persist_worker_recovery_workspace(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    receipt_id: str,
+    expected_generation: int,
+    workspace: Mapping[str, Any],
+) -> bool:
+    """Record quarantine provenance in the existing receipt before WIP removal.
+
+    This is an advisory filesystem fact, not a new assignment or delivery
+    binding. An identical retry reuses it; another receipt/generation or a
+    conflicting workspace cannot replace a committed archive reference.
+    """
+
+    facts = worker_recovery_workspace_facts(workspace)
+    if not facts:
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        status = load_status(config)
+        task = task_index_from_status(config, status).get(task_id)
+        if (
+            task is None
+            or isinstance(expected_generation, bool)
+            or task_generation(task) != expected_generation
+            or task.get("review_decision_intent") not in (None, {}, [])
+        ):
+            return False
+        try:
+            repository_id = validate_task_repository_scope(config, task)
+        except (RuntimeError, ValueError):
+            return False
+        if facts["repository_id"] != repository_id or facts["branch"] != worker_task_branch(config, task_id):
+            return False
+        receipt = _canonical_worker_recovery_receipt(status, task)
+        replacement = receipt.get("replacement") if receipt else None
+        pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+        role = str(receipt.get("recovery_role") or "") if receipt else ""
+        if (
+            receipt is None
+            or not validate_lost_lease_receipt(receipt)
+            or receipt.get("receipt_id") != receipt_id
+            or receipt.get("status") != "reassigned"
+            or task_current_dispatch_responsibility(config, task) != role
+            or not isinstance(replacement, Mapping)
+            or replacement.get("role") != role
+            or not str(replacement.get("agent") or "").strip()
+            or canonical_agent_name(config, str(replacement.get("agent") or ""))
+            != canonical_agent_name(config, str(task.get(role) or ""))
+            or replacement.get("task_generation") != expected_generation
+            or not isinstance(pointer, Mapping)
+            or pointer.get("replacement_generation") != expected_generation
+            or replacement.get("owner") != task.get("owner")
+            or replacement.get("reviewer") != task.get("reviewer")
+        ):
+            return False
+        if receipt.get("workspace") is not None:
+            return receipt["workspace"] == facts
+        receipt["workspace"] = facts
+        event = _worker_recovery_activity_event(
+            receipt,
+            event_type="worker_lost_lease_workspace_preserved",
+            timestamp=utc_now(),
+            message=(
+                f"Preserved task source {facts['source_head']} and quarantined WIP "
+                f"at {facts['archive_path']} before recovery workspace cleanup."
+            ),
+        )
+        composed = _compose_status_activity_outbox(status.get("status_activity_outbox"), event)
+        if composed is None:
+            return False
+        status["status_activity_outbox"] = composed
+        status[WORKER_RECOVERY_RECEIPTS_KEY][receipt_id] = receipt
+        write_status(config, status, source="supervisor-worker-recovery-workspace")
+    sync_status_pipeline(config)
+    return True
 
 
 def _persist_approved_worker_recovery_binding_locked(
@@ -9434,7 +9451,7 @@ def _persist_approved_worker_recovery_binding_locked(
     receipts[receipt_id] = deepcopy(canonical)
     task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(canonical)
     task["last_update"] = timestamp
-    task["next"] = (
+    message = (
         f"Supervisor recovered approved closeout lease {receipt_id} without "
         "changing the exact owner/reviewer approval binding."
     )
@@ -9442,7 +9459,7 @@ def _persist_approved_worker_recovery_binding_locked(
         canonical,
         event_type="worker_lost_lease_recovery_binding_preserved",
         timestamp=timestamp,
-        message=str(task["next"]),
+        message=message,
     )
     composed = _compose_status_activity_outbox(
         status.get("status_activity_outbox"), event
@@ -9686,7 +9703,8 @@ def _persist_task_reassignment_locked(
     # outbox row atomically so it cannot suppress replacement dispatch.
     task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
     task["generation"] = old_generation + 1
-    task["next"] = message
+    if recovery_receipt is None:
+        task["next"] = message
     if recovery_receipt is not None:
         role = str(recovery_receipt.get("recovery_role") or "owner")
         replacement_agent = (
@@ -9975,7 +9993,7 @@ def _rearm_worker_recovery_receipt_locked(
     receipts[receipt_id] = deepcopy(receipt)
     task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(receipt)
     task["last_update"] = timestamp
-    task["next"] = (
+    message = (
         f"Supervisor retained lost-lease fence {receipt_id} after an "
         f"unmaterialized replacement became unavailable: {reason}"
     )
@@ -9983,7 +10001,7 @@ def _rearm_worker_recovery_receipt_locked(
         receipt,
         event_type="worker_lost_lease_recovery_retry_pending",
         timestamp=timestamp,
-        message=str(task["next"]),
+        message=message,
         # One receipt may exhaust more than one replacement generation. Keep
         # each retry transaction independently idempotent in the activity log.
         event_identity=f"generation-{expected_generation}-attempt-{len(history)}",
