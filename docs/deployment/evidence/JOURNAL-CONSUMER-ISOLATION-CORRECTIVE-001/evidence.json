@@ -87,7 +87,7 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 58,
+        "tests": 63,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -260,7 +260,7 @@
         "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after atomic conditional disposal fix and PATCH allowlist restoration; includes all 3 new durable disposal regression tests."
       }
     ],
-    "total_tests_passed": 273
+    "total_tests_passed": 278
   },
   "artifacts": [
     "services/governance/decision_journal.py",
