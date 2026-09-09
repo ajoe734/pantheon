@@ -1,7 +1,7 @@
 {
   "task_id": "INTEGRATION-UNBLOCK-BFF-AUTH-SESSION-SEAM-PREREQUISITE-001-CI-RED-CB9BCD7066A5",
   "role": "diagnosis_and_evidence_tracking_only",
-  "checked_at": "2026-09-09T17:58:00Z",
+  "checked_at": "2026-09-09T23:34:00Z",
   "owner": "Antigravity",
   "reviewer": "Codex",
   "unblock_request": {
@@ -45,7 +45,7 @@
       "proof_of_cdn_desync": "Uncompressed Packages file on dl.google.com matches Release file hashes when gzipped locally, confirming origin server uploaded new Packages but CDN edge serves stale Packages.gz."
     }
   },
-  "live_pr": {
+  "initial_pr_state_at_diagnosis": {
     "number": 5728,
     "url": "https://github.com/ajoe734/pantheon/pull/5728",
     "state": "OPEN",
@@ -60,33 +60,84 @@
       "Canonical Review Gate": "SUCCESS",
       "Smoke acceptance": "FAILURE",
       "Pantheon canonical review gate": "FAILURE"
-    }
+    },
+    "conclusion": "At initial check, PR #5728 was stranded at approved head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d due to external apt-get update Hash Sum mismatch on Google Chrome repository."
+  },
+  "ci_rerun_unblock_verification": {
+    "run_id": 34384571777,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34384571777",
+    "rerun_job_id": 102683518119,
+    "rerun_job_name": "Smoke acceptance",
+    "rerun_job_started_at": "2026-09-09T23:25:21Z",
+    "rerun_job_completed_at": "2026-09-09T23:27:34Z",
+    "rerun_job_conclusion": "success",
+    "status_check_rollup": {
+      "Smoke acceptance": "SUCCESS",
+      "Commit trailers": "SUCCESS",
+      "Python packaging provision": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS"
+    },
+    "conclusion": "External Google CDN desynchronization cleared; failed-job rerun passed cleanly without source, gate, or configuration modifications."
+  },
+  "final_source_delivery": {
+    "repository_slug": "ajoe734/pantheon",
+    "pr": 5728,
+    "url": "https://github.com/ajoe734/pantheon/pull/5728",
+    "state": "MERGED",
+    "baseRefName": "dev",
+    "headRefName": "task/BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+    "headRefOid": "f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d",
+    "mergeCommit": {
+      "oid": "fd6341a8a84dbfc57bf7f6f31f6be0997f713388"
+    },
+    "mergedAt": "2026-09-09T23:30:22Z",
+    "integrator_action": "canonical_auto_integrator merged exact approved head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d into dev"
+  },
+  "parent_task_status": {
+    "task_id": "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+    "generation": 14,
+    "status": "review_approved",
+    "integration_receipt": {
+      "head_sha": "f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d",
+      "merge_commit_sha": "fd6341a8a84dbfc57bf7f6f31f6be0997f713388",
+      "observation": "performed_merge",
+      "observed_at": "2026-09-09T23:30:23Z",
+      "pr": 5728,
+      "repository": "ajoe734/pantheon",
+      "result": "landed",
+      "source": "canonical_auto_integrator",
+      "target_branch": "dev",
+      "task_generation": 14,
+      "version": 1
+    },
+    "note": "Parent task remains review_approved awaiting owner finalization; source merge into dev does not claim hosted delivery."
   },
   "actions_not_taken": [
     "did not edit scripts/git/auto_integrator.py",
-    "did not broaden credential or sandbox access",
-    "did not edit .github/workflows/branch-ci.yml without scope authorization",
+    "did not edit services/control-plane/bff source or tests in this task",
+    "did not bypass apt hash verification or weaken CI sandbox security",
     "did not mutate or invalidate approved PR #5728 head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d",
-    "did not fabricate review or approval evidence"
+    "did not fabricate review or approval evidence",
+    "did not claim hosted delivery"
   ],
   "acceptance_criteria_evaluation": {
     "criterion_1": {
       "criterion": "Root cause for BFF-AUTH-SESSION-SEAM-PREREQUISITE-001 integration blocker is documented",
       "status": "SATISFIED",
-      "evidence": "Root cause comprehensively documented with exact HTTP headers, byte checksums, CI runner log lines, and reproducible curl verification."
+      "evidence": "Root cause comprehensively documented with exact HTTP headers, byte checksums, CI runner log lines, and reproducible curl verification showing external dl.google.com CDN edge desync."
     },
     "criterion_2": {
       "criterion": "Original PR is updated or superseded and no longer stranded",
-      "status": "PENDING_EXTERNAL_CDN_SYNC",
-      "evidence": "PR #5728 head is approved and immutable. Rerun of failed Smoke acceptance job will unstrand PR #5728 as soon as dl.google.com CDN edge desync clears."
+      "status": "SATISFIED",
+      "evidence": "PR #5728 failed-job rerun of Smoke acceptance completed successfully (conclusion: success, all checks green). Canonical auto_integrator verified approved head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d and merged PR #5728 into dev at 2026-09-09T23:30:22Z as merge commit fd6341a8a84dbfc57bf7f6f31f6be0997f713388."
     }
   },
   "resolution": {
-    "state": "diagnosed_external_dependency_blocker",
+    "state": "source_pr_merged_original_blocker_resolved",
     "original_head_changed_by_this_task": false,
     "integrator_code_change_required": false,
-    "summary": "Integration blocker for BFF-AUTH-SESSION-SEAM-PREREQUISITE-001 is diagnosed as an upstream Google Chrome apt repository CDN desynchronization during package index update. PR #5728 code is fully verified and approved by Codex. Once the external dl.google.com CDN edge serves the updated Packages.gz, a rerun of failed job in run 34384571777 will turn required checks green, enabling normal auto_integrator completion.",
-    "limitations": "PR #5728 cannot merge until required status check Smoke acceptance succeeds. Neither code change to auto_integrator.py nor PR #5728 head mutation is appropriate."
+    "summary": "Integration blocker for BFF-AUTH-SESSION-SEAM-PREREQUISITE-001 genuinely cleared when external dl.google.com apt repository CDN edge synchronization completed. Existing failed-job rerun of Branch CI Gate run 34384571777 (job 102683518119) succeeded, turning all required checks green. Canonical auto_integrator independently verified exact approved head f6e6ad4b34c7b3565dd8fdf75df098e677a84d1d and merged PR #5728 into dev at 2026-09-09T23:30:22Z (merge commit fd6341a8a84dbfc57bf7f6f31f6be0997f713388). No source change, apt hash bypass, or required-check waiver was needed.",
+    "limitations": "Hosted acceptance is not claimed. Parent task BFF-AUTH-SESSION-SEAM-PREREQUISITE-001 remains review_approved awaiting owner finalization. No approval evidence was fabricated or replaced; no branch protection or runtime permissions were changed."
   },
-  "next": "Monitor dl.google.com Packages.gz checksum; rerun failed Smoke acceptance job on run 34384571777 once edge sync completes, or record external blocker if propagation exceeds cycle timeout."
+  "next": "Evidence updated to reflect merged PR #5728 and verified auto-integrator completion. Ready for independent review by Codex and final closeout."
 }
