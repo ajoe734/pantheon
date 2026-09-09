@@ -24,7 +24,10 @@
 # Optional environment:
 #   EXPECTED_FE_SHA                  full 40-hex candidate FE commit SHA
 #   DEV_PAPER_RUN_ID                 numeric run identity (e.g. GITHUB_RUN_ID)
-#   DEV_PAPER_ATTEMPT                numeric attempt identity
+#   DEV_PAPER_ATTEMPT                numeric attempt identity; supply both or
+#                                     neither. Official deploy supplies both:
+#                                     each run/attempt creates a fresh paper
+#                                     reservation; polling stays idempotent.
 #   DEV_PAPER_PHASE                  short [a-z0-9_-] phase label
 #   DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS  overall collection deadline
 #                                     (default 120); bounds a stalled/hung
@@ -48,6 +51,10 @@ error() {
   || { error "DEV_PAPER_RUN_ID must be empty or numeric"; exit 75; }
 [[ -z "${DEV_PAPER_ATTEMPT:-}" || "${DEV_PAPER_ATTEMPT}" =~ ^[0-9]{1,10}$ ]] \
   || { error "DEV_PAPER_ATTEMPT must be empty or numeric"; exit 75; }
+if [[ -n "${DEV_PAPER_RUN_ID:-}${DEV_PAPER_ATTEMPT:-}" ]]; then
+  [[ -n "${DEV_PAPER_RUN_ID:-}" && -n "${DEV_PAPER_ATTEMPT:-}" ]] \
+    || { error "DEV_PAPER_RUN_ID and DEV_PAPER_ATTEMPT must be supplied together"; exit 75; }
+fi
 [[ -z "${DEV_PAPER_PHASE:-}" || "${DEV_PAPER_PHASE}" =~ ^[a-z0-9_-]{1,64}$ ]] \
   || { error "DEV_PAPER_PHASE must be empty or a short lowercase token"; exit 75; }
 [[ "${DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS:-120}" =~ ^[0-9]{1,4}$ ]] \
@@ -165,9 +172,22 @@ SSH="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh"
 # instead of erasing all evidence by never writing one.
 write_status "not_started" "" "" ""
 
+# A failed/compensated Persona reservation is terminal. Replaying the old
+# bootstrap name OR key returns that receipt without retrying owner actions.
+# Derive BOTH from the deployment attempt; all interpolation is numeric-checked
+# above. No ledger resets, generated business IDs or privileged retry endpoints.
+# Invocation without either identity retains the explicit legacy/manual CLI
+# behavior; the official workflow always supplies both identities.
+bootstrap_command="set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5"
+if [[ -n "${DEV_PAPER_RUN_ID:-}" ]]; then
+  baseline_name="Pantheon Dev Paper Release ${DEV_PAPER_RUN_ID} Attempt ${DEV_PAPER_ATTEMPT}"
+  baseline_key="dev-paper-release-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT}"
+  bootstrap_command+=" --name '${baseline_name}' --idempotency-key '${baseline_key}'"
+  printf '[dev-paper-baseline] name=%s idempotency_key=%s\n' "${baseline_name}" "${baseline_key}"
+fi
+
 bootstrap_status=0
-"${SSH}" exec \
-  "set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5" \
+"${SSH}" exec "${bootstrap_command}" \
   || bootstrap_status=$?
 
 if [[ "${bootstrap_status}" -eq 0 ]]; then
