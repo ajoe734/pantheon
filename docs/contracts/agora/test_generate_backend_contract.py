@@ -226,8 +226,14 @@ def test_backend_derivation_closure_rejects_missing_legacy_inputs_counterexample
     module = _module()
     payload = json.loads(HANDOFF.read_text(encoding="utf-8"))
     contract_commit = payload["backend"]["contract_commit"]
-    reasons = module.validate_backend_derivation_closure(ROOT, payload, contract_commit)
+    # The frozen counterexample omitted 72 transitive inputs (providing only 18 leaves)
+    counterexample_payload = dict(payload)
+    counterexample_payload["source_files"] = payload["source_files"][:18]
+    reasons = module.validate_backend_derivation_closure(ROOT, counterexample_payload, contract_commit)
     assert "backend-source-files-incomplete" in reasons
+
+    # The genuine complete derivation closure passes with zero reasons
+    assert module.validate_backend_derivation_closure(ROOT, payload, contract_commit) == []
 
 
 def test_validate_contract_identity_rejects_changed_consumed_bytes_at_old_commit() -> None:
