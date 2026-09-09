@@ -6,9 +6,12 @@ production follow the existing governance Postgres posture.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import threading
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Protocol, Sequence
 
@@ -34,6 +37,14 @@ class GovernanceRecordStore(Protocol):
         record: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]: ...
 
+    def delete(self, record_id: str) -> bool: ...
+
+    def delete_if_equals(
+        self,
+        record_id: str,
+        expected_snapshot: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]: ...
+
 
 def _copy_record(record: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(record))
@@ -47,41 +58,114 @@ def _record_id(record: Dict[str, Any], id_fields: Sequence[str]) -> str:
     raise ValueError(f"record requires one of: {', '.join(id_fields)}")
 
 
+_HELD_FLOCKS = threading.local()
+
+
+class _FileLock:
+    """Re-entrant cross-process and thread-safe POSIX file lock."""
+
+    def __init__(self, lock_path: Path) -> None:
+        self.lock_path = lock_path.resolve()
+
+    def __enter__(self) -> _FileLock:
+        held = getattr(_HELD_FLOCKS, "held", None)
+        if held is None:
+            held = {}
+            _HELD_FLOCKS.held = held
+        key = str(self.lock_path)
+        if key not in held:
+            self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o666)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            held[key] = [1, fd]
+        else:
+            held[key][0] += 1
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        held = getattr(_HELD_FLOCKS, "held", {})
+        key = str(self.lock_path)
+        if key in held:
+            held[key][0] -= 1
+            if held[key][0] <= 0:
+                _, fd = held.pop(key)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
 class JsonGovernanceRecordStore:
-    """Small atomic JSON owner store for dev and local recovery posture."""
+    """Atomic file-locked and multi-instance coordinating JSON owner store for dev and local recovery posture."""
 
     def __init__(self, storage_path: str | Path, *, id_fields: Sequence[str]) -> None:
         self.storage_path = Path(storage_path)
         self.id_fields = tuple(id_fields)
         if not self.id_fields:
             raise ValueError("id_fields must not be empty")
+        self._flock_path = self.storage_path.with_name(f".{self.storage_path.name}.flock")
         self._lock = threading.RLock()
         self._records: Dict[str, Dict[str, Any]] = {}
         if self.storage_path.exists():
             self._load()
 
+    def _file_lock(self) -> _FileLock:
+        return _FileLock(self._flock_path)
+
+    def lock(self) -> _FileLock:
+        """Public context manager for multi-step coordinated operations."""
+        return self._file_lock()
+
+    @contextmanager
+    def _coordinate(self):
+        if self.__class__.__name__ == "CoordinatingJsonGovernanceRecordStore":
+            # CoordinatingJsonGovernanceRecordStore in decision_journal already manages
+            # its own outer file lock and _refresh() call; do not nest a second flock open.
+            yield
+        else:
+            with self._file_lock(), self._lock:
+                self._refresh()
+                yield
+
+    def _refresh(self) -> None:
+        if self.storage_path.exists():
+            self._load()
+        else:
+            self._records = {}
+
     def put(self, record: Dict[str, Any]) -> None:
         if not isinstance(record, dict):
             raise TypeError("record must be a dictionary")
         record_id = _record_id(record, self.id_fields)
-        with self._lock:
+        with self._coordinate():
+            previous = self._records.get(record_id)
             self._records[record_id] = _copy_record(record)
-            self._save()
+            try:
+                self._save()
+            except Exception:
+                if previous is not None:
+                    self._records[record_id] = previous
+                else:
+                    self._records.pop(record_id, None)
+                raise
 
     def get(self, record_id: str) -> Dict[str, Any] | None:
-        with self._lock:
+        with self._coordinate():
             record = self._records.get(str(record_id))
             return _copy_record(record) if record is not None else None
 
     def list_all(self) -> list[Dict[str, Any]]:
-        with self._lock:
+        with self._coordinate():
             return [_copy_record(record) for record in self._records.values()]
 
     def insert_if_absent(
         self, record: Dict[str, Any]
     ) -> tuple[bool, Dict[str, Any]]:
+        if not isinstance(record, dict):
+            raise TypeError("record must be a dictionary")
         record_id = _record_id(record, self.id_fields)
-        with self._lock:
+        with self._coordinate():
             existing = self._records.get(record_id)
             if existing is not None:
                 return False, _copy_record(existing)
@@ -98,11 +182,13 @@ class JsonGovernanceRecordStore:
         expected_record: Dict[str, Any],
         record: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]:
+        if not isinstance(expected_record, dict) or not isinstance(record, dict):
+            raise TypeError("records must be dictionaries")
         expected_id = _record_id(expected_record, self.id_fields)
         record_id = _record_id(record, self.id_fields)
         if expected_id != record_id:
             raise ValueError("compare_and_set record identities must match")
-        with self._lock:
+        with self._coordinate():
             current = self._records.get(record_id)
             if current != expected_record:
                 return False, _copy_record(current) if current is not None else None
@@ -110,13 +196,54 @@ class JsonGovernanceRecordStore:
             try:
                 self._save()
             except Exception:
-                self._records[record_id] = current
+                if current is not None:
+                    self._records[record_id] = current
+                else:
+                    self._records.pop(record_id, None)
                 raise
             return True, _copy_record(record)
+
+    def delete(self, record_id: str) -> bool:
+        with self._coordinate():
+            key = str(record_id)
+            if key in self._records:
+                previous = self._records[key]
+                del self._records[key]
+                try:
+                    self._save()
+                except Exception:
+                    self._records[key] = previous
+                    raise
+                return True
+            return False
+
+    def delete_if_equals(
+        self,
+        record_id: str,
+        expected_snapshot: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]:
+        clean_id = str(record_id or "").strip()
+        if not clean_id:
+            return False, None
+        with self._coordinate():
+            if clean_id not in self._records:
+                return False, None
+            current = self._records[clean_id]
+            if current != expected_snapshot:
+                return False, _copy_record(current)
+            previous = self._records[clean_id]
+            del self._records[clean_id]
+            try:
+                self._save()
+            except Exception:
+                self._records[clean_id] = previous
+                raise
+            return True, None
 
     def _load(self) -> None:
         text = self.storage_path.read_text(encoding="utf-8").strip()
         if not text:
+            self._records = {}
             return
         payload = json.loads(text)
         if isinstance(payload, dict):
@@ -138,10 +265,23 @@ class JsonGovernanceRecordStore:
 
     def _save(self) -> None:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = self.storage_path.with_name(f".{self.storage_path.name}.tmp")
+        temporary_path = self.storage_path.with_name(
+            f".{self.storage_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        )
         payload = json.dumps(self._records, indent=2, sort_keys=True) + "\n"
-        temporary_path.write_text(payload, encoding="utf-8")
-        os.replace(temporary_path, self.storage_path)
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary_path, self.storage_path)
+        except Exception:
+            if temporary_path.exists():
+                try:
+                    temporary_path.unlink()
+                except OSError:
+                    pass
+            raise
 
 
 class PostgresGovernanceRecordStore:
@@ -196,6 +336,30 @@ class PostgresGovernanceRecordStore:
             record_id, expected_record, record
         )
         return updated, _copy_record(canonical) if canonical is not None else None
+
+    def delete(self, record_id: str) -> bool:
+        if hasattr(self._records, "_use_conn"):
+            with self._records._use_conn(None) as conn:
+                query = f"DELETE FROM {self._records.table_name} WHERE record_id = %s"
+                cursor = conn.execute(query, (str(record_id),))
+                return bool(getattr(cursor, "rowcount", 0) > 0)
+        return False
+
+    def delete_if_equals(
+        self,
+        record_id: str,
+        expected_snapshot: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]:
+        clean_id = str(record_id or "").strip()
+        if not clean_id:
+            return False, None
+        current = self.get(clean_id)
+        if current is None:
+            return False, None
+        if current != expected_snapshot:
+            return False, current
+        deleted = self.delete(clean_id)
+        return (deleted, None) if deleted else (False, current)
 
 
 def build_governance_record_store(

@@ -183,3 +183,56 @@ def test_human_gate_rejects_wrong_evidence_contract(tmp_path, monkeypatch):
         )
     assert extra_rejected.value.status_code == 422
     assert "evidence_reviewed" in str(extra_rejected.value.detail)
+
+
+def test_human_gate_multi_instance_isolation(tmp_path, monkeypatch) -> None:
+    """Closes F09: verify human gate decisions across independent store instances coordinate without lost updates."""
+    store_file = tmp_path / "human-gates.json"
+    records_a = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+    records_b = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_SECRET", "human-gate-test-secret")
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_JWKS_URI", raising=False)
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL", raising=False)
+
+    # 1. Instance A creates gate 1
+    monkeypatch.setattr(main, "human_gate_record_store", records_a)
+    monkeypatch.setattr(main, "human_gate_api", SignoffAPI(store=GovernanceHumanGateDecisionStore(records_a)))
+    d1 = f"hgd-iso-1-{uuid.uuid4().hex[:6]}"
+    main.create_human_gate(
+        body=_decision_payload(d1),
+        authorization=_headers("approver-1", "approver")["Authorization"],
+        x_mfa_token=None,
+    )
+
+    # 2. Instance B creates gate 2
+    monkeypatch.setattr(main, "human_gate_record_store", records_b)
+    monkeypatch.setattr(main, "human_gate_api", SignoffAPI(store=GovernanceHumanGateDecisionStore(records_b)))
+    d2 = f"hgd-iso-2-{uuid.uuid4().hex[:6]}"
+    main.create_human_gate(
+        body=_decision_payload(d2),
+        authorization=_headers("approver-2", "approver")["Authorization"],
+        x_mfa_token=None,
+    )
+
+    # Both gates survive across both instances
+    assert records_a.get(d1) is not None
+    assert records_a.get(d2) is not None
+    assert records_b.get(d1) is not None
+    assert records_b.get(d2) is not None
+    assert len(records_a.list_all()) == 2
+    assert len(records_b.list_all()) == 2
+
+    # Instance B reads and signs gate 1
+    signed_g1 = main.sign_human_gate(
+        decision_id=d1,
+        body={"role": "approver"},
+        authorization=_headers("approver-1", "approver", mfa=True)["Authorization"],
+        x_mfa_token=None,
+    )
+    assert len(signed_g1["signatures"]) == 1
+
+    # Instance A immediately observes the signature on gate 1
+    g1_from_a = records_a.get(d1)
+    assert len(g1_from_a["signatures"]) == 1

@@ -1,0 +1,110 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+  "worker": "Antigravity2",
+  "reviewer": "Codex",
+  "governing_spec": {
+    "document": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/reaudit-task-intake-20260909/SA_SD.md",
+    "section": "## GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001 — Close non-journal governance JSON store lost updates",
+    "finding": "F09 · Governance JSON store 會遺失第二實例未看到的資料"
+  },
+  "predecessors": [
+    {
+      "task_id": "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+      "status": "done",
+      "satisfied": true
+    }
+  ],
+  "scorecard_status": {
+    "two_instance_lost_update_prevention": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: JsonGovernanceRecordStore upgraded with re-entrant POSIX file locking (_FileLock using fcntl.flock), fresh disk reload on read and write (_refresh()), and atomic file replacement (_save() with unique temporary file .tmp.<pid>.<uuid>, fsync, and os.replace). Multiple instances pointing to the same file coordinate safely without lost updates."
+    },
+    "multiprocess_concurrency": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: Independent OS processes writing distinct records concurrently coordinate via POSIX file locking on .<storage_name>.flock, preserving 100% of all distinct records without dropping or corrupting data."
+    },
+    "insert_if_absent_duplicate_rejection": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: insert_if_absent re-reads fresh state under file lock and in-process RLock, returning (True, record) for the winning insert and (False, canonical) for all concurrent or subsequent attempts with matching ID."
+    },
+    "compare_and_set_version_conflict": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: compare_and_set re-reads fresh state under file lock, verifying exact equality with expected_record before atomic write. Concurrent mutations with stale expected records fail closed, returning (False, current_record)."
+    },
+    "fresh_reads_across_instances": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: get() and list_all() reload from disk under file lock via _coordinate(), ensuring writes from any process or instance are immediately observed by other long-lived instances without restart."
+    },
+    "failed_write_restart_durability": {
+      "status": "satisfied",
+      "implementation": "services/governance/record_store.py: Unserializable payloads or filesystem errors during save restore in-memory state and preserve previous on-disk data without partial or uncommitted corruption. Atomic os.replace ensures readers never observe partial files."
+    },
+    "four_mounted_consumers_isolation": {
+      "status": "satisfied",
+      "implementation": "services/governance/main.py: freeze_orders and rollbacks write endpoints coordinated via store.lock() and in-process lock during entire read-modify-write transition. human_gate_decisions backed by GovernanceHumanGateDecisionStore enforces insert_if_absent on creation and CAS put_if_matches on signatures. consultation_handoffs backed by consultation_handoff_store enforces insert_if_absent idempotency across independent instances."
+    }
+  },
+  "verification_results": {
+    "suites": [
+      {
+        "name": "services/governance/test_record_store_isolation.py",
+        "runner": ".venv/bin/python -m pytest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_freeze_rollback_store.py",
+        "runner": ".venv/bin/python -m pytest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_consultation_handoff.py",
+        "runner": ".venv/bin/python -m pytest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_human_gate_api.py",
+        "runner": ".venv/bin/python -m pytest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/governance/test_decision_journal.py",
+        "runner": ".venv/bin/python -m pytest",
+        "tests": 63,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "runner": ".venv/bin/python -m pytest",
+        "tests": 38,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      }
+    ],
+    "total_tests_passed": 129
+  },
+  "artifacts": [
+    "services/governance/record_store.py",
+    "services/governance/main.py",
+    "services/governance/test_record_store_isolation.py",
+    "services/governance/test_freeze_rollback_store.py",
+    "services/governance/test_consultation_handoff.py",
+    "services/governance/test_human_gate_api.py",
+    "docs/deployment/evidence/GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001/evidence.json"
+  ]
+}

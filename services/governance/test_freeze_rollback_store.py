@@ -376,3 +376,83 @@ def test_rollback_status_transitions(tmp_path, monkeypatch) -> None:
         headers={"Authorization": "Bearer op-test:operator"},
     )
     assert resp4.status_code == 400
+
+
+def test_freeze_and_rollback_stores_multi_instance_isolation(tmp_path, monkeypatch) -> None:
+    """Closes F09: verify independent instances of freeze and rollback stores coordinate without lost updates."""
+    freeze_path = tmp_path / "freeze_orders.json"
+    rollback_path = tmp_path / "rollbacks.json"
+
+    freeze_store_a = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    freeze_store_b = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    rollback_store_a = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+    rollback_store_b = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+
+    # Instance A writes freeze 1
+    freeze_store_a.put(
+        {
+            "freeze_order_id": "freeze-iso-1",
+            "scope": "persona",
+            "target_id": "p-1",
+            "status": "active",
+            "actor": "admin",
+            "identity": "admin-1",
+            "source_command_id": "cmd-1",
+        }
+    )
+
+    # Instance B writes freeze 2
+    freeze_store_b.put(
+        {
+            "freeze_order_id": "freeze-iso-2",
+            "scope": "persona",
+            "target_id": "p-2",
+            "status": "requested",
+            "actor": "operator",
+            "identity": "op-2",
+            "source_command_id": "cmd-2",
+        }
+    )
+
+    # Instance A writes rollback 1
+    rollback_store_a.put(
+        {
+            "rollback_id": "rb-iso-1",
+            "runtime_id": "rt-1",
+            "action_type": "replace",
+            "status": "completed",
+            "actor": "operator",
+            "identity": "op-1",
+            "source_command_id": "cmd-3",
+        }
+    )
+
+    # Instance B writes rollback 2
+    rollback_store_b.put(
+        {
+            "rollback_id": "rb-iso-2",
+            "runtime_id": "rt-2",
+            "action_type": "pause",
+            "status": "initiated",
+            "actor": "operator",
+            "identity": "op-2",
+            "source_command_id": "cmd-4",
+        }
+    )
+
+    # Both instances observe both freeze orders and rollbacks
+    assert freeze_store_a.get("freeze-iso-2") is not None
+    assert freeze_store_b.get("freeze-iso-1") is not None
+    assert len(freeze_store_a.list_all()) == 2
+    assert len(freeze_store_b.list_all()) == 2
+
+    assert rollback_store_a.get("rb-iso-2") is not None
+    assert rollback_store_b.get("rb-iso-1") is not None
+    assert len(rollback_store_a.list_all()) == 2
+    assert len(rollback_store_b.list_all()) == 2
+
+    # Fresh instance verification
+    fresh_freezes = JsonGovernanceRecordStore(freeze_path, id_fields=("freeze_order_id", "id"))
+    fresh_rollbacks = JsonGovernanceRecordStore(rollback_path, id_fields=("rollback_id", "id"))
+    assert {r["freeze_order_id"] for r in fresh_freezes.list_all()} == {"freeze-iso-1", "freeze-iso-2"}
+    assert {r["rollback_id"] for r in fresh_rollbacks.list_all()} == {"rb-iso-1", "rb-iso-2"}

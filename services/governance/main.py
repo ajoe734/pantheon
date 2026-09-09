@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import threading
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
@@ -1040,7 +1041,8 @@ def record_freeze_order(
         body["created_at"] = _utc_now()
         body["issued_at"] = body["created_at"]
 
-    with _freeze_order_lock:
+    lock_cm = getattr(freeze_order_store, "lock", None)
+    with _freeze_order_lock, (lock_cm() if callable(lock_cm) else nullcontext()):
         existing = freeze_order_store.get(freeze_order_id)
         is_transition = False
         if existing:
@@ -1171,7 +1173,8 @@ def record_rollback(
         body["initiated_at"] = body["created_at"]
         body["requested_at"] = body["created_at"]
 
-    with _rollback_lock:
+    lock_cm = getattr(rollback_store, "lock", None)
+    with _rollback_lock, (lock_cm() if callable(lock_cm) else nullcontext()):
         existing = rollback_store.get(rollback_id)
         is_transition = False
         if existing:
