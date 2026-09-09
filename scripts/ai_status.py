@@ -111,8 +111,10 @@ from runtime_state import (
 from rewrite.task_state_store import (
     append_state_commit,
     load_snapshot,
+    review_decision_task_digest,
     snapshot_transaction,
 )
+from rewrite.worker_recovery import task_has_active_worker_recovery
 from rewrite import task_machine, task_state_store
 from rewrite.task_contract import (
     OpenPullRequestDiscovery,
@@ -2658,33 +2660,6 @@ def task_assignment_generation(task: Mapping[str, Any] | None) -> int:
             f"Task {task.get('id') or '?'} has invalid assignment generation"
         )
     return value
-
-
-def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
-    """Fail closed while supervisor-owned lost-lease recovery is unresolved."""
-
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping):
-        return False
-    receipt_id = str(pointer.get("receipt_id") or "").strip()
-    status = str(pointer.get("status") or "").strip()
-    if not receipt_id or status not in {"pending", "reassigned"}:
-        return False
-    generation_key = (
-        "fence_generation" if status == "pending" else "replacement_generation"
-    )
-    raw_authority_generation = pointer.get(generation_key)
-    if (
-        raw_authority_generation in (None, "")
-        or isinstance(raw_authority_generation, bool)
-    ):
-        return True
-    try:
-        authority_generation = int(raw_authority_generation)
-        current_generation = task_assignment_generation(task)
-    except (TypeError, ValueError, RuntimeError):
-        return True
-    return authority_generation == current_generation
 
 
 def validate_bound_status_command_task_authority(
@@ -8540,17 +8515,6 @@ def task_mutation_cas_digest(task: Mapping[str, Any]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def review_decision_task_digest(task: Mapping[str, Any]) -> str:
-    """Digest business task truth while excluding the intent and UI markers."""
-
-    candidate = deepcopy(dict(task))
-    candidate.pop(REVIEW_DECISION_INTENT_KEY, None)
-    candidate.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
-    candidate.pop("status_write_pending", None)
-    candidate.pop("status_write_pending_count", None)
-    return task_mutation_cas_digest(candidate)
 
 
 def validate_review_decision_intent(value: Any) -> dict[str, Any]:

@@ -153,6 +153,63 @@ class RecoveryWorktreeQuarantineTests(unittest.TestCase):
             existing_archive=existing_archive,
         )
 
+    def test_refresh_rejects_missing_base_instead_of_classifying_it_as_diverged(self) -> None:
+        before = self._snapshot()
+        missing_base = "f" * 40
+
+        self.assertEqual(
+            worker_workspace.worker_worktree_base_relation(self.worktree, missing_base),
+            "base_relation_failed",
+        )
+        ok, status = worker_workspace._refresh_reused_worker_worktree(self.worktree, missing_base)
+        self.assertFalse(ok, status)
+        self.assertTrue(status.startswith("merge_failed:"), status)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_refresh_rejects_either_ancestry_probe_failure(self) -> None:
+        self._git(self.repo, "commit", "--allow-empty", "-m", "independent dev commit")
+        base_sha = self._git(self.repo, "rev-parse", "HEAD")
+        before = self._snapshot()
+        real_run = subprocess.run
+        for failed_pair in ((base_sha, "HEAD"), ("HEAD", base_sha)):
+            for returncode in (128, -9):
+                with self.subTest(failed_pair=failed_pair, returncode=returncode):
+                    def failed_ancestry(args, **kwargs):
+                        if args == ["git", "merge-base", "--is-ancestor", *failed_pair]:
+                            return subprocess.CompletedProcess(
+                                args, returncode, stdout="", stderr="injected ancestry read failure",
+                            )
+                        return real_run(args, **kwargs)
+
+                    with mock.patch.object(worker_workspace.subprocess, "run", side_effect=failed_ancestry):
+                        self.assertEqual(
+                            worker_workspace.worker_worktree_base_relation(self.worktree, base_sha),
+                            "base_relation_failed",
+                        )
+                        ok, status = worker_workspace._refresh_reused_worker_worktree(self.worktree, base_sha)
+                    self.assertFalse(ok, status)
+                    self.assertTrue(status.startswith("merge_failed:"), status)
+                    self.assertEqual(self._snapshot(), before)
+
+    def test_refresh_still_preserves_ahead_and_genuinely_diverged_task_commits(self) -> None:
+        before = self._snapshot()
+        self.assertEqual(
+            worker_workspace.worker_worktree_base_relation(self.worktree, self.base_sha),
+            "contains_base",
+        )
+        ok, status = worker_workspace._refresh_reused_worker_worktree(self.worktree, self.base_sha)
+        self.assertTrue(ok, status)
+        self._git(self.repo, "commit", "--allow-empty", "-m", "independent dev commit")
+        base_sha = self._git(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(
+            worker_workspace.worker_worktree_base_relation(self.worktree, base_sha), "diverged",
+        )
+        self.assertEqual(
+            worker_workspace._refresh_reused_worker_worktree(self.worktree, base_sha),
+            (False, "skipped_non_fast_forward"),
+        )
+        self.assertEqual(self._snapshot(), before)
+
     def _assert_quarantine_preserves_committed_source(self) -> None:
         self._dirty_worktree()
         original = self._snapshot()
@@ -499,6 +556,200 @@ class RecoveryWorktreeQuarantineTests(unittest.TestCase):
                 publish.assert_not_called()
                 self.assertEqual(self._snapshot(), clean)
                 path.write_bytes(original_bytes)
+
+    def _completed_quarantine_binding(self):
+        self._dirty_worktree()
+        ok, status, binding = self._quarantine(mock.Mock(return_value=True))
+        self.assertTrue(ok, status)
+        self.assertEqual(self._git(self.worktree, "status", "--porcelain"), "")
+        return binding
+
+    def _assert_changed_head_retry_rejected(self, binding) -> None:
+        before = self._snapshot()
+        historical_binding = dict(binding)
+        manifest_path = Path(binding["archive_path"]) / "manifest.json"
+        historical_manifest = manifest_path.read_bytes()
+        recovery_refs = self._git(self.repo, "for-each-ref", "refs/pantheon/recovery/")
+        publish = mock.Mock(return_value=True)
+
+        ok, status, returned_binding = self._quarantine(publish, existing_archive=binding)
+
+        self.assertFalse(ok, status)
+        self.assertEqual(status, "recovery_branch_changed_after_archive")
+        publish.assert_not_called()
+        self.assertEqual(self._snapshot(), before)
+        self.assertEqual(binding, historical_binding)
+        self.assertEqual(returned_binding, historical_binding)
+        self.assertEqual(manifest_path.read_bytes(), historical_manifest)
+        self.assertEqual(
+            self._git(self.repo, "for-each-ref", "refs/pantheon/recovery/"), recovery_refs,
+        )
+
+    def test_changed_head_retry_rejects_dirty_descendant_without_restoring_wip(self) -> None:
+        binding = self._completed_quarantine_binding()
+        self._git(self.worktree, "commit", "--allow-empty", "-m", "committed descendant")
+        self._git(self.worktree, "merge-base", "--is-ancestor", binding["source_head"], "HEAD")
+        self._dirty_worktree()
+
+        self._assert_changed_head_retry_rejected(binding)
+
+    def test_changed_head_retry_rejects_clean_non_descendant(self) -> None:
+        binding = self._completed_quarantine_binding()
+        # This is the isolated fixture's clean task tree, not a source checkout.
+        # Its original dev base is not a descendant of the archived task commit.
+        self._git(self.worktree, "reset", "--hard", self.base_sha)
+        self.assertEqual(self._git(self.worktree, "status", "--porcelain"), "")
+
+        self._assert_changed_head_retry_rejected(binding)
+
+    def test_changed_head_retry_rejects_ancestry_git_errors_before_publication(self) -> None:
+        binding = self._completed_quarantine_binding()
+        self._git(self.worktree, "commit", "--allow-empty", "-m", "committed descendant")
+        current_head = self._git(self.worktree, "rev-parse", "HEAD")
+        ancestry_command = [
+            "git", "-C", str(self.worktree), "merge-base", "--is-ancestor",
+            binding["source_head"], current_head,
+        ]
+        real_run = subprocess.run
+        for returncode in (128, -9):
+            with self.subTest(returncode=returncode):
+                def fail_ancestry(args, **kwargs):
+                    if args == ancestry_command:
+                        return subprocess.CompletedProcess(
+                            args, returncode, stdout="", stderr="injected ancestry read failure",
+                        )
+                    return real_run(args, **kwargs)
+
+                with mock.patch.object(worker_workspace.subprocess, "run", side_effect=fail_ancestry):
+                    self._assert_changed_head_retry_rejected(binding)
+
+
+class RecoveryWorktreeCleanRetryTests(unittest.TestCase):
+    """Exercise archive revalidation through the real canonical handoff."""
+
+    def setUp(self) -> None:
+        # Reuse the established real-Git / TaskStore integration fixture. Its
+        # external fetch and projection seams never reach live state or GitHub.
+        import test_supervisor as integration
+
+        self.integration = integration
+        self.workspace_module = integration.worker_workspace
+        self.fixture = integration.LostLeaseWorkspaceRecoveryTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        directory = tempfile.TemporaryDirectory(prefix="recovery clean retry ")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.repo, _task, self.state, self.workspace = self.fixture._started_workspace(self.root)
+        (self.workspace / ".orchestrator/supervisor.py").write_bytes(b"# uncommitted source\n")
+        (self.workspace / "draft.txt").write_bytes(b"untracked draft\n")
+        self.task, self.receipt_id, self.event_id = self.fixture._fence_and_reassign(self.state)
+        request = self._rebuilt_request()
+        with mock.patch.object(
+            self.workspace_module, "_refresh_reused_worker_worktree",
+            return_value=(False, "worktree_status_failed"),
+        ):
+            ok, error = self.fixture._prepare_replacement(self.state, request, self.event_id)
+        self.assertFalse(ok, error)
+        self.assertIn("worktree_status_failed", str(error))
+        self.assertEqual(self.fixture._git(self.workspace, "status", "--porcelain"), "")
+        self.receipt = self._canonical_receipt()
+        self.binding = self.receipt["workspace"]
+        self.archive = Path(self.binding["archive_path"])
+        self.archive_paths = set((self.root / "archive").iterdir())
+        self.recovery_refs = self.fixture._git(self.repo, "for-each-ref", "refs/pantheon/recovery/")
+
+    def _canonical_receipt(self):
+        status = self.integration.supervisor.load_status(self.fixture.config)
+        return status[self.integration.supervisor.WORKER_RECOVERY_RECEIPTS_KEY][self.receipt_id]
+
+    def _rebuilt_request(self):
+        status = self.integration.supervisor.load_status(self.fixture.config)
+        return self.fixture._replacement_request(status["tasks"][0], self.receipt_id, self.event_id)
+
+    def _assert_same_history(self) -> None:
+        self.assertEqual(self._canonical_receipt(), self.receipt)
+        self.assertEqual(set((self.root / "archive").iterdir()), self.archive_paths)
+        self.assertEqual(
+            self.fixture._git(self.repo, "for-each-ref", "refs/pantheon/recovery/"),
+            self.recovery_refs,
+        )
+
+    def test_clean_retry_revalidates_existing_archive_without_republication(self) -> None:
+        request = self._rebuilt_request()
+        with mock.patch.object(
+            self.workspace_module, "_quarantine_recovery_worktree",
+            wraps=self.workspace_module._quarantine_recovery_worktree,
+        ) as quarantine:
+            ok, error = self.fixture._prepare_replacement(self.state, request, self.event_id)
+        self.assertTrue(ok, error)
+        quarantine.assert_called_once()
+        self.assertEqual(request.metadata["recovery_workspace"], self.binding)
+        self._assert_same_history()
+
+    def test_clean_retry_blocks_missing_or_corrupt_archive_before_materialization(self) -> None:
+        for relative_path in ("diff.patch", "files/.orchestrator/supervisor.py"):
+            for missing in (True, False):
+                with self.subTest(relative_path=relative_path, missing=missing):
+                    artifact = self.archive / relative_path
+                    saved_bytes = artifact.read_bytes()
+                    if missing:
+                        artifact.unlink()
+                    else:
+                        artifact.write_bytes(b"corrupt recovery evidence\n")
+                    try:
+                        request = self._rebuilt_request()
+                        with mock.patch.object(
+                            self.workspace_module, "materialize_worker_context_files",
+                        ) as materialize:
+                            ok, error = self.fixture._prepare_replacement(self.state, request, self.event_id)
+                        self.assertFalse(ok, error)
+                        materialize.assert_not_called()
+                        self.assertNotIn("workspace_path", request.metadata)
+                        self.assertNotIn("recovery_workspace", request.metadata)
+                        self.assertEqual(self.fixture._git(self.workspace, "status", "--porcelain"), "")
+                        self._assert_same_history()
+                    finally:
+                        artifact.write_bytes(saved_bytes)
+
+    def test_clean_retry_after_fast_forward_preserves_historical_archive_binding(self) -> None:
+        source_path = ".orchestrator/supervisor.py"
+        new_source = b"# committed dev advancement\n"
+        (self.repo / source_path).write_bytes(new_source)
+        self.fixture._git(self.repo, "add", source_path)
+        self.fixture._git(self.repo, "commit", "-m", "advance dev")
+        new_base = self.fixture._git(self.repo, "rev-parse", "HEAD")
+        self.fixture._git(self.repo, "update-ref", "refs/remotes/origin/dev", new_base)
+        first = self._rebuilt_request()
+        ok, error = self.fixture._prepare_replacement(self.state, first, self.event_id)
+        self.assertTrue(ok, error)
+        self.assertEqual(self.fixture._git(self.workspace, "rev-parse", "HEAD"), new_base)
+        self.assertNotEqual(new_base, self.binding["source_head"])
+
+        retry = self._rebuilt_request()
+        with mock.patch.object(
+            self.workspace_module, "_quarantine_recovery_worktree",
+            wraps=self.workspace_module._quarantine_recovery_worktree,
+        ) as quarantine:
+            ok, error = self.fixture._prepare_replacement(self.state, retry, self.event_id)
+        self.assertTrue(ok, error)
+        quarantine.assert_called_once()
+        self.assertEqual(retry.metadata["recovery_workspace"], self.binding)
+        self.assertEqual(self.fixture._git(self.workspace, "rev-parse", "HEAD"), new_base)
+        self.assertEqual((self.workspace / source_path).read_bytes(), new_source)
+        self._assert_same_history()
+
+        # The legitimate source advancement must not turn off the archive
+        # integrity barrier on another retry of the same receipt.
+        (self.archive / "diff.patch").unlink()
+        rejected = self._rebuilt_request()
+        with mock.patch.object(self.workspace_module, "materialize_worker_context_files") as materialize:
+            ok, error = self.fixture._prepare_replacement(self.state, rejected, self.event_id)
+        self.assertFalse(ok, error)
+        materialize.assert_not_called()
+        self.assertEqual(self.fixture._git(self.workspace, "rev-parse", "HEAD"), new_base)
+        self.assertEqual((self.workspace / source_path).read_bytes(), new_source)
+        self._assert_same_history()
 
 
 if __name__ == "__main__":

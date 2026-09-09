@@ -974,15 +974,6 @@ def validate_worker_entry_binding(
                 or (isinstance(policy, dict) and bool(policy.get("requires_execution_authorization"))))}
 
 
-def _get_task_roles(coordination_root: Path | None, task_id: str | None) -> dict[str, str]:
-    roles = {"owner": "", "reviewer": ""}
-    task = _get_task_record(coordination_root, task_id)
-    if isinstance(task, dict):
-        roles["owner"] = str(task.get("owner") or "").strip()
-        roles["reviewer"] = str(task.get("reviewer") or "").strip()
-    return roles
-
-
 def ensure_execution_authorized_before_launch(
     coordination_root: Path | None,
     task_id: str | None,
@@ -1017,34 +1008,6 @@ def ensure_execution_authorized_before_launch(
             f"worker_runner: task {task_id} is not currently execution-authorized "
             f"for run {run_id!r}; refusing to launch owner-execution process"
         )
-
-
-def execution_authorization_still_current(
-    coordination_root: Path | None,
-    task_id: str | None,
-    *,
-    active_role: str,
-    run_id: str,
-) -> bool:
-    """Running-loop counterpart to :func:`ensure_execution_authorized_before_launch`.
-
-    A revoked or expired reservation only prevents *new* effects (SA/SD 4);
-    it does not retroactively undo a process already launched. This is the
-    safe-stop boundary that enforces that half of the contract for an
-    already-running owner-execution attempt: the running loop re-reads the
-    canonical task on every heartbeat tick and, once this returns ``False``,
-    the caller must move to terminate the child rather than let it keep
-    running unobserved for the rest of its lifetime. Non-owner purposes are
-    never gated, matching :func:`ensure_execution_authorized_before_launch`.
-    """
-
-    try:
-        ensure_execution_authorized_before_launch(
-            coordination_root, task_id, active_role=active_role, run_id=run_id
-        )
-    except (RuntimeError, ValueError, OSError):
-        return False
-    return True
 
 
 def main(argv: list[str] | None = None) -> int:
