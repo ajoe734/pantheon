@@ -1,0 +1,54 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-WORKER-IMPLEMENTATION-FALLBACK-POLICY-001",
+  "base_ref": "dev@9c22995341e4f9ff896cc550ca2e219aea7ad4e1",
+  "depends_on": "none",
+  "normative_plan": "Operator preference: Claude/Antigravity lanes implement, Codex/Codex2 lanes review only. Read-only diagnosis /tmp/worker_fallback_user_preference_review.md and validated proposed graph /tmp/worker_owner_fallback_proposed_only.json.",
+  "results": {
+    "owner_fallbacks_review_only_removed": {
+      "file": ".orchestrator/config.json",
+      "details": "Removed only Codex and Codex2 from every worker_reassignment.owner_fallbacks destination list, including their appearance as transitive entries in each other's fallback graph. Claude, Claude2, Antigravity, Antigravity2 owner_fallbacks now list only implementation-eligible peers (no Codex/Codex2 entries). Codex and Codex2 owner_fallbacks keep their remaining destinations (Claude, Claude2, Antigravity, Antigravity2) with unchanged relative order; only the Codex2/Codex self-referential head entries were dropped from those two lists.",
+      "relative_order_preserved": true
+    },
+    "reviewer_fallbacks_and_review_capacity_preserved": {
+      "file": ".orchestrator/config.json",
+      "details": "worker_reassignment.reviewer_fallbacks is byte-identical to the baseline; Codex and Codex2 review lanes, worker_slots, max_parallel, models, reasoning efforts, provider identities, account mappings, auth/quota policy, health gates, generation fencing, and every other configuration key outside owner_fallbacks are unchanged. Verified programmatically: config with owner_fallbacks stripped equals baseline with owner_fallbacks stripped."
+    },
+    "no_scheduler_or_schema_changes": {
+      "details": "Change is confined to configuration data in .orchestrator/config.json; no edits to .orchestrator/supervisor.py or any other runtime source. No preferred_lane_order/preferredLaneOrder or other retired/new schema fields were added. config.example.json and other source paths are untouched."
+    },
+    "shared_test_file_ownership_respected": {
+      "details": "OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001 owns .orchestrator/test_supervisor.py. This task ran its existing tests unchanged and did not edit or claim that file; ad-hoc validation probes were run from a temporary script outside the repository tree and are recorded only as evidence text below, not committed as a new test framework."
+    },
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false,
+    "new_dispatcher_or_cron_added": false
+  },
+  "config_hashes": {
+    "baseline_sha256": "5dd4bcc78d08450761ac0ac87b94ad8e7c9e0a92aee42ce1f98867d56b8e0bda",
+    "final_sha256": "b88949c732fc4aea1c24eb029899c880abf4600c22f3fcae3933df2c212e85a6",
+    "source_identity": "worktree HEAD 9c22995341e4f9ff896cc550ca2e219aea7ad4e1 (task branch task/OPS-WORKER-IMPLEMENTATION-FALLBACK-POLICY-001 from dev tip)"
+  },
+  "verification": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/pantheon-current-gap-audit-20260903/.venv-pantheon/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "result": "provisioned .venv-pantheon interpreter for this task worktree; pytest importable"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"RuntimeConfigurationContractTests or test_configured_fallback_never_escapes_to_an_unrelated_healthy_roster or test_no_fallback_holds_dispatch_then_retries_when_capacity_returns\"",
+      "result": "11 passed, 308 deselected, 12 subtests passed in 5.20s",
+      "executed": 11,
+      "collected": 11
+    },
+    {
+      "command": "cwd=/tmp/pantheon-worker-worktrees/pantheon/ops-worker-implementation-fallback-policy-001; .venv-pantheon/bin/python3 <temporary read-only probe importing .orchestrator/supervisor.py, calling validate_provider_accounts(config) and reassignment_candidate_order(config, mapping, roots=[root]) for every configured owner root>",
+      "result": "validate_provider_accounts: OK. For every owner root (Claude, Claude2, Antigravity, Antigravity2, Codex, Codex2) reassignment_candidate_order returns no Codex/Codex2 entries, including transitive/cyclic traversal through the other's remaining fallback list. Baseline confirmation: the unmodified baseline config's reassignment_candidate_order for root=Claude includes Codex, proving the source baseline previously admitted the primary review-only identity as an implementation fallback. Equality check: config with worker_reassignment.owner_fallbacks removed is structurally equal to baseline with the same field removed. Order preservation check: remaining owner_fallbacks destination lists match the exact expected relative order (Claude/Claude2/Antigravity/Antigravity2 lists unchanged apart from trailing Codex/Codex2 removal; Codex/Codex2 lists unchanged apart from leading Codex2/Codex self-reference removal).",
+      "executed": "n/a (assertion script, not a pytest suite)",
+      "collected": "n/a"
+    }
+  ],
+  "incumbent_worker_preservation": {
+    "details": "This task does not cancel, restart, reassign, or race any currently running worker, including the incumbent BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 Codex generation 16 implementation. The change affects only future automatic fallback eligibility computed by reassignment_candidate_order; it carries no authority over current canonical task ownership or reviewer bindings.",
+    "activation_note": "Source merge alone is not fleet rollout. The existing coordinator sync/promote workflow must activate the merged owner_fallbacks graph and verify the live configuration and unchanged review capacity before the future-dispatch policy is considered live."
+  }
+}
