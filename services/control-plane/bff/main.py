@@ -8269,26 +8269,64 @@ def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
             suggestion="Escalate to a user with analyst-level Agora write access",
         )
 def _agora_private_record_owner(record: Dict[str, Any]) -> str:
-    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId"):
+    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId", "author"):
         clean = str(record.get(key) or "").strip()
         if clean:
             return clean
     owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
     return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
-def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+def _agora_private_record_visible(
+    record: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> bool:
+    from .agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
+    identity_tenant = str(resolved_tenant or "").strip()
+    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+    if identity_tenant:
+        if not record_tenant or record_tenant != identity_tenant:
+            return False
+    elif record_tenant:
+        return False
     visibility = str(record.get("visibility") or "private").strip().lower()
     owner = _agora_private_record_owner(record)
     if visibility != "private" or not owner:
         return True
-    return owner == identity.operator_id
+    operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
+    allowed_users = {u for u in (resolved_user, operator_id) if u}
+    return owner in allowed_users
 def _agora_filter_private_records(
     records: List[Dict[str, Any]],
     identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    from .agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
     return [
         record
         for record in records
-        if isinstance(record, dict) and _agora_private_record_visible(record, identity)
+        if isinstance(record, dict)
+        and _agora_private_record_visible(
+            record,
+            identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
     ]
 def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
     for field in fields:
@@ -23061,8 +23099,22 @@ def _resolve_agora_interaction_context_ref(
             )
             return {"row": episode, "audience_verified": audience_verified}
 
+        from .agora.identity.scope import resolve_canonical_agora_scope
+
+        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=getattr(resolved, "tenant_id", None),
+            user_id=getattr(resolved, "user_id", None),
+        )
+        try:
+            journal_entries = read_store.list_decision_journal_entries(tenant_id=scoped_tenant, user_id=scoped_user)
+        except TypeError:
+            journal_entries = read_store.list_decision_journal_entries()
         journal_rows = _agora_filter_private_records(
-            read_store.list_decision_journal_entries(), identity,
+            journal_entries,
+            identity,
+            tenant_id=scoped_tenant,
+            user_id=scoped_user,
         )
         journal = next(
             (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),

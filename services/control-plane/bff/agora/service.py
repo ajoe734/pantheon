@@ -8,9 +8,13 @@ and data projections without importing or coupling to main.py.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
+import os
 import re
+import time
+import urllib.parse
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
@@ -31,6 +35,7 @@ from ..models import (
     TargetObject,
     utc_now as default_utc_now,
 )
+from .identity.scope import resolve_canonical_agora_scope
 
 from services.control_plane.bff.ports import (
     OpenClawOpsClient,
@@ -52,6 +57,19 @@ except ImportError:
 
         def to_dict(self) -> Dict[str, Any]:
             return dict(self._data)
+
+try:
+    from services.governance.decision_journal import (
+        DecisionJournalAccessDeniedError,
+        DecisionJournalCollisionError,
+        DecisionJournalConcurrencyError,
+        DecisionJournalValidationError,
+    )
+except ImportError:
+    class DecisionJournalCollisionError(ValueError): pass  # type: ignore[no-redef]
+    class DecisionJournalAccessDeniedError(PermissionError): pass  # type: ignore[no-redef]
+    class DecisionJournalConcurrencyError(RuntimeError): pass  # type: ignore[no-redef]
+    class DecisionJournalValidationError(ValueError): pass  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -181,10 +199,13 @@ class AgoraService:
         bff_error: Optional[Callable[..., HTTPException]] = None,
         publish_event_fn: Optional[Callable[..., None]] = None,
         handle_sse_stream: Optional[Callable[..., Any]] = None,
+        journal_write_owner: Optional[Any] = None,
+        get_journal_write_owner: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._get_read_store = get_read_store or (lambda: None)
         self._get_audit_store = get_audit_store or (lambda: None)
         self._get_command_store = get_command_store or (lambda: None)
+        self._get_journal_write_owner = get_journal_write_owner or (lambda: journal_write_owner)
         self._idempotency = idempotency_store if idempotency_store is not None else {}
         self._sse_buffers = sse_buffers if sse_buffers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
         self._sse_subscribers = sse_subscribers if sse_subscribers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
@@ -207,6 +228,16 @@ class AgoraService:
     @property
     def read_store(self) -> Any:
         return self._get_read_store()
+
+    @property
+    def journal_write_owner(self) -> Any:
+        if self._get_journal_write_owner is not None:
+            owner = self._get_journal_write_owner()
+            if owner is not None:
+                return owner
+        if self.read_store is not None and hasattr(self.read_store, "create_decision_journal_entry"):
+            return self.read_store
+        return None
 
     @property
     def audit_store(self) -> Any:
@@ -553,22 +584,63 @@ class AgoraService:
         owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
         return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
 
-    def _private_record_visible(self, record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+    def _private_record_visible(
+        self,
+        record: Dict[str, Any],
+        identity: OperatorIdentity,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
+        )
+        identity_tenant = str(resolved_tenant or "").strip()
+        record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+
+        # Tenant isolation:
+        if identity_tenant:
+            # Legacy row missing tenant scope must NOT default to globally visible
+            if not record_tenant or record_tenant != identity_tenant:
+                return False
+        elif record_tenant:
+            return False
+
         visibility = str(record.get("visibility") or "private").strip().lower()
         owner = self._private_record_owner(record)
         if visibility != "private" or not owner:
             return True
-        return owner == identity.operator_id
+        operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
+        allowed_users = {u for u in (resolved_user, operator_id) if u}
+        return owner in allowed_users
 
     def filter_private_records(
         self,
         records: List[Dict[str, Any]],
         identity: OperatorIdentity,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
+        )
         return [
             record
             for record in records
-            if isinstance(record, dict) and self._private_record_visible(record, identity)
+            if isinstance(record, dict)
+            and self._private_record_visible(
+                record,
+                identity,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            )
         ]
 
     def raise_cross_user_forbidden(self, *, resource: str, resource_id: str) -> None:
@@ -750,39 +822,88 @@ class AgoraService:
         resolved_key: str,
         correlation_id: Optional[str] = None,
         x_request_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> CommandResponse[DecisionJournalEntryDTO]:
         request_hash = self.stable_json_hash({
             "route": f"PATCH /bff/agora/journal/{entry_id}",
             "entryId": entry_id,
             "patch": patch,
         })
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
+        )
         store = self.read_store
         if store is not None and hasattr(store, "list_decision_journal_entries"):
-            existing = [
-                e for e in store.list_decision_journal_entries()
-                if str(e.get("id") or e.get("entry_id") or "") == entry_id
-            ]
-            if existing and not self._private_record_visible(existing[0], identity):
+            try:
+                existing = [
+                    e for e in store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
+                    if str(e.get("id") or e.get("entry_id") or "") == entry_id
+                ]
+            except TypeError:
+                existing = [
+                    e for e in store.list_decision_journal_entries()
+                    if str(e.get("id") or e.get("entry_id") or "") == entry_id
+                ]
+            if existing and not self._private_record_visible(
+                existing[0],
+                identity,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            ):
                 self.raise_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
 
         now = self.utc_now()
-        if store is None or not hasattr(store, "patch_decision_journal_entry"):
+        owner = self.journal_write_owner
+        if owner is None or not hasattr(owner, "patch_decision_journal_entry"):
             raise self.bff_error(
                 503,
                 ErrorCode.DEPENDENCY_UNAVAILABLE,
                 "Decision Journal write owner is not configured",
-                "The canonical Decision Journal owner adapter was not composed onto this read store",
+                "The canonical Decision Journal owner adapter was not composed onto this service",
                 precondition_failed="decision_journal_write_owner",
             )
-        result = store.patch_decision_journal_entry(
-            entry_id,
-            patch=patch,
-            actor_id=identity.operator_id,
-            correlation_id=correlation_id,
-            idempotency_key=resolved_key,
-            request_hash=request_hash,
-            patched_at=now,
-        )
+        try:
+            result = owner.patch_decision_journal_entry(
+                entry_id,
+                patch=patch,
+                actor_id=identity.operator_id,
+                correlation_id=correlation_id,
+                idempotency_key=resolved_key,
+                request_hash=request_hash,
+                patched_at=now,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
+            )
+        except DecisionJournalAccessDeniedError:
+            self.raise_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
+        except DecisionJournalCollisionError as exc:
+            raise self.bff_error(
+                409,
+                ErrorCode.CONFLICT,
+                "Decision journal collision",
+                str(exc),
+                precondition_failed="entry_id",
+            )
+        except DecisionJournalConcurrencyError as exc:
+            raise self.bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent update conflict on decision journal entry",
+                str(exc),
+                precondition_failed="version",
+            )
+        except (OSError, IOError) as exc:
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision journal storage or outbox unavailable",
+                str(exc),
+                precondition_failed="decision_journal_storage",
+            )
 
         if result is None:
             raise self.bff_error(
@@ -825,12 +946,34 @@ class AgoraService:
 
     # --- Signals & Feedback --- #
 
-    def get_daily_brief(self) -> Dict[str, Any]:
+    def get_daily_brief(
+        self,
+        *,
+        identity: Optional[OperatorIdentity] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
+        if identity or tenant_id or user_id:
+            resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+                identity,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                utc_now=self.utc_now,
+            )
+        else:
+            resolved_tenant = None
+            resolved_user = None
         store = self.read_store
         signals = store.list_agora_signals() if store and hasattr(store, "list_agora_signals") else []
         watchlist = store.list_agora_watchlist() if store and hasattr(store, "list_agora_watchlist") else []
-        journal = store.list_decision_journal_entries() if store and hasattr(store, "list_decision_journal_entries") else []
+        journal = []
+        if store and hasattr(store, "list_decision_journal_entries"):
+            if resolved_tenant or resolved_user:
+                try:
+                    journal = store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
+                except TypeError:
+                    journal = store.list_decision_journal_entries()
         tasks = store.list_research_tickets(statuses=["new", "triaged", "open", "in_progress"]) if store and hasattr(store, "list_research_tickets") else []
 
         pending_signals = [s for s in signals if str(s.get("reviewStatus") or s.get("status") or "") in ("pending", "open", "new", "pending_trader_review")]
@@ -1401,11 +1544,29 @@ class AgoraService:
         identity: OperatorIdentity,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            utc_now=self.utc_now,
+        )
         store = self.read_store
-        entries = store.list_decision_journal_entries() if store and hasattr(store, "list_decision_journal_entries") else []
-        visible_entries = self.filter_private_records(entries, identity)
+        entries = []
+        if store and hasattr(store, "list_decision_journal_entries"):
+            try:
+                entries = store.list_decision_journal_entries(tenant_id=resolved_tenant, user_id=resolved_user)
+            except TypeError:
+                entries = store.list_decision_journal_entries()
+        visible_entries = self.filter_private_records(
+            entries,
+            identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+        )
         return self.agora_list_response(
             dataset="decision_journal_entries",
             surface_key="agora_journal_list",
@@ -1423,9 +1584,17 @@ class AgoraService:
         idempotency_key: Optional[str],
         x_idempotency_key: Optional[str],
         x_dry_run: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Any:
         self.reject_body_idempotency_key(payload)
         resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=tenant_id or payload.get("tenant_id") or payload.get("tenantId"),
+            user_id=user_id or payload.get("user_id") or payload.get("userId"),
+            utc_now=self.utc_now,
+        )
         title = self.agora_required_text(payload, "title")
         body_text = str(payload.get("body") or payload.get("decision") or payload.get("rationale") or "").strip()
         visibility = str(payload.get("visibility") or "private").strip().lower()
@@ -1450,14 +1619,202 @@ class AgoraService:
         journal_payload = {**payload, "title": title, "body": body_text, "visibility": visibility}
         request_hash = self.stable_json_hash({"route": "POST /bff/agora/journal", "payload": journal_payload})
         dry_run = bool(x_dry_run and x_dry_run.strip().lower() in ("true", "1", "yes"))
-        if not dry_run:
-            cached = self.check_idempotency(resolved_key, request_hash)
-            if cached is not None:
-                return cached
+
+        owner = self.journal_write_owner
+        if not dry_run and (owner is None or not hasattr(owner, "create_decision_journal_entry")):
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision Journal write owner is not configured",
+                "The canonical Decision Journal owner adapter was not composed onto this service",
+                precondition_failed="decision_journal_write_owner",
+            )
+
+        scoped_idem_key: Optional[str] = None
+        if resolved_key and not dry_run:
+            clean_tenant_q = urllib.parse.quote(str(resolved_tenant or "").strip(), safe="-_.~")
+            clean_user_q = urllib.parse.quote(str(resolved_user or "").strip(), safe="-_.~")
+            clean_key_q = urllib.parse.quote(str(resolved_key or "").strip(), safe="-_.~")
+            scoped_idem_key = f"create:{clean_tenant_q}:{clean_user_q}:{clean_key_q}"
+            entry_id = str(
+                payload.get("id")
+                or payload.get("entryId")
+                or f"dje-{hashlib.sha256(scoped_idem_key.encode('utf-8')).hexdigest()[:10]}"
+            )
+            journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
+            if hasattr(owner, "check_create_idempotency"):
+                idem_check = owner.check_create_idempotency(
+                    scoped_key=scoped_idem_key,
+                    request_hash=request_hash,
+                    entry_id=entry_id,
+                    raw_key=resolved_key,
+                    tenant_id=resolved_tenant,
+                    user_id=resolved_user,
+                )
+            elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                reservation = {
+                    "idempotency_key": scoped_idem_key,
+                    "raw_idempotency_key": resolved_key,
+                    "tenant_id": resolved_tenant,
+                    "user_id": resolved_user,
+                    "actor_id": resolved_user,
+                    "request_hash": request_hash,
+                    "entry_id": entry_id,
+                    "status": "pending",
+                    "created_pid": os.getpid(),
+                    "created_at": time.time(),
+                    "result": None,
+                }
+                reserved, existing = owner.stores.idempotency.insert_if_absent(reservation)
+                if reserved:
+                    idem_check = None
+                else:
+                    rec_tenant = str(existing.get("tenant_id") or "").strip()
+                    rec_user = str(existing.get("user_id") or existing.get("actor_id") or "").strip()
+                    rec_entry = str(existing.get("entry_id") or "").strip()
+                    req_tenant = str(resolved_tenant or "").strip()
+                    req_user = str(resolved_user or "").strip()
+                    req_entry = str(entry_id or "").strip()
+                    if (req_tenant and rec_tenant and req_tenant != rec_tenant) or \
+                       (req_user and rec_user and req_user != rec_user) or \
+                       (req_entry and rec_entry and req_entry != rec_entry):
+                        idem_check = {"conflict": True, "record": existing, "reason": "scope_mismatch"}
+                    elif existing.get("request_hash") != request_hash:
+                        idem_check = {"conflict": True, "record": existing}
+                    elif existing.get("status") == "pending":
+                        created_pid = existing.get("created_pid")
+                        is_dead = False
+                        if created_pid and created_pid != os.getpid():
+                            try:
+                                os.kill(created_pid, 0)
+                            except ProcessLookupError:
+                                is_dead = True
+                            except PermissionError:
+                                pass
+                        if is_dead:
+                            if hasattr(owner, "_recover_committed_entry_result"):
+                                recovered = owner._recover_committed_entry_result(
+                                    existing,
+                                    entry_id=entry_id,
+                                    raw_key=resolved_key,
+                                    tenant_id=resolved_tenant,
+                                    user_id=resolved_user,
+                                )
+                                if recovered is not None:
+                                    idem_check = {"conflict": False, "result": recovered}
+                                else:
+                                    owner.stores.idempotency.put(reservation)
+                                    idem_check = None
+                            else:
+                                owner.stores.idempotency.put(reservation)
+                                idem_check = None
+                        else:
+                            idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
+                    elif existing.get("status") == "failed":
+                        owner.stores.idempotency.put(reservation)
+                        idem_check = None
+                    else:
+                        result = existing.get("result")
+                        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+                            d = result["data"]
+                            d_tenant = str(d.get("tenant_id") or d.get("tenantId") or "").strip()
+                            d_user = str(d.get("userId") or d.get("user_id") or d.get("createdBy") or "").strip()
+                            d_id = str(d.get("id") or d.get("entryId") or "").strip()
+                            if (req_tenant and d_tenant and req_tenant != d_tenant) or \
+                               (req_user and d_user and req_user != d_user) or \
+                               (req_entry and d_id and req_entry != d_id):
+                                idem_check = {"conflict": True, "record": existing, "reason": "scope_mismatch"}
+                            else:
+                                idem_check = {"conflict": False, "result": result}
+                        else:
+                            idem_check = {"conflict": False, "result": result}
+            else:
+                idem_check = None
+
+            if idem_check is not None:
+                if idem_check.get("conflict"):
+                    raise self.bff_error(
+                        409,
+                        ErrorCode.IDEMPOTENCY_CONFLICT,
+                        "Idempotency key was already used with a different payload",
+                        f"Key {resolved_key!r} is bound to a different Agora request hash",
+                        precondition_failed="idempotency_conflict",
+                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                    )
+                if idem_check.get("pending"):
+                    resolved_idem = None
+                    if hasattr(owner, "await_create_idempotency"):
+                        resolved_idem = owner.await_create_idempotency(
+                            scoped_key=scoped_idem_key,
+                            request_hash=request_hash,
+                            entry_id=entry_id,
+                            raw_key=resolved_key,
+                            tenant_id=resolved_tenant,
+                            user_id=resolved_user,
+                        )
+                    elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                        deadline = time.monotonic() + 10.0
+                        while time.monotonic() < deadline:
+                            rec = owner.stores.idempotency.get(scoped_idem_key)
+                            if rec is not None:
+                                if rec.get("request_hash") != request_hash:
+                                    resolved_idem = {"conflict": True}
+                                    break
+                                if rec.get("status") == "succeeded":
+                                    resolved_idem = {"conflict": False, "result": rec.get("result")}
+                                    break
+                                if rec.get("status") == "failed":
+                                    resolved_idem = {"conflict": False, "failed": True}
+                                    break
+                                created_pid = rec.get("created_pid")
+                                if created_pid and created_pid != os.getpid():
+                                    try:
+                                        os.kill(created_pid, 0)
+                                    except ProcessLookupError:
+                                        if hasattr(owner, "_recover_committed_entry_result"):
+                                            recovered = owner._recover_committed_entry_result(rec, entry_id=entry_id, raw_key=resolved_key)
+                                            if recovered is not None:
+                                                resolved_idem = {"conflict": False, "result": recovered}
+                                                break
+                                        resolved_idem = {"conflict": False, "failed": True}
+                                        break
+                                    except PermissionError:
+                                        pass
+                            time.sleep(0.005)
+                        else:
+                            rec = owner.stores.idempotency.get(scoped_idem_key)
+                            if rec and rec.get("status") == "succeeded":
+                                resolved_idem = {"conflict": False, "result": rec.get("result")}
+                            elif hasattr(owner, "_recover_committed_entry_result"):
+                                recovered = owner._recover_committed_entry_result(rec or {}, entry_id=entry_id, raw_key=resolved_key)
+                                if recovered is not None:
+                                    resolved_idem = {"conflict": False, "result": recovered}
+                    if resolved_idem and resolved_idem.get("conflict"):
+                        raise self.bff_error(
+                            409,
+                            ErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Idempotency key was already used with a different payload",
+                            f"Key {resolved_key!r} is bound to a different Agora request hash",
+                            precondition_failed="idempotency_conflict",
+                        )
+                    if resolved_idem and resolved_idem.get("result"):
+                        cached_result = copy.deepcopy(resolved_idem["result"])
+                        if "meta" in cached_result and isinstance(cached_result["meta"], dict):
+                            if "idempotency" in cached_result["meta"] and isinstance(cached_result["meta"]["idempotency"], dict):
+                                cached_result["meta"]["idempotency"]["replayed"] = True
+                        return cached_result
+                cached = idem_check.get("result")
+                if cached is not None:
+                    cached_result = copy.deepcopy(cached)
+                    if "meta" in cached_result and isinstance(cached_result["meta"], dict):
+                        if "idempotency" in cached_result["meta"] and isinstance(cached_result["meta"]["idempotency"], dict):
+                            cached_result["meta"]["idempotency"]["replayed"] = True
+                    return cached_result
 
         snapshot_at = self.utc_now()
-        entry_id = str(payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}")
-        journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
+        if "entry_id" not in locals():
+            entry_id = str(payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}")
+            journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
         if dry_run:
             return self.dry_run_success_response(
                 {
@@ -1466,30 +1823,72 @@ class AgoraService:
                     **journal_payload,
                     "createdBy": identity.operator_id,
                     "author": identity.operator_id,
+                    "tenant_id": resolved_tenant,
+                    "user_id": resolved_user,
                     "createdAt": snapshot_at,
-                    "canonicalWriteAuthority": "agora_journal_service",
+                    "canonicalWriteAuthority": "governance-decision-journal-svc",
                 },
                 snapshot_at=snapshot_at,
                 idempotency_key=resolved_key,
                 evidence_kind="agora.journal.create",
             )
 
-        store = self.read_store
-        if store is None or not hasattr(store, "create_decision_journal_entry"):
-            raise self.bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Decision Journal write owner is not configured",
-                "The canonical Decision Journal owner adapter was not composed onto this read store",
-                precondition_failed="decision_journal_write_owner",
+        try:
+            created = owner.create_decision_journal_entry(
+                title=title,
+                body=body_text,
+                actor_id=identity.operator_id,
+                payload=journal_payload,
+                created_at=snapshot_at,
+                tenant_id=resolved_tenant,
+                user_id=resolved_user,
             )
-        created = store.create_decision_journal_entry(
-            title=title,
-            body=body_text,
-            actor_id=identity.operator_id,
-            payload=journal_payload,
-            created_at=snapshot_at,
-        )
+        except DecisionJournalCollisionError as exc:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
+            raise self.bff_error(
+                409,
+                ErrorCode.CONFLICT,
+                "Decision journal entry ID collision across tenant or actor boundary",
+                str(exc),
+                precondition_failed="entry_id",
+            )
+        except DecisionJournalAccessDeniedError as exc:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
+            raise self.bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Decision journal access denied",
+                str(exc),
+                precondition_failed="tenant_scope",
+            )
+        except DecisionJournalConcurrencyError as exc:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
+            raise self.bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent update conflict on decision journal entry",
+                str(exc),
+                precondition_failed="version",
+            )
+        except Exception:
+            if scoped_idem_key and not dry_run:
+                if hasattr(owner, "fail_create_idempotency"):
+                    owner.fail_create_idempotency(scoped_key=scoped_idem_key, request_hash=request_hash)
+                elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                    owner.stores.idempotency.put({"idempotency_key": scoped_idem_key, "request_hash": request_hash, "status": "failed"})
+            raise
 
         result = {
             "data": created,
@@ -1499,7 +1898,31 @@ class AgoraService:
                 "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
             },
         }
-        self.record_idempotency(resolved_key, request_hash, result)
+        if scoped_idem_key and not dry_run:
+            if hasattr(owner, "record_create_idempotency"):
+                owner.record_create_idempotency(
+                    scoped_key=scoped_idem_key,
+                    raw_key=resolved_key,
+                    tenant_id=resolved_tenant,
+                    user_id=resolved_user,
+                    request_hash=request_hash,
+                    result=result,
+                    created_at=snapshot_at,
+                    entry_id=entry_id,
+                )
+            elif hasattr(owner, "stores") and getattr(owner, "stores", None) is not None:
+                owner.stores.idempotency.put({
+                    "idempotency_key": scoped_idem_key,
+                    "raw_idempotency_key": resolved_key,
+                    "tenant_id": resolved_tenant,
+                    "user_id": resolved_user,
+                    "actor_id": resolved_user,
+                    "request_hash": request_hash,
+                    "entry_id": entry_id,
+                    "status": "succeeded",
+                    "result": result,
+                    "created_at": snapshot_at,
+                })
         return result
 
     # --- Training Examples --- #
