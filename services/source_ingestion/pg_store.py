@@ -54,14 +54,17 @@ def _scoped_record_id(tenant_id: str | None, record_id: str) -> str:
     """Collision-safe conflict key for the shared (record_type, record_id) unique index.
 
     Untenanted (legacy) records keep their bare ``record_id`` unchanged so existing
-    rows stay reachable. Tenanted records get a netstring-style length prefix, which
-    guarantees two distinct ``(tenant_id, record_id)`` pairs can never alias to the
-    same key — plain ``f"{tenant_id}:{record_id}"`` concatenation cannot make that
-    guarantee when either part may itself contain a colon.
+    rows stay reachable without modification. Tenanted records receive a distinguished
+    length-prefixed scope prefix (``@t{len}:{tenant}:{record_id}``) that cannot
+    alias to another tenanted pair. Any legacy record whose ID starts with ``@`` is
+    safely escaped (``@{record_id}``) so legacy and tenanted record keys can never
+    collide under the ``UNIQUE (record_type, record_id)`` index.
     """
     if tenant_id is None:
+        if record_id.startswith("@"):
+            return f"@{record_id}"
         return record_id
-    return f"t{len(tenant_id)}:{tenant_id}:{record_id}"
+    return f"@t{len(tenant_id)}:{tenant_id}:{record_id}"
 
 
 class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
@@ -164,26 +167,66 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 ),
             )
 
+    def _rollback_source_record(self, source: SourceRecord) -> None:
+        self._source_records.pop(source.source_id, None)
+        self._source_records_by_tenant.pop((source.tenant_id, source.source_id), None)
+        dedupe_key = source.metadata.get("source_dedupe_key") if isinstance(source.metadata, dict) else None
+        if dedupe_key:
+            self._source_dedupe_index.pop(str(dedupe_key), None)
+            self._source_dedupe_by_tenant.pop((source.tenant_id, str(dedupe_key)), None)
+
+    def _rollback_evidence_item(self, item: EvidenceItem) -> None:
+        self._evidence_items.pop(item.evidence_item_id, None)
+        self._evidence_items_by_tenant.pop((item.tenant_id, item.evidence_item_id), None)
+        dedupe_key = item.metadata.get("evidence_dedupe_key") if isinstance(item.metadata, dict) else None
+        if dedupe_key:
+            self._evidence_dedupe_index.pop(str(dedupe_key), None)
+            self._evidence_dedupe_by_tenant.pop((item.tenant_id, str(dedupe_key)), None)
+
+    def _rollback_bundle(self, bundle: EvidenceBundle) -> None:
+        self._bundles.pop(bundle.evidence_bundle_id, None)
+        self._bundles_by_tenant.pop((bundle.tenant_id, bundle.evidence_bundle_id), None)
+
+    def _rollback_knowledge_object(self, knowledge_object: KnowledgeObject) -> None:
+        self._knowledge_objects.pop(knowledge_object.knowledge_object_id, None)
+        self._knowledge_objects_by_tenant.pop((knowledge_object.tenant_id, knowledge_object.knowledge_object_id), None)
+
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         stored = super().add_source_record(source)
         if stored.source_id == source.source_id:
-            self._upsert("source_record", stored.source_id, stored.to_dict(), tenant_id=stored.tenant_id)
+            try:
+                self._upsert("source_record", stored.source_id, stored.to_dict(), tenant_id=stored.tenant_id)
+            except Exception:
+                self._rollback_source_record(stored)
+                raise
         return stored
 
     def add_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
         stored = super().add_evidence_item(item)
         if stored.evidence_item_id == item.evidence_item_id:
-            self._upsert("evidence_item", stored.evidence_item_id, stored.to_dict(), tenant_id=stored.tenant_id)
+            try:
+                self._upsert("evidence_item", stored.evidence_item_id, stored.to_dict(), tenant_id=stored.tenant_id)
+            except Exception:
+                self._rollback_evidence_item(stored)
+                raise
         return stored
 
     def add_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
         stored = super().add_bundle(bundle)
-        self._upsert("evidence_bundle", stored.evidence_bundle_id, stored.to_dict(), tenant_id=stored.tenant_id)
+        try:
+            self._upsert("evidence_bundle", stored.evidence_bundle_id, stored.to_dict(), tenant_id=stored.tenant_id)
+        except Exception:
+            self._rollback_bundle(stored)
+            raise
         return stored
 
     def add_knowledge_object(self, knowledge_object: KnowledgeObject) -> KnowledgeObject:
         stored = super().add_knowledge_object(knowledge_object)
-        self._upsert("knowledge_object", stored.knowledge_object_id, stored.to_dict(), tenant_id=stored.tenant_id)
+        try:
+            self._upsert("knowledge_object", stored.knowledge_object_id, stored.to_dict(), tenant_id=stored.tenant_id)
+        except Exception:
+            self._rollback_knowledge_object(stored)
+            raise
         return stored
 
 

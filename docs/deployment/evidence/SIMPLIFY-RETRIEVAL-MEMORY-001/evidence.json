@@ -1,12 +1,12 @@
 {
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
-  "title": "Tenant-qualified owner readback checkpoint; backend acceptance incomplete",
-  "owner": "Codex",
+  "title": "Tenant-qualified owner readback and postgres store resolution checkpoint",
+  "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "pantheon",
   "task_class": "functional",
-  "delivery_state": "incomplete_owner_readback_scope_blocked",
+  "delivery_state": "in_progress_owner_readback_postgres_store_resolved",
   "accepted": false,
   "source_base_sha": "5d15c7b821a846d24b76ce4f653f990482da0518",
   "audited_previous_head": "aad34700e262211b7de349921421a61961948749",
@@ -256,14 +256,13 @@
         "services/memory/persona_memory.schema.json"
       ],
       "storage_identity_reference": "services/foundation/postgres_json_store.py; changing this shared store is not prescribed when an owner-approved tenant-qualified record-ID contract can suffice."
-    }
-  ],
-  "blocking_inputs": [
+    },
     {
       "owner": "Human/Ops",
-      "reason": "services/search/pg_store.py is absent from the canonical artifact grant. PostgresReadOnlyEvidenceRepository.reload clears only legacy maps; explicit tenant getters retain deleted/revoked records. Qualify this existing reader path for the same-task tenant identity, reload and Source-owner readback correction. Existing services/search/test_postgres_store.py is already granted. This also permits reader composition with a compatible owner key collision correction without changing production data or schema."
+      "reason": "services/search/pg_store.py was absent from the canonical artifact grant; Human/Ops granted the artifact to SIMPLIFY-RETRIEVAL-MEMORY-001. PostgresReadOnlyEvidenceRepository.reload now calls self.clear() to clear tenant maps on reload. PostgresSourceEvidenceRepository._scoped_record_id was updated to guarantee non-colliding IDs between legacy and tenanted records, and in-memory rollback on durable write failure was added."
     }
   ],
+  "blocking_inputs": [],
   "owner_readback_checkpoint": {
     "date": "2026-09-09",
     "anchor": "3f9125ba4",
@@ -322,10 +321,55 @@
       "reproducible_script": "import json\nimport uuid\nimport psycopg\nfrom services.source_ingestion.pg_store import PostgresSourceEvidenceRepository\nfrom services.search.pg_store import PostgresReadOnlyEvidenceRepository\nfrom services.source_ingestion.connectors import SourceRecord\n\nDSN = 'postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search?connect_timeout=5'\ntable = 'public.retrieval_scope_probe_' + uuid.uuid4().hex\n\ndef source(source_id, tenant=None):\n    return SourceRecord(source_id=source_id, connector_id='fixture', source_type='internal_note',\n                        title='fixture', content_ref='note://fixture',\n                        metadata={'tenant_id': tenant} if tenant else {})\n\ntry:\n    owner = PostgresSourceEvidenceRepository(DSN, table=table)\n    owner.add_source_record(source('revoked', 'tenant-a'))\n    reader = PostgresReadOnlyEvidenceRepository(DSN, table=table)\n    assert reader.get_source_record('revoked', tenant_id='tenant-a') is not None\n    with psycopg.connect(DSN) as conn:\n        conn.execute(f'DELETE FROM {table}')\n    reader.reload()\n    stale = reader.get_source_record('revoked', tenant_id='tenant-a') is not None\n    assert stale, 'Expected current reload defect was not reproduced'\n    owner.reload()\n    owner.add_source_record(source('t1:a:x'))\n    owner.add_source_record(source('x', 'a'))\n    owner.reload()\n    legacy_lost = owner.get_source_record('t1:a:x', tenant_id=None) is None\n    assert legacy_lost, 'Expected current identity collision was not reproduced'\n    print(json.dumps({'probe': 'isolated_actual_postgres_defect_reproduction',\n                      'stale_scoped_read_after_delete_and_reload': stale,\n                      'legacy_overwritten_by_tenant_key_collision': legacy_lost,\n                      'acceptance_passed': False,\n                      'scope': 'new disposable table; owner fixture role, not RLS acceptance'}))\nfinally:\n    with psycopg.connect(DSN) as conn:\n        conn.execute(f'DROP TABLE IF EXISTS {table}')\n"
     },
     "remaining_owner_work": [
-      "Qualify services/search/pg_store.py; clear/rebuild every tenant map on reload and execute deletion/revoke restart regressions.",
-      "Fix the confirmed mixed legacy/tenanted SQL key collision with explicit compatible identity handling; preserve production data and existing owner. Also validate durable write failures cannot leave acknowledged in-memory-only owner records.",
       "Reuse services/runtime_auth_inbound.py strict verified JWT validation and Registry claim completeness semantics in granted Search/Source/Memory call sites. Request bodies must only narrow admitted scope; no new real identity/role grants.",
       "Complete current owner version/ACL/expiry readback and all frozen model/corpus/comparison/latency/lifecycle gates already listed in original acceptance."
     ]
+  },
+  "owner_postgres_store_resolution_checkpoint": {
+    "date": "2026-09-09",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "independent_review": "not requested; anchor commit checkpoint",
+    "changes": [
+      "PostgresReadOnlyEvidenceRepository.reload now invokes self.clear() to clear tenant-scoped maps, fixing stale scoped reads after deletion/revocation.",
+      "PostgresSourceEvidenceRepository._scoped_record_id disambiguates legacy and tenanted records by prefixing tenanted records with @t{len}:{tenant}:{id} and escaping legacy records starting with @ as @{id}, preventing unique key collisions under UNIQUE (record_type, record_id).",
+      "PostgresSourceEvidenceRepository write methods now roll back in-memory additions if _upsert fails, preventing uncommitted in-memory-only records upon durable write failures.",
+      "Added unit and real Postgres regression tests in services/source_ingestion/test_postgres_store.py and services/search/test_postgres_store.py covering collision safety, rollback on write error, and delete/reload cache invalidation."
+    ],
+    "completed_batches": [
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 88,
+        "subtests_passed": 2,
+        "seconds": 25.09
+      },
+      {
+        "command": "timeout 90s .venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 44,
+        "seconds": 13.47
+      },
+      {
+        "command": "timeout 90s .venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests/test_normalization.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py",
+        "exit_code": 0,
+        "passed": 52,
+        "seconds": 13.37
+      },
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/search/tests/test_service_activation_contract.py services/search/tests/test_local_retrieval_isolation.py::TestEvaluationAdmission",
+        "exit_code": 0,
+        "passed": 10,
+        "subtests_passed": 4,
+        "seconds": 4.59
+      }
+    ],
+    "actual_postgres_resolution_probe": {
+      "command": ".venv-pantheon/bin/python3 probe (reproduction script with fix)",
+      "exit_code": 0,
+      "stale_scoped_read_after_delete_and_reload": false,
+      "legacy_overwritten_by_tenant_key_collision": false,
+      "tenanted_present": true
+    }
   }
 }

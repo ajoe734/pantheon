@@ -84,12 +84,7 @@ class PostgresReadOnlyEvidenceRepository(InMemoryEvidenceRepository):
         return psycopg.connect(self.dsn)
 
     def reload(self) -> None:
-        self._source_records.clear()
-        self._source_dedupe_index.clear()
-        self._evidence_items.clear()
-        self._evidence_dedupe_index.clear()
-        self._bundles.clear()
-        self._knowledge_objects.clear()
+        self.clear()
         with self._connect() as conn:
             cursor = conn.execute(
                 f"SELECT record_type, payload FROM {self.table} ORDER BY append_id ASC"
