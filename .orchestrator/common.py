@@ -1170,8 +1170,8 @@ def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, s
                 raise ValueError(
                     f"Malformed git configuration: missing {key_var} for GIT_CONFIG_COUNT={count}"
                 )
-            key_val = str(env[key_var]).strip()
-            if not key_val:
+            key_val = str(env[key_var])
+            if not key_val.strip():
                 raise ValueError(
                     f"Malformed git configuration: {key_var} cannot be blank"
                 )
@@ -1213,7 +1213,10 @@ def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, s
             has_github_helper = True
             break
 
-    if not has_github_helper:
+    # An explicit supported askpass (e.g. a PAT-based PANTHEON_WORKER_GIT_ASKPASS)
+    # is a deliberate credential choice; do not silently override it by routing
+    # Git to the gh credential helper instead.
+    if not has_github_helper and not supported_askpass:
         new_index = len(existing_entries)
         env[f"GIT_CONFIG_KEY_{new_index}"] = "credential.https://github.com.helper"
         env[f"GIT_CONFIG_VALUE_{new_index}"] = "!gh auth git-credential"

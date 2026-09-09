@@ -609,6 +609,56 @@ class GithubCliEnvTests(unittest.TestCase):
         self.assertIn("synthetic-invalid-sensitive-key", real_git_proc.stderr)
         self.assertIn("key does not contain a section", real_git_proc.stderr)
 
+        # malformed key syntax - leading whitespace must be rejected by preparation
+        # itself, not merely by a stripped copy used only for validation, or real
+        # Git ends up invoked with the raw whitespace-prefixed key and exits 128.
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": " user.name",
+                "GIT_CONFIG_VALUE_0": "synthetic-sensitive-value",
+            })
+        self.assertNotIn("synthetic-sensitive-value", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # malformed key syntax - trailing newline must be rejected the same way
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.https://synthetic-sensitive.example/.extraheader\n",
+                "GIT_CONFIG_VALUE_0": "synthetic-sensitive-value",
+            })
+        self.assertNotIn("synthetic-sensitive-value", str(cm.exception))
+        self.assertIn("invalid key syntax in GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # Real Git execution regressions proving the whitespace/newline-malformed key
+        # never reaches Git as a raw indexed config value once preparation rejects it.
+        real_git_ws_proc = subprocess.run(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": " user.name",
+                "GIT_CONFIG_VALUE_0": "synthetic-value",
+            },
+        )
+        self.assertEqual(real_git_ws_proc.returncode, 128)
+
+        real_git_nl_proc = subprocess.run(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.https://synthetic-sensitive.example/.extraheader\n",
+                "GIT_CONFIG_VALUE_0": "synthetic-value",
+            },
+        )
+        self.assertEqual(real_git_nl_proc.returncode, 128)
+
     def test_git_credential_real_subprocess_consumption_and_prompt_free_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -710,6 +760,9 @@ class GithubCliEnvTests(unittest.TestCase):
             self.assertNotIn("synthetic-gh-token", proc_fail.stderr)
 
             # 4. Requirement 1: Explicit supported credential policy (PANTHEON_WORKER_GIT_ASKPASS) respected
+            # even when both the PAT askpass AND the gh helper would independently succeed:
+            # the explicit credential choice must win, not be silently overridden by
+            # automatic gh credential-helper routing.
             supported_askpass = bin_dir / "worker-pat-askpass"
             supported_askpass.write_text(
                 "#!/bin/sh\n"
@@ -720,6 +773,16 @@ class GithubCliEnvTests(unittest.TestCase):
                 encoding="utf-8",
             )
             supported_askpass.chmod(0o755)
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gh-user\"\n"
+                "  echo \"password=synthetic-gh-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
             env_supported = {
                 "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
                 "GIT_CONFIG_GLOBAL": os.devnull,
@@ -729,6 +792,12 @@ class GithubCliEnvTests(unittest.TestCase):
             }
             common.preserve_github_cli_auth_env(env_supported, {"HOME": str(tmp)})
             self.assertEqual(env_supported["GIT_ASKPASS"], str(supported_askpass))
+            self.assertNotIn(
+                "GIT_CONFIG_COUNT",
+                env_supported,
+                "must not auto-inject a gh credential helper when an explicit "
+                "supported askpass is configured",
+            )
             proc_supp = subprocess.run(
                 ["git", "credential", "fill"],
                 input="protocol=https\nhost=github.com\n\n",
@@ -740,6 +809,30 @@ class GithubCliEnvTests(unittest.TestCase):
             self.assertEqual(proc_supp.returncode, 0, proc_supp.stderr)
             self.assertIn("username=worker-pat-user", proc_supp.stdout)
             self.assertIn("password=worker-pat-token", proc_supp.stdout)
+            self.assertNotIn("synthetic-gh-user", proc_supp.stdout)
+            self.assertNotIn("synthetic-gh-token", proc_supp.stdout)
+
+            # 4b. Same explicit policy still wins when the gh helper is unusable (fallback case).
+            mock_gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            env_supported_gh_down = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "PANTHEON_WORKER_GIT_ASKPASS": str(supported_askpass),
+                "GIT_ASKPASS": str(supported_askpass),
+            }
+            common.preserve_github_cli_auth_env(env_supported_gh_down, {"HOME": str(tmp)})
+            proc_supp_gh_down = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_supported_gh_down,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_supp_gh_down.returncode, 0, proc_supp_gh_down.stderr)
+            self.assertIn("username=worker-pat-user", proc_supp_gh_down.stdout)
+            self.assertIn("password=worker-pat-token", proc_supp_gh_down.stdout)
 
             # 5. Requirement 3: Explicit generic credential.helper empty reset preserved and prevents gh from supplying credentials
             # Restore working synthetic gh

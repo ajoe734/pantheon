@@ -67,6 +67,19 @@
     "task_finalize": "Updated line 172 to 'git push origin $TASK_BRANCH' without -u, eliminating writes to shared .git/config while retaining explicit origin push target and failure propagation.",
     "docs": "Updated docs/operations/worker-atomic-state-mounts.md with architecture and runbook details for git credential propagation, protected config delivery, and promotion boundary."
   },
+  "review_rejection_20260909_fixes": {
+    "rejected_head": "1fffd401ad5b61395f8f7484f97a730b38466679",
+    "p1_gh_helper_overrides_explicit_askpass": {
+      "defect": "common.py preserved a supported PANTHEON_WORKER_GIT_ASKPASS policy but still auto-injected the gh credential.helper into GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> whenever no GitHub helper was already present, so real Git with both a working PAT askpass and a working gh helper used the gh identity instead of the explicit PAT identity.",
+      "fix": ".orchestrator/common.py: automatic gh credential-helper routing is now skipped whenever an explicit supported askpass (PANTHEON_WORKER_GIT_ASKPASS) is configured, so the explicit credential choice is preserved before adding automatic gh routing.",
+      "regression_added": ".orchestrator/test_common.py: test_git_credential_real_subprocess_consumption_and_prompt_free_failure now runs a real Git credential fill with BOTH the PAT askpass and the gh helper usable and asserts the PAT identity wins and no GIT_CONFIG_COUNT entry is auto-injected, plus a companion case with the gh helper unusable."
+    },
+    "p2_stripped_key_validation_not_applied_to_emitted_value": {
+      "defect": "common.py validated a stripped copy of each indexed GIT_CONFIG_KEY_<n> (key_val = str(env[key_var]).strip()) but left the original, unstripped value in env untouched, so a key with leading whitespace or a trailing newline passed preparation and was still emitted to real Git, which exited 128 and echoed the raw key.",
+      "fix": ".orchestrator/common.py: the key is now validated in its exact emitted form (is_valid_git_config_key(key_val) called on the unstripped value); is_valid_git_config_key already rejects any key that differs from its own stripped form or contains a newline, so malformed whitespace/newline keys are now redacted and rejected during preparation instead of reaching Git.",
+      "regression_added": ".orchestrator/test_common.py: test_preserve_github_cli_auth_env_malformed_indexed_config_rejected adds a leading-whitespace key case and a trailing-newline key case, each asserting ValueError with the raw sensitive value redacted from the message, plus real Git subprocess regressions proving the malformed key never reaches Git (both would previously exit 128 with the raw key echoed)."
+    }
+  },
   "verification": {
     "environment": {
       "python": "3.12.3",
@@ -76,8 +89,8 @@
       "interpreter": "/usr/bin/python3"
     },
     "checksums": {
-      ".orchestrator/common.py": "24e6cca9af9bce8f50b62b87272fdd52936863dd33171073c3f95489e9e637ab",
-      ".orchestrator/test_common.py": "5f6b60b4bd39a78bed4354dea317c900c4479237e501a8abc52d5c157b848a5a",
+      ".orchestrator/common.py": "65ed7fb0c719488f026cfd227b62aea6d45103216545364df033818dd46a7597",
+      ".orchestrator/test_common.py": "385ee8d0bf27275fc037b733e1a36800d70de9d40644e419247bbf7a62030a15",
       ".orchestrator/test_adapter_delivery_policy.py": "e4b4227c37352465205177e7d37ff87f8f453bc7a734549ac853cd004ee95966",
       ".orchestrator/test_worker_runner_heartbeat.py": "34154d05283a3ab97e3fa4c0ecaf6d2a4c55c89d9609f3f2a9128a2f3a06cf7e",
       "scripts/git/task_finalize.sh": "f8cac348ed4f8e73afaeab48551903054e15d3a3fa2c5c341561442d0e0396ac",
@@ -86,24 +99,21 @@
     },
     "test_runs": [
       {
-        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_common.py",
-        "result": "116 passed",
-        "exit_status": 0
-      },
-      {
-        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_adapter_delivery_policy.py",
-        "result": "21 passed",
-        "exit_status": 0
-      },
-      {
-        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_worker_runner_heartbeat.py",
-        "result": "74 passed",
-        "exit_status": 0
-      },
-      {
-        "command": "python3 scripts/git/test_task_review_merge_gate.py",
+        "command": "timeout 180s python3 scripts/git/test_task_review_merge_gate.py",
         "result": "119 passed",
         "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON -u PANTHEON_STATUS_ROOT PYTHONPATH=.orchestrator timeout 180s python3 -m unittest test_common test_adapter_delivery_policy test_worker_runner_heartbeat",
+        "result": "211 passed",
+        "exit_status": 0,
+        "note": "Same suites with these four env vars still set (inherited canonical identity binding of this live worker checkout) reproduce the single pre-existing, unrelated LogicalActivityReaderTests.test_recover_status_activity_outbox_integration failure noted by the prior independent review; unsetting them for the subprocess reproduces the documented clean baseline."
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON -u PANTHEON_STATUS_ROOT PYTHONPATH=.orchestrator timeout 180s python3 -m unittest test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_real_bubblewrap_worker_git_credential_propagation_and_protected_config",
+        "result": "1 passed",
+        "exit_status": 0,
+        "note": "focused real bubblewrap Git credential/protected-config regression, no skip"
       }
     ]
   }
