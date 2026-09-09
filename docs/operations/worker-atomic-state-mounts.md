@@ -126,3 +126,32 @@ python3 -m pytest .orchestrator/test_common.py -k "TestWriteStatusPrecondition"
 # Verify promotion storage migration, lock drain, preflight, and rollback
 python3 -m pytest scripts/test_promote_supervisor_runtime.py -k "migrate_storage_paths or storage_migration"
 ```
+
+---
+
+## Worker Git Credential Propagation and Delivery Architecture (`OPS-WORKER-GIT-AUTH-DELIVERY-001`)
+
+### Problem Statement
+1. **EBUSY on shared `.git/config` during worker delivery**:
+   In background worker environments, the shared common `.git/config` is mounted read-only (`--ro-bind`) to protect central repository settings from corruption or concurrent mutations by worker processes. When `scripts/git/task_finalize.sh` executed `git push -u origin "$TASK_BRANCH"`, Git attempted to write upstream tracking configuration (`branch.<name>.remote` and `branch.<name>.merge`) into `.git/config`, failing with `EBUSY` / `EROFS`.
+2. **Missing Git credential helper propagation in isolated provider HOME**:
+   Provider adapters (`antigravity.py`, `claude_cli.py`) isolate the worker `HOME` directory (e.g. `~/.antigravity2`, `~/.claude2`). While `common.preserve_github_cli_auth_env` preserved `GH_CONFIG_DIR`, Git's credential helper was not configured in the worker process. Running `gh auth setup-git` inside the worker failed because the alias HOME and `.git/config` were protected/read-only, resulting in Git interactively prompting for credentials on stdin and causing workers to hang or fail.
+
+### Design and Architecture
+1. **Per-Process Git Configuration via `GIT_CONFIG_*`**:
+   - `common.preserve_github_cli_auth_env` populates per-process Git environment variables (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`) supplying `credential.https://github.com.helper = !gh auth git-credential`.
+   - No `gh auth setup-git` invocation or `.gitconfig` file write is required inside the worker or alias `HOME`.
+   - Existing caller entries in `GIT_CONFIG_COUNT` are preserved without renumbering or loss. Unrelated-host credentials (e.g. `credential.https://gitlab.com.helper`) and non-credential settings (`user.name`) remain intact.
+   - Repeated environment preparation is stable and idempotent (does not duplicate configuration).
+   - Malformed indexed configurations are rejected with redacted actionable errors.
+2. **Non-Interactive Prompt-Free Failure via `GIT_TERMINAL_PROMPT=0`**:
+   - `GIT_TERMINAL_PROMPT=0` is exported in the worker environment.
+   - If credentials are unavailable or the helper fails, Git immediately exits (code 128) with a prompt-free actionable error (`terminal prompts disabled`), preventing background workers from hanging indefinitely on terminal input.
+3. **Protected Config Delivery in `task_finalize.sh`**:
+   - `scripts/git/task_finalize.sh` pushes explicitly to `origin "$TASK_BRANCH"` without `-u` (`--set-upstream`).
+   - Pushing to explicit destination ref does not require writes to `.git/config`, eliminating EBUSY errors in read-only sandboxes.
+   - Exact branch validation, origin target, push failure propagation, PR creation/reuse, and canonical auto-merge-off policies remain intact.
+4. **Source vs Fleet Rollout Boundary**:
+   - Merging these changes into `dev` establishes canonical source truth.
+   - Fleet rollout requires runtime promotion via `scripts/promote_supervisor_runtime.py`, ensuring newly spawned worker instances inherit the updated `common.py` and `task_finalize.sh` runtime without hand-written environment overrides.
+

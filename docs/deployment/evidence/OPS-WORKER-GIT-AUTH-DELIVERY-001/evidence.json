@@ -1,0 +1,110 @@
+{
+  "schema_version": "pantheon.worker-git-auth-evidence.v1",
+  "task_id": "OPS-WORKER-GIT-AUTH-DELIVERY-001",
+  "title": "Repair worker Git credential propagation and finalization",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "base_sha_at_dispatch": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+  "current_base": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+  "task_branch": "task/OPS-WORKER-GIT-AUTH-DELIVERY-001",
+  "depends_on": [
+    "OPS-WORKER-MOUNTS-001"
+  ],
+  "depends_on_status_at_dispatch": "done, satisfied=true",
+  "delivery_state": "ready_for_review",
+  "plan": {
+    "path": "/tmp/pantheon-worker-git-intake-20260909-v2/EXECUTION_PLAN.md",
+    "sha256": "eaeaeea063a49ad807d24babff0e0f116fd7128ff91b47b3c740f555232cd5b8"
+  },
+  "supplements": [
+    {
+      "path": "/tmp/pantheon-worker-git-intake-20260909-v2/SOURCE_REVIEW.md",
+      "sha256": "1d616cc509cfd63b2f115ea7adfbb1d58b35bd6add31c56ac5cc765bfb3adc19"
+    }
+  ],
+  "scope": {
+    "artifacts_count": 8,
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/test_common.py",
+      ".orchestrator/test_adapter_delivery_policy.py",
+      ".orchestrator/test_worker_runner_heartbeat.py",
+      "scripts/git/task_finalize.sh",
+      "scripts/git/test_task_review_merge_gate.py",
+      "docs/operations/worker-atomic-state-mounts.md",
+      "docs/deployment/evidence/OPS-WORKER-GIT-AUTH-DELIVERY-001/evidence.json"
+    ],
+    "owned": [
+      "Per-process Git credential propagation in common.preserve_github_cli_auth_env via GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, and GIT_CONFIG_VALUE_<n> supplying credential.https://github.com.helper = !gh auth git-credential without requiring gh auth setup-git or .gitconfig writes.",
+      "Preservation of existing GIT_CONFIG_COUNT entries without loss or renumbering; preservation of explicit GH_CONFIG_DIR, XDG/source HOME discovery, provider alias HOME isolation, and other-host helpers (e.g. gitlab).",
+      "Non-interactive prompt-free Git failure via GIT_TERMINAL_PROMPT=0 in background worker environments, preventing hangs on terminal input.",
+      "Redacted actionable rejection of malformed indexed git configuration.",
+      "Protected config delivery in scripts/git/task_finalize.sh: pushing explicitly to origin $TASK_BRANCH without -u (--set-upstream) to eliminate EBUSY writes to read-only shared .git/config.",
+      "Real bubblewrap integration test using bind_worker_sandbox with linked task worktree, alias HOME, protected common .git/config, and synthetic gh helper.",
+      "Isolated local Git / linked worktree regressions for task_finalize.sh with protected shared config.",
+      "Runbook documentation of git credential propagation and protected config delivery architecture in worker-atomic-state-mounts.md."
+    ],
+    "not_changing": [
+      "No bypass of bubblewrap isolation or sandbox boundaries.",
+      "No writable config overlay or mount relaxation for shared .git/config.",
+      "No creation, exposure, or printing of tokens; no call to gh auth token or token caching files.",
+      "No alteration to canonical review gates or supervisor merge policy."
+    ],
+    "composes_with": [
+      "OPS-WORKER-MOUNTS-001",
+      "Supervisor worker runner and provider adapters",
+      "scripts/git task lifecycle tools (task_start.sh, worker_commit.py, task_finalize.sh)"
+    ]
+  },
+  "failure_reproduction": {
+    "case_1_ebusy_git_push_u": "task_finalize.sh executed 'git push -u origin $TASK_BRANCH', which attempted to write branch upstream tracking to shared .git/config mounted read-only inside worker sandbox, failing with EBUSY / EROFS.",
+    "case_2_missing_git_credential_helper": "Provider alias HOME isolation broke Git credential helper inheritance, and gh auth setup-git could not write read-only HOME/.gitconfig or .git/config, causing Git to interactively prompt for credentials and hang."
+  },
+  "implementation": {
+    "common": "Extended preserve_github_cli_auth_env to configure GIT_TERMINAL_PROMPT=0 and per-process Git config (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>) for credential.https://github.com.helper = !gh auth git-credential while preserving existing caller entries, explicit GH_CONFIG_DIR, and other-host helpers.",
+    "task_finalize": "Updated line 172 to 'git push origin $TASK_BRANCH' without -u, eliminating writes to shared .git/config while retaining explicit origin push target and failure propagation.",
+    "docs": "Updated docs/operations/worker-atomic-state-mounts.md with architecture and runbook details for git credential propagation, protected config delivery, and promotion boundary."
+  },
+  "verification": {
+    "environment": {
+      "python": "3.12.3",
+      "git": "2.43.0",
+      "bwrap": "0.9.0",
+      "pytest": "9.1.1",
+      "interpreter": "/usr/bin/python3"
+    },
+    "checksums": {
+      ".orchestrator/common.py": "b6eb0f6d3439b5ed82459683316ccfbd1114abe32efb85238cc3deaf111a4276",
+      ".orchestrator/test_common.py": "0106af7c571668b55a2db52e8f8cbf9e827466e7b2b38d121f012ea4be155efa",
+      ".orchestrator/test_adapter_delivery_policy.py": "e4b4227c37352465205177e7d37ff87f8f453bc7a734549ac853cd004ee95966",
+      ".orchestrator/test_worker_runner_heartbeat.py": "34154d05283a3ab97e3fa4c0ecaf6d2a4c55c89d9609f3f2a9128a2f3a06cf7e",
+      "scripts/git/task_finalize.sh": "f8cac348ed4f8e73afaeab48551903054e15d3a3fa2c5c341561442d0e0396ac",
+      "scripts/git/test_task_review_merge_gate.py": "9afddca25cfa52fd87393acd571ba2b673cd61ff10789a42f0f7dcad0b4e23b9",
+      "docs/operations/worker-atomic-state-mounts.md": "717e4aff2d8c5555b8b665b162a38ae13199ea7341eee23516a3809b4084d28f"
+    },
+    "test_runs": [
+      {
+        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_common.py",
+        "result": "115 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_adapter_delivery_policy.py",
+        "result": "21 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_worker_runner_heartbeat.py",
+        "result": "74 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "python3 scripts/git/test_task_review_merge_gate.py",
+        "result": "119 passed",
+        "exit_status": 0
+      }
+    ]
+  }
+}

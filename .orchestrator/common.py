@@ -1103,12 +1103,66 @@ def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
 
 
 def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, str] | None = None) -> None:
-    if env.get("GH_CONFIG_DIR"):
-        env["GH_CONFIG_DIR"] = os.path.expanduser(str(env["GH_CONFIG_DIR"]))
-        return
-    config_dir = github_cli_config_dir(source_env)
-    if config_dir.exists():
-        env["GH_CONFIG_DIR"] = str(config_dir)
+    if str(env.get("GH_CONFIG_DIR") or "").strip():
+        env["GH_CONFIG_DIR"] = os.path.expanduser(str(env["GH_CONFIG_DIR"]).strip())
+    elif source_env is not None and str(source_env.get("GH_CONFIG_DIR") or "").strip():
+        env["GH_CONFIG_DIR"] = os.path.expanduser(str(source_env["GH_CONFIG_DIR"]).strip())
+    else:
+        config_dir = github_cli_config_dir(source_env)
+        if config_dir.exists():
+            env["GH_CONFIG_DIR"] = str(config_dir)
+
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    raw_count = env.get("GIT_CONFIG_COUNT")
+    existing_entries: list[tuple[str, str]] = []
+    if raw_count is not None:
+        stripped_count = str(raw_count).strip()
+        if not stripped_count.isdigit():
+            raise ValueError(
+                "Malformed git configuration: GIT_CONFIG_COUNT must be a non-negative integer, got <redacted>"
+            )
+        count = int(stripped_count)
+        for i in range(count):
+            key_var = f"GIT_CONFIG_KEY_{i}"
+            val_var = f"GIT_CONFIG_VALUE_{i}"
+            if key_var not in env:
+                raise ValueError(
+                    f"Malformed git configuration: missing {key_var} for GIT_CONFIG_COUNT={count}"
+                )
+            key_val = str(env[key_var]).strip()
+            if not key_val:
+                raise ValueError(
+                    f"Malformed git configuration: {key_var} cannot be blank"
+                )
+            if val_var not in env:
+                raise ValueError(
+                    f"Malformed git configuration: missing {val_var} for GIT_CONFIG_COUNT={count}"
+                )
+            existing_entries.append((key_val, str(env[val_var])))
+    else:
+        stray = [k for k in env if k.startswith("GIT_CONFIG_KEY_") or k.startswith("GIT_CONFIG_VALUE_")]
+        if stray:
+            stray_name = sorted(stray)[0]
+            raise ValueError(
+                f"Malformed git configuration: found {stray_name} but GIT_CONFIG_COUNT is unset"
+            )
+
+    has_github_helper = False
+    for k, v in existing_entries:
+        k_lower = k.lower().strip()
+        if k_lower == "credential.https://github.com.helper":
+            has_github_helper = True
+            break
+        if k_lower == "credential.helper" and "gh auth git-credential" in v.lower():
+            has_github_helper = True
+            break
+
+    if not has_github_helper:
+        new_index = len(existing_entries)
+        env[f"GIT_CONFIG_KEY_{new_index}"] = "credential.https://github.com.helper"
+        env[f"GIT_CONFIG_VALUE_{new_index}"] = "!gh auth git-credential"
+        env["GIT_CONFIG_COUNT"] = str(new_index + 1)
 
 
 def is_github_cli_auth_failure(reason: str | None) -> bool:

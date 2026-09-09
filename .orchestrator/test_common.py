@@ -360,6 +360,211 @@ class GithubCliEnvTests(unittest.TestCase):
 
         self.assertEqual(env["GH_CONFIG_DIR"], str(Path("~/custom-gh").expanduser()))
 
+    def test_preserve_github_cli_auth_env_unset_git_config_count(self) -> None:
+        env = {}
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_zero_git_config_count(self) -> None:
+        env = {"GIT_CONFIG_COUNT": "0"}
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_populated_with_noncredential_entries(self) -> None:
+        env = {
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Alice",
+            "GIT_CONFIG_KEY_1": "init.defaultBranch",
+            "GIT_CONFIG_VALUE_1": "main",
+        }
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "3")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "user.name")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "Alice")
+        self.assertEqual(env["GIT_CONFIG_KEY_1"], "init.defaultBranch")
+        self.assertEqual(env["GIT_CONFIG_VALUE_1"], "main")
+        self.assertEqual(env["GIT_CONFIG_KEY_2"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_2"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_explicit_and_xdg_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            xdg = root / "xdg"
+            gh_dir = xdg / "gh"
+            gh_dir.mkdir(parents=True)
+
+            env = {}
+            common.preserve_github_cli_auth_env(env, {"XDG_CONFIG_HOME": str(xdg)})
+            self.assertEqual(env["GH_CONFIG_DIR"], str(gh_dir))
+
+        env2 = {}
+        common.preserve_github_cli_auth_env(env2, {"GH_CONFIG_DIR": "~/explicit-source-gh"})
+        self.assertEqual(env2["GH_CONFIG_DIR"], str(Path("~/explicit-source-gh").expanduser()))
+
+    def test_preserve_github_cli_auth_env_repeated_preparation_stable(self) -> None:
+        env = {}
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+        snapshot = dict(env)
+
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+        self.assertEqual(env, snapshot)
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+
+    def test_preserve_github_cli_auth_env_existing_github_helper_preserved(self) -> None:
+        env = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_0": "!custom-gh-helper",
+        }
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "!custom-gh-helper")
+
+    def test_preserve_github_cli_auth_env_unrelated_host_helper_preserved(self) -> None:
+        env = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.https://gitlab.com.helper",
+            "GIT_CONFIG_VALUE_0": "gitlab-helper",
+        }
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/test"})
+
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "credential.https://gitlab.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "gitlab-helper")
+        self.assertEqual(env["GIT_CONFIG_KEY_1"], "credential.https://github.com.helper")
+        self.assertEqual(env["GIT_CONFIG_VALUE_1"], "!gh auth git-credential")
+
+    def test_preserve_github_cli_auth_env_malformed_indexed_config_rejected(self) -> None:
+        # non-integer count
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({"GIT_CONFIG_COUNT": "secret_abc_123"})
+        self.assertNotIn("secret_abc_123", str(cm.exception))
+        self.assertIn("non-negative integer", str(cm.exception))
+
+        # negative count
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({"GIT_CONFIG_COUNT": "-1"})
+
+        # missing key
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_VALUE_0": "super_secret_token",
+            })
+        self.assertNotIn("super_secret_token", str(cm.exception))
+        self.assertIn("missing GIT_CONFIG_KEY_0", str(cm.exception))
+
+        # blank key
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "  ",
+                "GIT_CONFIG_VALUE_0": "val",
+            })
+
+        # missing value
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "user.name",
+            })
+
+        # stray key without count
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({"GIT_CONFIG_KEY_0": "user.name"})
+        self.assertIn("GIT_CONFIG_COUNT is unset", str(cm.exception))
+
+    def test_git_credential_real_subprocess_consumption_and_prompt_free_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            mock_gh = bin_dir / "gh"
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gh-user\"\n"
+                "  echo \"password=synthetic-gh-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            mock_gh.chmod(0o755)
+
+            mock_gitlab = bin_dir / "git-credential-gitlab"
+            mock_gitlab.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gitlab-user\"\n"
+                "  echo \"password=synthetic-gitlab-pass\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            mock_gitlab.chmod(0o755)
+
+            env = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "credential.https://gitlab.com.helper",
+                "GIT_CONFIG_VALUE_0": "gitlab",
+            }
+            common.preserve_github_cli_auth_env(env, {"HOME": str(tmp)})
+
+            # 1. GitHub credential fill invokes the synthetic gh helper
+            proc_gh = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_gh.returncode, 0, proc_gh.stderr)
+            self.assertIn("username=synthetic-gh-user", proc_gh.stdout)
+            self.assertIn("password=synthetic-gh-token", proc_gh.stdout)
+
+            # 2. Unrelated host (gitlab.com) still invokes its preserved helper
+            proc_gl = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=gitlab.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_gl.returncode, 0, proc_gl.stderr)
+            self.assertIn("username=synthetic-gitlab-user", proc_gl.stdout)
+            self.assertIn("password=synthetic-gitlab-pass", proc_gl.stdout)
+
+            # 3. Missing/unusable credential source produces prompt-free failure (exit 128), no hang
+            mock_gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            proc_fail = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_fail.returncode, 128)
+            self.assertIn("terminal prompts disabled", proc_fail.stderr)
+            # Ensure no secret or token appears in diagnostics
+            self.assertNotIn("synthetic-gh-token", proc_fail.stderr)
+
 
 class ClaudeAuthTests(unittest.TestCase):
     def test_claude_auth_ready_accepts_long_lived_oauth_token_env(self) -> None:
