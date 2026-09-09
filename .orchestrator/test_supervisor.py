@@ -1888,6 +1888,23 @@ class OrphanUnmergedWorktreeStalenessTests(unittest.TestCase):
 
 
 class RuntimeConfigurationContractTests(unittest.TestCase):
+    def test_fleet_cap_rejects_invalid_authority_and_retired_alias(self) -> None:
+        for value in (None, True, "13", 13.0, -1, [], {}):
+            with self.subTest(value=value):
+                config = config_fixture()
+                config["ready_dispatcher"]["max_concurrent_workers"] = value
+                with self.assertRaisesRegex(ValueError, "max_concurrent_workers"):
+                    supervisor.validate_provider_accounts(config)
+        config = config_fixture()
+        del config["ready_dispatcher"]["max_concurrent_workers"]
+        with self.assertRaisesRegex(ValueError, "max_concurrent_workers"):
+            supervisor.validate_provider_accounts(config)
+        for value in (12, 13, 14, None, True, "13"):
+            config = config_fixture()
+            config["watchdog"] = {"max_active_workers": value}
+            with self.assertRaisesRegex(ValueError, "max_active_workers is retired"):
+                supervisor.validate_provider_accounts(config)
+
     def test_repo_config_uses_one_capacity_and_account_schema(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         supervisor.validate_provider_accounts(config)

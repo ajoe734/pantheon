@@ -4,9 +4,12 @@ import json
 import types
 from pathlib import Path
 
+import pytest
+
 from check_config_drift import (
     DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
+    fleet_capacity_errors,
     find_repository_integration_drift,
     find_repository_source_drift,
     get_dotted,
@@ -302,8 +305,8 @@ def test_git_commits_behind_none_on_failure() -> None:
 def test_main_fix_aligns_drift(tmp_path: Path) -> None:
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
-    repo.write_text(json.dumps({"ready_dispatcher": {"enabled": True}}))
-    live.write_text(json.dumps({"ready_dispatcher": {"enabled": False}}))
+    repo.write_text(json.dumps({"ready_dispatcher": {"enabled": True, "max_concurrent_workers": 13}}))
+    live.write_text(json.dumps({"ready_dispatcher": {"enabled": False, "max_concurrent_workers": 13}}))
     # without --fix: exit 1 (actionable drift)
     rc = main(["--repo-config", str(repo), "--live-config", str(live)])
     assert rc == 1
@@ -317,9 +320,9 @@ def test_main_fix_adds_repo_owned_flag_missing_from_live(tmp_path: Path) -> None
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
     repo.write_text(
-        json.dumps({"ready_dispatcher": {"max_concurrent_per_account": {"codex1": 4}}})
+        json.dumps({"ready_dispatcher": {"max_concurrent_workers": 13, "max_concurrent_per_account": {"codex1": 4}}})
     )
-    live.write_text(json.dumps({"ready_dispatcher": {}}))
+    live.write_text(json.dumps({"ready_dispatcher": {"max_concurrent_workers": 13}}))
 
     rc = main(
         [
@@ -340,8 +343,9 @@ def test_main_fix_adds_repo_owned_flag_missing_from_live(tmp_path: Path) -> None
 def test_main_behind_fails_only_when_threshold_exceeded(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
-    repo.write_text(json.dumps({"chair_review": {"enabled": True}}))
-    live.write_text(json.dumps({"chair_review": {"enabled": True}}))
+    config = {"chair_review": {"enabled": True}, "ready_dispatcher": {"max_concurrent_workers": 13}}
+    repo.write_text(json.dumps(config))
+    live.write_text(json.dumps(config))
     import check_config_drift
     monkeypatch.setattr(check_config_drift, "git_commits_behind", lambda *a, **k: 22)
     # no threshold -> behind reported but exit 0
@@ -349,3 +353,43 @@ def test_main_behind_fails_only_when_threshold_exceeded(tmp_path: Path, monkeypa
     # threshold exceeded -> exit 1
     assert main(["--repo-config", str(repo), "--live-config", str(live),
                  "--dev-root", "/x", "--max-behind", "5"]) == 1
+
+
+@pytest.mark.parametrize("invalid", [
+    {}, {"ready_dispatcher": {}}, {"ready_dispatcher": None},
+] + [
+    {"ready_dispatcher": {"max_concurrent_workers": v}}
+    for v in (None, True, False, "13", "", 13.0, 13.5, -1, [], {})
+] + [
+    {"ready_dispatcher": {"max_concurrent_workers": 13}, "watchdog": {"max_active_workers": v}}
+    for v in (12, 13, 14, None, True, "13", [], {})
+] + [
+    {"ready_dispatcher": {"max_concurrent_workers": 13}, "watchdog": v}
+    for v in (None, [], False)
+])
+def test_invalid_fleet_contract_fails_even_when_equal_and_fix_requested(tmp_path, capsys, invalid):
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    payload = json.dumps(invalid)
+    repo.write_text(payload)
+    live.write_text(payload)
+    assert len(fleet_capacity_errors(invalid, invalid)) == 2
+    assert main(["--repo-config", str(repo), "--live-config", str(live), "--json", "--fix"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert len(report["fleet_capacity_errors"]) == 2
+    assert report["fixed"] == []
+    assert live.read_text() == payload
+
+
+def test_fleet_contract_drift_is_actionable_and_valid_shape_passes(tmp_path, capsys):
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    valid = {"ready_dispatcher": {"max_concurrent_workers": 13}}
+    repo.write_text(json.dumps(valid))
+    live.write_text(json.dumps({"ready_dispatcher": {"max_concurrent_workers": 14}}))
+    assert main(["--repo-config", str(repo), "--live-config", str(live), "--json"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["fleet_capacity_errors"] == []
+    assert report["drift"] == [{"path": "ready_dispatcher.max_concurrent_workers", "repo": 13, "live": 14}]
+    live.write_text(json.dumps(valid))
+    assert main(["--repo-config", str(repo), "--live-config", str(live)]) == 0
