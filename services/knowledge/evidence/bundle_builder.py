@@ -40,6 +40,13 @@ class EvidenceBundleBuilder:
         if rejected:
             raise EvidenceValidationError(f"Rejected sources cannot be bundled: {rejected}")
 
+        tenant_ids = {source.tenant_id for source in source_records} | {item.tenant_id for item in evidence_items}
+        if len(tenant_ids) != 1:
+            raise EvidenceValidationError("Evidence bundle inputs must have one tenant identity")
+        tenant_id = next(iter(tenant_ids))
+        if metadata and "tenant_id" in metadata and metadata["tenant_id"] != tenant_id:
+            raise EvidenceValidationError("Evidence bundle metadata cannot override owner tenant")
+
         source_ids = {source.source_id for source in source_records}
         for source in source_records:
             self.repository.add_source_record(source)
@@ -85,12 +92,8 @@ class EvidenceBundleBuilder:
             effective_available_time = _iso(max(collected_available_times))
 
         meta = dict(metadata or {})
-        if "tenant_id" not in meta:
-            tenant_ids = {s.tenant_id for s in source_records if s.tenant_id} | {i.tenant_id for i in evidence_items if i.tenant_id}
-            if len(tenant_ids) == 1:
-                meta["tenant_id"] = next(iter(tenant_ids))
-            elif len(tenant_ids) > 1:
-                raise EvidenceValidationError(f"Multiple tenants in bundle: {tenant_ids}")
+        if tenant_id is not None:
+            meta["tenant_id"] = tenant_id
 
         bundle = EvidenceBundle(
             evidence_bundle_id=evidence_bundle_id or f"evbundle-{uuid4().hex[:12]}",
@@ -123,11 +126,14 @@ class EvidenceBundleBuilder:
         keywords: Iterable[str] = (),
         metadata: dict | None = None,
     ) -> KnowledgeObject:
+        tenant_id = source_record.tenant_id
+        if evidence_item.tenant_id != tenant_id or evidence_bundle.tenant_id != tenant_id:
+            raise EvidenceValidationError("Knowledge object inputs must have one tenant identity")
         meta = dict(metadata or {})
-        if "tenant_id" not in meta:
-            tenant_id = source_record.tenant_id or evidence_item.tenant_id or evidence_bundle.tenant_id
-            if tenant_id:
-                meta["tenant_id"] = tenant_id
+        if "tenant_id" in meta and meta["tenant_id"] != tenant_id:
+            raise EvidenceValidationError("Knowledge object metadata cannot override owner tenant")
+        if tenant_id is not None:
+            meta["tenant_id"] = tenant_id
 
         knowledge_object = KnowledgeObject(
             knowledge_object_id=knowledge_object_id,

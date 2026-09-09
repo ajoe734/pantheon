@@ -291,3 +291,60 @@ def test_keyword_index_adapter_preserves_metadata_search_text_input() -> None:
     )
 
     assert [result.result_id for result in response.results] == ["ko-adapter-metadata"]
+
+
+def _add_tenant_evidence(repository, tenant, *, text, citation):
+    source = SourceRecord(
+        source_id="same-source", connector_id="notes", source_type="internal_note",
+        title="momentum", content_ref="note://same",
+        metadata={"access_scope": ["research"], **({"tenant_id": tenant} if tenant else {})},
+    )
+    item = EvidenceItem(
+        evidence_item_id="same-item", source_id=source.source_id, item_type="text_chunk",
+        content_ref="note://same#1", citation_label=citation, body=text,
+        access_scope=["research"], metadata={"tenant_id": tenant} if tenant else {},
+    )
+    builder = EvidenceBundleBuilder(repository)
+    bundle = builder.build_bundle(
+        source_records=[source], evidence_items=[item], summary=text,
+        created_by="test", evidence_bundle_id="same-bundle",
+    )
+    return builder.build_knowledge_object(
+        knowledge_object_id="same-object", source_record=source, evidence_item=item,
+        evidence_bundle=bundle, title="momentum", text=text,
+    )
+
+
+@pytest.mark.parametrize("tenant", [None, "tenant-a"])
+def test_same_named_foreign_evidence_cannot_affect_rank_text_citations_or_counts(tenant):
+    repository = InMemoryEvidenceRepository()
+    own = _add_tenant_evidence(repository, tenant, text="momentum own", citation="own#1")
+    context = SearchAccessContext(tenant_id=tenant or "default", access_scopes=["research"])
+    request = SearchRequest(query="momentum", persona_id="persona", workspace_id="workspace")
+    before = SearchGateway(repository).search(request, context)
+    _add_tenant_evidence(repository, "tenant-b", text="secret foreignword", citation="secret#1")
+    after = SearchGateway(repository).search(request, context)
+    assert [r.answer_context for r in after.results] == ["momentum own"]
+    assert [r.citations for r in after.results] == [["own#1"]]
+    assert after.rejected_items_count == before.rejected_items_count == 0
+    assert [r.relevance_score for r in after.results] == [r.relevance_score for r in before.results]
+    document = KeywordIndexAdapter(repository).documents_for([own])[0]
+    assert "secret" not in document.search_text
+    assert "foreignword" not in document.search_text
+
+
+def test_backend_candidate_hydrates_only_request_tenant_owner():
+    from types import SimpleNamespace
+
+    repository = InMemoryEvidenceRepository()
+    _add_tenant_evidence(repository, "tenant-a", text="momentum own", citation="own#1")
+    _add_tenant_evidence(repository, "tenant-b", text="secret", citation="secret#1")
+    hit = SimpleNamespace(id="same-object", ranker_version="test", score=1.0,
+                          component_scores={}, matched_terms=())
+    backend = SimpleNamespace(search=lambda **kwargs: [hit])
+    response = SearchGateway(repository, retrieval_backend=backend).search(
+        SearchRequest(query="momentum"),
+        SearchAccessContext(tenant_id="tenant-a", access_scopes=["research"]),
+    )
+    assert [r.answer_context for r in response.results] == ["momentum own"]
+    assert [r.citations for r in response.results] == [["own#1"]]

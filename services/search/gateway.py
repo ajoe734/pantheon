@@ -200,14 +200,14 @@ class SearchGateway:
             backend_rejected = 0
             backend_rejected_by_reason: dict[str, int] = {}
             for hit in hits:
-                ko = self.repository.get_knowledge_object(hit.id)
+                ko = self.repository.get_knowledge_object(hit.id, tenant_id=context.tenant_id)
                 if ko is None:
                     backend_rejected += 1
                     backend_rejected_by_reason["missing_owner"] = backend_rejected_by_reason.get("missing_owner", 0) + 1
                     continue
 
-                evidence_item = self.repository.get_evidence_item(ko.evidence_item_id)
-                bundle = self.repository.get_bundle(ko.evidence_bundle_id)
+                evidence_item = self.repository.get_evidence_item(ko.evidence_item_id, tenant_id=ko.tenant_id)
+                bundle = self.repository.get_bundle(ko.evidence_bundle_id, tenant_id=ko.tenant_id)
                 if evidence_item is None or bundle is None:
                     backend_rejected += 1
                     backend_rejected_by_reason["missing_evidence"] = backend_rejected_by_reason.get("missing_evidence", 0) + 1
@@ -291,9 +291,15 @@ class SearchGateway:
             "missing_citation": 0,
         }
 
-        for knowledge_object in self.repository.list_knowledge_objects():
-            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id)
-            bundle = self.repository.get_bundle(knowledge_object.evidence_bundle_id)
+        # Legacy records keep their existing access policy. Tenant records are
+        # selected before ranking/counting; same-named IDs never use the global map.
+        candidates = [
+            *self.repository.list_knowledge_objects(tenant_id=context.tenant_id),
+            *self.repository.list_knowledge_objects(tenant_id=None),
+        ]
+        for knowledge_object in candidates:
+            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id, tenant_id=knowledge_object.tenant_id)
+            bundle = self.repository.get_bundle(knowledge_object.evidence_bundle_id, tenant_id=knowledge_object.tenant_id)
 
             allowed, reason = context.permits(
                 knowledge_object,
@@ -357,8 +363,8 @@ class SearchGateway:
 
         for match in matches:
             knowledge_object = match.knowledge_object
-            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id)
-            bundle = self.repository.get_bundle(knowledge_object.evidence_bundle_id)
+            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id, tenant_id=knowledge_object.tenant_id)
+            bundle = self.repository.get_bundle(knowledge_object.evidence_bundle_id, tenant_id=knowledge_object.tenant_id)
             if bundle is None or evidence_item is None:
                 raise SearchPolicyError("search index references missing governed evidence")
 
