@@ -3427,6 +3427,7 @@ def start_worker_for_request(
         "process_generation": result_process_generation,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
+        "native_log_path": result_metadata.get("native_log_path"),
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
@@ -4706,6 +4707,45 @@ def is_runner_gated_provider_error_envelope(
     )
 
 
+NATIVE_LOG_FAILURE_MARKERS = (
+    "resource_exhausted",
+    "individual quota reached",
+    "quota reached",
+    "not logged into antigravity",
+    "not authenticated",
+)
+
+
+def native_log_failure(log_path_value: Any) -> str | None:
+    """Return a sanitized provider-native error line bound to one invocation.
+
+    Antigravity's ``stream-json`` stdout only carries opaque ``error_message``
+    step updates with no error text when a request fails mid-turn (the CLI
+    keeps retrying internally), so ``detect_worker_failure``'s stdout scan
+    never sees the actual RESOURCE_EXHAUSTED/429 body. The CLI's own
+    ``--log-file`` output still records it. Scan newest-first so a later
+    actual failure (for example quota reached after a successful auth) is
+    returned instead of an earlier superseded not-logged-in startup notice.
+    """
+    if not log_path_value:
+        return None
+    log_path = Path(log_path_value)
+    if not log_path.exists():
+        return None
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    for idx in range(len(lines) - 1, -1, -1):
+        stripped = lines[idx].strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if any(marker in lowered for marker in NATIVE_LOG_FAILURE_MARKERS):
+            return stripped
+    return None
+
+
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     log_path_value = worker.get("log_path")
     if not log_path_value:
@@ -4747,7 +4787,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             # A top-level JSON object which is not one of the provider control
             # envelopes above is transcript content. Do not inspect its nested strings.
             continue
-    return None
+    return native_log_failure(worker.get("native_log_path"))
 
 
 def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
@@ -10483,10 +10523,21 @@ def reconcile_unavailable_assignments(
                 f"{new_owner} had spare capacity; planner will redispatch normally."
             )
         else:
-            message = (
+            recovery_reason = (
                 f"Recovery reassigned {role} from {unavailable_actor} after "
                 f"durable {unavailable_reason}; planner will redispatch normally."
             )
+            prior_next = str(task.get("next") or "").strip()
+            # The no-receipt reassignment path below overwrites task["next"]
+            # with this message. A qualified source's handoff/acceptance
+            # instructions must survive an ordinary unavailable-owner fallback
+            # rather than being replaced outright; append the short recovery
+            # reason instead. Do not nest onto an already-generic recovery
+            # note, or repeated fallbacks would grow the field unboundedly.
+            if prior_next and not prior_next.startswith(("Recovery reassigned ", "Load-balanced owner from ")):
+                message = f"{prior_next} Recovery: {recovery_reason}"
+            else:
+                message = recovery_reason
         if not persist_task_reassignment(
             config,
             task_id=task_id,

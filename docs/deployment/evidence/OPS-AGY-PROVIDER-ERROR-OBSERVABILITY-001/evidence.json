@@ -1,0 +1,77 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001",
+  "title": "Preserve provider-native quota errors in existing worker and readiness observation",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "9c22995341e4f9ff896cc550ca2e219aea7ad4e1",
+  "scope": {
+    "owned": [
+      "Antigravity adapter and auth-probe invocation-log binding (--log-file) so provider-native error text is observable",
+      "supervisor.detect_worker_failure native-log fallback for AGY error_message-only streams",
+      "reassignment fallback message preserving a qualified source's prior task[\"next\"] instructions"
+    ],
+    "not_changing": [
+      "classify_worker_failure's existing quota/auth marker tables",
+      "model_rotation cooldown/fallback selection logic",
+      "reconcile_unavailable_assignments candidate selection and process/lease fencing",
+      "Git authentication/finalizer behavior (common.py, .orchestrator/test_adapter_delivery_policy.py)"
+    ],
+    "composes_with": [
+      "the active Git authentication delivery task (shares antigravity.py's spawn_background_process call but owns .orchestrator/test_adapter_delivery_policy.py; that file is intentionally not touched here)"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "`agy --output-format stream-json` retries a RESOURCE_EXHAUSTED/429 quota error internally and only emits opaque step_update/error_message records on stdout with no error text; `agy --prompt` auth/quota probes can also authenticate and then hit quota with a clean exit and empty stdout/stderr.",
+    "prior_outcome": "supervisor.detect_worker_failure returned None for the error_message-only stream (no authoritative envelope ever reached stdout), and provider_permissions._antigravity_probe_ready classified the empty-output probe as a silent not-logged-in auth failure instead of quota_reached, even though the same invocation had already authenticated.",
+    "regression": "test_antigravity_error_observability.py's test_error_message_only_stream_falls_back_to_native_log_quota and test_empty_output_probe_reclassifies_as_quota_from_native_log reproduce both gaps against fake local CLI log fixtures with no network or credentials."
+  },
+  "implementation": {
+    "native_log_binding": "adapters/antigravity.py and provider_permissions.py's _antigravity_auth_probe both add an explicit --log-file <path> to the exact CLI invocation, using the CLI's own existing --log-file flag; the adapter reports the bound path via DeliveryResult.metadata[\"native_log_path\"], which supervisor.py stores on the worker record.",
+    "detect_worker_failure_fallback": "supervisor.native_log_failure() scans the bound native log newest-line-first for a small set of provider-native quota/auth markers only after the existing stdout-stream scan finds nothing, so a later actual quota failure supersedes an earlier superseded not-logged-in startup notice and existing authoritative-envelope detection is unchanged.",
+    "probe_reclassification": "provider_permissions._probe_once merges the bound native log's text into the same `combined` string _antigravity_probe_ready already inspects (signature unchanged), so existing quota-before-auth precedence in _antigravity_probe_ready applies unmodified; the probe deletes its own transient native log after each read.",
+    "reassignment_next_preservation": "reconcile_unavailable_assignments' ordinary (non-load-balance) fallback branch now appends its short recovery reason to any existing qualified task[\"next\"] instead of the no-receipt persistence path silently overwriting them, while not nesting onto an already-generic prior recovery note.",
+    "no_new_authority": "No new classifier, cooldown store, recovery command, or provider identity grouping is introduced; classify_worker_failure's existing quota_terminal markers and model_rotation's existing cool_slot/fallback logic consume the recovered text unchanged."
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_antigravity_error_observability.py",
+        "result": "12 tests passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_provider_permissions.py",
+        "result": "125 passed, 18 subtests passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "result": "321 passed, 69 subtests passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_adapter_delivery_policy.py",
+        "result": "20 passed, 2 subtests passed (unchanged; confirms Git-authentication-owned adapter tests are unaffected)"
+      }
+    ],
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1"
+    },
+    "checksums": {
+      ".orchestrator/adapters/antigravity.py": "dfb7b54c72acedb5552219321f7cec3e05f1d3670955a23f0d6cdf05a71d9eb3",
+      ".orchestrator/provider_permissions.py": "54a792b89b1b08fa7721aae9a44f976072a2f771a0d033e28a914080457b4071",
+      ".orchestrator/supervisor.py": "09789e6b2e0a25829f1efc1e692710c2cb44bbee5b0391c4afd3a09a3d3ee684",
+      ".orchestrator/test_antigravity_error_observability.py": "8e3772e7f43c6466ed64425a5219a6e014d0d4a87cf27af0e2b31c6d7de1c8e7",
+      ".orchestrator/test_provider_permissions.py": "ddac3a5f15dafbce8670e962f142d65391084b547b800f5c031bd0e484d8e594",
+      ".orchestrator/test_supervisor.py": "da687bd1c47022f7ff08ddf45a1548bf58d2208b4e2dd3d21af22c132e6822a7",
+      "docs/operations/auto-worker-readiness.md": "238ae0f0981c36b75ffcf4b40abd8bbb2f37f5c7c6f1c753cf7ffe886489e80c"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Independently verify the invocation-log binding on both the adapter and probe paths, the newest-line-first native-log fallback precedence, the reassignment next-preservation regressions, and that .orchestrator/test_adapter_delivery_policy.py was left untouched."
+  }
+}
