@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import tempfile
 import threading
 import uuid
 from contextlib import contextmanager
@@ -35,14 +36,6 @@ class GovernanceRecordStore(Protocol):
         self,
         expected_record: Dict[str, Any],
         record: Dict[str, Any],
-    ) -> tuple[bool, Dict[str, Any] | None]: ...
-
-    def delete(self, record_id: str) -> bool: ...
-
-    def delete_if_equals(
-        self,
-        record_id: str,
-        expected_snapshot: Dict[str, Any],
     ) -> tuple[bool, Dict[str, Any] | None]: ...
 
 
@@ -113,15 +106,15 @@ class JsonGovernanceRecordStore:
     def _file_lock(self) -> _FileLock:
         return _FileLock(self._flock_path)
 
-    def lock(self) -> _FileLock:
+    def lock(self) -> Any:
         """Public context manager for multi-step coordinated operations."""
-        return self._file_lock()
+        return self._coordinate()
 
     @contextmanager
     def _coordinate(self):
-        if self.__class__.__name__ == "CoordinatingJsonGovernanceRecordStore":
-            # CoordinatingJsonGovernanceRecordStore in decision_journal already manages
-            # its own outer file lock and _refresh() call; do not nest a second flock open.
+        if self._lock._is_owned():
+            # Current thread already holds self._lock (e.g. from an outer store.lock()
+            # or a coordinating subclass method); coordination is already active.
             yield
         else:
             with self._file_lock(), self._lock:
@@ -203,43 +196,6 @@ class JsonGovernanceRecordStore:
                 raise
             return True, _copy_record(record)
 
-    def delete(self, record_id: str) -> bool:
-        with self._coordinate():
-            key = str(record_id)
-            if key in self._records:
-                previous = self._records[key]
-                del self._records[key]
-                try:
-                    self._save()
-                except Exception:
-                    self._records[key] = previous
-                    raise
-                return True
-            return False
-
-    def delete_if_equals(
-        self,
-        record_id: str,
-        expected_snapshot: Dict[str, Any],
-    ) -> tuple[bool, Dict[str, Any] | None]:
-        clean_id = str(record_id or "").strip()
-        if not clean_id:
-            return False, None
-        with self._coordinate():
-            if clean_id not in self._records:
-                return False, None
-            current = self._records[clean_id]
-            if current != expected_snapshot:
-                return False, _copy_record(current)
-            previous = self._records[clean_id]
-            del self._records[clean_id]
-            try:
-                self._save()
-            except Exception:
-                self._records[clean_id] = previous
-                raise
-            return True, None
-
     def _load(self) -> None:
         text = self.storage_path.read_text(encoding="utf-8").strip()
         if not text:
@@ -265,23 +221,33 @@ class JsonGovernanceRecordStore:
 
     def _save(self) -> None:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = self.storage_path.with_name(
-            f".{self.storage_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self.storage_path.parent,
+            prefix=f".{self.storage_path.name}.",
+            suffix=".tmp",
+            delete=False,
         )
+        temporary_path = Path(handle.name)
         payload = json.dumps(self._records, indent=2, sort_keys=True) + "\n"
         try:
-            with open(temporary_path, "w", encoding="utf-8") as f:
-                f.write(payload)
-                f.flush()
-                os.fsync(f.fileno())
+            with handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary_path, self.storage_path)
-        except Exception:
+            dir_fd = os.open(self.storage_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
             if temporary_path.exists():
                 try:
                     temporary_path.unlink()
                 except OSError:
                     pass
-            raise
 
 
 class PostgresGovernanceRecordStore:
@@ -336,30 +302,6 @@ class PostgresGovernanceRecordStore:
             record_id, expected_record, record
         )
         return updated, _copy_record(canonical) if canonical is not None else None
-
-    def delete(self, record_id: str) -> bool:
-        if hasattr(self._records, "_use_conn"):
-            with self._records._use_conn(None) as conn:
-                query = f"DELETE FROM {self._records.table_name} WHERE record_id = %s"
-                cursor = conn.execute(query, (str(record_id),))
-                return bool(getattr(cursor, "rowcount", 0) > 0)
-        return False
-
-    def delete_if_equals(
-        self,
-        record_id: str,
-        expected_snapshot: Dict[str, Any],
-    ) -> tuple[bool, Dict[str, Any] | None]:
-        clean_id = str(record_id or "").strip()
-        if not clean_id:
-            return False, None
-        current = self.get(clean_id)
-        if current is None:
-            return False, None
-        if current != expected_snapshot:
-            return False, current
-        deleted = self.delete(clean_id)
-        return (deleted, None) if deleted else (False, current)
 
 
 def build_governance_record_store(

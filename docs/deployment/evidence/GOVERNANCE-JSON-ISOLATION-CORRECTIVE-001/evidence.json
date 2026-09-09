@@ -38,7 +38,7 @@
     },
     "failed_write_restart_durability": {
       "status": "satisfied",
-      "implementation": "services/governance/record_store.py: Unserializable payloads or filesystem errors during save restore in-memory state and preserve previous on-disk data without partial or uncommitted corruption. Atomic os.replace ensures readers never observe partial files."
+      "implementation": "services/governance/record_store.py: Atomic durable replacement using temporary file, os.fsync on file and parent directory, and os.replace. Filesystem errors during save restore in-memory state and preserve previous on-disk data without corruption. Readers never observe uncommitted state."
     },
     "four_mounted_consumers_isolation": {
       "status": "satisfied",
@@ -50,7 +50,7 @@
       {
         "name": "services/governance/test_record_store_isolation.py",
         "runner": ".venv/bin/python -m pytest",
-        "tests": 11,
+        "tests": 12,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -96,7 +96,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 129
+    "total_tests_passed": 130
   },
   "artifacts": [
     "services/governance/record_store.py",

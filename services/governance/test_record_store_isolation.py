@@ -332,30 +332,46 @@ def test_failed_write_does_not_corrupt_store_or_acknowledge_uncommitted(
     assert restarted_store.get("bad-payload") is None
 
 
-def test_atomic_delete_and_delete_if_equals(tmp_path: Path) -> None:
-    """Delete operations coordinate across instances and support conditional equality."""
-    store_file = tmp_path / "delete_test.json"
-    store_1 = JsonGovernanceRecordStore(store_file, id_fields=("id",))
-    store_2 = JsonGovernanceRecordStore(store_file, id_fields=("id",))
+def test_atomic_save_fsyncs_file_and_directory(tmp_path: Path) -> None:
+    """Acknowledged writes fsync both the temporary file and parent directory."""
+    import stat
 
-    doc = {"id": "del-1", "status": "pending"}
-    store_1.put(doc)
-    assert store_2.get("del-1") is not None
+    store_file = tmp_path / "fsync_test.json"
+    store = JsonGovernanceRecordStore(store_file, id_fields=("id",))
 
-    # delete_if_equals with mismatched snapshot fails and returns current
-    mismatched = {"id": "del-1", "status": "completed"}
-    deleted, current = store_2.delete_if_equals("del-1", mismatched)
-    assert deleted is False
-    assert current == doc
+    fsync_targets = []
+    real_fsync = os.fsync
 
-    # delete_if_equals with matching snapshot succeeds
-    deleted, current = store_2.delete_if_equals("del-1", doc)
-    assert deleted is True
-    assert current is None
+    def capture_fsync(fd: int) -> None:
+        fsync_targets.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
 
-    # store_1 immediately observes the deletion
-    assert store_1.get("del-1") is None
-    assert store_1.delete("del-1") is False
+    os.fsync = capture_fsync
+    try:
+        store.put({"id": "f-1", "val": "durability-checked"})
+    finally:
+        os.fsync = real_fsync
+
+    assert fsync_targets == ["file", "directory"]
+    assert store.get("f-1") == {"id": "f-1", "val": "durability-checked"}
+
+
+def test_coordinating_journal_store_subclass_does_not_deadlock(tmp_path: Path) -> None:
+    """Pass-through subclasses of CoordinatingJsonGovernanceRecordStore do not deadlock."""
+    from services.governance.decision_journal import CoordinatingJsonGovernanceRecordStore
+
+    class DerivedJournalStore(CoordinatingJsonGovernanceRecordStore):
+        pass
+
+    journal_path = tmp_path / "journal.json"
+    store = DerivedJournalStore(journal_path, id_fields=("id",))
+    store.put({"id": "d-1", "decision": "approved"})
+
+    assert store.get("d-1") == {"id": "d-1", "decision": "approved"}
+    assert len(store.list_all()) == 1
+    inserted, canonical = store.insert_if_absent({"id": "d-1", "decision": "conflict"})
+    assert not inserted
+    assert canonical["decision"] == "approved"
 
 
 # ---------------------------------------------------------------------------
