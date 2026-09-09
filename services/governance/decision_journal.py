@@ -35,11 +35,12 @@ import uuid
 from pathlib import Path
 import threading
 import urllib.parse
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar
 
 from .record_store import (
     GovernanceRecordStore,
     JsonGovernanceRecordStore,
+    _record_id,
     build_governance_record_store,
 )
 
@@ -62,6 +63,56 @@ class _FileLock:
                 os.close(self._fd)
         finally:
             self._fd = None
+
+
+_ReadResult = TypeVar("_ReadResult")
+
+
+def _read_only_filesystem(path: Path) -> bool:
+    """Inspect mount posture, not chmod bits (root can bypass the latter)."""
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return bool(os.statvfs(path).f_flag & os.ST_RDONLY)
+
+
+def _read_under_shared_lock(lock_path: Path, read: Callable[[], _ReadResult]) -> _ReadResult:
+    """Use the writer's exact persistent lock inode without creating a file.
+
+    A pre-lock legacy/empty store may have no lock yet. Its single-file reads
+    are atomic replacements; if a first writer creates the permanent lock
+    during the read, discard that result and retry under that same lock.
+    The bundle caller applies this rule across all four store snapshots.
+    Locks must never be deleted/replaced while the owner is serving traffic.
+    """
+    deadline = time.monotonic() + 1.0
+    for _ in range(4):
+        try:
+            fd = os.open(str(lock_path), os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            result = read()
+            if not lock_path.exists():
+                return result
+            continue
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise DecisionJournalConcurrencyError("journal readonly snapshot lock timeout")
+                    time.sleep(0.005)
+            before = os.fstat(fd)
+            result = read()
+            try:
+                after = lock_path.stat()
+            except FileNotFoundError:
+                continue
+            if (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino):
+                return result
+        finally:
+            os.close(fd)
+    raise DecisionJournalConcurrencyError("journal readonly snapshot lock changed")
 
 
 _HELD_BUNDLE_LOCKS = threading.local()
@@ -107,6 +158,17 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
     def _file_lock(self) -> _FileLock:
         return _FileLock(self._flock_path)
 
+    @property
+    def read_only(self) -> bool:
+        return _read_only_filesystem(self.storage_path.parent)
+
+    def _read_snapshot(self, read: Callable[[], _ReadResult]) -> _ReadResult:
+        def refreshed() -> _ReadResult:
+            with self._lock:
+                self._refresh()
+                return read()
+        return _read_under_shared_lock(self._flock_path, refreshed)
+
     def _refresh(self) -> None:
         if self.storage_path.exists():
             self._load()
@@ -114,11 +176,15 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
             self._records = {}
 
     def get(self, record_id: str) -> Dict[str, Any] | None:
+        if self.read_only:
+            return self._read_snapshot(lambda: JsonGovernanceRecordStore.get(self, record_id))
         with self._file_lock(), self._lock:
             self._refresh()
             return super().get(record_id)
 
     def list_all(self) -> list[Dict[str, Any]]:
+        if self.read_only:
+            return self._read_snapshot(lambda: JsonGovernanceRecordStore.list_all(self))
         with self._file_lock(), self._lock:
             self._refresh()
             return super().list_all()
@@ -343,12 +409,16 @@ class DecisionJournalStores:
             self.data_dir = Path("/tmp/pantheon_dj_locks")
         self._bundle_flock_path = self.data_dir / ".decision_journal_bundle.flock"
         self._tx_lock = threading.RLock()
+        self._frozen_read_snapshot = False
 
     def bundle_lock(self) -> _BundleFileLock:
         return _BundleFileLock(self._bundle_flock_path)
 
     def is_bundle_locked(self) -> bool:
         """Check if any thread or process is actively holding the bundle lock."""
+        if self._frozen_read_snapshot:
+            # Frozen read models must never coordinate/recover owner writes.
+            return True
         held = getattr(_HELD_BUNDLE_LOCKS, "held", {})
         key = str(self._bundle_flock_path.resolve())
         if held.get(key, [0])[0] > 0:
@@ -367,6 +437,45 @@ class DecisionJournalStores:
                 os.close(fd)
         except OSError:
             return False
+
+
+class _FrozenJournalRecords:
+    """Request-local query snapshot, never another persistence authority."""
+
+    def __init__(self, store: Any) -> None:
+        self._rows = {
+            _record_id(row, store.id_fields): copy.deepcopy(row)
+            for row in store.list_all()
+        }
+
+    def get(self, record_id: str) -> Optional[Dict[str, Any]]:
+        return copy.deepcopy(self._rows.get(str(record_id)))
+
+    def list_all(self) -> List[Dict[str, Any]]:
+        return copy.deepcopy(list(self._rows.values()))
+
+
+def _requires_read_snapshot(stores: DecisionJournalStores) -> bool:
+    return isinstance(stores.entries, CoordinatingJsonGovernanceRecordStore) and stores.entries.read_only
+
+
+def _with_read_snapshot(stores: DecisionJournalStores, read: Callable[[DecisionJournalStores], _ReadResult]) -> _ReadResult:
+    def capture() -> DecisionJournalStores:
+        snapshot = DecisionJournalStores(
+            entries=_FrozenJournalRecords(stores.entries),
+            idempotency=_FrozenJournalRecords(stores.idempotency),
+            audit=_FrozenJournalRecords(stores.audit),
+            outbox=_FrozenJournalRecords(stores.outbox) if stores.outbox is not None else None,
+            data_dir=stores.data_dir,
+        )
+        snapshot._frozen_read_snapshot = True
+        return snapshot
+
+    # Hold the existing writer bundle lock across capture of every store.
+    # A frozen snapshot then reuses the ordinary visibility/commit predicates
+    # but deliberately does not run repair, even for crash-pending records.
+    snapshot = _read_under_shared_lock(stores._bundle_flock_path, capture)
+    return read(snapshot)
 
 
 def _build_journal_record_store(
@@ -1034,6 +1143,11 @@ def get_entry(
     include_unscoped_legacy: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Retrieve a single decision journal entry by ID with fail-closed scope enforcement."""
+    if _requires_read_snapshot(stores):
+        return _with_read_snapshot(stores, lambda snapshot: get_entry(
+            snapshot, entry_id, tenant_id=tenant_id, actor_id=actor_id,
+            user_id=user_id, include_unscoped_legacy=include_unscoped_legacy,
+        ))
     clean_id = str(entry_id or "").strip()
     if not clean_id:
         return None
@@ -1073,6 +1187,11 @@ def list_entries(
     include_unscoped_legacy: bool = False,
 ) -> List[Dict[str, Any]]:
     """List decision journal entries with fail-closed tenant and user isolation."""
+    if _requires_read_snapshot(stores):
+        return _with_read_snapshot(stores, lambda snapshot: list_entries(
+            snapshot, tenant_id=tenant_id, actor_id=actor_id,
+            user_id=user_id, include_unscoped_legacy=include_unscoped_legacy,
+        ))
     all_records = stores.entries.list_all()
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
@@ -1672,6 +1791,11 @@ def list_audit_events(
     - Legacy un-tenanted audit events require governed legacy access.
     - Gates event visibility on committed transaction outcome: never exposes provisional or rolled-back events.
     """
+    if _requires_read_snapshot(stores):
+        return _with_read_snapshot(stores, lambda snapshot: list_audit_events(
+            snapshot, entry_id=entry_id, tenant_id=tenant_id, actor_id=actor_id,
+            user_id=user_id, include_unscoped_legacy=include_unscoped_legacy,
+        ))
     if not stores.is_bundle_locked():
         try:
             if entry_id:
@@ -1874,6 +1998,10 @@ def list_outbox_events(
     tenant_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """List outbox events for the decision journal."""
+    if _requires_read_snapshot(stores):
+        return _with_read_snapshot(stores, lambda snapshot: list_outbox_events(
+            snapshot, entry_id=entry_id, tenant_id=tenant_id,
+        ))
     if stores.outbox is None:
         return []
 

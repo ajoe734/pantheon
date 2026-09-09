@@ -16,6 +16,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +49,7 @@ from services.governance.migrations.journal_migration import (
     compute_journal_row_checksum,
     verify_migration_parity,
 )
+from services.governance import decision_journal as journal_module
 
 
 class TestDecisionJournalGovernanceOwner(unittest.TestCase):
@@ -2184,7 +2187,175 @@ patch_entry(
         )
 
 
+class TestDecisionJournalReadOnlySnapshots(unittest.TestCase):
+    def setUp(self):
+        self.fixture = tempfile.TemporaryDirectory()
+        self.addCleanup(self.fixture.cleanup)
+        self.path = Path(self.fixture.name)
+        self.path.chmod(0o755)
+        self.stores = build_decision_journal_stores(self.path)
+
+    def _seed(self):
+        create_entry(
+            self.stores, entry_id="ro-entry", title="committed", body="body",
+            actor_id="alice", tenant_id="tenant-a", created_at="2026-09-09T00:00:00Z",
+        )
+        patch_entry(
+            self.stores, "ro-entry", patch={"title": "settled"},
+            actor_id="alice", tenant_id="tenant-a", idempotency_key="settled-patch",
+            request_hash="settled-hash", patched_at="2026-09-09T00:01:00Z",
+        )
+
+    def _docker_command(self):
+        image = os.getenv("PANTHEON_JOURNAL_RO_TEST_IMAGE", "pantheon-governance-contract:ci")
+        if shutil.which("docker") is None:
+            self.skipTest("actual readonly mount test requires Docker")
+        found = subprocess.run(["docker", "image", "inspect", image], capture_output=True, timeout=15)
+        if found.returncode:
+            self.skipTest("build services/governance/Dockerfile as pantheon-governance-contract:ci first")
+        root = Path(__file__).resolve().parents[2]
+        return [
+            "docker", "run", "--rm", "-i", "--network", "none", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "--mount", f"type=bind,source={root},target=/workspace,readonly",
+            "--mount", f"type=bind,source={self.path},target=/journal,readonly",
+            "-e", "PYTHONPATH=/workspace", "-e", "PYTHONDONTWRITEBYTECODE=1",
+            "-e", "GOVERNANCE_STORE_BACKEND=json", "--entrypoint", "python", image, "-",
+        ]
+
+    def test_actual_readonly_mount_fresh_process_pending_snapshots_never_recover(self):
+        self._seed()
+        before = self.stores.entries.get("ro-entry")
+        pending = copy.deepcopy(before)
+        pending["title"] = "must-not-be-visible"
+        pending.setdefault("_tx_history", []).append({
+            "idempotency_key": "pending-patch", "before_entry": before,
+        })
+        self.stores.entries.put(pending)
+        self.stores.idempotency.put({"idempotency_key": "pending-patch", "status": "pending"})
+        self.stores.entries.put({
+            "id": "pending-create", "title": "must-not-be-visible", "tenant_id": "tenant-a",
+            "createdBy": "alice", "_creation_outbox": {"event_id": "pending-event"},
+        })
+        original = {p.name: p.read_bytes() for p in self.path.iterdir()}
+        script = '''
+import errno, os
+from unittest.mock import patch
+from services.governance import decision_journal as j
+assert os.statvfs("/journal").f_flag & os.ST_RDONLY
+stores = j.build_decision_journal_stores("/journal")
+assert stores.entries.get("ro-entry")["title"] == "must-not-be-visible"
+assert len(stores.entries.list_all()) == 2
+with patch.object(j, "_coordinate_pending_txs", side_effect=AssertionError("readonly attempted recovery")):
+    row = j.get_entry(stores, "ro-entry", tenant_id="tenant-a", actor_id="alice")
+    assert row["title"] == "settled", row
+    assert j.get_entry(stores, "pending-create", tenant_id="tenant-a", actor_id="alice") is None
+    assert [r["id"] for r in j.list_entries(stores, tenant_id="tenant-a", actor_id="alice")] == ["ro-entry"]
+    assert j.list_entries(stores, tenant_id="tenant-b", actor_id="alice") == []
+    assert j.list_entries(stores, tenant_id="tenant-a", actor_id="bob") == []
+    assert len(j.list_audit_events(stores, tenant_id="tenant-a", actor_id="alice")) == 1
+    assert len(j.list_outbox_events(stores, tenant_id="tenant-a")) == 2
+try:
+    stores.entries.put({"id":"denied-write"})
+except OSError as exc:
+    assert exc.errno in (errno.EROFS, errno.EACCES)
+else:
+    raise AssertionError("readonly mount accepted a mutation")
+print("readonly snapshots passed")
+'''
+        for _ in range(2):
+            result = subprocess.run(self._docker_command(), input=script, text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(original, {p.name: p.read_bytes() for p in self.path.iterdir()})
+
+    def test_actual_readonly_process_waits_for_same_writer_bundle_inode(self):
+        self._seed()
+        command = self._docker_command()
+        script = '''
+from services.governance import decision_journal as j
+stores = j.build_decision_journal_stores("/journal")
+print("reader-ready", flush=True)
+row = j.get_entry(stores, "ro-entry", tenant_id="tenant-a", actor_id="alice")
+assert row["title"] == "writer-finished", row
+print("consistent", flush=True)
+'''
+        with self.stores.bundle_lock():
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                process.stdin.write(script)
+                process.stdin.close()
+                process.stdin = None
+                ready, _, _ = select.select([process.stdout], [], [], 20)
+                self.assertTrue(ready, "readonly process never reached its query")
+                self.assertEqual(process.stdout.readline().strip(), "reader-ready")
+                readable, _, _ = select.select([process.stdout], [], [], 0.05)
+                self.assertFalse(readable, "reader returned while the writer still held the bundle")
+                self.assertIsNone(process.poll(), "reader bypassed the active writer bundle lock")
+                patch_entry(
+                    self.stores, "ro-entry", patch={"title": "writer-finished"},
+                    actor_id="alice", tenant_id="tenant-a", idempotency_key="writer-patch",
+                    request_hash="writer-hash", patched_at="2026-09-09T00:02:00Z",
+                )
+            except BaseException:
+                process.kill()
+                process.communicate(timeout=10)
+                raise
+        output, errors = process.communicate(timeout=20)
+        self.assertEqual(process.returncode, 0, output + errors)
+        self.assertIn("consistent", output)
+
+    def test_actual_readonly_mount_prelock_legacy_snapshot_creates_no_lock_files(self):
+        (self.path / "decision_journal_entries.json").write_text(json.dumps([{
+            "id": "prelock", "title": "legacy scoped fixture", "createdBy": "alice",
+            "tenant_id": "tenant-a", "visibility": "private",
+        }, {
+            "id": "unscoped", "title": "governed legacy fixture", "createdBy": "alice",
+            "visibility": "private",
+        }]))
+        script = '''
+from services.governance import decision_journal as j
+stores = j.build_decision_journal_stores("/journal")
+assert stores.entries.get("prelock")["id"] == "prelock"
+assert len(stores.entries.list_all()) == 2
+assert j.get_entry(stores, "prelock", tenant_id="tenant-a", actor_id="alice")["id"] == "prelock"
+assert len(j.list_entries(stores, tenant_id="tenant-a", actor_id="alice")) == 1
+assert j.get_entry(stores, "unscoped", actor_id="alice") is None
+assert j.get_entry(stores, "unscoped", tenant_id="tenant-a", actor_id="alice") is None
+assert j.get_entry(stores, "unscoped", actor_id="alice", include_unscoped_legacy=True)["id"] == "unscoped"
+assert j.get_entry(stores, "unscoped", actor_id="bob", include_unscoped_legacy=True) is None
+assert [row["id"] for row in j.list_entries(stores, actor_id="alice", include_unscoped_legacy=True)] == ["unscoped"]
+'''
+        result = subprocess.run(self._docker_command(), input=script, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([p.name for p in self.path.iterdir()], ["decision_journal_entries.json"])
+
+    def test_missing_lock_first_writer_discards_prelock_result(self):
+        path = self.path / ".first-writer.flock"
+        calls = []
+
+        def read():
+            calls.append(True)
+            if len(calls) == 1:
+                # A writer creates this persistent lock before touching data.
+                with journal_module._FileLock(path):
+                    pass
+                return "stale"
+            return "committed"
+
+        self.assertEqual(journal_module._read_under_shared_lock(path, read), "committed")
+        self.assertEqual(len(calls), 2)
+
+    def test_missing_lock_empty_legacy_read_does_not_create_lock(self):
+        path = self.path / ".never-created.flock"
+        self.assertEqual(journal_module._read_under_shared_lock(path, lambda: []), [])
+        self.assertFalse(path.exists())
+
+    def test_same_per_file_writer_lock_blocks_reader_and_times_out_bounded(self):
+        path = self.path / ".held.flock"
+        with journal_module._FileLock(path):
+            with self.assertRaisesRegex(DecisionJournalConcurrencyError, "timeout"):
+                journal_module._read_under_shared_lock(path, lambda: self.fail("lock bypass"))
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
