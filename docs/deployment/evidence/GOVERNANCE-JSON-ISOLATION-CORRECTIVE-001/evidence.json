@@ -41,7 +41,7 @@
     },
     "failed_write_restart_durability": {
       "status": "satisfied",
-      "implementation": "services/governance/record_store.py: Atomic durable replacement using temporary file, os.fsync on file and parent directory, and os.replace. Pre-replacement filesystem errors during save restore in-memory state and preserve previous on-disk data without corruption. Post-replacement directory fsync errors raise without masking. Readers never observe uncommitted state."
+      "implementation": "services/governance/record_store.py: Atomic durable replacement using temporary file, os.fsync on file and parent directory, and os.replace. Pre-replacement filesystem errors during save restore in-memory state and preserve previous on-disk data without corruption. Post-replacement directory fsync errors raise without masking, while replaced bytes may already be visible on disk; durability remains unconfirmed without successful directory fsync. Readers never observe uncommitted state prior to replacement."
     },
     "four_mounted_consumers_isolation": {
       "status": "satisfied",
@@ -171,9 +171,10 @@
         "name": "services/governance/test_decision_journal.py",
         "runner": ".venv-pantheon/bin/python3 -m pytest",
         "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_decision_journal.py",
-        "tests": 63,
+        "tests": 69,
         "failures": 0,
         "errors": 0,
+        "skipped": 3,
         "exit_code": 0,
         "status": "PASSED"
       },
@@ -188,7 +189,8 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 136
+    "total_tests_passed": 139,
+    "total_tests_skipped": 3
   },
   "artifacts": [
     "services/governance/record_store.py",
