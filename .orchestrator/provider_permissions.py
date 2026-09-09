@@ -1022,7 +1022,9 @@ def _read_and_discard_native_probe_log(path: Path) -> str:
     return text
 
 
-def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tuple[bool, str | None, str]:
+def _antigravity_probe_ready(
+    returncode: int, stdout: str, combined: str, *, native_log: str = ""
+) -> tuple[bool, str | None, str]:
     """Decide whether an `agy --prompt` smoke probe proves non-interactive auth.
 
     The Antigravity CLI exits 0 in print mode even when its OAuth token is
@@ -1030,9 +1032,12 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
     "You are not logged into Antigravity" notice only reaches the CLI's own
     log file (never the probe's stdout/stderr). A clean exit code therefore is
     not sufficient. Require a non-zero exit to fail, an exhausted-quota or
-    not-logged-in marker to fail, and non-empty stdout before declaring ready.
+    terminal not-logged-in marker to fail, and non-empty stdout before
+    declaring ready. Native startup notices may precede successful silent
+    authentication; keep their ordering separate from process output.
     """
-    lowered = combined.lower()
+    full_output = "\n".join(part for part in (combined, native_log) if part)
+    lowered = full_output.lower()
     # Quota exhaustion must be classified before the exit-code check: the CLI
     # exits 1 on a quota error, and "quota_reached" (a per-model condition the
     # rotation layer can route around) must not be reported as a generic
@@ -1044,18 +1049,22 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
             "quota_reached",
         )
     if returncode != 0:
-        return False, _compact_auth_error(combined), f"exit_{returncode}"
-    if "not logged into antigravity" in lowered or "not authenticated" in lowered:
+        return False, _compact_auth_error(full_output), f"exit_{returncode}"
+    auth_failures = ("not logged into antigravity", "not authenticated")
+    native_lowered = native_log.lower()
+    last_native_failure = max(native_lowered.rfind(marker) for marker in auth_failures)
+    native_auth_failed = last_native_failure > native_lowered.rfind("authenticated successfully")
+    if any(marker in combined.lower() for marker in auth_failures) or native_auth_failed:
         return (
             False,
             "Antigravity CLI is not logged in (silent print-mode failure).",
             "not_logged_in",
         )
-    if not stdout:
+    if not stdout.strip():
         return (
             False,
-            "Antigravity auth probe exited 0 but returned no output "
-            "(silent not-logged-in print-mode failure).",
+            "Antigravity auth probe exited 0 but returned no model output; "
+            "readiness is unproven.",
             "empty_output",
         )
     return True, None, "ready"
@@ -1173,9 +1182,8 @@ def _antigravity_auth_probe(
             )
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
         native_text = _read_and_discard_native_probe_log(native_log_path)
-        combined = "\n".join(part for part in (output, native_text) if part)
         ready, error, status = _antigravity_probe_ready(
-            result.returncode, (result.stdout or "").strip(), combined
+            result.returncode, (result.stdout or "").strip(), output, native_log=native_text
         )
         return _auth_probe_record(
             provider_id,

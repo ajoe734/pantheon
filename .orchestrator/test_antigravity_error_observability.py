@@ -292,7 +292,12 @@ class AntigravityAuthProbeNativeLogBindingTests(unittest.TestCase):
         def fake_run_command(command, **kwargs):
             log_path = Path(command[command.index("--log-file") + 1])
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_path.write_text("ok\n", encoding="utf-8")
+            log_path.write_text(
+                "error getting token source: You are not logged into Antigravity.\n"
+                "silent authentication started\n"
+                "authenticated successfully\n",
+                encoding="utf-8",
+            )
             return ok
 
         with (
@@ -305,6 +310,31 @@ class AntigravityAuthProbeNativeLogBindingTests(unittest.TestCase):
             record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
 
         self.assertTrue(record["ready"])
+
+    def test_native_auth_lifecycle_preserves_terminal_and_model_failures(self) -> None:
+        import provider_permissions
+
+        startup = "You are not logged into Antigravity.\n"
+        authenticated = startup + "authenticated successfully\n"
+        cases = [
+            (0, "OK", "OK", authenticated, "ready"),
+            (0, "", "", authenticated, "empty_output"),
+            (0, " \n", "", authenticated, "empty_output"),
+            (0, "OK", "OK", startup, "not_logged_in"),
+            (0, "OK", "OK", authenticated + "not authenticated\n", "not_logged_in"),
+            (0, "OK", "OK\nnot authenticated", authenticated, "not_logged_in"),
+            (1, "OK", "failed", authenticated, "exit_1"),
+            (0, "OK", "OK", authenticated + "Individual quota reached\n", "quota_reached"),
+            (1, "", "", authenticated + "Individual quota reached\n", "quota_reached"),
+        ]
+        for code, stdout, output, native, expected in cases:
+            with self.subTest(code=code, stdout=stdout, output=output, native=native):
+                ready, error, status = provider_permissions._antigravity_probe_ready(
+                    code, stdout, output, native_log=native
+                )
+                self.assertEqual(status, expected)
+                self.assertEqual(ready, expected == "ready")
+                self.assertEqual(error is None, ready)
 
     def test_probe_removes_its_transient_native_log_after_reading(self) -> None:
         import subprocess
