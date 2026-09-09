@@ -5147,31 +5147,44 @@ def _dependency_contract_validate_worker_recovery(
         return
     if not isinstance(recovery, Mapping):
         raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
-    receipt_id = str(recovery.get("receipt_id") or "").strip()
-    if not receipt_id:
+    receipt_id = recovery.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id.strip():
         raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
-    status = str(recovery.get("status") or "").strip()
-    if status not in RECOGNIZED_WORKER_RECOVERY_STATUSES:
+    status = recovery.get("status")
+    if not isinstance(status, str) or status.strip() not in RECOGNIZED_WORKER_RECOVERY_STATUSES:
         raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    status = status.strip()
     try:
         current_generation = task_assignment_generation(task)
     except (TypeError, ValueError, RuntimeError):
         raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
-    for gen_key in {"task_generation", "fence_generation", "replacement_generation"}.union(
+    required_generation_keys = {"task_generation", "fence_generation"}
+    if status == "reassigned":
+        required_generation_keys.add("replacement_generation")
+    for req_key in required_generation_keys:
+        if req_key not in recovery:
+            raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+    all_gen_keys = {"task_generation", "fence_generation", "replacement_generation"}.union(
         k for k in recovery if "generation" in k
-    ):
+    )
+    for gen_key in all_gen_keys:
+        if gen_key not in recovery:
+            continue
         raw_gen = recovery.get(gen_key)
-        if raw_gen not in (None, ""):
-            if isinstance(raw_gen, bool):
+        if gen_key in required_generation_keys:
+            if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
                 raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
-            try:
-                gen_val = int(raw_gen)
-            except (TypeError, ValueError):
+            if raw_gen < 0 or raw_gen > current_generation:
                 raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
-            if gen_val < 0 or gen_val > current_generation:
-                raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+        else:
+            if raw_gen is not None:
+                if isinstance(raw_gen, bool) or not isinstance(raw_gen, int):
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+                if raw_gen < 0 or raw_gen > current_generation:
+                    raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
     if task_has_active_worker_recovery(task):
         raise DependencyContractBusy(f"{task_id} has pending {WORKER_RECOVERY_TASK_KEY}")
+
 
 
 def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any], runtime: Mapping[str, Any]) -> dict[str, Any]:

@@ -13,17 +13,26 @@
     {
       "path": "/tmp/dependency_recovery_contract_probe.py",
       "sha256": "07b4bba83ca4e2486d554729b18ddd17dbfb5c0e0c0f4b18e8ae09bdc0b426de"
+    },
+    {
+      "path": "/tmp/dependency_recovery_contract_shapes_probe.py",
+      "sha256": "40bb6d0a486e73a95a48ce6a7770761f94b0c19ec3a5b4543e0f06390ed7974e"
     }
   ],
   "implementation": {
     "ingress": "dependency-contract <absolute-request.json>; explicit local Human/Ops only, with no auto-worker markers",
     "cas": "Existing task_mutation_cas_digest over each complete current task row",
-    "recovery_admission": "Generation-aware task_has_active_worker_recovery semantics with explicit shape, receipt identity, recognized status, and generation guards; settled terminal held recovery or obsolete prior-generation recovery pointers allow dependency revision while preserving task holds, waiting_for, next, provenance, and complete recovery receipts",
-    "fail_closed_guards": "Current pending/reassigned recovery, unknown recovery status, missing receipt identity, malformed pointer, invalid generation, or future generation fail closed with DependencyContractBusy (exit 75)",
+    "recovery_admission": "Generation-aware task_has_active_worker_recovery semantics with explicit shape, nonblank string receipt identity, recognized status, required existing generation pointer keys, and strict non-negative integer generation bounds; settled terminal held recovery or obsolete prior-generation recovery pointers allow dependency revision while preserving task holds, waiting_for, next, provenance, and complete recovery receipts",
+    "fail_closed_guards": "Current pending/reassigned recovery, unknown recovery status, missing receipt identity, non-string receipt identity, malformed pointer, missing required generation keys, fractional generation, invalid generation, or future generation fail closed with DependencyContractBusy (exit 75)",
     "runtime_fences": "Active workers, queue intents, worktree leases, and off-lock phase reservations remain busy fences",
     "transaction": "Existing runtime-admission lock, canonical TaskStore transaction and buffered activity outbox; one atomic append for the complete batch"
   },
   "validation": [
+    {
+      "command": "python3 -B /tmp/dependency_recovery_contract_shapes_probe.py --command-root /tmp/pantheon-worker-worktrees/pantheon/ops-dependency-recovery-settlement-001 --expect-fixed",
+      "exit_code": 0,
+      "note": "Detached pure-memory shapes probe verified all 35 cases match expect-fixed outcomes."
+    },
     {
       "command": "python3 -B /tmp/dependency_recovery_contract_probe.py --command-root /tmp/pantheon-worker-worktrees/pantheon/ops-dependency-recovery-settlement-001 --expect-fixed",
       "exit_code": 0,
@@ -38,7 +47,7 @@
       "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests -v",
       "exit_code": 0,
       "tests": 20,
-      "note": "Extended DependencyContractBatchTests with settled held recovery, recovery variants, and fail-closed active/malformed cases."
+      "note": "Extended DependencyContractBatchTests with settled held recovery, recovery variants, and fail-closed active/malformed/fractional/missing-field cases."
     },
     {
       "command": "python3 -m unittest scripts.test_ai_status.DependencyContractBatchTests scripts.test_ai_status.DependencyTrackCommandTests scripts.test_ai_status.TaskMetadataTests scripts.test_status_command_runtime_pin -v",
@@ -77,8 +86,8 @@
     "binding_location": "Canonical task delivery_binding at governed owner handoff; review/merge records are not fabricated in this pre-review manifest."
   },
   "validated_file_sha256": {
-    "scripts/ai_status.py": "b455a78cbb9d4a483b52e5c8ed4de190d28ce38ba9f1880bf722d394a1f18ac1",
-    "scripts/test_ai_status.py": "793dc866802d0bcfe720a01692f49b7ac533df763358b005040aa43a96b43357",
+    "scripts/ai_status.py": "a2dca2329f9db6e75da5ec8386c88c342c751ad51276e553651cb850c21cf29b",
+    "scripts/test_ai_status.py": "ffbba487d7e96ad1e40cc60e74c3e4012baff8daa3a797a69c684512b874010e",
     "docs/operations/auto-worker-readiness.md": "694cae3ab2986e3dc823d9f546b995b09b51831754707602f2512ea0b8d56c43"
   }
 }
