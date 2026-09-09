@@ -180,14 +180,19 @@ def test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair(
     assert isinstance(output, Path)
     assert isinstance(frontend, dict)
     manifest = json.loads(output.read_text(encoding="utf-8"))
+    backend_handoff = json.loads(BACKEND_HANDOFF.read_text(encoding="utf-8"))
 
     assert manifest["contract_family"] == "agora.v1.13"
     assert manifest["compatibility_status"] == "accepted"
     assert manifest["blocking_reasons"] == []
-    assert manifest["backend"]["runtime_commit"] == "6e08b040eebd2c317a9b44741d8badbf878e26ad"
-    assert manifest["backend"]["contract_commit"] == "9e909de182f9f2379d23e8e6b81eefec29ffbce7"
-    assert manifest["backend"]["bundle_index_sha256"] == "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870"
-    assert manifest["backend"]["openapi_sha256"] == "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+    assert manifest["backend"]["runtime_commit"] == backend_handoff["backend"]["runtime_commit"]
+    assert manifest["backend"]["contract_commit"] == backend_handoff["backend"]["contract_commit"]
+    assert manifest["backend"]["bundle_index_sha256"] == _sha256(
+        ROOT / backend_handoff["contract"]["bundle_index"]["path"]
+    )
+    assert manifest["backend"]["openapi_sha256"] == _sha256(
+        ROOT / backend_handoff["contract"]["openapi"]["path"]
+    )
     assert manifest["frontend"]["runtime_commit"] == frontend["runtime_commit"]
     assert manifest["frontend"]["generated_types_sha256"] != "0" * 64
     assert manifest["source_handoffs"]["backend"]["sha256"] == _sha256(BACKEND_HANDOFF)

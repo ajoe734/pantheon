@@ -1,0 +1,194 @@
+{
+  "schema_version": "pantheon.task-review-evidence.v1",
+  "task_id": "FE-GENERATION-INPUT-CORRECTIVE-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "merge_target": "dev",
+  "branch": "task/FE-GENERATION-INPUT-CORRECTIVE-001",
+  "status": "source-prepared-awaiting-independent-review",
+  "recorded_at": "2026-09-09T01:56:17.107671+00:00",
+  "scope": {
+    "kind": "source-only",
+    "complete": false,
+    "hosted_mutation": false,
+    "artifacts": [
+      "docs/contracts/agora/backend-generation-input.v1_13.json",
+      "scripts/test_agora_compat_manifest.py",
+      "docs/deployment/evidence/FE-GENERATION-INPUT-CORRECTIVE-001/evidence.json"
+    ]
+  },
+  "source_context": {
+    "accepted_dev_base": "c0c035b5f32436b96f10cd10c91834861d555144",
+    "handoff_source_commit": "a1efe19c94f77c0d23ccbe88239ce3ab45bb357f",
+    "accepted_schema_predecessor": "879ac6c8262d05cd734b391a24a5deb42331b9e1"
+  },
+  "change": [
+    "Regenerate existing backend generation input from an accepted commit containing inherited ResearchRunProjection provenance.",
+    "Replace four preexisting historical test identity/hash constants with actual handoff identities and source-byte hashes; preserve the compatibility verifier and all negative cases."
+  ],
+  "validation": {
+    "generator_checks": [
+      {
+        "command": [
+          "python3",
+          "docs/contracts/agora/generate_backend_contract.py",
+          "bundle",
+          "--check"
+        ],
+        "exit_code": 0,
+        "stdout": "verified agora.v1.13 bundle\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "python3",
+          "docs/contracts/agora/generate_backend_contract.py",
+          "handoff",
+          "--backend-runtime-commit",
+          "c0c035b5f32436b96f10cd10c91834861d555144",
+          "--backend-contract-commit",
+          "c0c035b5f32436b96f10cd10c91834861d555144",
+          "--check"
+        ],
+        "exit_code": 0,
+        "stdout": "verified /home/chloe_ong_dev_cctech_support_com/code/pantheon-worktrees/direct-fe-generation-input-20260909/docs/contracts/agora/backend-generation-input.v1_13.json\n",
+        "stderr": ""
+      },
+      {
+        "command": [
+          "python3",
+          "docs/contracts/agora/generate_backend_contract.py",
+          "verify"
+        ],
+        "exit_code": 0,
+        "stdout": "verified docs/contracts/agora/backend-generation-input.v1_13.json\n",
+        "stderr": ""
+      }
+    ],
+    "pytest": {
+      "command": ".venv/bin/python -m pytest -q docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py",
+      "interpreter": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python",
+      "exit_code": 0,
+      "terminal_output": ".........................                                                [100%]\n25 passed in 11.46s",
+      "log_sha256": "9923b459c8f78bd846a254df6c3d7e641151d4ec1b79ab63c5c8638cd727e955"
+    },
+    "baseline": {
+      "commit": "c0c035b5f32436b96f10cd10c91834861d555144",
+      "result": "24 passed, 1 failed: test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair used four stale July identities/hashes.",
+      "log_sha256": "7e01ae8d5a330f08fb9e73d7dd465f4351d3b6342ad2efc466bbb4072b442c70"
+    },
+    "complete_source_git_byte_audit": {
+      "commit": "c0c035b5f32436b96f10cd10c91834861d555144",
+      "accepted_predecessor": "879ac6c8262d05cd734b391a24a5deb42331b9e1",
+      "bundle_indices": 14,
+      "audited_file_count": 90,
+      "all_git_bytes_match": true,
+      "backend_handoff_source_file_count": 18,
+      "required_frontend_files_covered": true,
+      "research_projection": {
+        "path": "services/control-plane/specs/agora/v4/research_run_projection.schema.json",
+        "previous_commit_sha256": "cafd98509779818f62d4972693e50a6c749153293528de651f213713e0b1ed97",
+        "current_commit_sha256": "305bac84f1075bc3448238bf6157bcc1f7d39b1e18501cdef7dd39035f66c887"
+      },
+      "files": {
+        "docs/contracts/agora/generate_backend_contract.py": "a86facb081dcacf314b144732bcda0883f6916db969d0f5fee283ce00b10b313",
+        "services/control-plane/openapi/agora_v1.openapi.yaml": "4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f",
+        "services/control-plane/openapi/agora_v1_10.openapi.yaml": "9661492672164de1f79f01c68c6dd5c2d1898404ecda78e60c071aeed8bad69c",
+        "services/control-plane/openapi/agora_v1_11.openapi.yaml": "ce5e8d634c3518579301a3bc3bacc0998104dc483597ce31e1a6c1a2ef4e54a9",
+        "services/control-plane/openapi/agora_v1_12.openapi.yaml": "88a707090a1e58ebe3159d530ab437f6f0bb0d130f26e396edf6f1de3678f53f",
+        "services/control-plane/openapi/agora_v1_13.openapi.yaml": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
+        "services/control-plane/openapi/agora_v1_2.openapi.yaml": "5a8de5667869e17a662f34433e397a4140d68f038b1a76145d0d123d65774e66",
+        "services/control-plane/openapi/agora_v1_3.openapi.yaml": "3997d0149e026d895cf32f70ee91f1f1021dcaab8be0dddc72e65971975cfd9b",
+        "services/control-plane/openapi/agora_v1_4.openapi.yaml": "c911512fd3b9ff0c537c8137378aaa31578311a2275c77518eaedfceed55e409",
+        "services/control-plane/openapi/agora_v1_5.openapi.yaml": "bb61d901a4ff3778630390b8fbe3db0a38e45278d7ab6fbd199dc39b8b005a1e",
+        "services/control-plane/openapi/agora_v1_7.openapi.yaml": "4f5a1254d035891859436c62bf7edaf84797e5e4d0ff1076c539f08963a5b86e",
+        "services/control-plane/openapi/agora_v1_8.openapi.yaml": "e0b7108922e76f51900f631477a5f87874f7aaf94630640b5d57d32e7f3feea3",
+        "services/control-plane/openapi/agora_v1_9.openapi.yaml": "bcac37d2cb674abe24f4e7d73b37302347bf4e2af14b6ce6c674acbe74798f86",
+        "services/control-plane/specs/agora/agora_user_scope.schema.json": "ae660aa7719ded37ca8b41bfc6ac287d1eae0bb85a8389b08d069c528a934dee",
+        "services/control-plane/specs/agora/bundle_index.json": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
+        "services/control-plane/specs/agora/bundle_index.v1_1.json": "5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee",
+        "services/control-plane/specs/agora/bundle_index.v1_10.json": "b8469492d1f97f99924de9d5f220eaa3ee430c94c8db2fe130a6d0261b33c775",
+        "services/control-plane/specs/agora/bundle_index.v1_11.json": "202f97b5099806849511c69349f9c77e08f2c3420294dbe92ec6b1c2b07679a0",
+        "services/control-plane/specs/agora/bundle_index.v1_12.json": "25ca80c94a622a0845266cbecab617f96fc47daa8a08736a166d1d88c9dec7c6",
+        "services/control-plane/specs/agora/bundle_index.v1_13.json": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948",
+        "services/control-plane/specs/agora/bundle_index.v1_2.json": "4ba5fc1a0858f3ca7370a2a54c11affe98ee0e11cfd3eb99c4ade734b52c75e3",
+        "services/control-plane/specs/agora/bundle_index.v1_3.json": "23c95383a69b378c3bb124b372895d4db5baa3e7aac82cc14575eff517708ef6",
+        "services/control-plane/specs/agora/bundle_index.v1_4.json": "0d052751a394dd3851facadfcb816ebe66927dcadaf1997007beecd121da6074",
+        "services/control-plane/specs/agora/bundle_index.v1_5.json": "f88662a3ba1d2e07d5711f88e35d6374b7d737ed654b1963dc07281e2c3fe5f9",
+        "services/control-plane/specs/agora/bundle_index.v1_6.json": "13f1297b75477e691d47229cb35d77c031a9104c63a087298356a861ed2e2ee0",
+        "services/control-plane/specs/agora/bundle_index.v1_7.json": "bf5290191e8fd651c21583ef68b67d119c0da8b51c20a53483c76680146ec69f",
+        "services/control-plane/specs/agora/bundle_index.v1_8.json": "8bedd60c2d0be4edf9d1c2c76d77e4771d6116cffb4e059092441a9b30dfe653",
+        "services/control-plane/specs/agora/bundle_index.v1_9.json": "3485acad9de193aff972910e8286193b09924ac6505b06b7debc931211999795",
+        "services/control-plane/specs/agora/candidate_pool.schema.json": "679077c2f567502883f0b7735332645df30cccd6752a978379c5eeecd058e3b9",
+        "services/control-plane/specs/agora/capability_manifest.json": "5988cac6d8ca38fc0c51922086c1cc2564b1bb31b2b36ee276e6d363249e9e3e",
+        "services/control-plane/specs/agora/dashboard_recipe.schema.json": "5b9c33653eb8c85b001b5f6f6a802e83e58276a25f6c00e0a030a7094c78a8f6",
+        "services/control-plane/specs/agora/personalization_event.schema.json": "df7991d19943650a61d58a065182fe4bda20f967b4098a36f36b1ab4b33bcb21",
+        "services/control-plane/specs/agora/research_plan.schema.json": "55010d81198a4eef6934cde9392e19d79d014bf3f7ef6d31901b37627bd040d4",
+        "services/control-plane/specs/agora/research_run_summary.schema.json": "669530ad2aed09133e84344aec7768e375c9cc505728b136d76041366184328b",
+        "services/control-plane/specs/agora/servant_profile.schema.json": "71b114fa03fe0d54f72c785855760482d5c1ea5500a039a7c0593c490d58f930",
+        "services/control-plane/specs/agora/shadow_decision.schema.json": "1414c77ddebb5102b81a10fb57db32520c607daba76cb3736f7eb20eb751b0b2",
+        "services/control-plane/specs/agora/strategy_completeness.schema.json": "13a8c0e28a6434b93b221a4d33f8022f87ee6ca4df99627728800117474ce2fa",
+        "services/control-plane/specs/agora/strategy_workshop.schema.json": "d8d1662790f35d61fdaff0580ca488011dd90f4b4007d78e9fb77a5065396aec",
+        "services/control-plane/specs/agora/trading_event.schema.json": "14bd9e788c855c30a1803a767e66a38efc6f7505bfddf59d3095499d113f02f4",
+        "services/control-plane/specs/agora/trading_intent.schema.json": "588a0508e6b00206be1361e6337b440b7710df0075d6272adb4e85040be4f7ad",
+        "services/control-plane/specs/agora/trading_room_workspace.schema.json": "c810e4aa01303fa877a90f6062fd5f64f5078a7144bacb433bf2089cdd5ace0e",
+        "services/control-plane/specs/agora/v10/capability_manifest_v1_9.json": "db88915b6af58e9805963a83a35c2df79f9850534734cda0f8e947a32aed4cf7",
+        "services/control-plane/specs/agora/v10/persona_interaction_daily.schema.json": "629c9cb145085b3cf4d00bfd2222fb096e06b46143fdb6001a2a23d95a2fd605",
+        "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json": "504a30b33a992f0a02bd2feadf35ce2ab29911c7284e64907f704dcab8b2d25e",
+        "services/control-plane/specs/agora/v11/performance_truth.schema.json": "e68c00ba691d020e3d1637739fa2005c233c250a56e28a68e920e320ff3ada8e",
+        "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json": "8e4797a787eb0661e8115eeb647dfb46783fd746df6e03170b5c3f138058afbe",
+        "services/control-plane/specs/agora/v12/capability_manifest_v1_11.json": "dcbe26ba0e3f3529d9ce38590aca16b8c6ae34ff614547b1be1d69894da37a61",
+        "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json": "abdaf6226c230e9628893272c27e2990928b14fbfec3eeef8004f1a2137d9fc3",
+        "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json": "7ed59957adc97dd48af20aab19f8476acb84c29e8832d3ad076fe8625e610b00",
+        "services/control-plane/specs/agora/v13/capability_manifest_v1_12.json": "d35999b82e6b606f22de5baf4e6d260f03ce85d0cc871f5c1aa68145a0543188",
+        "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5",
+        "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json": "6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41",
+        "services/control-plane/specs/agora/v2/chart_spec_v1.schema.json": "0bcd0fa5fc21d7c021d54803780e310cfd9234b3ea15c044fa0b5cdfffed0967",
+        "services/control-plane/specs/agora/v2/compatibility_manifest.schema.json": "84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827",
+        "services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json": "34c7e0fab793ec79776e9ddd5cca98683cacc6b8bba328e02a8c4c5eba45c13a",
+        "services/control-plane/specs/agora/v2/widget_spec_v2.schema.json": "d360a17a9762d69e6a5e2c87921117bb85ee34d972fd8034f8904df6facb993f",
+        "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json": "de7bffc221ecebf268c9a3a5da4787c5aaaa5088ecb8bc4502cc1ed0a4722b33",
+        "services/control-plane/specs/agora/v3/private_content_ref.schema.json": "f51648d6534142046ed256649e29357038ba420894b09bb9dab92e75fd7a8403",
+        "services/control-plane/specs/agora/v3/strategy_ref_contract.schema.json": "1e456372c394d2d256fdcaaee1fd2f1e4ab4829ffbf18e3432dc78e242d497e0",
+        "services/control-plane/specs/agora/v3/workshop_event.schema.json": "cea5fe3c9360fd50710ef7f68d84b155d7720ea27c52617cd298604dd6c5c5f3",
+        "services/control-plane/specs/agora/v3/workshop_persistence.schema.json": "fb62e17f64311e5090577dd3b9b43be599faee12aee9ac9241660d99a095fa3b",
+        "services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json": "a4dc2d5e464d952ab633757f396426459b84ca84d150cbcbe960b8006ba758ca",
+        "services/control-plane/specs/agora/v3/workshop_version_link.schema.json": "70e4ce55ce55a4417bb869f27ce35e05408a05a909ea08941a2b3ad5b16b7313",
+        "services/control-plane/specs/agora/v4/capability_manifest_v1_3.json": "d21ac91558f9205732d6cffffe1fca86efad59bf1824e8dabe95fb4b585ca041",
+        "services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json": "d16723d9de8c469905859e62d9904561ce96c51ebce9992cd8927a35e79092db",
+        "services/control-plane/specs/agora/v4/research_plan_execution.schema.json": "cc97bc9e119473c4ae9d2656f9629843645e73d09ab7ba2fa46bbd190c1cbe4c",
+        "services/control-plane/specs/agora/v4/research_run_projection.schema.json": "305bac84f1075bc3448238bf6157bcc1f7d39b1e18501cdef7dd39035f66c887",
+        "services/control-plane/specs/agora/v4/strategy_readiness.schema.json": "5ab691bb8c5fa866355092d44f2a6a197eb3c77c1dff814e7fa5e65cb2fbb816",
+        "services/control-plane/specs/agora/v4/trading_decision_event.schema.json": "fe6c8eb40900eda247b30c00ea3eb4a7fe9ec2edc65643e7850722a2adf2b3ea",
+        "services/control-plane/specs/agora/v4/trading_room_aggregate.schema.json": "c10babb6f20f4155d8f5be76b438d520e13716d6bb01f4612431b29e45027874",
+        "services/control-plane/specs/agora/v4/version_compare.schema.json": "732829b704f8c24fca36e1a0c2e9b14dbe714de19b460cfe5bf56f7133cdcba2",
+        "services/control-plane/specs/agora/v4/version_patch_proposal.schema.json": "5d7b4ca34becee0c5e6d2f2d8a741859f26afe68fbe36e843d870257c3e8da8c",
+        "services/control-plane/specs/agora/v4/workshop_card.schema.json": "f32f550250bfafd87801f5287856330e929255d9c86f0c71de49ccb84e716061",
+        "services/control-plane/specs/agora/v4/workshop_stream_event.schema.json": "37c21e77aae56a0d5031bbc56d16e86541b5b79422b54821a0503772c307e4de",
+        "services/control-plane/specs/agora/v5/candidate_discussion.schema.json": "69b1b81b120dec2a6f90b289c0130ef45197cbd4240ac578bce78c42d9f62eaa",
+        "services/control-plane/specs/agora/v5/candidate_member_review.schema.json": "560df54cefc05154a17cb00ae49611758484174bd18e52ee477ab261a0ba18a3",
+        "services/control-plane/specs/agora/v5/candidate_monitoring_status.schema.json": "64ec4637bcd16f5c13f839a96d04c9209e076fd8dc4162a3e5631138c7c3f344",
+        "services/control-plane/specs/agora/v5/candidate_score_result.schema.json": "c28d2c45d955106e07f9ce529bb7792d822d333ae5fbd498500e379acfb50363",
+        "services/control-plane/specs/agora/v5/capability_manifest_v1_4.json": "58141ebdd0a7fab9a35b6cd912e40b2b00800d2bbc82bee31a334e894cd2d564",
+        "services/control-plane/specs/agora/v6/capability_manifest_v1_5.json": "712ec646ec032cd0fbcc4cdc4f94df34a7ccfecfe5bf54e7f069df7b056c7f97",
+        "services/control-plane/specs/agora/v7/capability_manifest_v1_6.json": "cc55b8dc8d41ff5a4287ab19cd83df482377e7ead072f124242b903575bda1f0",
+        "services/control-plane/specs/agora/v7/governed_action_authority_request.schema.json": "78674dd48c378dd3e1b9bc8371937855dec4df6ff3d56cc0fe96a33a669c77d5",
+        "services/control-plane/specs/agora/v7/persona_opinion_consultation_event.schema.json": "23e653ec9393fd583bde33c54767cffd09c3d7608955eb17cf275fbaff03b5d4",
+        "services/control-plane/specs/agora/v7/winner_branch_completeness.schema.json": "8a85739687f5a37865ef5ae954c263f239aea4b6928400edc7a67c2f66297f35",
+        "services/control-plane/specs/agora/v8/capability_manifest_v1_7.json": "3ce6b5a2203b2c8b65c0262ed29642ff017f2d7748fa59306a256f474ac8139d",
+        "services/control-plane/specs/agora/v8/pint_ooda_live_routes.schema.json": "45d9e6e07ba6a2fb1980027d8b0bc0dbae0810ea5181e52ede7c24a9b09ae750",
+        "services/control-plane/specs/agora/v8/trading_room_workspace_v1_7.schema.json": "74bef9743d0b77f90aacba8164ff2b9daeb9b4609c21e5bc15ac86ba7dc4d10f",
+        "services/control-plane/specs/agora/v9/capability_manifest_v1_8.json": "42ecfda2a35ca54ef65481a8898297ad6bc9fe08a159b48bb1a5257ca1c7bacb",
+        "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json": "602828f57d03b168c2ea5f6375ab0b141d39635f70ee5140db21f5d7a253fc06",
+        "services/control-plane/specs/agora/widget_spec.schema.json": "0749275943dc155afa08dbb8736c336d613daf18b99b42f6c10aec15d2eabedb"
+      }
+    }
+  },
+  "boundaries": [
+    "Backend compatibility intentionally remains pending and keeps its existing required frontend evidence.",
+    "The existing backend generator handoff lists 18 source files, including its generator; its direct aggregate derivation alone does not cover all frontend inherited inputs. The independent audit additionally covers all 14 inherited bundle indices and the complete resolved file set, 90 distinct files total.",
+    "Historical extends-edge metadata checksums are not repaired by this narrow change. Exact accepted Git bytes are independently verified instead; frontend checker repairs are delivered by FE-DEP-CLOSURE-001.",
+    "Source preparation does not claim canonical owner handoff, independent review, accepted deployment or hosted product readiness."
+  ]
+}
