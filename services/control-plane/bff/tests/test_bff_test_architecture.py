@@ -25,9 +25,9 @@ REPO_ROOT = TESTS_DIR.parents[3]
 INVENTORY_PATH = TESTS_DIR / "bff_test_architecture_inventory.json"
 
 TASK_REVIEW_EVIDENCE = {
-    "task": "BFF-TEST-ARCH-001",
+    "task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
     "owner": "Antigravity2",
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "base": "dev",
     "scope": (
         "Decouple BFF tests from composition globals: classify test files into "
@@ -38,7 +38,9 @@ TASK_REVIEW_EVIDENCE = {
     "verification": (
         "Run test_bff_test_architecture.py alongside migrated suites "
         "(test_governance_router, test_operations_consultation_ports, "
-        "test_read_surface_caller_migration, test_cw01-04)."
+        "test_read_surface_caller_migration, test_cw01-04, test_ask_001/003/004, "
+        "test_consultation_surfaces, test_settings_contract, test_pkt001, "
+        "test_bff_logout, test_bff_auth_refresh, test_bff_me_session_bootstrap, test_bff_me_locale)."
     ),
 }
 
@@ -199,7 +201,7 @@ def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
     current = data["current_main_importers"]
 
     # 1. Check inventory metadata bounds
-    assert current <= 205, f"Expected current main importers <= 205, got {current}"
+    assert current <= 201, f"Expected current main importers <= 201, got {current}"
     assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
 
     # 2. Live AST scan across cataloged suites
@@ -208,8 +210,8 @@ def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
     assert len(catalog_importers) == current, (
         f"Inventory current_main_importers ({current}) does not match live AST count ({len(catalog_importers)})"
     )
-    assert len(catalog_importers) <= 205, (
-        f"Live AST scan found {len(catalog_importers)} cataloged main importers, expected <= 205"
+    assert len(catalog_importers) <= 201, (
+        f"Live AST scan found {len(catalog_importers)} cataloged main importers, expected <= 201"
     )
 
     # 3. Live AST scan across all test files, helpers, fixtures, conftest, and smoke suites

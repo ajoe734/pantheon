@@ -4,7 +4,7 @@
   "description": "Architectural classification of BFF test suites and composition decoupling",
   "total_test_files": 341,
   "audited_baseline_main_importers": 218,
-  "current_main_importers": 205,
+  "current_main_importers": 201,
   "migrated_in_task_count": 11,
   "composition_allowlist": [
     "tests/test_bff_main_composition.py",
@@ -31,13 +31,17 @@
     "test_ask_004_memo_publish_contract.py",
     "test_consultation_surfaces.py",
     "test_settings_contract.py",
-    "test_pkt001_deployment_review_console_contract.py"
+    "test_pkt001_deployment_review_console_contract.py",
+    "tests/test_bff_logout.py",
+    "tests/test_bff_auth_refresh.py",
+    "tests/test_bff_me_session_bootstrap.py",
+    "tests/test_bff_me_locale.py"
   ],
   "layer_summary": {
-    "composition": 11,
-    "router": 114,
-    "application": 180,
     "adapter": 25,
+    "application": 180,
+    "router": 114,
+    "composition": 11,
     "hosted": 11
   },
   "main_by_layer": {
@@ -1695,8 +1699,8 @@
     {
       "file": "tests/test_bff_auth_refresh.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -1877,8 +1881,8 @@
     {
       "file": "tests/test_bff_logout.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
@@ -1912,15 +1916,15 @@
     {
       "file": "tests/test_bff_me_locale.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
       "file": "tests/test_bff_me_session_bootstrap.py",
       "layer": "application",
-      "imports_main": true,
-      "disposition": "PLANNED",
+      "imports_main": false,
+      "disposition": "MIGRATED",
       "rationale": "Planned for decoupling in subsequent wave (layer: application)"
     },
     {
