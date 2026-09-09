@@ -3,3 +3,4 @@ uvicorn
 httpx
 pydantic
 psycopg[binary]
+jsonschema>=4.0,<5.0

@@ -432,14 +432,33 @@ class RegistryService:
 
             if target_state == ArtifactState.APPROVED:
                 from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
+                from services.governance.paper_approval_scope import (
+                    PaperCandidateInvalid,
+                    current_environment,
+                    paper_candidate_usage_context,
+                )
                 try:
                     reader = self.approval_reader or configured_approval_reader('registry')
-                    evidence = reader.verify(approval_decision_id, expected={
+                    evidence = reader.get(approval_decision_id)
+                    usage_context = None
+                    if evidence.authorization_scope is not None:
+                        # A scoped (dev paper) approval is never treated as
+                        # unrestricted: the entry itself must prove to be a
+                        # zero-capital paper spec/bundle before Registry
+                        # presents the dev/paper/0% usage context.  Anything
+                        # else gets no context and fails closed below.
+                        usage_context = paper_candidate_usage_context(
+                            base_entry.to_dict(),
+                            evidence=evidence.model_dump(),
+                            read_entry=self._read_entry_dict,
+                            environment=current_environment(),
+                        )
+                    evidence = evidence.require_valid(expected={
                         'tenant_id': base_entry.owner_tenant, 'target_type': 'registry_entry',
                         'target_id': base_entry.registry_id, 'target_version': base_entry.version,
                         'candidate_digest': base_entry.checksum,
-                    })
-                except ApprovalInvalid as exc:
+                    }, usage_context=usage_context)
+                except (ApprovalInvalid, PaperCandidateInvalid) as exc:
                     raise RegistryError(str(exc)) from exc
                 if actor.get('tenant') != base_entry.owner_tenant:
                     raise RegistryError('Approval actor tenant does not own this artifact')
@@ -480,6 +499,11 @@ class RegistryService:
                 registry_id,
             )
         return self._to_view(entry)
+
+    def _read_entry_dict(self, registry_id: str) -> Optional[dict]:
+        """Exact local owner read used to follow candidate lineage."""
+        entry = self.store.get(registry_id)
+        return entry.to_dict() if entry is not None else None
 
     def update_metadata(
         self,

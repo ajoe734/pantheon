@@ -382,7 +382,24 @@ class DeploymentPlannerService:
         tenant_id: str,
     ) -> DeploymentPlan:
         registry_entry = self._resolve_registry_entry(request)
-        approval_decision = self._resolve_approval_decision(request, registry_entry, tenant_id)
+        # Bind the approval to the ACTUAL effective request stage and scale
+        # (explicit request scale or the planner default) before anything is
+        # persisted, so a paper-scoped approval can never seed a canary/live
+        # or non-zero-capital plan.
+        effective_scale = (
+            DeploymentScale(**request.scale.model_dump())
+            if request.scale is not None
+            else self.planner.default_scale(request.target_stage.value)
+        )
+        approval_decision = self._resolve_approval_decision(
+            request,
+            registry_entry,
+            tenant_id,
+            usage_context=_approval_usage_context(
+                target_stage=request.target_stage.value,
+                capital_scale_pct=effective_scale.capital_scale_pct,
+            ),
+        )
         if registry_entry.get('owner_tenant') != tenant_id:
             raise DeploymentPlanError('Registry artifact belongs to a different tenant')
         if registry_entry.get('artifact_state') != 'approved' or registry_entry.get('approval_decision_id') != request.approval_decision_id:
@@ -645,7 +662,11 @@ class DeploymentPlannerService:
         import httpx
         from urllib.parse import quote
         url = os.getenv('DEPLOYMENT_REGISTRY_BASE_URL', '').rstrip('/')
-        token = os.getenv('DEPLOYMENT_REGISTRY_SERVICE_TOKEN', '')
+        from services.service_token_file import configured_service_token
+        try:
+            token = configured_service_token('DEPLOYMENT_REGISTRY_SERVICE_TOKEN')
+        except RuntimeError as exc:
+            raise DeploymentPlanError('Registry read principal unavailable') from exc
         if not url or not token:
             raise DeploymentPlanError('Registry owner URL and scoped read principal required')
         try:
@@ -661,7 +682,7 @@ class DeploymentPlannerService:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
             raise DeploymentPlanError('Registry exact owner read unavailable or malformed') from exc
 
-    def _resolve_approval_decision(self, request, registry_entry, tenant_id) -> Mapping[str, Any]:
+    def _resolve_approval_decision(self, request, registry_entry, tenant_id, *, usage_context=None) -> Mapping[str, Any]:
         from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
         try:
             reader = self.approval_reader or configured_approval_reader('deployment')
@@ -669,7 +690,7 @@ class DeploymentPlannerService:
                 'tenant_id': tenant_id, 'target_type': 'registry_entry',
                 'target_id': request.registry_id, 'target_version': registry_entry.get('version'),
                 'candidate_digest': registry_entry.get('checksum'),
-            }).model_dump()
+            }, usage_context=usage_context).model_dump()
         except ApprovalInvalid as exc:
             raise DeploymentPlanError(str(exc)) from exc
 
@@ -817,11 +838,22 @@ class DeploymentProjectionReadModelService:
         if not entry or not decision:
             return False
         try:
+            # Bind the read model to the same persisted stage/scale/environment
+            # the mutation paths use, so a valid paper-scoped plan reads as
+            # authoritative and a drifted (canary/live/non-zero) plan does not.
+            usage_context = (
+                _approval_usage_context(
+                    target_stage=_enum_value(plan.target_stage),
+                    capital_scale_pct=plan.scale.capital_scale_pct,
+                )
+                if plan.scale is not None
+                else None
+            )
             ApprovalEvidence.model_validate(decision).require_valid(expected={
                 'tenant_id': _plan_tenant_id(plan), 'target_type': 'registry_entry',
                 'target_id': plan.artifact_id, 'target_version': plan.artifact_version,
                 'candidate_digest': entry.get('checksum'),
-            })
+            }, usage_context=usage_context)
             return True
         except (ApprovalInvalid, ValueError):
             return False
@@ -1271,6 +1303,18 @@ class DeploymentOrchestrationService:
         event_id: str,
         request: ReplayOutboxEventRequest,
     ) -> tuple[OutboxRecord, bool]:
+        # Re-admit the persisted plan (stage/scale against the owner
+        # approval) before an outbox event is put back in flight.
+        record = self._find_outbox_event_by_event_id(event_id)
+        if record is None:
+            raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
+        saga = self._require_saga(record.event.aggregate_id)
+        try:
+            self._resolve_registry_entry_for_plan(self.planner_service.get_plan(saga.plan_id))
+        except DeploymentPlanError as exc:
+            raise DeploymentSagaError(
+                f"Outbox event '{event_id}' replay denied: {exc}"
+            ) from exc
         return self.saga_store.replay_outbox_event(event_id, reason=request.reason)
 
     def _mark_plan_binding_created(
@@ -1367,6 +1411,12 @@ class DeploymentOrchestrationService:
         return saga
 
     def _resolve_registry_entry_for_plan(self, plan: DeploymentPlan) -> Mapping[str, Any]:
+        """Re-read Registry and Governance for a persisted plan (pre saga/outbox).
+
+        The approval is bound to the persisted plan's own ``target_stage`` and
+        ``scale.capital_scale_pct``; a scoped approval that does not admit
+        them fails closed here, before any saga or outbox record exists.
+        """
         from types import SimpleNamespace
         reference = SimpleNamespace(registry_id=plan.artifact_id,
                                     approval_decision_id=plan.approval_decision_id)
@@ -1376,7 +1426,15 @@ class DeploymentOrchestrationService:
                 or entry.get('artifact_state') != 'approved'
                 or entry.get('approval_decision_id') != plan.approval_decision_id):
             raise DeploymentPlanError('Registry authority no longer matches the approved plan')
-        self.planner_service._resolve_approval_decision(reference, entry, _plan_tenant_id(plan))
+        if plan.scale is None:
+            raise DeploymentPlanError('DeploymentPlan scale is required to bind approval usage')
+        self.planner_service._resolve_approval_decision(
+            reference, entry, _plan_tenant_id(plan),
+            usage_context=_approval_usage_context(
+                target_stage=_enum_value(plan.target_stage),
+                capital_scale_pct=plan.scale.capital_scale_pct,
+            ),
+        )
         return entry
 
     def _find_outbox_event(self, saga_id: str, *, sequence_no: int) -> OutboxRecord | None:
@@ -1394,6 +1452,16 @@ class DeploymentOrchestrationService:
 
 def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
+
+
+def _approval_usage_context(*, target_stage: str, capital_scale_pct: Any):
+    """Actual environment/stage/scale a consumer is about to exercise."""
+    from services.governance.paper_approval_scope import ApprovalUsageContext, current_environment
+    return ApprovalUsageContext(
+        environment=current_environment(),
+        target_stage=str(target_stage),
+        capital_scale_pct=float(capital_scale_pct),
+    )
 
 
 def _load_record(path: Path, *, key_candidates: Iterable[str], target_key: str) -> Optional[Dict[str, Any]]:

@@ -10629,6 +10629,75 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         }
         self.assertTrue(supervisor.worker_lease_progress_is_fresh(config, worker, self.now))
 
+    def test_active_provider_loop_cannot_use_quiet_process_grace(self) -> None:
+        config = {
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+            "providers": {"antigravity2": {"antigravity": {"print_timeout": "2h"}}},
+        }
+        worker = {
+            "status": "running",
+            "provider": "antigravity2",
+            "lease_acquired_at": (self.now - timedelta(minutes=45)).isoformat(),
+            "last_work_progress_at": self.stale_event_at,
+            "last_active_process_at": self.fresh_event_at,
+            "last_event_at": self.fresh_event_at,
+        }
+        self.assertFalse(supervisor.worker_lease_progress_is_fresh(config, worker, self.now))
+
+    def test_stale_provider_loop_is_fenced_for_existing_lease_recovery(self) -> None:
+        config = {"worker_runtime": {"work_progress_stale_seconds": 300}}
+        worker = {
+            "status": "running",
+            "run_id": "run-stale",
+            "provider": "antigravity2",
+            "task_id": "TASK-1",
+            "lease_acquired_at": (self.now - timedelta(seconds=301)).isoformat(),
+            "lease_expires_at": (self.now + timedelta(hours=2)).isoformat(),
+            "last_event_at": self.fresh_event_at,
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as activity:
+            result = supervisor.poll_worker_stall_stage(
+                config,
+                {},
+                worker,
+                alive=True,
+                progress_advanced=False,
+                now=self.now,
+                stall_after=300,
+            )
+        self.assertEqual(result, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "stalled")
+        self.assertEqual(worker["lease_expires_at"], "2026-01-01T00:00:00Z")
+        self.assertIn("fenced for typed recovery", activity.call_args.args[1]["message"])
+
+    def test_quiet_foreground_validation_is_not_fenced_as_stalled(self) -> None:
+        config = {
+            "worker_runtime": {"work_progress_stale_seconds": 300},
+            "providers": {"antigravity2": {"antigravity": {"print_timeout": "2h"}}},
+        }
+        worker = {
+            "status": "running",
+            "run_id": "run-validation",
+            "provider": "antigravity2",
+            "task_id": "TASK-1",
+            "lease_acquired_at": (self.now - timedelta(minutes=45)).isoformat(),
+            "lease_expires_at": (self.now + timedelta(hours=2)).isoformat(),
+            "last_active_process_at": self.fresh_event_at,
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as activity:
+            result = supervisor.poll_worker_stall_stage(
+                config,
+                {},
+                worker,
+                alive=True,
+                progress_advanced=False,
+                now=self.now,
+                stall_after=300,
+            )
+        self.assertEqual(result, {"changed": False, "stop": True})
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(activity.call_count, 0)
+
     def test_active_child_without_provider_timeout_cannot_renew_quiet_lease(self) -> None:
         worker = {
             "status": "running",
@@ -11249,6 +11318,16 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
 
 
 class ProviderStreamLifecycleTests(unittest.TestCase):
+    def test_streamed_tool_and_text_steps_do_not_extend_work_lease(self) -> None:
+        tool_step = supervisor.normalize_provider_stream_event(
+            {"event": "step_update", "step_update": {"type": "tool", "tool_name": "view_file"}}
+        )
+        text_step = supervisor.normalize_provider_stream_event(
+            {"event": "step_update", "step_update": {"type": "agent_response", "text_delta": "thinking"}}
+        )
+        self.assertFalse(supervisor.provider_stream_event_is_meaningful(tool_step or {}))
+        self.assertFalse(supervisor.provider_stream_event_is_meaningful(text_step or {}))
+
     def test_antigravity_stream_progress_and_result_are_normalized_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "agy.log"

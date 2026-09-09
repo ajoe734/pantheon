@@ -96,6 +96,10 @@ services:
       dockerfile: services/governance/Dockerfile
     restart: unless-stopped
     environment:
+      PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
+      GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED: ${GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED:-false}
+      GOVERNANCE_REGISTRY_BASE_URL: ${GOVERNANCE_REGISTRY_BASE_URL:-http://registry:8087}
+      GOVERNANCE_REGISTRY_SERVICE_TOKEN: ${GOVERNANCE_REGISTRY_SERVICE_TOKEN:-}
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -141,6 +145,7 @@ services:
       dockerfile: services/deployment/Dockerfile
     restart: unless-stopped
     environment:
+      PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
       DEPLOYMENT_GOVERNANCE_BASE_URL: ${DEPLOYMENT_GOVERNANCE_BASE_URL:-http://governance:8082}
       DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN: ${DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN:-}
       DEPLOYMENT_GOVERNANCE_TIMEOUT_SECONDS: ${DEPLOYMENT_GOVERNANCE_TIMEOUT_SECONDS:-5}
@@ -285,6 +290,8 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     environment:
+      PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID: ${PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID:-pantheon-dev-paper-provisioner}
+      PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       BFF_DATA_DIR: /data/bff
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -531,6 +538,7 @@ services:
       dockerfile: services/registry/Dockerfile
     restart: unless-stopped
     environment:
+      PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
       REGISTRY_GOVERNANCE_BASE_URL: ${REGISTRY_GOVERNANCE_BASE_URL:-http://governance:8082}
       REGISTRY_GOVERNANCE_SERVICE_TOKEN: ${REGISTRY_GOVERNANCE_SERVICE_TOKEN:-}
       REGISTRY_GOVERNANCE_TIMEOUT_SECONDS: ${REGISTRY_GOVERNANCE_TIMEOUT_SECONDS:-5}

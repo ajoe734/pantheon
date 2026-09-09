@@ -68,6 +68,7 @@ from services.control_plane.bff.models import (
     RedactedEvidenceRef,
     redact_evidence_refs,
 )
+from services.control_plane.bff.management_read_models.models import ManagementObservation
 
 
 def _default_bff_error(
@@ -2020,6 +2021,602 @@ class ManagementService:
             except Exception:
                 return None
         return None
+
+    # -----------------------------------------------------------------------
+    # Purpose-built Management AI context accessors (MGMT-READ-001).
+    #
+    # These replace bare/generic read-surface access from Management AI
+    # context collection with typed, owner-projection observations: an
+    # unavailable domain returns an explicit degraded row instead of being
+    # silently omitted or backed by seed data.
+    # -----------------------------------------------------------------------
+    # Maps a context subject to where its real availability lives inside
+    # ReadSurfacePorts.get_surface_status(); subjects without an entry here
+    # (e.g. incidents) have no upstream unconfigured/unavailable signal
+    # distinct from "no records", so they keep the list-call-based inference.
+    _DOMAIN_SURFACE_STATUS_PATH: Dict[str, Tuple[str, ...]] = {
+        "runtime_bindings": ("persona_capital_runtime", "runtime"),
+        "capital_pools": ("persona_capital_runtime", "capital"),
+        "evolution_decisions": ("persona_capital_runtime", "evolution", "surfaces", "evolution_decisions"),
+    }
+
+    def _resolve_domain_surface_status(self, subject_type: str, store: Optional[Any]) -> Optional[Dict[str, Any]]:
+        path = self._DOMAIN_SURFACE_STATUS_PATH.get(subject_type)
+        if path is None or store is None or not hasattr(store, "get_surface_status"):
+            return None
+        try:
+            node: Any = store.get_surface_status()
+        except Exception:
+            return None
+        for key in path:
+            if not isinstance(node, dict) or key not in node:
+                return None
+            node = node[key]
+        return node if isinstance(node, dict) else None
+
+    def _observed_at_freshness(self, observed_at: Optional[str]) -> Tuple[str, Optional[float]]:
+        resolved_observed_at = observed_at or self._utc_now()
+        parsed_observed_at = _parse_time(resolved_observed_at)
+        if parsed_observed_at == datetime.min.replace(tzinfo=timezone.utc):
+            return resolved_observed_at, None
+        parsed_now = _parse_time(self._utc_now())
+        return resolved_observed_at, max(0.0, (parsed_now - parsed_observed_at).total_seconds())
+
+    def _context_observation(
+        self,
+        *,
+        subject_type: str,
+        status: str,
+        owner: str,
+        source_kind: str,
+        subject_id: Optional[str] = None,
+        source_version: Optional[str] = None,
+        observed_at: Optional[str] = None,
+        freshness_seconds: Optional[float] = None,
+        degradation_reason: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        contributing_observations: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        if observed_at is not None and freshness_seconds is None:
+            observed_at, freshness_seconds = self._observed_at_freshness(observed_at)
+        return ManagementObservation(
+            subject_type=subject_type,
+            subject_id=subject_id or subject_type,
+            status=status,
+            owner=owner,
+            source_kind=source_kind,
+            source_version=source_version,
+            observed_at=observed_at,
+            freshness_seconds=freshness_seconds,
+            degradation_reason=degradation_reason,
+            correlation_id=correlation_id,
+            contributing_observations=contributing_observations or [],
+        ).model_dump()
+
+    _STATUS_RANK: Dict[str, int] = {"ok": 0, "degraded": 1, "unavailable": 2}
+
+    @staticmethod
+    def _record_provenance(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # Every provenance-bearing record, not just the first: picking only
+        # the first record let a healthy owner row that happened to sort
+        # first hide a later owner's real degradation for the same subject
+        # (and the reverse when reversed), so availability depended on
+        # record order instead of the worst actual observation.
+        return [item for item in items if isinstance(item, dict) and "source_kind" in item]
+
+    _RECORD_ID_KEYS = ("runtime_id", "binding_id", "pool_id", "decision_id", "incident_id", "id")
+
+    @classmethod
+    def _record_subject_id(cls, record: Dict[str, Any], subject_type: str) -> str:
+        for key in cls._RECORD_ID_KEYS:
+            value = record.get(key)
+            if value:
+                return str(value)
+        return subject_type
+
+    def _typed_context_list(
+        self,
+        method_name: str,
+        *,
+        subject_type: str,
+        owner: str,
+        args: Tuple[Any, ...] = (),
+        kwargs: Optional[Dict[str, Any]] = None,
+        load_records: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        store = self._resolve_store()
+        domain_status = self._resolve_domain_surface_status(subject_type, store)
+        if domain_status is not None and domain_status.get("status") == "unavailable":
+            return [], self._context_observation(
+                subject_type=subject_type,
+                status="unavailable",
+                owner=owner,
+                source_kind="unavailable",
+                degradation_reason=domain_status.get("message")
+                or f"{subject_type} read surface is unavailable or unconfigured.",
+            )
+        if load_records is None and (store is None or not hasattr(store, method_name)):
+            return [], self._context_observation(
+                subject_type=subject_type,
+                status="unavailable",
+                owner=owner,
+                source_kind="unavailable",
+                degradation_reason=f"{subject_type} read surface is unavailable or unconfigured.",
+            )
+        try:
+            items = list(
+                (load_records() if load_records is not None else getattr(store, method_name)(*args, **(kwargs or {})))
+                or []
+            )
+        except Exception as exc:
+            return [], self._context_observation(
+                subject_type=subject_type,
+                status="unavailable",
+                owner=owner,
+                source_kind="unavailable",
+                degradation_reason=f"{subject_type} read failed: {exc}",
+            )
+        # Authorization scoping (e.g. tenant filtering) must happen before any
+        # owner/provenance derivation below, or a foreign owner's provenance
+        # (or presence) can leak into the caller's observation even when the
+        # caller's own scoped record count is zero.
+        if record_filter is not None:
+            items = record_filter(items)
+        # A separately probed domain_status can go stale relative to the read
+        # that just happened (e.g. a flaky provider that answered the probe
+        # but then failed on the actual list call and swallowed the error).
+        # Only a non-empty read outcome is trusted as "ok"; any empty result
+        # fails closed instead of inheriting a possibly-stale healthy probe.
+        if items:
+            status = "ok"
+        elif domain_status is not None and domain_status.get("status") == "unavailable":
+            status = "unavailable"
+        else:
+            status = "degraded"
+        return items, self._observation_from_items(
+            items,
+            subject_type=subject_type,
+            owner=owner,
+            status=status,
+            not_ok_degradation_reason=(domain_status or {}).get("message")
+            or f"{subject_type} read returned no records despite a healthy status probe.",
+        )
+
+    def _observation_from_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        subject_type: str,
+        owner: str,
+        status: str,
+        not_ok_degradation_reason: str,
+    ) -> Dict[str, Any]:
+        provenance_records = self._record_provenance(items)
+        if provenance_records:
+            # An owner-reported status/degradation_reason on the records
+            # themselves is real observation truth and must not be
+            # overridden by the count-derived status below (e.g. a
+            # non-empty batch of rows that an owner itself marked
+            # unavailable is not "ok"). Aggregate across every
+            # provenance-bearing record instead of only the first one, so a
+            # later owner's degradation is never masked by an earlier
+            # owner's healthy row -- the worst reported status wins
+            # independent of record order.
+            worst = max(
+                provenance_records,
+                key=lambda record: self._STATUS_RANK.get(str(record.get("status") or status), 0),
+            )
+            worst_status = str(worst.get("status") or status)
+            degradation_reasons = [
+                str(record.get("degradation_reason"))
+                for record in provenance_records
+                if record.get("degradation_reason")
+                and str(record.get("status") or status) != "ok"
+            ]
+            # The aggregate above reports only the single worst-status
+            # winner, which silently drops a second same-tenant owner's
+            # identity/version/correlation/observed_at when more than one
+            # record contributes (e.g. two distinct unavailable owners).
+            # Carry an identifiable typed observation for every
+            # provenance-bearing record so no contributing owner is
+            # discarded regardless of row order or mixed statuses.
+            contributing_observations = [
+                self._context_observation(
+                    subject_type=subject_type,
+                    subject_id=self._record_subject_id(record, subject_type),
+                    status=str(record.get("status") or status),
+                    owner=str(record.get("owner") or owner),
+                    source_kind=str(record.get("source_kind") or "live"),
+                    source_version=record.get("source_version"),
+                    observed_at=record.get("observed_at"),
+                    degradation_reason=record.get("degradation_reason"),
+                    correlation_id=record.get("correlation_id"),
+                )
+                for record in provenance_records
+            ]
+            return self._context_observation(
+                subject_type=subject_type,
+                status=worst_status,
+                owner=str(worst.get("owner") or owner),
+                source_kind=str(worst.get("source_kind") or "live"),
+                source_version=worst.get("source_version"),
+                observed_at=worst.get("observed_at"),
+                degradation_reason="; ".join(degradation_reasons) or worst.get("degradation_reason"),
+                correlation_id=worst.get("correlation_id"),
+                contributing_observations=contributing_observations,
+            )
+        if status == "ok":
+            return self._context_observation(
+                subject_type=subject_type,
+                status=status,
+                owner=owner,
+                source_kind="live",
+            )
+        # No record carried provenance to explain a non-ok outcome (e.g. a
+        # provider that answered a healthy status probe and then silently
+        # returned nothing on the real read): report the degradation
+        # explicitly instead of a bare "live"/None pairing that reads as
+        # healthy.
+        return self._context_observation(
+            subject_type=subject_type,
+            status=status,
+            owner=owner,
+            source_kind="unavailable",
+            degradation_reason=not_ok_degradation_reason,
+        )
+
+    def observation_from_records(
+        self,
+        records: List[Dict[str, Any]],
+        *,
+        subject_type: str,
+        owner: str = "management_ai_context",
+    ) -> Dict[str, Any]:
+        """Derive an owner observation from a record list that was already
+        fetched by the caller (e.g. a merged/combined read), instead of
+        issuing another store read. An owner-reported status/degradation on
+        any record is preserved verbatim; an empty list without provenance
+        reports degraded instead of a bare "ok"/None pairing."""
+        status = "ok" if records else "degraded"
+        return self._observation_from_items(
+            records,
+            subject_type=subject_type,
+            owner=owner,
+            status=status,
+            not_ok_degradation_reason=f"{subject_type} read returned no records.",
+        )
+
+    def get_context_runtime_bindings(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_runtime_bindings", subject_type="runtime_bindings", owner=owner, record_filter=record_filter
+        )
+
+    def get_context_capital_pools(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_capital_pools", subject_type="capital_pools", owner=owner, record_filter=record_filter
+        )
+
+    def get_context_incidents(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_incidents", subject_type="incidents", owner=owner, record_filter=record_filter
+        )
+
+    def get_context_evolution_decisions(
+        self,
+        *,
+        owner: str = "management_ai_context",
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_evolution_decisions",
+            subject_type="evolution_decisions",
+            owner=owner,
+            record_filter=record_filter,
+        )
+
+    def get_context_telemetry_summary(
+        self, runtime_id: str, *, owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_telemetry_summary") or not runtime_id:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id or "telemetry",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="telemetry read surface is unavailable or unconfigured.",
+            )
+        try:
+            summary = store.get_telemetry_summary(runtime_id)
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"telemetry read failed: {exc}",
+            )
+        if summary is not None and record_filter is not None:
+            scoped = record_filter([summary])
+            summary = scoped[0] if scoped else None
+        if summary is None:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status="degraded",
+                owner=observation_owner,
+                source_kind="live",
+                degradation_reason="telemetry summary not found for this runtime.",
+            )
+        provenance_records = self._record_provenance([summary]) if isinstance(summary, dict) else []
+        provenance = provenance_records[0] if provenance_records else None
+        if provenance is not None:
+            # As above: an owner-reported status/degradation_reason on the
+            # summary itself is real observation truth, not overridden by
+            # "a value came back" alone.
+            return summary, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status=str(provenance.get("status") or "ok"),
+                owner=str(provenance.get("owner") or observation_owner),
+                source_kind=str(provenance.get("source_kind") or "live"),
+                source_version=provenance.get("source_version"),
+                observed_at=provenance.get("observed_at"),
+                degradation_reason=provenance.get("degradation_reason"),
+                correlation_id=provenance.get("correlation_id"),
+            )
+        return summary, self._context_observation(
+            subject_type="telemetry",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
+
+    def get_context_bindings_for_persona(
+        self,
+        persona_id: str,
+        *,
+        owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "get_bindings_for_persona",
+            subject_type="persona_bindings",
+            owner=owner or persona_id or "management_ai_context",
+            args=(persona_id,),
+            record_filter=record_filter,
+        )
+
+    def get_context_teaching_sessions_for_persona(
+        self,
+        persona_id: str,
+        *,
+        owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "get_teaching_sessions_for_persona",
+            subject_type="persona_teaching_sessions",
+            owner=owner or persona_id or "management_ai_context",
+            args=(persona_id,),
+            record_filter=record_filter,
+        )
+
+    def get_context_personas(
+        self, load_records: Callable[[], List[Dict[str, Any]]], *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Observe the canonical persona/provisioning composition without losing failures."""
+        return self._typed_context_list(
+            "list_personas", subject_type="personas", owner="persona_fleet",
+            load_records=load_records, record_filter=record_filter,
+        )
+
+    def get_context_sessions_for_persona(
+        self, persona_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "get_sessions_for_persona", subject_type="persona_sessions",
+            owner=persona_id, args=(persona_id,), record_filter=record_filter,
+        )
+
+    def get_context_strategies_for_persona(
+        self, persona_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_list(
+            "list_strategy_specs", subject_type="persona_strategies",
+            owner=persona_id, kwargs={"persona_id": persona_id}, record_filter=record_filter,
+        )
+
+    def _typed_context_record(
+        self, method_name: str, subject_type: str, subject_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        try:
+            record = getattr(self._resolve_store(), method_name)(subject_id)
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type=subject_type, subject_id=subject_id, owner=subject_id,
+                status="unavailable", source_kind="unavailable",
+                degradation_reason=f"{subject_type} read failed: {exc}",
+            )
+        records = [record] if record else []
+        if record_filter is not None:
+            records = record_filter(records)
+        return (records[0] if records else None), self.observation_from_records(
+            records, subject_type=subject_type, owner=subject_id,
+        )
+
+    def get_context_capital_pool(
+        self, pool_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_record(
+            "get_capital_pool", "capital_pool", pool_id, record_filter=record_filter,
+        )
+
+    def get_context_persona_allowed_actions(
+        self, persona_id: str, *,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        return self._typed_context_record(
+            "get_persona_allowed_actions", "persona_allowed_actions", persona_id,
+            record_filter=record_filter,
+        )
+
+    def get_context_monitoring_session(
+        self, runtime_id: str, binding_id: str, *, owner: Optional[str] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_paper_runtime_monitoring_session") or not runtime_id:
+            return None, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id or "paper_runtime_monitoring",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="paper runtime monitoring read surface is unavailable or unconfigured.",
+            )
+        try:
+            session = store.get_paper_runtime_monitoring_session(
+                runtime_id=runtime_id, binding_id=binding_id
+            )
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"paper runtime monitoring read failed: {exc}",
+            )
+        provenance_records = self._record_provenance([session]) if isinstance(session, dict) else []
+        provenance = provenance_records[0] if provenance_records else None
+        if provenance is not None:
+            return session, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id,
+                status=str(provenance.get("status") or "ok"),
+                owner=str(provenance.get("owner") or observation_owner),
+                source_kind=str(provenance.get("source_kind") or "live"),
+                source_version=provenance.get("source_version"),
+                observed_at=provenance.get("observed_at"),
+                degradation_reason=provenance.get("degradation_reason"),
+                correlation_id=provenance.get("correlation_id"),
+            )
+        return session, self._context_observation(
+            subject_type="paper_runtime_monitoring",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
+
+    def get_context_rollbacks(
+        self, runtime_id: str, *, owner: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_rollbacks") or not runtime_id:
+            return [], self._context_observation(
+                subject_type="rollbacks",
+                subject_id=runtime_id or "rollbacks",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="rollback read surface is unavailable or unconfigured.",
+            )
+        try:
+            # A non-raising empty rollback list cannot be told apart from a
+            # genuinely unavailable owner; the real ReadSurfacePorts.get_rollbacks
+            # now raises when the underlying owner read reports unavailable
+            # instead of returning a false-healthy empty list.
+            rollbacks = list(store.get_rollbacks(runtime_id) or [])
+        except Exception as exc:
+            return [], self._context_observation(
+                subject_type="rollbacks",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"rollback read failed: {exc}",
+            )
+        provenance_records = self._record_provenance(rollbacks)
+        if provenance_records:
+            # An owner-reported status/degradation_reason on a rollback record
+            # itself is real observation truth (e.g. a rollback owner marked
+            # unavailable) and must not be overridden by the bare "read
+            # succeeded" status below. Aggregate across every
+            # provenance-bearing record, worst status wins, same as the other
+            # typed accessors in _typed_context_list.
+            worst = max(
+                provenance_records,
+                key=lambda record: self._STATUS_RANK.get(str(record.get("status") or "ok"), 0),
+            )
+            worst_status = str(worst.get("status") or "ok")
+            degradation_reasons = [
+                str(record.get("degradation_reason"))
+                for record in provenance_records
+                if record.get("degradation_reason")
+                and str(record.get("status") or "ok") != "ok"
+            ]
+            contributing_observations = [
+                self._context_observation(
+                    subject_type="rollbacks",
+                    subject_id=self._record_subject_id(record, "rollbacks"),
+                    status=str(record.get("status") or "ok"),
+                    owner=str(record.get("owner") or observation_owner),
+                    source_kind=str(record.get("source_kind") or "live"),
+                    source_version=record.get("source_version"),
+                    observed_at=record.get("observed_at"),
+                    degradation_reason=record.get("degradation_reason"),
+                    correlation_id=record.get("correlation_id"),
+                )
+                for record in provenance_records
+            ]
+            return rollbacks, self._context_observation(
+                subject_type="rollbacks",
+                subject_id=runtime_id,
+                status=worst_status,
+                owner=str(worst.get("owner") or observation_owner),
+                source_kind=str(worst.get("source_kind") or "live"),
+                source_version=worst.get("source_version"),
+                observed_at=worst.get("observed_at"),
+                degradation_reason="; ".join(degradation_reasons) or worst.get("degradation_reason"),
+                correlation_id=worst.get("correlation_id"),
+                contributing_observations=contributing_observations,
+            )
+        return rollbacks, self._context_observation(
+            subject_type="rollbacks",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
 
     # -----------------------------------------------------------------------
     # 1. Shell Summary

@@ -2965,7 +2965,7 @@ def approved_closeout_commit_ref(
 
     if str(task.get("status") or "").strip() != "review_approved":
         return None
-    if not exact_head_acceptance_evidence_matches(task):
+    if not exact_head_acceptance_available(task, load_config()):
         return None
     binding = task.get(APPROVAL_BINDING_KEY)
     if not isinstance(binding, Mapping):
@@ -2997,6 +2997,34 @@ def approved_closeout_commit_ref(
             f"delivery repository ({approved_head})."
         )
     return approved_head
+
+
+def exact_head_acceptance_available(
+    task: Mapping[str, Any], config: Mapping[str, Any]
+) -> bool:
+    """Resolve exact-head acceptance in the configured review mode.
+
+    Canonical-task review temporarily omits only the GitHub proof write. The
+    same delivery/review binding is still recorded atomically and callers
+    below validate the immutable approval audit before restoring or closing a
+    task. Normal mode keeps the existing GitHub/operator evidence predicate.
+    """
+
+    if exact_head_acceptance_evidence_matches(task):
+        return True
+    if github_review_bridge_required(config):
+        return False
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    approval = task.get(APPROVAL_BINDING_KEY)
+    if not isinstance(delivery, Mapping) or not isinstance(approval, Mapping):
+        return False
+    if str(delivery.get("kind") or "") != "pull_request":
+        return False
+    return all(
+        str(delivery.get(field) or "").strip()
+        == str(approval.get(field) or "").strip()
+        for field in ("pr", "head_sha", "head_branch", "base")
+    )
 
 
 def approved_closeout_metadata_ref(
@@ -5782,9 +5810,9 @@ def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
             raise SystemExit(
                 f"{task_id} cannot resume integration: delivery and review {field} differ"
             )
-    if not exact_head_acceptance_evidence_matches(task):
+    if not exact_head_acceptance_available(task, load_config()):
         raise SystemExit(
-            f"{task_id} cannot resume integration without matching GitHub approval evidence"
+            f"{task_id} cannot resume integration without matching exact-head acceptance evidence"
         )
 
     # Reuse the merge gate's audit interpretation. Restoring a status must
