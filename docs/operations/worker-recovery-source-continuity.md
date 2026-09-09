@@ -61,6 +61,14 @@ remaining source against it. Changed WIP, missing/corrupt archive data,
 unsupported paths, read failures, or incomplete/oversized archives block cleanup.
 Partial archives remain for inspection and are not permission to remove source.
 
+Preparation revalidates an existing archive even when cleanup already left a
+clean worktree. If ordinary refresh has since fast-forwarded the branch, the
+same validator accepts only a clean descendant of the archived source HEAD;
+the historical receipt/ref/archive are unchanged. A dirty descendant, unrelated
+HEAD, failed ancestry query, or missing/corrupt archive blocks the handoff.
+Git ancestry exit code 1 means a negative relationship; other nonzero exits
+are errors, never permission to dispatch a supposedly diverged worktree.
+
 Continuation carries prior PR/head/repository identity, current `task.next`,
 unresolved reviewer requirements and earlier quarantine provenance. It excludes
 approval bindings/proofs, execution grants and nonces. Current task instructions
@@ -71,6 +79,27 @@ Resolving an obsolete receipt after responsibility moves to another lane also
 preserves the successor's exact `task.next` (including an absent field). Its
 operational message belongs only to the existing resolved activity event;
 replaying resolution does not rewrite instructions or emit another event.
+
+Receipt retention protects the current canonical pointer of every nonterminal
+task, including materialized, held and resolved receipts: ending assignment
+fencing does not end the need for source continuation. Terminal tasks, orphaned
+receipts and mismatched task/receipt identities are prunable. The 128-receipt
+history target is a soft limit when live references alone exceed it; retention
+never drops live context to meet that limit or retains entire previous chains.
+
+Supervisor and Human/Ops import the same recovery-fence predicate from
+`rewrite/worker_recovery.py`. It checks lifecycle before inspecting only the
+relevant generation: pending uses the fence epoch, reassigned uses the
+replacement epoch. Missing or non-positive/non-integer active epochs fail
+closed; valid stale epochs do not fence a newer task. Resolved/held/materialized
+history cannot reactivate fencing because an unrelated old field is malformed.
+This pointer check is not a substitute for full transition receipt validation.
+
+Review-intent CAS hashing has one existing owner,
+`rewrite/task_state_store.py:review_decision_task_digest`; supervisor and CLI
+import it directly. The exact-actor/nonce review-intent replay and generic
+worker reassignment are mutually exclusive lifecycles, not competing recovery
+implementations. Review replay must not acquire generic generation fencing.
 
 ## Retired implementations and retained boundaries
 
@@ -83,6 +112,11 @@ replaying resolution does not rewrite instructions or emit another event.
 | Recovery status text overwriting `task.next` | Operational receipt/events separate from task instructions |
 | Legacy brief removal based on a text marker | Ordinary dirty-source admission; qualified recovery archives WIP |
 | Separate reused/recreated branch refresh admission blocks | One shared refresh and failure policy |
+| CLI copy of the active recovery-fence predicate | Direct import of the canonical worker-recovery predicate |
+| Supervisor and CLI copies of review task digest/exclusion rules | Direct imports of the existing TaskStore digest |
+| Uncalled runner role/revalidation shortcuts and unused recovery locals | Existing entry/running binding validation; preserve adoption side effects |
+| Uncalled supervisor dashboard refresh helper | Existing canonical projection pipeline; no replacement helper |
+| Status-root bridge source fallback | Current command-runtime package and module, checked before import/reuse |
 
 Ordinary regenerable scratch cleanup, index-only split repair, incomplete
 checkout-directory quarantine, and terminal/orphan worktree retention have
@@ -91,6 +125,12 @@ machines. They remain under the same filesystem owner. The shared archive helper
 now returns success only for a complete archive, including for retention callers.
 Historical evidence documenting retired behavior is retained as history, not as
 a live contract.
+
+The local bridge reads packet/task data from the configured status root, but
+loads executable code only from the supervisor's immutable command root.
+Missing command source or a cached module from another root is unavailable,
+not a reason to fall back to mutable working-copy code. No product BFF ingress,
+credential mechanism, dynamic source loader, or second task authority is added.
 
 ## Operating and acceptance checks
 

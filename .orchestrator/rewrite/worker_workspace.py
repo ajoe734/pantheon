@@ -1015,7 +1015,8 @@ def _quarantine_recovery_worktree(
     checked_branch = git("symbolic-ref", "--quiet", "--short", "HEAD")
     if head.returncode or checked_branch.returncode or checked_branch.stdout.strip() != branch:
         return False, "recovery_branch_identity_mismatch", None
-    source_head = head.stdout.strip()
+    current_head = head.stdout.strip()
+    source_head = current_head
     binding = dict(existing_archive) if existing_archive is not None else None
     try:
         if binding is None:
@@ -1051,11 +1052,12 @@ def _quarantine_recovery_worktree(
                 (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
             )
         else:
+            source_head = str(binding.get("source_head") or "")
             archive_dir = Path(str(binding.get("archive_path") or ""))
             if (
                 binding.get("repository_id") != repository_id
                 or binding.get("branch") != branch
-                or binding.get("source_head") != source_head
+                or re.fullmatch(r"[0-9a-f]{40,64}", source_head) is None
                 or Path(str(binding.get("workspace_path") or "")).resolve() != worktree_path.resolve()
                 or not archive_dir.resolve().is_relative_to(archive_root.resolve())
                 or archive_dir.resolve() == archive_root.resolve()
@@ -1088,6 +1090,14 @@ def _quarantine_recovery_worktree(
         current_untracked = git("ls-files", "--others", "--exclude-standard", "-z")
         if any(item.returncode for item in (current_status, current_diff, current_staged, current_untracked)):
             return False, "recovery_source_read_failed", binding
+        if current_head != source_head:
+            # A completed quarantine may have reached the ordinary fast-forward
+            # before preparation was interrupted. Validate the historical
+            # archive without rewriting that legitimate committed advancement.
+            # Dirty continuation still requires the exact archived source HEAD.
+            ancestry = git("merge-base", "--is-ancestor", source_head, current_head)
+            if current_status.stdout.strip() or ancestry.returncode != 0:
+                return False, "recovery_branch_changed_after_archive", binding
         untracked_paths = manifest["untracked_paths"]
         checksums = manifest["file_checksums"]
         file_modes = manifest["file_modes"]
@@ -1149,7 +1159,7 @@ def _quarantine_recovery_worktree(
                     or stat.S_IMODE(source_stat.st_mode) != file_modes[rel_path]):
                 return False, "recovery_wip_changed_after_archive", binding
         verified_head = git("rev-parse", "HEAD")
-        if verified_head.returncode or verified_head.stdout.strip() != source_head:
+        if verified_head.returncode or verified_head.stdout.strip() != current_head:
             return False, "recovery_branch_changed_after_archive", binding
         if not publish_archive(binding):
             return False, "recovery_archive_publication_failed", binding
@@ -1168,7 +1178,7 @@ def _quarantine_recovery_worktree(
             published_untracked, published_branch, published_head,
         )):
             return False, "recovery_source_read_failed", binding
-        if (published_head.stdout.strip() != source_head
+        if (published_head.stdout.strip() != current_head
                 or published_branch.stdout.strip() != branch):
             return False, "recovery_branch_changed_after_publication", binding
         if any(before.stdout != after.stdout for before, after in (
@@ -1201,7 +1211,7 @@ def _quarantine_recovery_worktree(
         final_status = git("status", "--porcelain", "--untracked-files=all")
         final_head = git("rev-parse", "HEAD")
         if (final_status.returncode or final_head.returncode
-                or final_status.stdout.strip() or final_head.stdout.strip() != source_head):
+                or final_status.stdout.strip() or final_head.stdout.strip() != current_head):
             return False, "recovery_wip_restore_incomplete", binding
         return True, "quarantined_wip", binding
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
@@ -1209,7 +1219,7 @@ def _quarantine_recovery_worktree(
 
 
 def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
-    """Describe a task branch's relationship to one immutable base snapshot."""
+    """Describe ancestry, distinguishing a negative answer from Git failure."""
 
     head_contains_base = subprocess.run(
         ["git", "merge-base", "--is-ancestor", base_sha, "HEAD"],
@@ -1220,6 +1230,8 @@ def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
     )
     if head_contains_base.returncode == 0:
         return "contains_base"
+    if head_contains_base.returncode != 1:
+        return "base_relation_failed"
     head_is_base_ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", "HEAD", base_sha],
         cwd=worktree_path,
@@ -1229,6 +1241,8 @@ def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
     )
     if head_is_base_ancestor.returncode == 0:
         return "behind_base"
+    if head_is_base_ancestor.returncode != 1:
+        return "base_relation_failed"
     return "diverged"
 
 
@@ -1397,7 +1411,7 @@ def prepare_worker_workspace(
             if receipt is None or receipt.get("receipt_id") != request.metadata.get("recovery_receipt_id"):
                 return False, "Recovery receipt changed before workspace preparation."
             recovery_workspace = worker_recovery_workspace_facts(receipt.get("workspace"))
-            if _git_dirty_entries(worktree_path):
+            if recovery_workspace or _git_dirty_entries(worktree_path):
                 active_roots = active_worker_workspace_roots(config, state)
                 if any(_paths_overlap(worktree_path, active) for active in active_roots):
                     return False, f"Cannot quarantine active worker workspace {worktree_path}."
@@ -1513,6 +1527,11 @@ def prepare_worker_workspace(
         "exact_base" if not reused and creation_origin == "base_snapshot"
         else worker_worktree_base_relation(worktree_path, base_sha)
     )
+    if base_relation == "base_relation_failed":
+        return False, (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"worktree {worktree_path} base_relation_failed."
+        )
 
     request.metadata.update(
         {

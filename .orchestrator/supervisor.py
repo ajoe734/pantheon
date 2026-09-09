@@ -7,7 +7,6 @@ import faulthandler
 import fcntl
 import fnmatch
 import hashlib
-import importlib
 import itertools
 import json
 import math
@@ -186,6 +185,9 @@ from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
 from rewrite import task_machine as rewrite_task_machine
 from rewrite import task_state_store as rewrite_task_state_store
+from rewrite.task_state_store import (
+    review_decision_task_digest as review_intent_recovery_task_digest,
+)
 from rewrite import worker_lifecycle as rewrite_worker_lifecycle
 from rewrite.runtime_authority import validate_supervisor_launch_authority
 from rewrite.task_identity import task_generation
@@ -217,38 +219,6 @@ from rewrite.worker_recovery import (
 # separate rewrite/ module -- see review_decision_intent_replay_eligible).
 REVIEW_INTENT_RECOVERY_TASK_KEY = "review_decision_intent_recovery"
 REVIEW_INTENT_RECOVERY_SCHEMA_VERSION = 1
-
-# Keys excluded from the digest so neither the pending intent itself nor its
-# recovery receipt can perturb the CAS binding the intent froze at
-# reservation time.
-_REVIEW_INTENT_RECOVERY_DIGEST_EXCLUDED_KEYS = frozenset(
-    {
-        "review_decision_intent",
-        REVIEW_INTENT_RECOVERY_TASK_KEY,
-        "status_write_pending",
-        "status_write_pending_count",
-    }
-)
-
-
-def review_intent_recovery_task_digest(task: Mapping[str, Any]) -> str:
-    """Digest business task truth, excluding the intent and recovery markers.
-
-    Mirrors ``scripts.ai_status.review_decision_task_digest`` exactly so a
-    receipt minted here is judged identically by the canonical CLI's own
-    finalize-time CAS check. Duplicated intentionally instead of importing
-    across the supervisor/ai_status boundary for one hash function.
-    """
-
-    candidate = {
-        key: value
-        for key, value in task.items()
-        if key not in _REVIEW_INTENT_RECOVERY_DIGEST_EXCLUDED_KEYS
-    }
-    encoded = json.dumps(
-        candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def build_review_decision_intent_recovery_receipt(
@@ -886,39 +856,6 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
     }
 
 
-def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
-    try:
-        repo_root = config_path(config, "status_file").parent
-    except KeyError:
-        repo_root = THIS_DIR.parent
-    scripts_dir = repo_root / "scripts"
-    if not scripts_dir.exists():
-        return
-    scripts_path = str(scripts_dir)
-    if scripts_path not in sys.path:
-        sys.path.insert(0, scripts_path)
-    try:
-        runtime_env = task_state_store_runtime_env(config)
-        previous_env = {name: os.environ.get(name) for name in runtime_env}
-        os.environ.update(runtime_env)
-        try:
-            ai_status = importlib.import_module("ai_status")
-            status_state = ai_status.load_state()
-            ai_status.write_dashboard_bundle(status_state)
-            ai_status.sync_docs_site(status_state)
-        finally:
-            for name, previous_value in previous_env.items():
-                if previous_value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = previous_value
-    except Exception as exc:
-        console_log(
-            f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
-            quiet=SUPERVISOR_LOG_QUIET,
-        )
-
-
 def archived_task_owner_reviewer_with_receipt_proof(
     config: dict[str, Any],
     task_id: str,
@@ -1065,15 +1002,9 @@ def canonical_task_with_archive_proof(
 
 
 def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
-    """Locate the local development-bridge package, never product BFF code."""
+    """Use this supervisor's command source; repo_root supplies data only."""
 
-    code_tooling_dir = THIS_DIR
-    repo_tooling_dir = repo_root / ".orchestrator"
-    dirs: list[Path] = []
-    for candidate in (code_tooling_dir, repo_tooling_dir):
-        if candidate not in dirs:
-            dirs.append(candidate)
-    return dirs
+    return [THIS_DIR]
 
 
 def assistant_dev_bridge_allowed_repositories(config: dict[str, Any]) -> list[str]:
@@ -1139,10 +1070,29 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
         repo_root = THIS_DIR.parent
     tooling_dirs = assistant_dev_bridge_tooling_dirs(repo_root)
     for tooling_dir in reversed(tooling_dirs):
-        if str(tooling_dir) not in sys.path:
-            sys.path.insert(0, str(tooling_dir))
+        tooling_path = str(tooling_dir)
+        sys.path[:] = [tooling_path, *(entry for entry in sys.path if entry != tooling_path)]
 
     try:
+        from importlib.util import find_spec
+
+        # Check origins before importing or reusing cached code. A missing
+        # command package is unavailable, never permission to execute files
+        # from the mutable status root or another command checkout.
+        for module_name, relative_path in (
+            ("development_bridge", "development_bridge/__init__.py"),
+            ("development_bridge.dev_bridge_inbox", "development_bridge/dev_bridge_inbox.py"),
+        ):
+            expected_source = (THIS_DIR / relative_path).resolve()
+            if not expected_source.is_file():
+                raise RuntimeError(f"command runtime bridge source is missing: {expected_source}")
+            module_spec = find_spec(module_name)
+            if (
+                module_spec is None
+                or module_spec.origin is None
+                or Path(module_spec.origin).resolve() != expected_source
+            ):
+                raise RuntimeError(f"bridge import is outside the command runtime: {module_name}")
         from development_bridge.dev_bridge_inbox import drain_task_packet_inbox
     except Exception as exc:
         write_activity_log(
@@ -12555,7 +12505,7 @@ def _fence_lost_worker_runtime(
     worker: dict[str, Any],
     receipt: Mapping[str, Any],
 ) -> bool:
-    changed = _adopt_worker_recovery_receipt(state, receipt)
+    _adopt_worker_recovery_receipt(state, receipt)
     receipt_id = str(receipt.get("receipt_id") or "")
     next_status = (
         "recovery_pending"
@@ -12564,7 +12514,6 @@ def _fence_lost_worker_runtime(
     )
     if worker.get("status") != next_status:
         worker["status"] = next_status
-        changed = True
     worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
     worker["lost_lease_receipt_id"] = receipt_id
     worker["last_error"] = str(receipt.get("reason") or "Worker lease was lost.")
@@ -12681,13 +12630,12 @@ def attempt_worker_recovery_reassignment(
         or str(canonical.get("status") or "") not in {"reassigned", "materialized"}
     ):
         return False
-    changed = _adopt_worker_recovery_receipt(state, canonical)
+    _adopt_worker_recovery_receipt(state, canonical)
     run_id = str(canonical.get("worker_run_id") or "")
     worker = (state.get("workers") or {}).get(run_id)
     if isinstance(worker, dict):
         if worker.get("status") != "superseded":
             worker["status"] = "superseded"
-            changed = True
         worker["recovery_replacement"] = deepcopy(canonical.get("replacement"))
     return True
 
