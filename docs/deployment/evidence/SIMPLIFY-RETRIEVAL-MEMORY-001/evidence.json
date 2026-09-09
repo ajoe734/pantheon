@@ -2,7 +2,7 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
   "title": "Tenant-qualified owner readback and postgres store resolution checkpoint",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "pantheon",
   "task_class": "functional",
@@ -374,7 +374,7 @@
   },
   "owner_inbound_auth_and_search_retrieval_checkpoint": {
     "date": "2026-09-09",
-    "owner": "Antigravity2",
+    "owner": "Antigravity",
     "reviewer": "Claude",
     "independent_review": "not requested; anchor commit checkpoint",
     "changes": [
@@ -410,6 +410,46 @@
         "exit_code": 0,
         "passed": 9,
         "seconds": 18.27
+      }
+    ]
+  },
+  "owner_dev_merge_and_verification_checkpoint": {
+    "date": "2026-09-09",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "anchor": "2bb1986db",
+    "dev_base_sha": "a4bc6261aa1f578e787eacc407e9f469ab0a6b2a",
+    "changes": [
+      "Merged origin/dev (commit a4bc6261a) into task branch task/SIMPLIFY-RETRIEVAL-MEMORY-001 with 0 merge conflicts.",
+      "Verified that git merge-base --is-ancestor origin/dev HEAD succeeds.",
+      "Re-executed all four test batches post-merge (209 total tests passed: 59/41/100/9).",
+      "Confirmed 0 ungranted files in PR diff against origin/dev (exactly 46 declared artifact files modified)."
+    ],
+    "completed_batches": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 59,
+        "seconds": 13.92
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_materialized_index.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/search/tests/test_contracts.py",
+        "exit_code": 0,
+        "passed": 41,
+        "seconds": 10.93
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 100,
+        "subtests_passed": 2,
+        "seconds": 24.41
+      },
+      {
+        "command": "SEARCH_RETRIEVAL_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 60s .venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_pg_retrieval.py services/memory/test_search_retrieval.py",
+        "exit_code": 0,
+        "passed": 9,
+        "seconds": 16.98
       }
     ]
   }
