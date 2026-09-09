@@ -53,15 +53,15 @@
     },
     "auth_handlers_store_rebinding": {
       "file": "services/control-plane/bff/auth/handlers.py",
-      "detail": "Rebound get_session_id, get_session_key, get_session_state, and ensure create_auth_handlers binds deps.raise_if_session_logged_out to the injected deps.session_lifecycle_store"
+      "detail": "Rebound get_session_id, get_session_key, get_session_state, ensure bff_auth_refresh persists to get_session_key(identity), populate last_refreshed_at and last_refresh_credential_source in bff_me, and ensure create_auth_handlers binds deps.raise_if_session_logged_out to the injected deps.session_lifecycle_store"
     },
     "main_delegation": {
       "file": "services/control-plane/bff/main.py",
-      "detail": "Replaced duplicate auth constants, dev login helpers, error code maps, metadata helpers, identity extraction, tenant scoping, session key/state functions, and source commit with delegates to auth.policy; auth_deps instantiated with create_auth_dependencies"
+      "detail": "Replaced duplicate auth constants, dev login helpers, error code maps, metadata helpers, identity extraction, tenant scoping, session key/state functions, and source commit with delegates to auth.policy; restored _pack_d_direct_error_response; auth_deps instantiated with create_auth_dependencies"
     },
     "focused_regressions": {
       "file": "services/control-plane/bff/auth/test_policy.py",
-      "detail": "13 tests covering standalone imports, two isolated stores with independent logout, concurrent/idempotent logout, session key variants and legacy fallback, cookie/bearer/refresh flows, negative JWT/role/tenant cases, and composition smoke"
+      "detail": "16 tests covering standalone imports, two isolated stores with independent logout, concurrent/idempotent logout, nested two-instance lifecycle proving outer idempotency survives inner teardown, session key variants and legacy fallback, cookie/bearer/refresh flows, configured session key refresh/readback/idempotency, negative JWT/role cases, real signed-token tenant rejection through the router, dev-login production block, and composition smoke"
     },
     "live_credentials_changed": false,
     "production_grants_changed": false,
@@ -72,9 +72,9 @@
     {
       "command": ".venv/bin/pytest services/control-plane/bff/auth/test_policy.py -vv",
       "exit_code": 0,
-      "result": "13 passed",
-      "executed": 13,
-      "collected": 13
+      "result": "16 passed",
+      "executed": 16,
+      "collected": 16
     },
     {
       "command": ".venv/bin/pytest services/control-plane/bff/test_bff_auth_facade.py",
@@ -99,8 +99,8 @@
     },
     {
       "command": ".venv/bin/pytest services/control-plane/bff/test_bff_error_envelope_shape.py",
-      "exit_code": 1,
-      "result": "7 passed, 1 failed (pre-existing baseline failure: test_direct_json_error_response_uses_pack_d_shape asserts 500 == 503)",
+      "exit_code": 0,
+      "result": "8 passed",
       "executed": 8,
       "collected": 8
     },
@@ -117,7 +117,7 @@
       "result": "pass (both composition_store and isolated_store return 200 -> logout 200 -> 401)"
     }
   ],
-  "coordination_note": "This functional source prerequisite fixes the injected auth/session seam and validates standalone auth policy. Pre-existing test-migration failures in test_bff_session_auth_me_contract.py and test_bff_error_envelope_shape.py are preserved honestly and handed off to BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 to complete the 211-importer test fixture migration.",
+  "coordination_note": "This functional source prerequisite fixes the injected auth/session seam and validates standalone auth policy, canonical configured-session key refresh and readback, nested two-instance outer idempotency, real signed-token tenant router rejection, and Pack-D direct error response envelope. Pre-existing test-migration failures in test_bff_session_auth_me_contract.py are preserved honestly and handed off to BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 to complete the 211-importer test fixture migration.",
   "review": {
     "owner": "Antigravity2",
     "reviewer": "Codex",

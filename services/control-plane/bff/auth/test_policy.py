@@ -245,6 +245,77 @@ def test_concurrent_clients_and_logout_idempotency(tmp_path: Path):
     asyncio.run(_run())
 
 
+def test_nested_two_instance_lifecycle_outer_idempotency_survives_inner_teardown(tmp_path: Path):
+    """Test nested two-instance lifecycle proving outer idempotency survives inner teardown.
+    - Outer app and client are created with a shared session lifecycle store.
+    - Outer issues POST /bff/logout with an idempotency key; receives initial 200 (replayed=False).
+    - Inside outer client scope, an inner app and inner client instance are created with the same store.
+    - Inner client performs active requests and its own logout with its own idempotency key; receives 200 (replayed=False).
+    - Inner client is closed and inner instance is completely torn down.
+    - Outer client replays the exact same POST /bff/logout request with its original idempotency key.
+    - Outer client receives 200 with replayed=True, proving outer idempotency state survived inner instance teardown.
+    - Subsequent GET /bff/me on outer client confirms session is logged out (401).
+    """
+    async def _run():
+        store = SessionLifecycleStore(str(tmp_path / "nested_lifecycle_store.json"))
+        app_outer = _build_standalone_app(store)
+        app_inner = _build_standalone_app(store)
+
+        outer_headers = {
+            "Authorization": "Bearer outer-op:operator",
+            "Idempotency-Key": "outer-logout-idem-001",
+        }
+        inner_headers = {
+            "Authorization": "Bearer inner-op:operator",
+            "Idempotency-Key": "inner-logout-idem-001",
+        }
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app_outer), base_url="http://outer.test") as client_outer:
+            # 1. Outer client starts authenticated
+            resp_outer_before = await client_outer.get("/bff/me", headers={"Authorization": "Bearer outer-op:operator"})
+            assert resp_outer_before.status_code == 200
+
+            # 2. Outer client performs first logout with idempotency key
+            logout_outer_1 = await client_outer.post("/bff/logout", headers=outer_headers)
+            assert logout_outer_1.status_code == 200
+            data_outer_1 = logout_outer_1.json()
+            assert data_outer_1["data"]["session"]["state"] == "logged_out"
+            assert data_outer_1["meta"]["idempotency"]["replayed"] is False
+
+            # 3. Inside outer lifecycle, spin up inner instance and inner client
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app_inner), base_url="http://inner.test") as client_inner:
+                resp_inner_before = await client_inner.get("/bff/me", headers={"Authorization": "Bearer inner-op:operator"})
+                assert resp_inner_before.status_code == 200
+
+                logout_inner = await client_inner.post("/bff/logout", headers=inner_headers)
+                assert logout_inner.status_code == 200
+                data_inner = logout_inner.json()
+                assert data_inner["data"]["session"]["state"] == "logged_out"
+                assert data_inner["meta"]["idempotency"]["replayed"] is False
+
+                # Inner replay also works before teardown
+                logout_inner_replay = await client_inner.post("/bff/logout", headers=inner_headers)
+                assert logout_inner_replay.status_code == 200
+                assert logout_inner_replay.json()["meta"]["idempotency"]["replayed"] is True
+
+            # 4. Inner client is now closed and inner instance torn down.
+            # Outer client replays its original request with its idempotency key.
+            logout_outer_2 = await client_outer.post("/bff/logout", headers=outer_headers)
+            assert logout_outer_2.status_code == 200
+            data_outer_2 = logout_outer_2.json()
+            assert data_outer_2["data"]["session"]["state"] == "logged_out"
+            assert data_outer_2["meta"]["idempotency"]["replayed"] is True
+
+            # 5. Subsequent GET /bff/me on outer client confirms 401 SESSION_LOGGED_OUT
+            resp_outer_after = await client_outer.get("/bff/me", headers={"Authorization": "Bearer outer-op:operator"})
+            assert resp_outer_after.status_code == 401
+            err_outer = _extract_error(resp_outer_after)
+            assert err_outer.get("code") == "AUTH_REQUIRED"
+            assert err_outer.get("details", {}).get("reason") == "SESSION_LOGGED_OUT"
+
+    asyncio.run(_run())
+
+
 # ==============================================================================
 # 4. Session-Key Variants and Legacy State
 # ==============================================================================
@@ -409,6 +480,70 @@ def test_refresh_flow_with_bearer_and_cookie(tmp_path: Path, monkeypatch: pytest
     assert data["session"]["last_refresh_credential_source"] == "session_cookie"
 
 
+def test_configured_session_key_refresh_readback_and_idempotency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Regression test for P1:
+    With PANTHEON_SESSION_ID=configured-session and a standalone factory:
+    1. POST /bff/auth/refresh writes to canonical configured-session key in store,
+       NOT the bff-session-review-op fallback key.
+    2. Refresh response includes session.id = configured-session, last_refreshed_at,
+       and last_refresh_credential_source.
+    3. Idempotency replay with identical Idempotency-Key returns 200 with replayed=True.
+    4. Subsequent GET /bff/me reads back state using the canonical configured-session key
+       and preserves last_refreshed_at and last_refresh_credential_source.
+    5. Direct inspection of store verifies state is present under canonical key and absent
+       under the unconfigured fallback key.
+    """
+    monkeypatch.setenv("PANTHEON_SESSION_ID", "configured-session")
+    store = SessionLifecycleStore(str(tmp_path / "configured_session_store.json"))
+    app = _build_standalone_app(store, auth_mode="permissive")
+    client = TestClient(app)
+
+    headers = {
+        "Authorization": "Bearer review-op:operator",
+        "Idempotency-Key": "refresh-idem-configured-001",
+    }
+
+    # 1. Initial refresh
+    resp1 = client.post("/bff/auth/refresh", json={}, headers=headers)
+    assert resp1.status_code == 200, resp1.text
+    data1 = resp1.json()["data"]
+    assert data1["session"]["id"] == "configured-session"
+    assert data1["session"]["session_kind"] in ("stub", "bearer")
+    refreshed_at = data1["session"]["last_refreshed_at"]
+    assert refreshed_at is not None
+    assert data1["session"]["last_refresh_credential_source"] == "bearer"
+    assert resp1.json()["meta"]["idempotency"]["replayed"] is False
+
+    # 2. Idempotency replay with same key
+    resp2 = client.post("/bff/auth/refresh", json={}, headers=headers)
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["meta"]["idempotency"]["replayed"] is True
+    assert resp2.json()["data"]["session"]["last_refreshed_at"] == refreshed_at
+
+    # 3. Idempotency conflict with different payload
+    resp_conflict = client.post("/bff/auth/refresh", json={"extra": "different"}, headers=headers)
+    assert resp_conflict.status_code == 409
+    err_conflict = _extract_error(resp_conflict)
+    assert err_conflict.get("code") == "IDEMPOTENCY_CONFLICT"
+
+    # 4. GET /bff/me readback
+    resp_me = client.get("/bff/me", headers={"Authorization": "Bearer review-op:operator"})
+    assert resp_me.status_code == 200, resp_me.text
+    me_session = resp_me.json()["data"]["session"]
+    assert me_session["id"] == "configured-session"
+    assert me_session["last_refreshed_at"] == refreshed_at
+    assert me_session["last_refresh_credential_source"] == "bearer"
+
+    # 5. Direct store inspection: canonical key must exist, fallback key must NOT exist
+    canonical_key = "operator:review-op:session:configured-session"
+    fallback_key = "operator:review-op:session:bff-session-review-op"
+    session_state = store.get_session(canonical_key)
+    assert session_state != {}, f"Expected state at {canonical_key}"
+    assert session_state.get("last_refreshed_at") == refreshed_at
+    assert session_state.get("state") == "active"
+    assert store.get_session(fallback_key) == {}, f"Fallback key {fallback_key} should not have been written"
+
+
 # ==============================================================================
 # 6. Authentic Negative JWT, Role, and Tenant Cases
 # ==============================================================================
@@ -494,6 +629,79 @@ def test_tenant_scoping_and_narrowing():
     assert exc.status_code == 403
     assert exc.detail["error"]["code"] == "FORBIDDEN"
     assert exc.detail["error"]["details"]["precondition_failed"] == "tenant_scope"
+
+
+def test_real_signed_token_tenant_rejection_through_router(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify real signed-token tenant scoping and rejection through the router (HTTP endpoints):
+    1. Valid signed token with allowed_tenants = ['tenant-alpha', 'tenant-beta'].
+    2. GET /bff/me with header X-Tenant-Id: tenant-alpha returns 200 with tenant.id = 'tenant-alpha'.
+    3. GET /bff/me with header X-Tenant-Id: tenant-gamma (unauthorized) returns 403 FORBIDDEN,
+       precondition_failed = 'tenant_scope'.
+    4. GET /bff/me?tenant_id=tenant-gamma (query param) returns 403 FORBIDDEN.
+    5. POST /bff/switch-tenant with tenantId = 'tenant-gamma' returns 403 FORBIDDEN.
+    6. POST /bff/switch-tenant with tenantId = 'tenant-beta' returns 200 OK.
+    7. Subsequent GET /bff/me without explicit tenant header reads switched tenant from session.
+    """
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", TEST_JWT_AUDIENCE)
+
+    store = SessionLifecycleStore(str(tmp_path / "tenant_router_store.json"))
+    app = _build_standalone_app(store, auth_mode="strict", auth_stub=False)
+    client = TestClient(app)
+
+    token = _make_jwt(
+        subject="router-tenant-op",
+        roles=["operator"],
+        extra={"allowed_tenants": ["tenant-alpha", "tenant-beta"]},
+    )
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Allowed tenant via header
+    resp_ok = client.get("/bff/me", headers={**auth_headers, "X-Tenant-Id": "tenant-alpha"})
+    assert resp_ok.status_code == 200, resp_ok.text
+    data = resp_ok.json()["data"]
+    assert data["tenant"]["id"] == "tenant-alpha"
+    assert data["tenant"]["allowed_ids"] == ["tenant-alpha", "tenant-beta"]
+    assert data["tenant"]["source"] == "request"
+
+    # 2. Unauthorized tenant via header
+    resp_bad_header = client.get("/bff/me", headers={**auth_headers, "X-Tenant-Id": "tenant-gamma"})
+    assert resp_bad_header.status_code == 403
+    err_h = _extract_error(resp_bad_header)
+    assert err_h.get("code") == "FORBIDDEN"
+    assert err_h.get("details", {}).get("precondition_failed") == "tenant_scope"
+    assert err_h.get("details", {}).get("tenantId") == "tenant-gamma"
+
+    # 3. Unauthorized tenant via query param
+    resp_bad_query = client.get("/bff/me?tenant_id=tenant-gamma", headers=auth_headers)
+    assert resp_bad_query.status_code == 403
+    err_q = _extract_error(resp_bad_query)
+    assert err_q.get("code") == "FORBIDDEN"
+    assert err_q.get("details", {}).get("precondition_failed") == "tenant_scope"
+
+    # 4. POST /bff/switch-tenant with unauthorized tenant returns 403
+    resp_switch_bad = client.post("/bff/switch-tenant", json={"tenantId": "tenant-gamma"}, headers=auth_headers)
+    assert resp_switch_bad.status_code == 403
+    err_s = _extract_error(resp_switch_bad)
+    assert err_s.get("code") == "FORBIDDEN"
+    assert err_s.get("details", {}).get("precondition_failed") == "tenant_scope"
+
+    # 5. POST /bff/switch-tenant with allowed tenant returns 200
+    resp_switch_ok = client.post("/bff/switch-tenant", json={"tenantId": "tenant-beta"}, headers=auth_headers)
+    assert resp_switch_ok.status_code == 200, resp_switch_ok.text
+    switch_data = resp_switch_ok.json()["data"]
+    assert switch_data["tenant"]["id"] == "tenant-beta"
+    assert switch_data["tenant"]["source"] == "session"
+
+    # 6. Subsequent GET /bff/me without explicit tenant header reads switched tenant from session
+    resp_me_switched = client.get("/bff/me", headers=auth_headers)
+    assert resp_me_switched.status_code == 200, resp_me_switched.text
+    me_data = resp_me_switched.json()["data"]
+    assert me_data["tenant"]["id"] == "tenant-beta"
+    assert me_data["tenant"]["source"] == "session"
 
 
 def test_dev_login_forbidden_in_production(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -476,6 +476,25 @@ def _pack_d_error_response(
         headers=response_headers,
     )
 
+
+def _pack_d_direct_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    details: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    return _pack_d_error_response(
+        status_code=status_code,
+        code=code,
+        message=message,
+        correlation_id=str(uuid.uuid4()),
+        details=details,
+        extra=extra,
+    )
+
+
 def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
     response_headers = dict(headers)
     origin = request.headers.get("origin")

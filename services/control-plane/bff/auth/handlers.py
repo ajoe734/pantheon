@@ -338,6 +338,10 @@ async def bff_me(
         user = _user(identity, deps)
         session = _session(identity, checked_at=deps.utc_now())
         session["state"] = str(state.get("state") or "active")
+        if state.get("last_refreshed_at"):
+            session["last_refreshed_at"] = state["last_refreshed_at"]
+        if state.get("last_refresh_credential_source"):
+            session["last_refresh_credential_source"] = state["last_refresh_credential_source"]
     except HTTPException as exc:
         raise exc
     data = {
@@ -462,7 +466,7 @@ async def bff_auth_refresh(
     now = deps.utc_now()
     state = _state(identity, deps)
     state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": source})
-    deps.session_lifecycle_store.upsert_session(f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}", state, now=now)
+    deps.session_lifecycle_store.upsert_session(get_session_key(identity), state, now=now)
     idem = idempotency_key or x_idempotency_key
     record_key = _idempotency_key("POST /bff/auth/refresh", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}, "source": source})
