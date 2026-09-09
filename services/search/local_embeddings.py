@@ -41,6 +41,7 @@ class LocalEmbeddingEngine:
         self.local_files_only = local_files_only
         self._embedder: Any = None
         self._query_cache: dict[str, list[float]] = {}
+        self._verified: bool | None = None
 
     def _load_manifest(self) -> dict[str, Any]:
         if not self.manifest_path.exists():
@@ -84,12 +85,17 @@ class LocalEmbeddingEngine:
 
     def verify_integrity(self) -> bool:
         """Verify cached ONNX artifacts against manifest digests, revision, and dimension."""
+        if self._verified is not None:
+            return self._verified
+
         expected_rev = self.manifest.get("revision")
         target_dir = self._find_snapshot_dir()
         if target_dir is None:
+            self._verified = False
             return False
 
         if expected_rev and target_dir.name != expected_rev:
+            self._verified = False
             return False
 
         # Verify dimension matches manifest
@@ -99,24 +105,30 @@ class LocalEmbeddingEngine:
                 cfg = json.loads(config_file.read_text(encoding="utf-8"))
                 hidden_size = cfg.get("hidden_size")
                 if hidden_size is not None and int(hidden_size) != self.dimension:
+                    self._verified = False
                     return False
             except Exception:
+                self._verified = False
                 return False
 
         files_spec = self.manifest.get("files", {})
         if not files_spec:
+            self._verified = True
             return True
 
         for filename, spec in files_spec.items():
             expected_sha = spec.get("sha256")
             fpath = target_dir / filename
             if not fpath.exists():
+                self._verified = False
                 return False
             if expected_sha:
                 real_file = fpath.resolve()
                 computed = hashlib.sha256(real_file.read_bytes()).hexdigest()
                 if computed.lower() != expected_sha.lower():
+                    self._verified = False
                     return False
+        self._verified = True
         return True
 
     def _ensure_loaded(self) -> Any:

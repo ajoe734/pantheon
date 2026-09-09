@@ -243,6 +243,7 @@ def retrieve_persona_with_backend(
     *,
     query: str = "",
     tenant_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
     memory_type: Optional[str] = None,
     relevance_scope: Optional[str] = None,
     tags: Optional[Iterable[str]] = None,
@@ -268,7 +269,7 @@ def retrieve_persona_with_backend(
     context = SearchAccessContext(
         tenant_id=tenant_id or "default",
         persona_id=persona_id,
-        workspace_id="workspace-default",
+        workspace_id=workspace_id,
         environment="paper",
         access_scopes=["operator", "research"],
     )
@@ -295,7 +296,7 @@ def retrieve_persona_with_backend(
         seen_ids.add(cand.id)
 
         entry = store.get(cand.id)
-        if entry is None or not entry.is_active:
+        if entry is None or not entry.is_active or (callable(getattr(entry, "is_expired", None)) and entry.is_expired()):
             continue
         if tenant_id and entry.tenant_id and entry.tenant_id != tenant_id:
             continue

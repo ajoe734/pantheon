@@ -6,7 +6,7 @@
   "reviewer": "Claude",
   "target_repo": "pantheon",
   "task_class": "functional",
-  "delivery_state": "in_progress_owner_readback_postgres_store_resolved",
+  "delivery_state": "in_progress_inbound_auth_and_search_retrieval_hardened",
   "accepted": false,
   "source_base_sha": "5d15c7b821a846d24b76ce4f653f990482da0518",
   "audited_previous_head": "aad34700e262211b7de349921421a61961948749",
@@ -371,5 +371,46 @@
       "legacy_overwritten_by_tenant_key_collision": false,
       "tenanted_present": true
     }
+  },
+  "owner_inbound_auth_and_search_retrieval_checkpoint": {
+    "date": "2026-09-09",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "independent_review": "not requested; anchor commit checkpoint",
+    "changes": [
+      "services/search/main.py: Reused services/runtime_auth_inbound.py strict verified JWT validation, required identity claims (sub, exp, tenant, roles), and whitespace rejection. Implemented access context ceiling rule where verified JWT authority dictates actor_ref and tenant_id, while request bodies only narrow roles, access scopes, and filters. Protected search query, v2, alpha-query, compat, reload, and materialize routes with role-based checks.",
+      "services/memory/main.py: Integrated runtime_auth_inbound verification across /api/memory/retrieve, /api/memory/entries, persona-entries, and writeback endpoints. Enforced tenant ceiling on writes (no cross-tenant poisoning) and actor/role narrowing on retrieval.",
+      "services/memory/search_retrieval.py: Updated retrieve_persona_with_backend to support workspace_id filtering, avoid hardcoded default workspace, and enforce entry.is_expired() validation during hydration.",
+      "services/search/pg_retrieval.py: Added fallback to lexical FTS and synthetic rrf_score (ranker_version postgres-rrf-v1) when LocalEmbeddingEngine is not ready, while preserving fail-closed behavior for mode='semantic'.",
+      "services/search/local_embeddings.py: Added _verified state caching on LocalEmbeddingEngine to prevent repeated re-hashing of 2.2GB ONNX model weights on every index and search call.",
+      "Added services/search/tests/test_search_auth.py (15 tests) and services/memory/test_memory_auth.py (12 tests) verifying strict/permissive modes, claim validation, signature checks, role enforcement, and forgery/elevation rejection."
+    ],
+    "completed_batches": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/search/tests/test_search_auth.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 59,
+        "seconds": 14.52
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/search/tests/test_materialized_index.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/search/tests/test_contracts.py",
+        "exit_code": 0,
+        "passed": 41,
+        "seconds": 11.03
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/memory/test_memory_auth.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 100,
+        "subtests_passed": 2,
+        "seconds": 24.53
+      },
+      {
+        "command": "SEARCH_RETRIEVAL_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 60s .venv-pantheon/bin/python -m pytest -q services/search/tests/test_pg_retrieval.py services/memory/test_search_retrieval.py",
+        "exit_code": 0,
+        "passed": 9,
+        "seconds": 17.28
+      }
+    ]
   }
 }

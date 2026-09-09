@@ -199,7 +199,10 @@ class PostgresRetrievalBackend:
         texts_to_embed = [r.search_text for r in records if r.embedding is None]
         embeddings = []
         if texts_to_embed:
-            embeddings = self.embedding_engine.embed_documents(texts_to_embed)
+            if self.embedding_engine.is_ready():
+                embeddings = self.embedding_engine.embed_documents(texts_to_embed)
+            else:
+                embeddings = [None] * len(texts_to_embed)
 
         emb_idx = 0
         final_records = []
@@ -466,7 +469,7 @@ class PostgresRetrievalBackend:
 
         tsquery_sql = "plainto_tsquery('simple', %(lexical_query)s)"
 
-        if mode in ("keyword", "full_text"):
+        if mode in ("keyword", "full_text") or (mode == "hybrid" and not self.embedding_engine.is_ready()):
             sql = f"""
             WITH raw_lex AS (
                 SELECT id, record_kind, title, search_text, content_ref, citation_label,
@@ -577,11 +580,15 @@ class PostgresRetrievalBackend:
             upd = row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else str(row["updated_at"] or "")
 
             comp_scores: dict[str, Any] = {}
-            if mode in ("keyword", "full_text"):
+            if mode in ("keyword", "full_text") or (mode == "hybrid" and "raw_rrf" not in row):
                 lex_score = float(row.get("lex_score") or 0.0)
                 norm_score = round(min(0.999, max(0.01, 0.5 + lex_score * 0.1)), 4)
                 comp_scores = {"full_text_score": lex_score, "rank": row.get("lex_rank")}
-                ranker_ver = "postgres-fts-v1"
+                if mode == "hybrid":
+                    comp_scores["rrf_score"] = norm_score
+                    ranker_ver = "postgres-rrf-v1"
+                else:
+                    ranker_ver = "postgres-fts-v1"
             elif mode == "semantic":
                 sem_score = float(row.get("sem_score") or 0.0)
                 norm_score = round(max(0.0, min(1.0, (sem_score + 1.0) / 2.0)), 4)
