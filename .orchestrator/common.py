@@ -1157,12 +1157,17 @@ def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, s
     raw_count = env.get("GIT_CONFIG_COUNT")
     existing_entries: list[tuple[str, str]] = []
     if raw_count is not None:
-        stripped_count = str(raw_count).strip()
-        if not stripped_count.isdigit():
+        raw_count_str = str(raw_count)
+        # Validate the exact value that will be emitted to real Git, not a
+        # stripped copy used only for validation: a trailing newline or a
+        # non-ASCII decimal digit (e.g. U+0661 ARABIC-INDIC DIGIT ONE) can
+        # satisfy a lenient check while real `git config --list` rejects the
+        # raw env value and exits 128.
+        if not raw_count_str or not raw_count_str.isascii() or not raw_count_str.isdigit():
             raise ValueError(
                 "Malformed git configuration: GIT_CONFIG_COUNT must be a non-negative integer, got <redacted>"
             )
-        count = int(stripped_count)
+        count = int(raw_count_str)
         for i in range(count):
             key_var = f"GIT_CONFIG_KEY_{i}"
             val_var = f"GIT_CONFIG_VALUE_{i}"
@@ -1214,9 +1219,10 @@ def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, s
             break
 
     # An explicit supported askpass (e.g. a PAT-based PANTHEON_WORKER_GIT_ASKPASS)
-    # is a deliberate credential choice; do not silently override it by routing
-    # Git to the gh credential helper instead.
-    if not has_github_helper and not supported_askpass:
+    # or an explicit indexed core.askPass entry is a deliberate credential
+    # choice; do not silently override it by routing Git to the gh credential
+    # helper instead.
+    if not has_github_helper and not supported_askpass and not has_explicit_core_askpass:
         new_index = len(existing_entries)
         env[f"GIT_CONFIG_KEY_{new_index}"] = "credential.https://github.com.helper"
         env[f"GIT_CONFIG_VALUE_{new_index}"] = "!gh auth git-credential"

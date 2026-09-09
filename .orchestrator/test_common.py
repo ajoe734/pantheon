@@ -524,6 +524,52 @@ class GithubCliEnvTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             common.preserve_github_cli_auth_env({"GIT_CONFIG_COUNT": "-1"})
 
+        # count with a trailing newline: a stripped-copy check would accept this,
+        # but real Git parses the raw env value and rejects the embedded newline.
+        with self.assertRaises(ValueError) as cm:
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "1\n",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            })
+        self.assertIn("non-negative integer", str(cm.exception))
+
+        # count using a non-ASCII decimal digit (U+0661 ARABIC-INDIC DIGIT ONE):
+        # str.isdigit() and int() both accept it, but real Git only understands
+        # ASCII digits.
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "١",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            })
+
+        # count using a non-ASCII digit with no int() equivalent (U+00B2
+        # SUPERSCRIPT TWO): str.isdigit() is True but int() raises ValueError;
+        # that raw exception must not escape preparation uncaught.
+        with self.assertRaises(ValueError):
+            common.preserve_github_cli_auth_env({
+                "GIT_CONFIG_COUNT": "²",
+                "GIT_CONFIG_KEY_0": "credential.helper",
+                "GIT_CONFIG_VALUE_0": "",
+            })
+
+        # Real Git execution regressions proving each malformed count, if it had
+        # reached Git unrejected, would exit 128 rather than silently working.
+        for malformed_count in ("1\n", "١", "²"):
+            real_git_count_proc = subprocess.run(
+                ["git", "config", "--list"],
+                capture_output=True,
+                text=True,
+                env={
+                    "PATH": os.environ.get("PATH", ""),
+                    "GIT_CONFIG_COUNT": malformed_count,
+                    "GIT_CONFIG_KEY_0": "credential.helper",
+                    "GIT_CONFIG_VALUE_0": "",
+                },
+            )
+            self.assertEqual(real_git_count_proc.returncode, 128)
+
         # missing key
         with self.assertRaises(ValueError) as cm:
             common.preserve_github_cli_auth_env({
@@ -958,6 +1004,75 @@ class GithubCliEnvTests(unittest.TestCase):
             self.assertIn("username=custom-github-user", proc_cgh.stdout)
             self.assertIn("password=custom-github-token", proc_cgh.stdout)
             self.assertNotIn("gh-leak-user", proc_cgh.stdout)
+
+            # 9. Requirement 1: An explicit indexed core.askPass entry is a deliberate
+            # credential choice too, distinct from PANTHEON_WORKER_GIT_ASKPASS. With no
+            # credential.helper configured, real `git credential fill` falls back to
+            # core.askPass for the identity. A working synthetic gh helper must not be
+            # auto-appended and silently switch the resolved identity from the explicit
+            # askpass to gh.
+            explicit_core_askpass = bin_dir / "explicit-core-askpass"
+            explicit_core_askpass.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  *sername*) echo \"synthetic-explicit-user\" ;;\n"
+                "  *) echo \"synthetic-explicit-pass\" ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            explicit_core_askpass.chmod(0o755)
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=synthetic-gh\"\n"
+                "  echo \"password=synthetic-gh-token\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            env_core_askpass = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.askPass",
+                "GIT_CONFIG_VALUE_0": str(explicit_core_askpass),
+            }
+
+            # Identity before preparation: the explicit core.askPass fallback.
+            proc_before = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_core_askpass,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_before.returncode, 0, proc_before.stderr)
+            self.assertIn("username=synthetic-explicit-user", proc_before.stdout)
+
+            common.preserve_github_cli_auth_env(env_core_askpass, {"HOME": str(tmp)})
+            self.assertEqual(
+                env_core_askpass["GIT_CONFIG_COUNT"],
+                "1",
+                "must not auto-append a gh credential helper when an explicit "
+                "indexed core.askPass entry is already configured",
+            )
+            self.assertNotIn("GIT_ASKPASS", env_core_askpass)
+
+            # Identity after preparation must still be the explicit core.askPass choice.
+            proc_after = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                capture_output=True,
+                text=True,
+                env=env_core_askpass,
+                timeout=5.0,
+            )
+            self.assertEqual(proc_after.returncode, 0, proc_after.stderr)
+            self.assertIn("username=synthetic-explicit-user", proc_after.stdout)
+            self.assertNotIn("synthetic-gh", proc_after.stdout)
 
 
 class ClaudeAuthTests(unittest.TestCase):
