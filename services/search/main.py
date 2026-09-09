@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Response
+from fastapi import Body, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
+
+from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
 from services.foundation.health import register_fastapi_health_routes
 from services.knowledge.evidence import (
@@ -145,6 +147,7 @@ class AccessContextBody(BaseModel):
     capital_pool_scopes: list[str] = Field(default_factory=list)
     entitlements: list[str] = Field(default_factory=list)
     as_of: str | None = None
+    tenant_id: str | None = None
 
     def to_domain(self) -> SearchAccessContext:
         return SearchAccessContext(
@@ -159,7 +162,249 @@ class AccessContextBody(BaseModel):
             capital_pool_scopes=self.capital_pool_scopes,
             entitlements=self.entitlements,
             as_of=self.as_of,
+            tenant_id=self.tenant_id or "default",
         )
+
+
+_SEARCH_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst")
+_SEARCH_ADMIN_ROLES = ("operator", "admin", "system", "ingest-writer")
+_REQUIRED_JWT_CLAIMS = ("sub", "exp")
+_TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
+
+
+def _search_auth_env() -> dict[str, str]:
+    return {
+        "PANTHEON_RUNTIME_AUTH_MODE": (
+            os.getenv("PANTHEON_SEARCH_AUTH_MODE")
+            or os.getenv("PANTHEON_RUNTIME_AUTH_MODE")
+            or "permissive"
+        ),
+        "PANTHEON_RUNTIME_JWT_SECRET": (
+            os.getenv("PANTHEON_SEARCH_JWT_SECRET")
+            or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", "")
+        ),
+        "PANTHEON_RUNTIME_JWT_ISSUER": (
+            os.getenv("PANTHEON_SEARCH_JWT_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", "")
+        ),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": (
+            os.getenv("PANTHEON_SEARCH_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", "")
+        ),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": (
+            os.getenv("PANTHEON_SEARCH_DEFAULT_ROLE")
+            or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "researcher")
+        ),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": (
+            os.getenv("PANTHEON_SEARCH_MFA_REQUIRED")
+            or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false")
+        ),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": (
+            os.getenv("PANTHEON_SEARCH_ROLE_CLAIMS")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", "")
+        ),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": (
+            os.getenv("PANTHEON_SEARCH_MFA_CLAIMS")
+            or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", "")
+        ),
+        "PANTHEON_RUNTIME_MFA_VALUES": (
+            os.getenv("PANTHEON_SEARCH_MFA_VALUES")
+            or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", "")
+        ),
+    }
+
+
+def _require_verified_identity(ctx: AuthContext) -> None:
+    if ctx.token_kind != "jwt":
+        return
+    missing = [claim for claim in _REQUIRED_JWT_CLAIMS if not ctx.claims.get(claim)]
+    if not any(str(ctx.claims.get(name) or "").strip() for name in _TENANT_CLAIM_NAMES):
+        missing.append("tenant")
+    if not (ctx.claims.get("roles") or ctx.claims.get("role")):
+        missing.append("role")
+    if missing:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Verified JWT is missing required identity claims: {sorted(set(missing))}",
+        )
+
+
+def _reject_malformed_identity_claims(ctx: AuthContext) -> None:
+    if ctx.token_kind != "jwt":
+        return
+    sub = ctx.claims.get("sub")
+    if sub is not None and not str(sub).strip():
+        raise HTTPException(
+            status_code=403,
+            detail="Verified JWT 'sub' claim is present but blank/whitespace-only.",
+        )
+    for name in _TENANT_CLAIM_NAMES:
+        tenant = ctx.claims.get(name)
+        if tenant is not None and not str(tenant).strip():
+            raise HTTPException(
+                status_code=403,
+                detail=f"Verified JWT {name!r} claim is present but blank/whitespace-only.",
+            )
+
+
+def _authenticate_search_request(
+    authorization: str | None,
+    *,
+    required_roles: Sequence[str] | None = None,
+) -> AuthContext | None:
+    env = _search_auth_env()
+    mode = env.get("PANTHEON_RUNTIME_AUTH_MODE", "permissive").strip().lower()
+    if not authorization or not authorization.strip():
+        if mode == "strict":
+            raise HTTPException(status_code=401, detail="Unauthorized: missing Bearer token")
+        return None
+    try:
+        ctx = validate_request_auth(
+            authorization=authorization,
+            required_roles=required_roles,
+            env=env,
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    _reject_malformed_identity_claims(ctx)
+    _require_verified_identity(ctx)
+    return ctx
+
+
+def _resolve_search_access_context(
+    body: SearchQueryBody | StructuredAlphaQueryBody,
+    auth_ctx: AuthContext | None,
+) -> SearchAccessContext:
+    if auth_ctx is None:
+        context = body.access_context.to_domain()
+        context.require_persona_workspace()
+        return context
+
+    actor_ref = auth_ctx.actor_id
+    if body.access_context.actor_ref and body.access_context.actor_ref != actor_ref:
+        raise HTTPException(
+            status_code=403,
+            detail="actor_ref in access_context does not match verified token identity",
+        )
+    if getattr(body, "actor_ref", None) and getattr(body, "actor_ref") != actor_ref:
+        raise HTTPException(
+            status_code=403,
+            detail="actor_ref does not match verified token identity",
+        )
+
+    token_tenant = (
+        auth_ctx.claims.get("tenant_id")
+        or auth_ctx.claims.get("tenant")
+        or "default"
+    )
+    body_tenant = getattr(body.access_context, "tenant_id", None)
+    if body_tenant and token_tenant != "*" and body_tenant != token_tenant:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Requested tenant '{body_tenant}' is outside the verified caller scope '{token_tenant}'",
+        )
+    effective_tenant = token_tenant if token_tenant != "*" else (body_tenant or "default")
+
+    server_roles = auth_ctx.roles
+    all_requested = set(body.access_context.role_refs or ())
+    if getattr(body, "role_refs", None):
+        all_requested.update(body.role_refs)
+    if all_requested:
+        invalid_roles = all_requested - server_roles
+        if invalid_roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requested roles {sorted(invalid_roles)} exceed verified token roles {sorted(server_roles)}",
+            )
+        preferred = getattr(body, "role_refs", None) or body.access_context.role_refs
+        effective_roles = tuple(r for r in preferred if r in server_roles)
+    else:
+        effective_roles = tuple(server_roles)
+
+    token_access = auth_ctx.claims.get("access_scopes") or auth_ctx.claims.get("scope")
+    if token_access:
+        if isinstance(token_access, str):
+            token_access = [s.strip() for s in token_access.split(",") if s.strip()]
+        token_access_set = set(token_access)
+        req_access_set = set(body.access_context.access_scopes)
+        if not req_access_set.issubset(token_access_set):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requested access scopes {sorted(req_access_set - token_access_set)} exceed verified token scopes",
+            )
+        effective_access = tuple(body.access_context.access_scopes)
+    else:
+        effective_access = tuple(body.access_context.access_scopes)
+
+    token_licenses = auth_ctx.claims.get("license_scopes")
+    if token_licenses:
+        if isinstance(token_licenses, str):
+            token_licenses = [s.strip() for s in token_licenses.split(",") if s.strip()]
+        token_license_set = set(token_licenses)
+        req_license_set = set(body.access_context.license_scopes)
+        if not req_license_set.issubset(token_license_set):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requested license scopes {sorted(req_license_set - token_license_set)} exceed verified token licenses",
+            )
+        effective_licenses = tuple(body.access_context.license_scopes)
+    else:
+        effective_licenses = tuple(body.access_context.license_scopes)
+
+    token_sens = auth_ctx.claims.get("sensitivity_scopes") or auth_ctx.claims.get("sensitivity")
+    if token_sens:
+        if isinstance(token_sens, str):
+            token_sens = [s.strip() for s in token_sens.split(",") if s.strip()]
+        token_sens_set = set(token_sens)
+        req_sens_set = set(body.access_context.sensitivity_scopes)
+        if not req_sens_set.issubset(token_sens_set):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requested sensitivity scopes {sorted(req_sens_set - token_sens_set)} exceed verified token sensitivity",
+            )
+        effective_sens = tuple(body.access_context.sensitivity_scopes)
+    else:
+        effective_sens = tuple(body.access_context.sensitivity_scopes)
+
+    persona_id = body.access_context.persona_id or getattr(body, "persona_id", None)
+    workspace_id = body.access_context.workspace_id or getattr(body, "workspace_id", None)
+
+    token_personas = auth_ctx.claims.get("allowed_personas") or auth_ctx.claims.get("personas")
+    if token_personas:
+        if isinstance(token_personas, str):
+            token_personas = [p.strip() for p in token_personas.split(",") if p.strip()]
+        if persona_id and persona_id not in token_personas and "*" not in token_personas:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requested persona '{persona_id}' is not permitted by verified token",
+            )
+
+    token_workspaces = auth_ctx.claims.get("allowed_workspaces") or auth_ctx.claims.get("workspaces")
+    if token_workspaces:
+        if isinstance(token_workspaces, str):
+            token_workspaces = [w.strip() for w in token_workspaces.split(",") if w.strip()]
+        if workspace_id and workspace_id not in token_workspaces and "*" not in token_workspaces:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requested workspace '{workspace_id}' is not permitted by verified token",
+            )
+
+    context = SearchAccessContext(
+        actor_ref=actor_ref,
+        persona_id=persona_id,
+        workspace_id=workspace_id,
+        role_refs=effective_roles,
+        environment=body.access_context.environment,
+        access_scopes=effective_access,
+        license_scopes=effective_licenses,
+        sensitivity_scopes=effective_sens,
+        capital_pool_scopes=tuple(body.access_context.capital_pool_scopes),
+        entitlements=tuple(body.access_context.entitlements),
+        as_of=body.access_context.as_of,
+        tenant_id=effective_tenant,
+    )
+    context.require_persona_workspace()
+    return context
 
 
 class SearchQueryBody(BaseModel):
@@ -338,6 +583,7 @@ def create_app(
     durable_index_only: bool | None = None,
     vector_embedding_backend: Any | None = None,
     alpha_engine: StructuredAlphaEngine | None = None,
+    retrieval_backend: Any | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.2.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
@@ -347,7 +593,12 @@ def create_app(
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
-    pipeline = IncrementalIndexPipeline(durable_repository, pipeline_store, freshness_sla_seconds=sla_seconds)
+    pipeline = IncrementalIndexPipeline(
+        durable_repository,
+        pipeline_store,
+        freshness_sla_seconds=sla_seconds,
+        retrieval_backend=retrieval_backend,
+    )
 
     # Initialize retrievers
     kw_retriever = KeywordRetriever()
@@ -369,6 +620,7 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
+            retrieval_backend=retrieval_backend,
         )
 
     def _materialize_index_state(
@@ -475,8 +727,12 @@ def create_app(
         return _build_gateway(durable_repository).get_capabilities()
 
     @app.post("/api/search/index/refresh")
-    def refresh_index(body: IndexRefreshBody | None = Body(default=None)) -> dict[str, Any]:
+    def refresh_index(
+        body: IndexRefreshBody | None = Body(default=None),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
         """Trigger incremental (or full) index refresh from current evidence repository."""
+        _authenticate_search_request(authorization, required_roles=_SEARCH_ADMIN_ROLES)
         try:
             triggered_by = (body.triggered_by if body else "manual").strip() or "manual"
             trigger_ref = body.trigger_ref if body else None
@@ -508,8 +764,12 @@ def create_app(
         }
 
     @app.post("/api/search/index/source-completions")
-    def record_source_completion(body: SourceCompletionBody) -> dict[str, Any]:
+    def record_source_completion(
+        body: SourceCompletionBody,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
         """Record source ingest completion and reconcile search freshness/materialization truth."""
+        _authenticate_search_request(authorization, required_roles=_SEARCH_ADMIN_ROLES)
         ingest_run_id = body.ingest_run_id.strip()
         if not ingest_run_id:
             raise HTTPException(status_code=400, detail="ingest_run_id is required")
@@ -561,7 +821,10 @@ def create_app(
         return {"truth": _source_completion_truth(ingest_run_id)}
 
     @app.post("/api/search/index/reload")
-    def reload_index() -> dict[str, Any]:
+    def reload_index(
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        _authenticate_search_request(authorization, required_roles=_SEARCH_ADMIN_ROLES)
         try:
             durable_repository.reload()
             adapter = KeywordIndexAdapter(
@@ -594,7 +857,12 @@ def create_app(
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def _query_search(body: SearchQueryBody, *, allow_request_documents_compat: bool = False) -> dict[str, Any]:
+    def _query_search(
+        body: SearchQueryBody,
+        *,
+        allow_request_documents_compat: bool = False,
+        auth_ctx: AuthContext | None = None,
+    ) -> dict[str, Any]:
         try:
             if body.documents:
                 if durable_only:
@@ -619,17 +887,19 @@ def create_app(
                 source_watermarks=_source_watermarks(repository),
                 adapter_state=adapter_state,
             )
+            context = _resolve_search_access_context(body, auth_ctx)
+
             request = SearchRequest(
                 schema_version=body.schema_version,
                 request_id=body.request_id,
                 query=body.query,
                 retrieval_mode=body.retrieval_mode,
-                actor_ref=body.actor_ref or body.access_context.actor_ref,
-                persona_id=body.persona_id or body.access_context.persona_id,
-                workspace_id=body.workspace_id or body.access_context.workspace_id,
-                role_refs=body.role_refs or body.access_context.role_refs,
+                actor_ref=context.actor_ref,
+                persona_id=context.persona_id,
+                workspace_id=context.workspace_id,
+                role_refs=context.role_refs,
                 source_types=body.source_types,
-                environment=body.environment or body.access_context.environment,
+                environment=context.environment,
                 purpose=body.purpose,
                 time_window=body.time_window,
                 filters=body.filters,
@@ -639,8 +909,6 @@ def create_app(
                 trace_id=body.trace_id,
                 filters_applied=body.filters_applied,
             )
-            context = body.access_context.to_domain()
-            context.require_persona_workspace()
 
             gateway = _build_gateway(repository, adapter=index_adapter)
             response = gateway.search(request, context)
@@ -656,16 +924,28 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/search/query")
-    def query_search(body: SearchQueryBody) -> dict[str, Any]:
-        return _query_search(body)
+    def query_search(
+        body: SearchQueryBody,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        auth_ctx = _authenticate_search_request(authorization, required_roles=_SEARCH_READ_ROLES)
+        return _query_search(body, auth_ctx=auth_ctx)
 
     @app.post("/api/search/v2/query")
-    def query_search_v2(body: SearchQueryBody) -> dict[str, Any]:
-        return _query_search(body)
+    def query_search_v2(
+        body: SearchQueryBody,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        auth_ctx = _authenticate_search_request(authorization, required_roles=_SEARCH_READ_ROLES)
+        return _query_search(body, auth_ctx=auth_ctx)
 
     @app.post("/api/search/v2/alpha-query")
-    def query_structured_alpha(body: StructuredAlphaQueryBody) -> dict[str, Any]:
+    def query_structured_alpha(
+        body: StructuredAlphaQueryBody,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
         """Execute a constrained structured alpha rule query."""
+        auth_ctx = _authenticate_search_request(authorization, required_roles=_SEARCH_READ_ROLES)
         try:
             alpha_query = StructuredAlphaQuery(
                 schema_version=body.schema_version,
@@ -676,8 +956,7 @@ def create_app(
                 sort=body.sort,
                 limit=body.limit,
             )
-            context = body.access_context.to_domain()
-            context.require_persona_workspace()
+            context = _resolve_search_access_context(body, auth_ctx)
 
             request = SearchRequest(
                 schema_version="governed_search_request.v2",
@@ -706,10 +985,15 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/search/query/request-documents-compat")
-    def query_search_request_documents_compat(body: SearchQueryBody, response: Response) -> dict[str, Any]:
+    def query_search_request_documents_compat(
+        body: SearchQueryBody,
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        auth_ctx = _authenticate_search_request(authorization, required_roles=_SEARCH_READ_ROLES)
         response.headers["Deprecation"] = "true"
         response.headers["X-Search-Path"] = "request_documents_compat"
-        return _query_search(body, allow_request_documents_compat=True)
+        return _query_search(body, allow_request_documents_compat=True, auth_ctx=auth_ctx)
 
     @app.get("/api/search/snapshots/{request_id}")
     def get_snapshot(request_id: str) -> dict[str, Any]:
@@ -720,7 +1004,10 @@ def create_app(
         return {"snapshot": snapshot.to_dict()}
 
     @app.post("/api/search/index/materialize")
-    def materialize_index() -> dict[str, Any]:
+    def materialize_index(
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        _authenticate_search_request(authorization, required_roles=_SEARCH_ADMIN_ROLES)
         try:
             return _materialize_index_state()
         except EvidenceValidationError as exc:

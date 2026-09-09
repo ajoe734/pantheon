@@ -130,6 +130,69 @@ class JsonlIndexPipelineStore:
         return list(self._runs[-limit:])
 
 
+def _knowledge_object_to_retrieval_record(ko: Any, repository: InMemoryEvidenceRepository) -> Any:
+    from services.search.pg_retrieval import RetrievalIndexRecord
+    evidence_item = repository.get_evidence_item(ko.evidence_item_id)
+    bundle = repository.get_bundle(ko.evidence_bundle_id)
+    metadata = dict(ko.metadata) if ko.metadata else {}
+
+    search_parts = [
+        ko.title,
+        ko.text,
+        " ".join(ko.keywords),
+        metadata.get("search_text"),
+    ]
+    if evidence_item is not None:
+        search_parts.extend([evidence_item.body, evidence_item.citation_label])
+    if bundle is not None:
+        search_parts.extend([bundle.summary, " ".join(bundle.citation_refs)])
+    search_text = " ".join(str(p or "") for p in search_parts).strip()
+
+    tenant_id = str(metadata.get("tenant_id") or "default")
+    persona_id = (ko.persona_scope[0] if ko.persona_scope else None) or metadata.get("persona_id")
+    workspace_id = (ko.workspace_scope[0] if ko.workspace_scope else None) or metadata.get("workspace_id")
+
+    event_time = None
+    available_time = None
+    if evidence_item:
+        if evidence_item.event_time:
+            event_time = evidence_item.event_time.isoformat() if hasattr(evidence_item.event_time, "isoformat") else str(evidence_item.event_time)
+        if evidence_item.available_time:
+            available_time = evidence_item.available_time.isoformat() if hasattr(evidence_item.available_time, "isoformat") else str(evidence_item.available_time)
+    if not event_time and metadata.get("event_time"):
+        event_time = str(metadata["event_time"])
+    if not available_time and metadata.get("available_time"):
+        available_time = str(metadata["available_time"])
+
+    return RetrievalIndexRecord(
+        id=ko.knowledge_object_id,
+        record_kind="knowledge_object",
+        tenant_id=tenant_id,
+        persona_id=persona_id,
+        workspace_id=workspace_id,
+        environment_scope=list(ko.environment_scope or ["paper"]),
+        access_scope=list(ko.access_scope or ["operator"]),
+        license_scope=str(ko.license_scope or "internal"),
+        role_scope=list(metadata.get("role_scope") or []),
+        sensitivity=str(metadata.get("sensitivity") or "internal"),
+        capital_pool_scope=list(metadata.get("capital_pool_scope") or []),
+        source_type=str(ko.source_type or "internal_note"),
+        asset_class=list(metadata.get("asset_class") or []),
+        strategy_id=metadata.get("strategy_id"),
+        title=ko.title,
+        search_text=search_text or ko.text,
+        content_ref=evidence_item.content_ref if evidence_item else f"/docs/{ko.knowledge_object_id}",
+        citation_label=evidence_item.citation_label if evidence_item else f"doc:{ko.knowledge_object_id}",
+        evidence_bundle_id=ko.evidence_bundle_id,
+        evidence_item_id=ko.evidence_item_id,
+        event_time=event_time,
+        available_time=available_time,
+        relevance_score=float(metadata.get("relevance_score") or 0.0),
+        metadata=metadata,
+        is_active=bool(metadata.get("is_active", True)),
+    )
+
+
 class IncrementalIndexPipeline:
     """Drives incremental or full index refresh against the evidence repository."""
 
@@ -139,10 +202,12 @@ class IncrementalIndexPipeline:
         pipeline_store: JsonlIndexPipelineStore,
         *,
         freshness_sla_seconds: int = 3600,
+        retrieval_backend: Any | None = None,
     ) -> None:
         self.repository = repository
         self.pipeline_store = pipeline_store
         self.freshness_sla_seconds = freshness_sla_seconds
+        self.retrieval_backend = retrieval_backend
 
     def _source_watermarks(self) -> dict[str, str | None]:
         watermarks: dict[str, str | None] = {}
@@ -204,6 +269,17 @@ class IncrementalIndexPipeline:
         )
         # Build documents for all new/changed objects (validates adapter can process them)
         adapter.documents_for(new_objects)
+
+        if self.retrieval_backend is not None:
+            if new_objects:
+                records = [_knowledge_object_to_retrieval_record(obj, self.repository) for obj in new_objects]
+                self.retrieval_backend.index_documents(records)
+            if removed_count > 0:
+                for removed_id in (previous_ids - current_ids):
+                    try:
+                        self.retrieval_backend.delete_document(removed_id)
+                    except Exception:
+                        pass
 
         now = _now_iso()
         snapshot = IndexPipelineSnapshot(

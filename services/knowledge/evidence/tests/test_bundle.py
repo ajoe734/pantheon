@@ -125,3 +125,33 @@ def test_jsonl_repository_replays_source_evidence_and_knowledge_refs(tmp_path) -
     assert replayed.get_evidence_item("evi-note-001").to_dict() == item.to_dict()
     assert replayed.get_bundle("evbundle-note-001").to_dict() == bundle.to_dict()
     assert replayed.get_knowledge_object("ko-note-001").evidence_bundle_id == "evbundle-note-001"
+
+
+def test_explicit_legacy_scope_does_not_resolve_tenant_records():
+    from dataclasses import replace
+
+    repository = InMemoryEvidenceRepository()
+    source = replace(_source(), metadata={"tenant_id": "tenant-a", "source_dedupe_key": "same"})
+    repository.add_source_record(source)
+    assert repository.get_source_record(source.source_id, tenant_id=None) is None
+    assert repository.get_source_record_by_dedupe_key("same", tenant_id=None) is None
+    legacy = replace(source, metadata={"source_dedupe_key": "same"}, source_id="legacy")
+    assert repository.add_source_record(legacy) == legacy
+    assert repository.get_source_record_by_dedupe_key("same", tenant_id=None) == legacy
+    assert repository.get_source_record_by_dedupe_key("same", tenant_id="tenant-a") == source
+
+
+@pytest.mark.parametrize("item_tenant, metadata", [("tenant-b", None), (None, None), ("tenant-a", {"tenant_id": "tenant-b"})])
+def test_bundle_rejects_mixed_or_overridden_tenant_before_writing(item_tenant, metadata):
+    from dataclasses import replace
+
+    repository = InMemoryEvidenceRepository()
+    source = replace(_source(), metadata={"tenant_id": "tenant-a"})
+    item = replace(_item(), metadata={"tenant_id": item_tenant} if item_tenant else {})
+    with pytest.raises(EvidenceValidationError, match="tenant"):
+        EvidenceBundleBuilder(repository).build_bundle(
+            source_records=[source], evidence_items=[item], summary="test",
+            created_by="test", metadata=metadata,
+        )
+    assert repository.list_source_records() == []
+    assert repository.list_evidence_items() == []

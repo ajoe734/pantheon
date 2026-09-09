@@ -11,100 +11,160 @@ from services.source_ingestion.connectors.base import SourceRecord
 from .models import EvidenceBundle, EvidenceItem, EvidenceValidationError, KnowledgeObject
 
 
+class _Unscoped:
+    """Omitted scope is the legacy administrative view; explicit None is legacy-only."""
+
+
+_UNSCOPED = _Unscoped()
+
+
 class InMemoryEvidenceRepository:
     """Small deterministic repository used by tests, BFF projections, and stubs."""
 
     def __init__(self) -> None:
         self._source_records: Dict[str, SourceRecord] = {}
+        self._source_records_by_tenant: Dict[tuple[str | None, str], SourceRecord] = {}
         self._source_dedupe_index: Dict[str, str] = {}
+        self._source_dedupe_by_tenant: Dict[tuple[str | None, str], str] = {}
         self._evidence_items: Dict[str, EvidenceItem] = {}
+        self._evidence_items_by_tenant: Dict[tuple[str | None, str], EvidenceItem] = {}
         self._evidence_dedupe_index: Dict[str, str] = {}
+        self._evidence_dedupe_by_tenant: Dict[tuple[str | None, str], str] = {}
         self._bundles: Dict[str, EvidenceBundle] = {}
+        self._bundles_by_tenant: Dict[tuple[str | None, str], EvidenceBundle] = {}
         self._knowledge_objects: Dict[str, KnowledgeObject] = {}
+        self._knowledge_objects_by_tenant: Dict[tuple[str | None, str], KnowledgeObject] = {}
+
+    def clear(self) -> None:
+        self._source_records.clear()
+        self._source_records_by_tenant.clear()
+        self._source_dedupe_index.clear()
+        self._source_dedupe_by_tenant.clear()
+        self._evidence_items.clear()
+        self._evidence_items_by_tenant.clear()
+        self._evidence_dedupe_index.clear()
+        self._evidence_dedupe_by_tenant.clear()
+        self._bundles.clear()
+        self._bundles_by_tenant.clear()
+        self._knowledge_objects.clear()
+        self._knowledge_objects_by_tenant.clear()
 
     def reload(self) -> None:
         """No-op for in-memory store; subclasses override to re-read from durable storage."""
 
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
+        tenant_id = source.tenant_id
         dedupe_key = _metadata_text(source.metadata, "source_dedupe_key")
         if dedupe_key:
-            existing_source_id = self._source_dedupe_index.get(dedupe_key)
+            existing_source_id = self._source_dedupe_by_tenant.get((tenant_id, dedupe_key))
             if existing_source_id and existing_source_id != source.source_id:
-                return self._source_records[existing_source_id]
+                return self._source_records_by_tenant[(tenant_id, existing_source_id)]
         self._source_records[source.source_id] = source
+        self._source_records_by_tenant[(tenant_id, source.source_id)] = source
         if dedupe_key:
             self._source_dedupe_index[dedupe_key] = source.source_id
+            self._source_dedupe_by_tenant[(tenant_id, dedupe_key)] = source.source_id
         return source
 
     def add_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
-        if item.source_id not in self._source_records:
+        tenant_id = item.tenant_id
+        source = self.get_source_record(item.source_id, tenant_id=tenant_id)
+        if source is None:
             raise EvidenceValidationError(f"EvidenceItem references unknown source_id: {item.source_id}")
         dedupe_key = _metadata_text(item.metadata, "evidence_dedupe_key")
         if dedupe_key:
-            existing_item_id = self._evidence_dedupe_index.get(dedupe_key)
+            existing_item_id = self._evidence_dedupe_by_tenant.get((tenant_id, dedupe_key))
             if existing_item_id and existing_item_id != item.evidence_item_id:
-                return self._evidence_items[existing_item_id]
+                return self._evidence_items_by_tenant[(tenant_id, existing_item_id)]
         self._evidence_items[item.evidence_item_id] = item
+        self._evidence_items_by_tenant[(tenant_id, item.evidence_item_id)] = item
         if dedupe_key:
             self._evidence_dedupe_index[dedupe_key] = item.evidence_item_id
+            self._evidence_dedupe_by_tenant[(tenant_id, dedupe_key)] = item.evidence_item_id
         return item
 
     def add_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
-        missing_sources = [source_id for source_id in bundle.source_ids if source_id not in self._source_records]
+        tenant_id = bundle.tenant_id
+        missing_sources = [source_id for source_id in bundle.source_ids if self.get_source_record(source_id, tenant_id=tenant_id) is None]
         if missing_sources:
             raise EvidenceValidationError(f"EvidenceBundle references unknown source_ids: {missing_sources}")
-        missing_items = [item_id for item_id in bundle.evidence_item_ids if item_id not in self._evidence_items]
+        missing_items = [item_id for item_id in bundle.evidence_item_ids if self.get_evidence_item(item_id, tenant_id=tenant_id) is None]
         if missing_items:
             raise EvidenceValidationError(f"EvidenceBundle references unknown evidence_item_ids: {missing_items}")
         self._bundles[bundle.evidence_bundle_id] = bundle
+        self._bundles_by_tenant[(tenant_id, bundle.evidence_bundle_id)] = bundle
         return bundle
 
     def add_knowledge_object(self, knowledge_object: KnowledgeObject) -> KnowledgeObject:
-        if knowledge_object.evidence_bundle_id not in self._bundles:
+        tenant_id = knowledge_object.tenant_id
+        if self.get_bundle(knowledge_object.evidence_bundle_id, tenant_id=tenant_id) is None:
             raise EvidenceValidationError(
                 f"KnowledgeObject references unknown evidence_bundle_id: {knowledge_object.evidence_bundle_id}"
             )
-        if knowledge_object.evidence_item_id not in self._evidence_items:
+        if self.get_evidence_item(knowledge_object.evidence_item_id, tenant_id=tenant_id) is None:
             raise EvidenceValidationError(
                 f"KnowledgeObject references unknown evidence_item_id: {knowledge_object.evidence_item_id}"
             )
         self._knowledge_objects[knowledge_object.knowledge_object_id] = knowledge_object
+        self._knowledge_objects_by_tenant[(tenant_id, knowledge_object.knowledge_object_id)] = knowledge_object
         return knowledge_object
 
-    def get_source_record(self, source_id: str) -> SourceRecord | None:
+    def get_source_record(self, source_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> SourceRecord | None:
+        if tenant_id is not _UNSCOPED:
+            return self._source_records_by_tenant.get((tenant_id, source_id))
         return self._source_records.get(source_id)
 
-    def get_source_record_by_dedupe_key(self, source_dedupe_key: str) -> SourceRecord | None:
+    def get_source_record_by_dedupe_key(self, source_dedupe_key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> SourceRecord | None:
+        if tenant_id is not _UNSCOPED:
+            source_id = self._source_dedupe_by_tenant.get((tenant_id, source_dedupe_key))
+            return self._source_records_by_tenant.get((tenant_id, source_id)) if source_id else None
         source_id = self._source_dedupe_index.get(source_dedupe_key)
         return self._source_records.get(source_id) if source_id else None
 
-    def get_evidence_item(self, evidence_item_id: str) -> EvidenceItem | None:
+    def get_evidence_item(self, evidence_item_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
+        if tenant_id is not _UNSCOPED:
+            return self._evidence_items_by_tenant.get((tenant_id, evidence_item_id))
         return self._evidence_items.get(evidence_item_id)
 
-    def get_evidence_item_by_dedupe_key(self, evidence_dedupe_key: str) -> EvidenceItem | None:
+    def get_evidence_item_by_dedupe_key(self, evidence_dedupe_key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
+        if tenant_id is not _UNSCOPED:
+            item_id = self._evidence_dedupe_by_tenant.get((tenant_id, evidence_dedupe_key))
+            return self._evidence_items_by_tenant.get((tenant_id, item_id)) if item_id else None
         item_id = self._evidence_dedupe_index.get(evidence_dedupe_key)
         return self._evidence_items.get(item_id) if item_id else None
 
-    def get_bundle(self, evidence_bundle_id: str) -> EvidenceBundle | None:
+    def get_bundle(self, evidence_bundle_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceBundle | None:
+        if tenant_id is not _UNSCOPED:
+            return self._bundles_by_tenant.get((tenant_id, evidence_bundle_id))
         return self._bundles.get(evidence_bundle_id)
 
-    def get_knowledge_object(self, knowledge_object_id: str) -> KnowledgeObject | None:
+    def get_knowledge_object(self, knowledge_object_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> KnowledgeObject | None:
+        if tenant_id is not _UNSCOPED:
+            return self._knowledge_objects_by_tenant.get((tenant_id, knowledge_object_id))
         return self._knowledge_objects.get(knowledge_object_id)
 
-    def list_knowledge_objects(self) -> List[KnowledgeObject]:
+    def list_knowledge_objects(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[KnowledgeObject]:
+        if tenant_id is not _UNSCOPED:
+            return [ko for (t, _), ko in self._knowledge_objects_by_tenant.items() if t == tenant_id]
         return list(self._knowledge_objects.values())
 
-    def list_bundles(self) -> List[EvidenceBundle]:
+    def list_bundles(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceBundle]:
+        if tenant_id is not _UNSCOPED:
+            return [b for (t, _), b in self._bundles_by_tenant.items() if t == tenant_id]
         return list(self._bundles.values())
 
     def add_knowledge_objects(self, objects: Iterable[KnowledgeObject]) -> None:
         for knowledge_object in objects:
             self.add_knowledge_object(knowledge_object)
 
-    def list_source_records(self) -> List[SourceRecord]:
+    def list_source_records(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[SourceRecord]:
+        if tenant_id is not _UNSCOPED:
+            return [s for (t, _), s in self._source_records_by_tenant.items() if t == tenant_id]
         return list(self._source_records.values())
 
-    def list_evidence_items(self) -> List[EvidenceItem]:
+    def list_evidence_items(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceItem]:
+        if tenant_id is not _UNSCOPED:
+            return [i for (t, _), i in self._evidence_items_by_tenant.items() if t == tenant_id]
         return list(self._evidence_items.values())
 
 
@@ -130,12 +190,7 @@ class JsonlEvidenceRepository(InMemoryEvidenceRepository):
         self.reload()
 
     def reload(self) -> None:
-        self._source_records.clear()
-        self._source_dedupe_index.clear()
-        self._evidence_items.clear()
-        self._evidence_dedupe_index.clear()
-        self._bundles.clear()
-        self._knowledge_objects.clear()
+        self.clear()
         if not self.path.exists():
             return
 

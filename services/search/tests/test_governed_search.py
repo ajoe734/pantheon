@@ -291,3 +291,327 @@ def test_keyword_index_adapter_preserves_metadata_search_text_input() -> None:
     )
 
     assert [result.result_id for result in response.results] == ["ko-adapter-metadata"]
+
+
+def _add_tenant_evidence(repository, tenant, *, text, citation):
+    source = SourceRecord(
+        source_id="same-source", connector_id="notes", source_type="internal_note",
+        title="momentum", content_ref="note://same",
+        metadata={"access_scope": ["research"], **({"tenant_id": tenant} if tenant else {})},
+    )
+    item = EvidenceItem(
+        evidence_item_id="same-item", source_id=source.source_id, item_type="text_chunk",
+        content_ref="note://same#1", citation_label=citation, body=text,
+        access_scope=["research"], metadata={"tenant_id": tenant} if tenant else {},
+    )
+    builder = EvidenceBundleBuilder(repository)
+    bundle = builder.build_bundle(
+        source_records=[source], evidence_items=[item], summary=text,
+        created_by="test", evidence_bundle_id="same-bundle",
+    )
+    return builder.build_knowledge_object(
+        knowledge_object_id="same-object", source_record=source, evidence_item=item,
+        evidence_bundle=bundle, title="momentum", text=text,
+    )
+
+
+@pytest.mark.parametrize("tenant", [None, "tenant-a"])
+def test_same_named_foreign_evidence_cannot_affect_rank_text_citations_or_counts(tenant):
+    repository = InMemoryEvidenceRepository()
+    own = _add_tenant_evidence(repository, tenant, text="momentum own", citation="own#1")
+    context = SearchAccessContext(tenant_id=tenant or "default", access_scopes=["research"])
+    request = SearchRequest(query="momentum", persona_id="persona", workspace_id="workspace")
+    before = SearchGateway(repository).search(request, context)
+    _add_tenant_evidence(repository, "tenant-b", text="secret foreignword", citation="secret#1")
+    after = SearchGateway(repository).search(request, context)
+    assert [r.answer_context for r in after.results] == ["momentum own"]
+    assert [r.citations for r in after.results] == [["own#1"]]
+    assert after.rejected_items_count == before.rejected_items_count == 0
+    assert [r.relevance_score for r in after.results] == [r.relevance_score for r in before.results]
+    document = KeywordIndexAdapter(repository).documents_for([own])[0]
+    assert "secret" not in document.search_text
+    assert "foreignword" not in document.search_text
+
+
+def test_backend_candidate_hydrates_only_request_tenant_owner():
+    from types import SimpleNamespace
+
+    repository = InMemoryEvidenceRepository()
+    _add_tenant_evidence(repository, "tenant-a", text="momentum own", citation="own#1")
+    _add_tenant_evidence(repository, "tenant-b", text="secret", citation="secret#1")
+    hit = SimpleNamespace(id="same-object", ranker_version="test", score=1.0,
+                          component_scores={}, matched_terms=())
+    backend = SimpleNamespace(search=lambda **kwargs: [hit])
+    response = SearchGateway(repository, retrieval_backend=backend).search(
+        SearchRequest(query="momentum"),
+        SearchAccessContext(tenant_id="tenant-a", access_scopes=["research"]),
+    )
+    assert [r.answer_context for r in response.results] == ["momentum own"]
+    assert [r.citations for r in response.results] == [["own#1"]]
+
+
+# ============================================================================
+# Inbound Search API Authentication & Access Context Ceiling Tests
+# ============================================================================
+
+import time
+from fastapi.testclient import TestClient
+from services.runtime_auth_inbound import encode_jwt_hs256
+from services.search.main import create_app
+
+JWT_SECRET = "search-test-secret-key-12345"
+
+
+def _make_jwt(
+    *,
+    sub: str | None = "search-operator-1",
+    roles: list[str] | None = None,
+    tenant_id: str | None = "tenant-alpha",
+    exp_offset: int = 3600,
+    secret: str = JWT_SECRET,
+    custom_claims: dict | None = None,
+) -> str:
+    claims: dict = {}
+    if sub is not None:
+        claims["sub"] = sub
+    if roles is not None:
+        claims["roles"] = roles
+    elif roles is None and "roles" not in (custom_claims or {}):
+        claims["roles"] = ["operator", "researcher"]
+    if tenant_id is not None:
+        claims["tenant_id"] = tenant_id
+    if exp_offset is not None:
+        claims["exp"] = int(time.time()) + exp_offset
+    if custom_claims:
+        claims.update(custom_claims)
+    return encode_jwt_hs256(claims, secret=secret)
+
+
+def _valid_query_body(**overrides) -> dict:
+    body = {
+        "request_id": "req-search-auth-001",
+        "trace_id": "trace-search-auth-001",
+        "query": "alpha",
+        "documents": [],
+        "persona_id": "persona-researcher",
+        "workspace_id": "workspace-alpha",
+        "access_context": {
+            "persona_id": "persona-researcher",
+            "workspace_id": "workspace-alpha",
+            "environment": "paper",
+            "access_scopes": ["operator", "research"],
+            "license_scopes": ["internal"],
+        },
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.fixture
+def search_client(tmp_path):
+    index_path = tmp_path / "search-index.jsonl"
+    return TestClient(create_app(index_path))
+
+
+def test_search_auth_permissive_mode_unauthenticated_allowed(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "permissive")
+    resp = search_client.post("/api/search/query", json=_valid_query_body())
+    assert resp.status_code == 200, resp.text
+
+
+def test_search_auth_strict_mode_missing_token_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    resp = search_client.post("/api/search/query", json=_valid_query_body())
+    assert resp.status_code == 401
+    assert "missing Bearer token" in resp.text
+
+
+def test_search_auth_invalid_signature_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    bad_token = _make_jwt(secret="wrong-secret-key-999")
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {bad_token}"},
+    )
+    assert resp.status_code == 401
+
+
+def test_search_auth_expired_token_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    expired_token = _make_jwt(exp_offset=-100)
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {expired_token}"},
+    )
+    assert resp.status_code == 401
+
+
+def test_search_auth_missing_sub_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(sub=None)
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "sub" in resp.text
+
+
+def test_search_auth_missing_exp_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(exp_offset=None)
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "exp" in resp.text
+
+
+def test_search_auth_missing_tenant_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(tenant_id=None)
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "tenant" in resp.text
+
+
+def test_search_auth_missing_roles_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(roles=[])
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "role" in resp.text.lower()
+
+
+def test_search_auth_whitespace_claim_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(sub="   ")
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "whitespace" in resp.text
+
+
+def test_search_auth_forged_body_tenant_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(tenant_id="tenant-alpha")
+    body = _valid_query_body()
+    body["access_context"]["tenant_id"] = "tenant-beta"
+    resp = search_client.post(
+        "/api/search/query",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "outside the verified caller scope" in resp.text
+
+
+def test_search_auth_forged_body_actor_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(sub="operator-alpha")
+    body = _valid_query_body()
+    body["actor_ref"] = "operator-intruder"
+    resp = search_client.post(
+        "/api/search/query",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "actor_ref does not match verified token identity" in resp.text
+
+
+def test_search_auth_role_elevation_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(roles=["researcher"])
+    body = _valid_query_body()
+    body["role_refs"] = ["admin"]
+    resp = search_client.post(
+        "/api/search/query",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert "exceed verified token roles" in resp.text
+
+
+def test_search_auth_insufficient_endpoint_role_rejected(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(roles=["guest_viewer"])
+    resp = search_client.post(
+        "/api/search/query",
+        json=_valid_query_body(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_search_auth_valid_token_populates_context(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+    token = _make_jwt(sub="researcher-carol", tenant_id="tenant-finance", roles=["researcher"])
+    body = _valid_query_body()
+    body.pop("actor_ref", None)
+    body["access_context"]["actor_ref"] = None
+    body["access_context"]["tenant_id"] = None
+
+    resp = search_client.post(
+        "/api/search/query",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_search_admin_endpoints_role_enforcement(search_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_SEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_SEARCH_JWT_SECRET", JWT_SECRET)
+
+    # 1. Researcher cannot call materialize or reload
+    researcher_token = _make_jwt(roles=["researcher"])
+    resp = search_client.post(
+        "/api/search/index/materialize",
+        headers={"Authorization": f"Bearer {researcher_token}"},
+    )
+    assert resp.status_code == 403
+
+    resp = search_client.post(
+        "/api/search/index/reload",
+        headers={"Authorization": f"Bearer {researcher_token}"},
+    )
+    assert resp.status_code == 403
+
+    # 2. Admin/operator can call reload
+    admin_token = _make_jwt(roles=["admin"])
+    resp = search_client.post(
+        "/api/search/index/reload",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+

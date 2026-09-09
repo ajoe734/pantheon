@@ -112,6 +112,10 @@
       "minimum": 0,
       "default": 0,
       "description": "Incremented by the retrieval facade when this memory is reused in an authorized context."
+    },
+    "tenant_id": {
+      "type": ["string", "null"],
+      "description": "Optional tenant identifier for multi-tenant memory isolation."
     }
   },
   "additionalProperties": false
