@@ -53,7 +53,7 @@
     },
     "auth_handlers_store_rebinding": {
       "file": "services/control-plane/bff/auth/handlers.py",
-      "detail": "Rebound get_session_id, get_session_key, get_session_state, ensure bff_auth_refresh persists to get_session_key(identity), populate last_refreshed_at and last_refresh_credential_source in bff_me, and ensure create_auth_handlers binds deps.raise_if_session_logged_out to the injected deps.session_lifecycle_store"
+      "detail": "Rebound get_session_id, get_session_key, get_session_state, ensure bff_auth_refresh resolves idempotency replay/conflict before session state mutation and persists to get_session_key(identity), populate last_refreshed_at and last_refresh_credential_source in bff_me, and ensure create_auth_handlers binds deps.raise_if_session_logged_out to the injected deps.session_lifecycle_store"
     },
     "main_delegation": {
       "file": "services/control-plane/bff/main.py",
@@ -61,7 +61,7 @@
     },
     "focused_regressions": {
       "file": "services/control-plane/bff/auth/test_policy.py",
-      "detail": "16 tests covering standalone imports, two isolated stores with independent logout, concurrent/idempotent logout, nested two-instance lifecycle proving outer idempotency survives inner teardown, session key variants and legacy fallback, cookie/bearer/refresh flows, configured session key refresh/readback/idempotency, negative JWT/role cases, real signed-token tenant rejection through the router, dev-login production block, and composition smoke"
+      "detail": "16 tests covering standalone imports, two isolated stores with independent logout, concurrent/idempotent logout, nested two-instance lifecycle proving outer idempotency survives inner teardown, session key variants and legacy fallback, cookie/bearer/refresh flows, configured session key refresh/readback/idempotency with advanceable clock, negative JWT/role cases, real signed-token tenant rejection through the router, dev-login production block, and composition smoke"
     },
     "live_credentials_changed": false,
     "production_grants_changed": false,
@@ -117,9 +117,9 @@
       "result": "pass (both composition_store and isolated_store return 200 -> logout 200 -> 401)"
     }
   ],
-  "coordination_note": "This functional source prerequisite fixes the injected auth/session seam and validates standalone auth policy, canonical configured-session key refresh and readback, nested two-instance outer idempotency, real signed-token tenant router rejection, and Pack-D direct error response envelope. Pre-existing test-migration failures in test_bff_session_auth_me_contract.py are preserved honestly and handed off to BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 to complete the 211-importer test fixture migration.",
+  "coordination_note": "This functional source prerequisite fixes the injected auth/session seam, resolves refresh replay and conflict checks before session state mutation, and validates standalone auth policy, canonical configured-session key refresh and readback with an advanceable clock, nested two-instance outer idempotency, real signed-token tenant router rejection, and Pack-D direct error response envelope. Pre-existing test-migration failures in test_bff_session_auth_me_contract.py are preserved honestly and handed off to BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 to complete the 211-importer test fixture migration.",
   "review": {
-    "owner": "Antigravity2",
+    "owner": "Antigravity",
     "reviewer": "Codex",
     "decision": "pending independent exact-head review"
   }

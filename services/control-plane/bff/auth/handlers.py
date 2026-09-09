@@ -463,10 +463,6 @@ async def bff_auth_refresh(
         identity = _assert_identity(None, deps, mfa=x_mfa_token, cookie=str(credential))
     else:
         identity = _assert_identity(bearer, deps, mfa=x_mfa_token, cookie=pantheon_session)
-    now = deps.utc_now()
-    state = _state(identity, deps)
-    state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": source})
-    deps.session_lifecycle_store.upsert_session(get_session_key(identity), state, now=now)
     idem = idempotency_key or x_idempotency_key
     record_key = _idempotency_key("POST /bff/auth/refresh", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}, "source": source})
@@ -478,6 +474,10 @@ async def bff_auth_refresh(
             result = cached["result"]
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
             return result
+    now = deps.utc_now()
+    state = _state(identity, deps)
+    state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": source})
+    deps.session_lifecycle_store.upsert_session(get_session_key(identity), state, now=now)
     result = _lifecycle(identity, "refresh", idem, now, deps=deps)
     descriptor = {"source": source, "session_kind": _session_kind(identity), "sessionKind": _session_kind(identity), "token_kind": identity.token_kind, "tokenKind": identity.token_kind}
     result["data"]["session"]["last_refreshed_at"] = now

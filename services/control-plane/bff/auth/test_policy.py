@@ -83,6 +83,7 @@ def _build_standalone_app(
     *,
     auth_mode: str = "permissive",
     auth_stub: bool = True,
+    utc_now: Optional[Callable[[], str]] = None,
 ) -> FastAPI:
     """Build a standalone FastAPI app wired with isolated AuthDependencies."""
     deps = create_auth_dependencies(
@@ -90,6 +91,7 @@ def _build_standalone_app(
         bff_auth_stub_enabled=lambda: auth_stub,
         bff_auth_mode=lambda: auth_mode,
         bff_source_commit=lambda: "test-commit-001",
+        utc_now=utc_now,
     )
     handlers = create_auth_handlers(dependencies=deps)
     service = AuthFacadeService(
@@ -481,21 +483,26 @@ def test_refresh_flow_with_bearer_and_cookie(tmp_path: Path, monkeypatch: pytest
 
 
 def test_configured_session_key_refresh_readback_and_idempotency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Regression test for P1:
-    With PANTHEON_SESSION_ID=configured-session and a standalone factory:
+    """Regression test for P1 and P2:
+    With PANTHEON_SESSION_ID=configured-session, a standalone factory, and an advanceable clock:
     1. POST /bff/auth/refresh writes to canonical configured-session key in store,
        NOT the bff-session-review-op fallback key.
     2. Refresh response includes session.id = configured-session, last_refreshed_at,
        and last_refresh_credential_source.
-    3. Idempotency replay with identical Idempotency-Key returns 200 with replayed=True.
-    4. Subsequent GET /bff/me reads back state using the canonical configured-session key
-       and preserves last_refreshed_at and last_refresh_credential_source.
-    5. Direct inspection of store verifies state is present under canonical key and absent
+    3. Idempotency replay with identical Idempotency-Key returns 200 with replayed=True,
+       without mutating last_refreshed_at when the clock advances.
+    4. Idempotency conflict with different payload returns 409 IDEMPOTENCY_CONFLICT,
+       without mutating last_refreshed_at when the clock advances.
+    5. Subsequent GET /bff/me reads back state using the canonical configured-session key
+       and preserves initial last_refreshed_at and last_refresh_credential_source.
+    6. Direct inspection of store verifies state is present under canonical key and absent
        under the unconfigured fallback key.
     """
     monkeypatch.setenv("PANTHEON_SESSION_ID", "configured-session")
     store = SessionLifecycleStore(str(tmp_path / "configured_session_store.json"))
-    app = _build_standalone_app(store, auth_mode="permissive")
+
+    clock = ["2026-09-09T01:00:00Z"]
+    app = _build_standalone_app(store, auth_mode="permissive", utc_now=lambda: clock[0])
     client = TestClient(app)
 
     headers = {
@@ -503,43 +510,46 @@ def test_configured_session_key_refresh_readback_and_idempotency(tmp_path: Path,
         "Idempotency-Key": "refresh-idem-configured-001",
     }
 
-    # 1. Initial refresh
+    # 1. Initial refresh at 01:00:00Z
     resp1 = client.post("/bff/auth/refresh", json={}, headers=headers)
     assert resp1.status_code == 200, resp1.text
     data1 = resp1.json()["data"]
     assert data1["session"]["id"] == "configured-session"
     assert data1["session"]["session_kind"] in ("stub", "bearer")
     refreshed_at = data1["session"]["last_refreshed_at"]
-    assert refreshed_at is not None
+    assert refreshed_at == "2026-09-09T01:00:00Z"
     assert data1["session"]["last_refresh_credential_source"] == "bearer"
     assert resp1.json()["meta"]["idempotency"]["replayed"] is False
 
-    # 2. Idempotency replay with same key
+    # 2. Idempotency replay with same key, clock advanced to 01:00:10Z
+    clock[0] = "2026-09-09T01:00:10Z"
     resp2 = client.post("/bff/auth/refresh", json={}, headers=headers)
     assert resp2.status_code == 200, resp2.text
     assert resp2.json()["meta"]["idempotency"]["replayed"] is True
-    assert resp2.json()["data"]["session"]["last_refreshed_at"] == refreshed_at
+    assert resp2.json()["data"]["session"]["last_refreshed_at"] == "2026-09-09T01:00:00Z"
 
-    # 3. Idempotency conflict with different payload
+    # 3. Idempotency conflict with different payload, clock advanced to 01:00:20Z
+    clock[0] = "2026-09-09T01:00:20Z"
     resp_conflict = client.post("/bff/auth/refresh", json={"extra": "different"}, headers=headers)
     assert resp_conflict.status_code == 409
     err_conflict = _extract_error(resp_conflict)
     assert err_conflict.get("code") == "IDEMPOTENCY_CONFLICT"
 
-    # 4. GET /bff/me readback
+    # 4. GET /bff/me readback with clock advanced to 01:00:30Z must report 01:00:00Z
+    clock[0] = "2026-09-09T01:00:30Z"
     resp_me = client.get("/bff/me", headers={"Authorization": "Bearer review-op:operator"})
     assert resp_me.status_code == 200, resp_me.text
     me_session = resp_me.json()["data"]["session"]
     assert me_session["id"] == "configured-session"
-    assert me_session["last_refreshed_at"] == refreshed_at
+    assert me_session["last_refreshed_at"] == "2026-09-09T01:00:00Z"
     assert me_session["last_refresh_credential_source"] == "bearer"
 
-    # 5. Direct store inspection: canonical key must exist, fallback key must NOT exist
+    # 5. Direct store inspection: canonical key must preserve 01:00:00Z, fallback key must NOT exist
     canonical_key = "operator:review-op:session:configured-session"
     fallback_key = "operator:review-op:session:bff-session-review-op"
     session_state = store.get_session(canonical_key)
     assert session_state != {}, f"Expected state at {canonical_key}"
-    assert session_state.get("last_refreshed_at") == refreshed_at
+    assert session_state.get("last_refreshed_at") == "2026-09-09T01:00:00Z"
     assert session_state.get("state") == "active"
     assert store.get_session(fallback_key) == {}, f"Fallback key {fallback_key} should not have been written"
 
