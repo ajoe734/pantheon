@@ -81,9 +81,6 @@ _JOURNAL_PATCH_FIELDS = {
     "linkedStrategyIds",
     "linkedPersonaIds",
     "visibility",
-    "category",
-    "contextRefs",
-    "context_refs",
 }
 _JOURNAL_TAG_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 _JOURNAL_WRITE_ROLES = {"operator", "reviewer", "approver", "admin"}

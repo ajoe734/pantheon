@@ -13,6 +13,7 @@ Covers:
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -2124,6 +2125,63 @@ patch_entry(
             self.assertEqual(dest["version"], 1)
             self.assertEqual(source.get(snapshot["id"]), newer, "stale inventory deleted a newer committed source row")
             self.assertFalse(report.disposition_evidence["disposed"])
+
+    def _run_disposal_case(self, change, *, after_read=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source.json"
+            source = CoordinatingJsonGovernanceRecordStore(path, id_fields=("id",))
+            other = CoordinatingJsonGovernanceRecordStore(path, id_fields=("id",))
+            snapshot = {
+                "id": "synthetic-review",
+                "title": "Decision",
+                "decision": "body",
+                "author": "alice",
+                "tenant_id": "tenant-a",
+                "visibility": "private",
+                "version": 1,
+                "createdAt": "2026-09-01T00:00:00Z",
+                "updatedAt": "2026-09-01T00:00:00Z",
+                "contextRefs": [{"type": "strategy", "id": "old-ref"}],
+            }
+            changed = {**copy.deepcopy(snapshot), **change}
+            source.put(snapshot if after_read else changed)
+            original_get = source.get
+            fired = False
+
+            def raced_get(entry_id):
+                nonlocal fired
+                result = original_get(entry_id)
+                if after_read and not fired:
+                    fired = True
+                    other.put(changed)
+                    self.assertEqual(other.get(entry_id), changed)
+                return result
+
+            dest = build_decision_journal_stores(Path(tmp) / "dest")
+            with unittest.mock.patch.object(source, "get", side_effect=raced_get):
+                report = JournalMigrationEngine(dest).run_migration(
+                    [snapshot],
+                    target_tenant_id="tenant-a",
+                    dry_run=False,
+                    dispose_source=True,
+                    source_store=source,
+                )
+            fresh_source = CoordinatingJsonGovernanceRecordStore(path, id_fields=("id",))
+            remaining = fresh_source.get(snapshot["id"])
+            self.assertEqual(remaining, changed, "Unmigrated durable source change was deleted")
+            self.assertFalse(report.disposition_evidence["disposed"])
+
+    def test_changed_context_refs_preserved(self):
+        self._run_disposal_case({"contextRefs": [{"type": "strategy", "id": "new-ref"}]})
+
+    def test_changed_principal_preserved(self):
+        self._run_disposal_case({"tenant_id": "tenant-b", "author": "bob"})
+
+    def test_commit_between_source_read_and_delete_preserved(self):
+        self._run_disposal_case(
+            {"decision": "new committed body", "version": 2, "updatedAt": "2026-09-02T00:00:00Z"},
+            after_read=True,
+        )
 
 
 if __name__ == "__main__":

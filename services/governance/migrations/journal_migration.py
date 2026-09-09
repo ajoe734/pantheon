@@ -168,45 +168,71 @@ def _dispose_source_record(
     if source_store is None:
         return False
 
-    current_src = _get_source_record(source_store, entry_id)
-    if current_src is not None and expected_record is not None:
-        if _is_source_record_stale_or_conflicting(current_src, expected_record, expected_checksum):
-            # Source row has been modified or is newer than the migrated snapshot.
-            # Strictly preserve the source store to prevent deleting newer committed data.
+    clean_id = str(entry_id or "").strip()
+    if not clean_id:
+        return False
+
+    if expected_record is not None:
+        _ = _get_source_record(source_store, clean_id)
+        if hasattr(source_store, "delete_if_equals") and callable(source_store.delete_if_equals):
+            deleted, _ = source_store.delete_if_equals(clean_id, expected_record)
+            if deleted:
+                if hasattr(source_store, "get") and callable(source_store.get):
+                    try:
+                        return source_store.get(clean_id) is None
+                    except Exception:
+                        return False
+                return True
             return False
-    elif current_src is not None and expected_checksum is not None:
+
+        try:
+            from services.governance.decision_journal import _delete_record_if_equals
+            deleted, _ = _delete_record_if_equals(source_store, clean_id, expected_record)
+            if deleted:
+                if hasattr(source_store, "get") and callable(source_store.get):
+                    try:
+                        return source_store.get(clean_id) is None
+                    except Exception:
+                        return False
+                return True
+            return False
+        except Exception:
+            return False
+
+    current_src = _get_source_record(source_store, clean_id)
+    if current_src is not None and expected_checksum is not None:
         if compute_journal_row_checksum(current_src) != expected_checksum:
             return False
 
     deleted = False
     if hasattr(source_store, "delete_decision_journal_entry") and callable(source_store.delete_decision_journal_entry):
         try:
-            source_store.delete_decision_journal_entry(entry_id)
+            source_store.delete_decision_journal_entry(clean_id)
             deleted = True
         except Exception:
             deleted = False
     elif hasattr(source_store, "_journal"):
         if isinstance(source_store._journal, dict):
-            deleted = bool(source_store._journal.pop(entry_id, None) is not None)
+            deleted = bool(source_store._journal.pop(clean_id, None) is not None)
         elif hasattr(source_store._journal, "delete") and callable(source_store._journal.delete):
-            deleted = bool(source_store._journal.delete(entry_id))
+            deleted = bool(source_store._journal.delete(clean_id))
     elif hasattr(source_store, "delete") and callable(source_store.delete):
         try:
-            deleted = bool(source_store.delete(entry_id))
+            deleted = bool(source_store.delete(clean_id))
         except Exception:
             deleted = False
 
     if deleted:
         if hasattr(source_store, "get_journal_entry") and callable(source_store.get_journal_entry):
             try:
-                return source_store.get_journal_entry(entry_id) is None
+                return source_store.get_journal_entry(clean_id) is None
             except Exception:
                 return False
         elif hasattr(source_store, "_journal") and isinstance(source_store._journal, dict):
-            return entry_id not in source_store._journal
+            return clean_id not in source_store._journal
         elif hasattr(source_store, "get") and callable(source_store.get):
             try:
-                return source_store.get(entry_id) is None
+                return source_store.get(clean_id) is None
             except Exception:
                 return False
         return True

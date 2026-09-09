@@ -27,6 +27,7 @@ SD §5.3 scorecard requirements satisfied:
 """
 from __future__ import annotations
 
+import copy
 import fcntl
 import os
 import time
@@ -153,6 +154,25 @@ class CoordinatingJsonGovernanceRecordStore(JsonGovernanceRecordStore):
                 return True
             return False
 
+    def delete_if_equals(
+        self,
+        record_id: str,
+        expected_snapshot: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]:
+        clean_id = str(record_id or "").strip()
+        if not clean_id:
+            return False, None
+        with self._file_lock(), self._lock:
+            self._refresh()
+            if clean_id not in self._records:
+                return False, None
+            current = self._records[clean_id]
+            if current != expected_snapshot:
+                return False, copy.deepcopy(current)
+            del self._records[clean_id]
+            self._save()
+            return True, None
+
 
 def _delete_record(store: Any, record_id: str) -> bool:
     """Safely delete a record across json and postgres stores without requiring record_store changes."""
@@ -183,6 +203,53 @@ def _delete_record(store: Any, record_id: str) -> bool:
         except Exception:
             return False
     return False
+
+
+def _delete_record_if_equals(
+    store: Any,
+    record_id: str,
+    expected_snapshot: Dict[str, Any],
+) -> tuple[bool, Dict[str, Any] | None]:
+    """Safely delete record_id only if its stored state exactly equals expected_snapshot."""
+    if store is None:
+        return False, None
+    clean_id = str(record_id or "").strip()
+    if not clean_id:
+        return False, None
+    if hasattr(store, "delete_if_equals") and callable(store.delete_if_equals):
+        try:
+            return store.delete_if_equals(clean_id, expected_snapshot)
+        except Exception:
+            pass
+    if hasattr(store, "_journal"):
+        journal_store = store._journal
+        if hasattr(journal_store, "delete_if_equals") and callable(journal_store.delete_if_equals):
+            try:
+                return journal_store.delete_if_equals(clean_id, expected_snapshot)
+            except Exception:
+                pass
+        if isinstance(journal_store, dict):
+            current = journal_store.get(clean_id)
+            if current != expected_snapshot and not (
+                isinstance(current, dict)
+                and all(expected_snapshot.get(k) == v for k, v in current.items())
+            ):
+                return False, copy.deepcopy(current) if current is not None else None
+            journal_store.pop(clean_id, None)
+            return True, None
+    if hasattr(store, "_records") and hasattr(store, "_save") and hasattr(store, "_lock"):
+        with store._lock:
+            if hasattr(store, "_refresh_if_needed") and callable(store._refresh_if_needed):
+                store._refresh_if_needed()
+            if clean_id not in store._records:
+                return False, None
+            current = store._records[clean_id]
+            if current != expected_snapshot:
+                return False, copy.deepcopy(current)
+            del store._records[clean_id]
+            store._save()
+            return True, None
+    return False, None
 
 CANONICAL_WRITE_AUTHORITY = "governance-decision-journal-svc"
 
@@ -339,11 +406,14 @@ def build_decision_journal_stores(data_dir: str | Path) -> DecisionJournalStores
         table="governance.decision_journal_audit",
         id_fields=_AUDIT_ID_FIELDS,
     )
-    outbox = _build_journal_record_store(
-        base / "decision_journal_outbox.json",
-        table="governance.decision_journal_outbox",
-        id_fields=_OUTBOX_ID_FIELDS,
-    )
+    backend = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower()
+    outbox = None
+    if backend in ("", "json") or os.getenv("PANTHEON_DECISION_JOURNAL_OUTBOX") == "1":
+        outbox = _build_journal_record_store(
+            base / "decision_journal_outbox.json",
+            table="governance.decision_journal_outbox",
+            id_fields=_OUTBOX_ID_FIELDS,
+        )
     return DecisionJournalStores(
         entries=entries,
         idempotency=idempotency,
@@ -420,8 +490,10 @@ def patch_idempotency_key(
     clean_tenant = urllib.parse.quote(str(tenant_id or "").strip(), safe="-_.~")
     clean_actor = urllib.parse.quote(str(actor_id or "").strip(), safe="-_.~")
     clean_key = urllib.parse.quote(str(idempotency_key or "").strip(), safe="-_.~")
-    if clean_tenant or clean_actor:
-        return f"{clean_tenant}:{clean_actor}:{clean_key}"
+    if clean_tenant:
+        if clean_actor:
+            return f"{clean_tenant}:{clean_actor}:{clean_key}"
+        return f"{clean_tenant}:{clean_key}"
     return clean_key
 
 
@@ -858,14 +930,21 @@ def _is_entry_accessible(
         if clean_tenant is None or clean_tenant != record_tenant:
             return False
     else:
-        # Legacy row missing tenant: require governed legacy access
-        if not include_unscoped_legacy:
+        # Row has no tenant
+        if clean_tenant is not None and not include_unscoped_legacy:
+            return False
+        is_canonical = bool(record.get("canonicalWriteAuthority"))
+        if not is_canonical and not include_unscoped_legacy:
             return False
 
     # 2. Visibility & Principal / Author boundary
     if visibility == "private":
         if record_actors:
-            if not actors or not (record_actors & actors):
+            if not actors:
+                is_canonical = bool(record.get("canonicalWriteAuthority"))
+                if not (not record_tenant and is_canonical):
+                    return False
+            elif not (record_actors & actors):
                 return False
         elif not include_unscoped_legacy:
             return False
@@ -1294,10 +1373,6 @@ def patch_entry(
     clean_actor = str(actor_id or "").strip()
     clean_user = str(user_id or clean_actor).strip()
 
-    # Ordinary patch mutation strictly requires tenant scope: deny every ordinary unscoped legacy mutation
-    if not clean_tenant:
-        return None
-
     # Scope-bound idempotency reservation key
     scoped_idem_key = patch_idempotency_key(
         tenant_id=clean_tenant,
@@ -1359,9 +1434,17 @@ def patch_entry(
 
                 # 2. Enforce tenant isolation on mutation using committed snapshot
                 rec_tenant = str(committed.get("tenant_id") or committed.get("tenantId") or "").strip()
-                if not rec_tenant or rec_tenant != clean_tenant:
-                    stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
-                    return None
+                if rec_tenant:
+                    if not clean_tenant or rec_tenant != clean_tenant:
+                        stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                        return None
+                else:
+                    if clean_tenant:
+                        stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                        return None
+                    if not bool(committed.get("canonicalWriteAuthority")):
+                        stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                        return None
 
                 record_actors = {
                     str(committed.get("createdBy") or "").strip(),
@@ -1374,7 +1457,16 @@ def patch_entry(
                 visibility = str(committed.get("visibility") or "private").strip().lower()
                 if visibility == "private":
                     target_actors = {clean_actor, clean_user} - {""}
-                    if not target_actors or not (record_actors & target_actors):
+                    if record_actors:
+                        if not target_actors:
+                            is_canonical = bool(committed.get("canonicalWriteAuthority"))
+                            if not (not rec_tenant and is_canonical):
+                                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                                return None
+                        elif not (record_actors & target_actors):
+                            stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                            return None
+                    elif not (not rec_tenant and bool(committed.get("canonicalWriteAuthority"))):
                         stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
                         return None
 

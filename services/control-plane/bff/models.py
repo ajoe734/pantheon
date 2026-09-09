@@ -340,8 +340,6 @@ class DecisionJournalEntryDTO(BaseModel):
     version: int = 1
     canonicalWriteAuthority: str = "agora_journal_service"
     persistenceMode: str = "bff_local_dev_store"
-    category: Optional[str] = None
-    contextRefs: Optional[List[Dict[str, Any]]] = None
 
 
 class JournalEntryMergePatch(BaseModel):
@@ -351,9 +349,6 @@ class JournalEntryMergePatch(BaseModel):
     linkedStrategyIds: Optional[List[str]] = None
     linkedPersonaIds: Optional[List[str]] = None
     visibility: Optional[str] = None
-    category: Optional[str] = None
-    contextRefs: Optional[List[Dict[str, Any]]] = None
-    context_refs: Optional[List[Dict[str, Any]]] = None
 
 
 class CommandStatusResponse(BaseModel):

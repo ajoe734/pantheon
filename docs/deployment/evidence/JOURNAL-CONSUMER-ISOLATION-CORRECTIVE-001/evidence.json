@@ -31,7 +31,7 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit. CORRECTIVE (PR #5667 review head 8ee88255d, commit a742e3ebf): journal_migration.py previously performed an unconditional entries.put on legacy migration destination without CAS or snapshot revalidation, allowing concurrent tenant migrations to race. Fixed by claiming the legacy row with compare_and_set against the exact read snapshot so losing concurrent migrations report conflicts. CORRECTIVE (PR #5667 review head 2baf1d76a): journal_migration.py previously omitted Agora category, contextRefs, version, and updatedAt from migration mapping, compute_journal_row_checksum(), and verify_migration_parity(), causing accepted migrations to reset version/timestamps and dispose source stores while dropping contextRefs and category. Fixed compute_journal_row_checksum() and verify_migration_parity() to deterministically normalize and assert category, contextRefs, version, createdAt, updatedAt, tags, and linked IDs, passing all preserved fields through create_entry() and DecisionJournalOwnerAdapter.create_decision_journal_entry(). On incomplete fidelity or readback parity mismatch, migration detects conflict and retains source store without disposal; repro script /tmp/journal-review-2baf1d76-migration.py passes exit 0; regression test test_migration_preserves_agora_context_refs_category_version_and_timestamps added to test_decision_journal.py. CORRECTIVE (PR #5667 review head 4339b4e8b): _dispose_source_record previously deleted legacy source entries by entry_id without verifying that the source record in source_store still matched the migrated snapshot, allowing stale inventories to delete newer committed source rows or modified rows during source disposal. Fixed by checking current source row in source_store via _is_source_record_stale_or_conflicting(current_src, record, expected_checksum) before deletion, strictly preserving source rows when version is higher, updatedAt is later, or content fields conflict; repro script /tmp/journal-review-4339b4e8-disposal.py passes exit 0; regression test test_stale_inventory_must_not_delete_newer_source added to test_decision_journal.py."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Requires or recovers checksum/principal/action-bound durable migration audit (governance.decision_journal.migrated or legacy_scoped) before every disposal path, including skipped_identical and checkpoint resume; source is strictly preserved on missing proof or general patch audit. CORRECTIVE (PR #5667 review head 8ee88255d, commit a742e3ebf): journal_migration.py previously performed an unconditional entries.put on legacy migration destination without CAS or snapshot revalidation, allowing concurrent tenant migrations to race. Fixed by claiming the legacy row with compare_and_set against the exact read snapshot so losing concurrent migrations report conflicts. CORRECTIVE (PR #5667 review head 2baf1d76a): journal_migration.py previously omitted Agora category, contextRefs, version, and updatedAt from migration mapping, compute_journal_row_checksum(), and verify_migration_parity(), causing accepted migrations to reset version/timestamps and dispose source stores while dropping contextRefs and category. Fixed compute_journal_row_checksum() and verify_migration_parity() to deterministically normalize and assert category, contextRefs, version, createdAt, updatedAt, tags, and linked IDs, passing all preserved fields through create_entry() and DecisionJournalOwnerAdapter.create_decision_journal_entry(). On incomplete fidelity or readback parity mismatch, migration detects conflict and retains source store without disposal; repro script /tmp/journal-review-2baf1d76-migration.py passes exit 0; regression test test_migration_preserves_agora_context_refs_category_version_and_timestamps added to test_decision_journal.py. CORRECTIVE (PR #5667 review head 4339b4e8b): _dispose_source_record previously deleted legacy source entries by entry_id without verifying that the source record in source_store still matched the migrated snapshot, allowing stale inventories to delete newer committed source rows or modified rows during source disposal. Fixed by checking current source row in source_store via _is_source_record_stale_or_conflicting(current_src, record, expected_checksum) before deletion, strictly preserving source rows when version is higher, updatedAt is later, or content fields conflict; repro script /tmp/journal-review-4339b4e8-disposal.py passes exit 0; regression test test_stale_inventory_must_not_delete_newer_source added to test_decision_journal.py. CORRECTIVE (PR #5667 review head 1d1f79c4b): _dispose_source_record previously performed separate get and delete operations, vulnerable to race conditions and inconsistent snapshot comparisons across changed contextRefs, changed principal/tenant, and concurrent commits between read and delete. Fixed by implementing atomic conditional disposal with full snapshot equality under store lock/transaction via CoordinatingJsonGovernanceRecordStore.delete_if_equals and _delete_record_if_equals; repro script /tmp/journal-review-1d1f79c4.py passes 3/3 tests clean; regression tests test_changed_context_refs_preserved, test_changed_principal_preserved, and test_commit_between_source_read_and_delete_preserved added to test_decision_journal.py."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -242,16 +242,25 @@
         "note": "Independent reviewer repro for PR #5667 head 4339b4e8b finding (stale inventory deleting newer committed source row during disposal); rerun clean after fixes in journal_migration.py."
       },
       {
-        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py (post-fix rerun)",
-        "runner": ".venv-pantheon/bin/python -m pytest",
-        "tests": 117,
+        "name": "/tmp/journal-review-1d1f79c4.py",
+        "runner": ".venv-pantheon/bin/python",
+        "tests": 3,
         "failures": 0,
         "errors": 0,
         "status": "PASSED",
-        "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after migration source disposal staleness fix; includes new test_stale_inventory_must_not_delete_newer_source."
+        "note": "Independent reviewer repro for PR #5667 head 1d1f79c4b findings (atomic conditional disposal with full snapshot equality across changed contextRefs, changed principal, and concurrent read/delete commit); rerun clean after delete_if_equals fixes."
+      },
+      {
+        "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py (post-fix rerun)",
+        "runner": ".venv-pantheon/bin/python -m pytest",
+        "tests": 120,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED",
+        "note": "Combined rerun with services/governance/test_decision_journal.py and tests/agora_write_owner/ after atomic conditional disposal fix and PATCH allowlist restoration; includes all 3 new durable disposal regression tests."
       }
     ],
-    "total_tests_passed": 267
+    "total_tests_passed": 273
   },
   "artifacts": [
     "services/governance/decision_journal.py",
@@ -264,7 +273,6 @@
     "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
     "services/control-plane/bff/ports/read_surface_ports.py",
     "services/control-plane/bff/ports/operations_consultation.py",
-    "services/control-plane/bff/models.py",
     "services/control-plane/bff/main.py",
     "services/agora/store.py",
     "services/agora/service.py",
