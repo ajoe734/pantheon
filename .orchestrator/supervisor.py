@@ -9516,7 +9516,7 @@ def _resolve_obsolete_worker_recovery_receipt_locked(
     Once canonical state has moved to another lane, retaining that fence only
     blocks the successor.  This transaction changes receipt bookkeeping and
     emits an auditable event; it deliberately leaves task status, assignment,
-    and generation untouched.
+    generation, and successor instructions untouched.
     """
 
     status = load_status(config)
@@ -9553,7 +9553,7 @@ def _resolve_obsolete_worker_recovery_receipt_locked(
     receipts[receipt_id] = deepcopy(receipt)
     task.pop(WORKER_RECOVERY_TASK_KEY, None)
     task["last_update"] = timestamp
-    task["next"] = (
+    message = (
         f"Supervisor released stale lost-lease fence {receipt_id}: "
         f"canonical responsibility moved from {previous_role} to "
         f"{current_role or 'terminal/non-dispatch'}.")
@@ -9561,7 +9561,7 @@ def _resolve_obsolete_worker_recovery_receipt_locked(
         receipt,
         event_type="worker_lost_lease_recovery_resolved",
         timestamp=timestamp,
-        message=str(task["next"]),
+        message=message,
     )
     composed = _compose_status_activity_outbox(
         status.get("status_activity_outbox"), event

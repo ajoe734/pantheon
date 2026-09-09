@@ -67,6 +67,11 @@ approval bindings/proofs, execution grants and nonces. Current task instructions
 win; a new owner/Human-Ops reopen starts a new rejection context. An obsolete
 role, pointer, actor or generation cannot project replacement context.
 
+Resolving an obsolete receipt after responsibility moves to another lane also
+preserves the successor's exact `task.next` (including an absent field). Its
+operational message belongs only to the existing resolved activity event;
+replaying resolution does not rewrite instructions or emit another event.
+
 ## Retired implementations and retained boundaries
 
 | Retired implementation | Single replacement |
