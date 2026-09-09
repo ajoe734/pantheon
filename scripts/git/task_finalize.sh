@@ -169,7 +169,7 @@ if [[ -n "$EXISTING_PR" ]]; then
 fi
 
 echo "→ push $TASK_BRANCH ($AHEAD commits ahead of origin/${DEV_BRANCH})"
-git push -u origin "$TASK_BRANCH"
+git push origin "$TASK_BRANCH"
 
 # Compose title / body
 if [[ -z "$CUSTOM_TITLE" ]]; then
