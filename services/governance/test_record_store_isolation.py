@@ -778,6 +778,48 @@ def test_atomic_save_fsyncs_file_and_directory(tmp_path: Path) -> None:
     assert store.get("f-1") == {"id": "f-1", "val": "durability-checked"}
 
 
+def test_new_record_file_gets_umask_controlled_mode(tmp_path: Path) -> None:
+    """A newly created record file is not pinned to NamedTemporaryFile's 0600.
+
+    ``tempfile.NamedTemporaryFile`` always creates its backing file 0600, and
+    ``os.replace`` used to publish that restrictive mode verbatim. The store
+    must instead land the mode an ordinary ``open()`` would produce under the
+    active umask, so distinct-UID readonly consumers keep the access an
+    ordinary file creation would have given them.
+    """
+    import stat
+
+    store_file = tmp_path / "new_record.json"
+    previous_umask = os.umask(0o022)
+    try:
+        store = JsonGovernanceRecordStore(store_file, id_fields=("id",))
+        store.put({"id": "n-1", "val": "fresh"})
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(store_file.stat().st_mode) == 0o644
+
+
+def test_replacing_existing_record_file_preserves_its_mode(tmp_path: Path) -> None:
+    """Replacing an existing record file must not narrow its established mode.
+
+    A file already readable by another UID (for example a readonly
+    consumer mounting the governance data directory) must stay readable
+    after the next write publishes a fresh temporary file over it.
+    """
+    import stat
+
+    store_file = tmp_path / "existing_record.json"
+    store = JsonGovernanceRecordStore(store_file, id_fields=("id",))
+    store.put({"id": "e-1", "val": "first"})
+
+    os.chmod(store_file, 0o644)
+    store.put({"id": "e-1", "val": "second"})
+
+    assert stat.S_IMODE(store_file.stat().st_mode) == 0o644
+    assert store.get("e-1") == {"id": "e-1", "val": "second"}
+
+
 def test_coordinating_journal_store_subclass_does_not_deadlock(tmp_path: Path) -> None:
     """Pass-through subclasses of CoordinatingJsonGovernanceRecordStore do not deadlock."""
     from services.governance.decision_journal import CoordinatingJsonGovernanceRecordStore

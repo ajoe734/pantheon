@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
-  "worker": "Antigravity",
+  "worker": "Claude",
   "reviewer": "Codex",
   "governing_spec": {
     "document": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/reaudit-task-intake-20260909/SA_SD.md",
@@ -124,21 +124,35 @@
           "coverage_note": "Consultation handoff HTTP route tests cover sequential operations, idempotent replays, security failures, and conflict rejection. Controlled multi-instance concurrent insertion semantics are verified by test_mounted_consumer_consultation_handoff_multi_instance."
         }
       }
+    },
+    "ci_regression_fixed_permission_mode_on_replace": {
+      "status": "satisfied",
+      "finding": "PR #5709 real Persona provisioning owner contracts CI (workflow 34304100683 / job 102317075569) at reviewed head d4d961804 failed 2/2 on the actual readonly-Docker-mount decision journal tests with PermissionError: [Errno 13] Permission denied. Root cause: services/governance/record_store.py switched _save() from an ordinary write to tempfile.NamedTemporaryFile, whose backing file is always created mode 0600 regardless of umask; os.replace then published that restrictive mode verbatim as the canonical record file, narrowing an existing readable (0644) journal file to 0600 on its next write and breaking the distinct-UID readonly consumer relied on by the unchanged CI test. Base 15e2907b5 passed 2/2; head d4d961804 reproduced the same 2 failures locally against the actual pantheon-governance-contract:ci image with --read-only --cap-drop ALL mounts.",
+      "implementation": "services/governance/record_store.py: added JsonGovernanceRecordStore._replacement_mode(), called via os.chmod(temporary_path, ...) immediately before os.replace() in _save(). When storage_path already exists, the temporary file is chmod'd to the existing file's exact current mode (stat.S_IMODE), so an established readable posture is never narrowed by a replace. When storage_path does not yet exist (first write), the temporary file is chmod'd to the umask-controlled default an ordinary open() would have produced (0o666 & ~current_umask), read via the standard os.umask(0)/os.umask(restore) probe. Unique temporary file creation, POSIX file locking, fsync of file and parent directory, and atomic os.replace are all unchanged.",
+      "tests": [
+        "services/governance/test_record_store_isolation.py::test_new_record_file_gets_umask_controlled_mode (new)",
+        "services/governance/test_record_store_isolation.py::test_replacing_existing_record_file_preserves_its_mode (new)",
+        "services/governance/test_decision_journal.py::TestDecisionJournalReadOnlySnapshots::test_actual_readonly_mount_fresh_process_pending_snapshots_never_recover (actual Docker readonly mount, previously failing)",
+        "services/governance/test_decision_journal.py::TestDecisionJournalReadOnlySnapshots::test_actual_readonly_process_waits_for_same_writer_bundle_inode (actual Docker readonly mount, previously failing)"
+      ],
+      "regression_verification": "Reverted only record_store.py to the exact HEAD (d4d961804) blob while keeping the two new tests: both new tests failed (AssertionError comparing 0600 vs the expected preserved/umask mode), confirming they reproduce the exact CI defect. Restoring the fix made all tests pass again. The two real readonly-Docker-mount tests, run against the unchanged pantheon-governance-contract:ci image with --read-only --cap-drop ALL --network none mounts, now pass (previously PermissionError)."
     }
   },
   "verification_results": {
-    "execution_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. GOVERNANCE_DATA_DIR=/tmp/governance-final-review-test-run GOVERNANCE_STORE_BACKEND=json GOVERNANCE_AUDIT_BACKEND=jsonl PANTHEON_PERSISTENCE_POSTURE=dev .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/governance/test_record_store_isolation.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/governance/test_human_gate_api.py services/governance/test_decision_journal.py services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+    "execution_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. GOVERNANCE_DATA_DIR=/tmp/governance-final-review-test-run-2 GOVERNANCE_STORE_BACKEND=json GOVERNANCE_AUDIT_BACKEND=jsonl PANTHEON_PERSISTENCE_POSTURE=dev .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/governance/test_record_store_isolation.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/governance/test_human_gate_api.py services/governance/test_decision_journal.py services/control-plane/bff/governance/test_decision_journal_write_owner.py",
     "exit_code": 0,
+    "note": "test_decision_journal.py::TestDecisionJournalReadOnlySnapshots was executed with Docker available and the pre-built pantheon-governance-contract:ci image present, so the 3 tests skipped in the prior run's environment ran and passed here (0 skipped).",
     "suites": [
       {
         "name": "services/governance/test_record_store_isolation.py",
         "runner": ".venv-pantheon/bin/python3 -m pytest",
         "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/governance/test_record_store_isolation.py",
-        "tests": 16,
+        "tests": 18,
         "failures": 0,
         "errors": 0,
         "exit_code": 0,
-        "status": "PASSED"
+        "status": "PASSED",
+        "note": "+2 vs prior evidence: test_new_record_file_gets_umask_controlled_mode, test_replacing_existing_record_file_preserves_its_mode"
       },
       {
         "name": "services/governance/test_freeze_rollback_store.py",
@@ -177,9 +191,10 @@
         "tests": 69,
         "failures": 0,
         "errors": 0,
-        "skipped": 3,
+        "skipped": 0,
         "exit_code": 0,
-        "status": "PASSED"
+        "status": "PASSED",
+        "note": "Docker available in this run: TestDecisionJournalReadOnlySnapshots (previously skipped without a Docker image) executed and passed, including the two tests that reproduced the PR #5709 CI PermissionError before this fix."
       },
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
@@ -192,22 +207,29 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 139,
-    "total_tests_skipped": 3,
+    "total_tests_passed": 144,
+    "total_tests_skipped": 0,
     "mutation_probe": {
       "runner": ".venv-pantheon/bin/python3 /tmp/governance_r1_lock_coverage_probe.py",
       "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv-pantheon/bin/python3 /tmp/governance_r1_lock_coverage_probe.py",
       "result": "PASSED (both test_mounted_freeze_orders_command_isolation_multiprocess and test_mounted_rollbacks_command_isolation_multiprocess fail with AssertionError when JsonGovernanceRecordStore.lock is made nullcontext, proving command-wide lock coverage)",
       "exit_code": 0
     },
+    "actual_docker_readonly_mount_regression_probe": {
+      "runner": "actual pantheon-governance-contract:ci Docker image, --read-only --cap-drop ALL --network none --security-opt no-new-privileges:true",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/governance/test_decision_journal.py::TestDecisionJournalReadOnlySnapshots",
+      "result": "PASSED at fixed head (6/6, including the two tests that reproduced PermissionError at PR #5709 reviewed head d4d961804 in CI run 34304100683/102317075569)",
+      "exit_code": 0
+    },
     "tested_source_hashes": {
-      "services/governance/record_store.py": "42b82dc679d1dfdf6b851b7b844840cc9fae9d311d82e9798260a310380d0e4a",
+      "services/governance/record_store.py": "e412f3d56207c3ad2e11dca80d2c32d59718178f854d29c6315a37fae6c66504",
       "services/governance/main.py": "9fe9c9db46abc8d0a2dfe982ac15388a40890925d09cf152e22a0654d2230293",
-      "services/governance/test_record_store_isolation.py": "f6814de0af36a533698209aac6ac60eae74d5ee70817d4bbc16e95621e7dd4f5",
+      "services/governance/test_record_store_isolation.py": "44a2f4e4b27587aa4ac91820ca8e28caa38b1dd985030110d7eb2a756eac742e",
       "services/governance/test_freeze_rollback_store.py": "998686d1658aa8559d835b89c71f9c1c4e4636c9b4bda6584c4a457377605e13",
       "services/governance/test_consultation_handoff.py": "5a078f85f2a9d13a371da4a3044c6d473c9cb5672d025e3c27eb04f3d4e4df2d",
       "services/governance/test_human_gate_api.py": "a16cc3a81ed825408d107741ee2e1f5a7d8c965ece8582097b3ab56f26f19580"
-    }
+    },
+    "prior_source_baseline_note": "This evidence supersedes the R1 finalization evidence recorded at PR #5709 reviewed head d4d961804, which introduced a real CI regression (see ci_regression_fixed_permission_mode_on_replace above). source_baseline below is unchanged; the fix applies on top of that baseline plus the already-merged R1/R1b work."
   },
   "artifacts": [
     "services/governance/record_store.py",

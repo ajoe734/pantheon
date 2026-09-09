@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import stat
 import tempfile
 import threading
 import uuid
@@ -237,6 +238,7 @@ class JsonGovernanceRecordStore:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
+            os.chmod(temporary_path, self._replacement_mode())
             os.replace(temporary_path, self.storage_path)
             dir_fd = os.open(self.storage_path.parent, os.O_RDONLY)
             try:
@@ -249,6 +251,24 @@ class JsonGovernanceRecordStore:
                     temporary_path.unlink()
                 except OSError:
                     pass
+
+    def _replacement_mode(self) -> int:
+        """Mode the published record file should carry after replacement.
+
+        ``NamedTemporaryFile`` always creates its backing file 0600
+        regardless of umask, and ``os.replace`` publishes that mode as-is.
+        Restore the mode an ordinary ``open()`` would have produced: the
+        existing file's mode when replacing a record that already exists
+        (so an established readable posture is never narrowed), or the
+        umask-controlled default for a brand-new record file.
+        """
+        try:
+            return stat.S_IMODE(os.stat(self.storage_path).st_mode)
+        except FileNotFoundError:
+            pass
+        current_umask = os.umask(0)
+        os.umask(current_umask)
+        return 0o666 & ~current_umask
 
 
 class PostgresGovernanceRecordStore:
