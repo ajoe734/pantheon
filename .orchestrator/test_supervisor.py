@@ -12440,6 +12440,48 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
             )
         )
 
+    def test_canonical_task_review_mode_uses_heartbeat_grace_for_a_gone_worker(self) -> None:
+        self.config["worker_runtime"] = {
+            "worker_lease_seconds": 7200,
+            "heartbeat_stale_seconds": 300,
+            "heartbeat_grace_seconds": 60,
+        }
+        self.config["review_gate"] = {"github_review_bridge_required": False}
+        created = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+        self.assertFalse(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state(),
+                self.task,
+                now=created + timedelta(minutes=5),
+            )
+        )
+        self.assertTrue(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state(),
+                self.task,
+                now=created + timedelta(minutes=6),
+            )
+        )
+
+        live_worker = {
+            "task_id": "TASK-1",
+            "status": "waiting_approval",
+            "lease_expires_at": supervisor._isoformat_utc(
+                created + timedelta(hours=3)
+            ),
+        }
+        self.assertFalse(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state({"w1": live_worker}),
+                self.task,
+                now=created + timedelta(minutes=6),
+            )
+        )
+
     def test_reconcile_mints_a_receipt_and_unblocks_only_the_original_actor(self) -> None:
         state = self._state()
 

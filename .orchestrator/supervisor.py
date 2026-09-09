@@ -12747,10 +12747,27 @@ def review_decision_intent_lease_is_lost(
     created_at = _parse_iso_utc(str(intent.get("created_at") or ""))
     if created_at is None:
         return False
-    lease_seconds = max(
-        60, int(worker_runtime_settings(config).get("worker_lease_seconds", 1800))
-    )
-    if now_dt - created_at < timedelta(seconds=lease_seconds):
+    runtime_settings = worker_runtime_settings(config)
+    review_gate = config.get("review_gate")
+    bridge_required = not isinstance(review_gate, Mapping) or review_gate.get(
+        "github_review_bridge_required", True
+    ) is not False
+    if bridge_required:
+        recovery_delay_seconds = max(
+            60, int(runtime_settings.get("worker_lease_seconds", 1800))
+        )
+    else:
+        # Canonical task review mode has no GitHub write that could be
+        # partially committed after a process disappears. Retain a bounded
+        # heartbeat grace so a just-reserved intent cannot race its worker,
+        # but do not strand a known-gone reviewer for the full execution
+        # lease window.
+        recovery_delay_seconds = max(
+            60,
+            int(runtime_settings.get("heartbeat_stale_seconds", 300))
+            + int(runtime_settings.get("heartbeat_grace_seconds", 60)),
+        )
+    if now_dt - created_at < timedelta(seconds=recovery_delay_seconds):
         return False
     live_statuses = {"started", "waiting_approval"} | normalized_status_set(
         ready_dispatch_settings(config).get("active_worker_statuses"), []
