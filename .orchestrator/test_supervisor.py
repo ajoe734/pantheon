@@ -1299,23 +1299,6 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             )
             self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
 
-            legacy_brief = workspace / self.BRIEF_PATH
-            legacy_brief.parent.mkdir(parents=True, exist_ok=True)
-            legacy_brief.write_text(
-                "# Legacy generated context\n\n"
-                f"{supervisor._GENERATED_WORKER_TASK_BRIEF_MARKER}\n",
-                encoding="utf-8",
-            )
-            self.assertIn(
-                f"?? {self.BRIEF_PATH}",
-                self._git(
-                    workspace,
-                    "status",
-                    "--porcelain",
-                    "--untracked-files=all",
-                ),
-            )
-
             task["status"] = "review"
             task["next"] = "review the exact task head"
             reviewer_request = self._prepare(
@@ -1330,13 +1313,6 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             generated_text = generated_file.read_text(encoding="utf-8")
             self.assertIn("Status: review", generated_text)
             self.assertIn("review the exact task head", generated_text)
-            self.assertFalse(legacy_brief.exists())
-            self.assertEqual(
-                reviewer_request.metadata[
-                    "removed_legacy_generated_context_files"
-                ],
-                [self.BRIEF_PATH],
-            )
             self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
 
             task["status"] = "review_approved"
@@ -1371,6 +1347,27 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
                 self.TASK_ID,
                 state["worker_worktrees"]["leases"],
             )
+
+
+    def test_untracked_brief_is_not_deleted_by_its_generated_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, task, _status_root, _source_root = self._fixture(root, tracked_brief=None)
+            state = {"worker_worktrees": {"leases": {}}}
+            request = self._prepare(config, state, task, agent_id="codex",
+                                    reason=supervisor.REASON_OWNED_READY, queue_event_id="evt-owner")
+            workspace = Path(request.metadata["workspace_path"])
+            brief = workspace / self.BRIEF_PATH
+            brief.parent.mkdir(parents=True, exist_ok=True)
+            content = supervisor._GENERATED_WORKER_TASK_BRIEF_MARKER + "\nUser additions must survive.\n"
+            brief.write_text(content, encoding="utf-8")
+            replacement = self._request(task, agent_id="codex", reason=supervisor.REASON_OWNED_READY)
+            with mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)):
+                ok, error = supervisor.prepare_worker_workspace(
+                    config, state, replacement, queue_event_id="evt-next", target_agent="codex")
+            self.assertFalse(ok)
+            self.assertIn("dirty", error)
+            self.assertEqual(brief.read_text(encoding="utf-8"), content)
 
 
 class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
@@ -7563,10 +7560,24 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         self.assertNotIn(receipt["receipt_id"], state[supervisor.WORKER_RECOVERY_RECEIPTS_KEY])
 
 
-class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
-    """SUP-LOST-LEASE-DIRTY-WIP-ADOPTION-20260831."""
+class LostLeaseWorkspaceRecoveryTests(unittest.TestCase):
+    """One canonical recovery path preserves source and quarantines WIP."""
 
     TASK_ID = "TASK-1"
+
+    def setUp(self) -> None:
+        # Fetch belongs to the extracted filesystem owner, not its supervisor
+        # re-export. Tests use locally seeded immutable origin/dev refs.
+        patcher = mock.patch("rewrite.worker_workspace._fetch_worker_base_ref", return_value=(True, None))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # Exercise real canonical writes while replacing the external status
+        # pipeline, whose command-root guard rejects this editing checkout.
+        sync_patcher = mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        )
+        sync_patcher.start()
+        self.addCleanup(sync_patcher.stop)
 
     @staticmethod
     def _git(cwd: Path, *args: str) -> str:
@@ -7587,6 +7598,9 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
         self._git(source_root, "init", "-b", "dev")
         self._git(source_root, "config", "user.name", "Test")
         self._git(source_root, "config", "user.email", "test@example.com")
+        (source_root / ".gitignore").write_text(
+            ".orchestrator/worker-runtime/\n", encoding="utf-8"
+        )
         (source_root / "AI_COLLABORATION_GUIDE.md").write_text(
             "worker instructions\n", encoding="utf-8"
         )
@@ -7597,6 +7611,7 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
         self._git(
             source_root,
             "add",
+            ".gitignore",
             "AI_COLLABORATION_GUIDE.md",
             ".orchestrator/supervisor.py",
         )
@@ -7641,6 +7656,7 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
                     "mode": "block",
                     "blocking_globs": [".orchestrator/supervisor.py"],
                 },
+                "worker_worktree_cleanup": {"archive_root": str(root / "archive")},
                 "coordination": {
                     "repositories": {
                         "pantheon": {"local_path": str(source_root)},
@@ -7704,16 +7720,13 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
             queue_event_id=queue_event_id,
             recovery_receipt_id=recovery_receipt_id,
         )
-        with mock.patch.object(
-            supervisor, "_fetch_worker_base_ref", return_value=(True, None)
-        ):
-            ok, error = supervisor.prepare_worker_workspace(
-                config,
-                state,
-                request,
-                queue_event_id=queue_event_id,
-                target_agent=agent_id,
-            )
+        ok, error = supervisor.prepare_worker_workspace(
+            config,
+            state,
+            request,
+            queue_event_id=queue_event_id,
+            target_agent=agent_id,
+        )
         return ok, error, request
 
     def _worker(
@@ -7829,7 +7842,303 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
         ] = receipt_id
         return task, receipt_id, replacement_event_id
 
-    def test_fenced_replacement_adopts_dirty_wip_without_reset_or_commit(self) -> None:
+    def _started_workspace(self, root: Path):
+        status_root, source_root = self._git_repo_fixture(root)
+        self.config = self._config(status_root, source_root, root)
+        task = task_fixture(self.TASK_ID, status="in_progress")
+        task["next"] = "predecessor task instruction"
+        self._seed_status(self.config, task)
+        state = self._state()
+        ok, error, request = self._prepare(
+            self.config, state, task, agent_id="codex",
+            reason=supervisor.REASON_OWNED_IN_PROGRESS, queue_event_id="evt-lost-1",
+        )
+        self.assertTrue(ok, error)
+        return source_root, task, state, Path(request.metadata["workspace_path"])
+
+    def _replacement_request(self, task, receipt_id, event_id):
+        return supervisor.build_request(self.config, {
+            "event_id": event_id,
+            "event_key": f"key-{event_id}",
+            "task_id": self.TASK_ID,
+            "task_generation": task["generation"],
+            "target_agent": "codex2",
+            "reason": supervisor.REASON_OWNED_READY,
+            "recovery_receipt_id": receipt_id,
+            "message": "resume the canonical task\n",
+            "context_files": [],
+            "metadata": {"task": task},
+        })
+
+    def _prepare_replacement(self, state, request, event_id):
+        return supervisor.prepare_worker_workspace(
+            self.config, state, request, queue_event_id=event_id, target_agent="codex2",
+        )
+
+    def _assert_canonical_workspace_rendered(self, request, receipt_id, workspace, source_head):
+        canonical = supervisor.load_status(self.config)
+        provenance = canonical[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["workspace"]
+        self.assertEqual(request.metadata["recovery_workspace"], provenance)
+        self.assertEqual(provenance["workspace_path"], str(workspace))
+        self.assertEqual(provenance["source_head"], source_head)
+        self.assertEqual(provenance["branch"], f"task/{self.TASK_ID}")
+        self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), source_head)
+        self.assertEqual(self._git(workspace, "rev-parse", provenance["preserved_branch_ref"]), source_head)
+        self.assertIn(provenance["archive_path"], request.message)
+        self.assertIn(source_head, request.message)
+        self.assertIn("not delivery approval", request.message)
+        return provenance
+
+    def test_committed_ahead_and_diverged_source_survives_with_current_canonical_context(self) -> None:
+        for diverged in (False, True):
+            with self.subTest(diverged=diverged), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source_root, _task, state, workspace = self._started_workspace(root)
+                implementation = workspace / ".orchestrator/supervisor.py"
+                implementation.write_text("# committed task implementation\n", encoding="utf-8")
+                self._git(workspace, "add", ".orchestrator/supervisor.py")
+                self._git(workspace, "commit", "-m", "task implementation")
+                source_head = self._git(workspace, "rev-parse", "HEAD")
+                if diverged:
+                    (source_root / "dev-only.txt").write_text("independent dev commit\n", encoding="utf-8")
+                    self._git(source_root, "add", "dev-only.txt")
+                    self._git(source_root, "commit", "-m", "dev advances")
+                    self._git(source_root, "update-ref", "refs/remotes/origin/dev", "HEAD")
+                worktree_inode = workspace.stat().st_ino
+                implementation.write_text("# staged WIP\n", encoding="utf-8")
+                self._git(workspace, "add", ".orchestrator/supervisor.py")
+                implementation.write_text("# unstaged WIP\n", encoding="utf-8")
+                (workspace / "draft notes.txt").write_bytes(b"untracked task WIP\n")
+                task, receipt_id, event_id = self._fence_and_reassign(state)
+                canonical = supervisor.load_status(self.config)
+                canonical["tasks"][0]["next"] = "current canonical recovery instruction"
+                supervisor.write_status(self.config, canonical, source="test-current-task-note")
+
+                # Build with a stale task payload: current canonical notes and
+                # workspace facts must still be rendered for the replacement.
+                request = self._replacement_request(task, receipt_id, event_id)
+                request.context_files = [".orchestrator/task-briefs/task_1.md"]
+                ok, error = self._prepare_replacement(state, request, event_id)
+                self.assertTrue(ok, error)
+                provenance = self._assert_canonical_workspace_rendered(
+                    request, receipt_id, workspace, source_head
+                )
+                self.assertEqual(workspace.stat().st_ino, worktree_inode)
+                self.assertEqual(implementation.read_text(encoding="utf-8"), "# committed task implementation\n")
+                self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+                self.assertFalse((workspace / "dev-only.txt").exists())
+                self.assertEqual(request.metadata["workspace_base_relation"], "diverged" if diverged else "contains_base")
+                self.assertIn("current canonical recovery instruction", request.message)
+                self.assertNotIn("predecessor task instruction", request.message)
+                brief = workspace / request.metadata["generated_context_files"][0]
+                self.assertIn("current canonical recovery instruction", brief.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    (Path(provenance["archive_path"]) / "files/.orchestrator/supervisor.py").read_text(encoding="utf-8"),
+                    "# unstaged WIP\n",
+                )
+
+    def test_rebuilt_same_receipt_request_resumes_published_quarantine_without_new_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root, _task, state, workspace = self._started_workspace(root)
+            source_head = self._git(workspace, "rev-parse", "HEAD")
+            (workspace / ".orchestrator/supervisor.py").write_text("# tracked WIP\n", encoding="utf-8")
+            draft = workspace / "draft notes.txt"
+            draft.write_bytes(b"untracked WIP\n")
+            task, receipt_id, event_id = self._fence_and_reassign(state)
+            request = self._replacement_request(task, receipt_id, event_id)
+            real_unlink = Path.unlink
+
+            def interrupt_cleanup(path, *args, **kwargs):
+                if path == draft:
+                    raise PermissionError("interrupted after canonical publication and tracked restore")
+                return real_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", new=interrupt_cleanup):
+                ok, error = self._prepare_replacement(state, request, event_id)
+            self.assertFalse(ok, error)
+            canonical = supervisor.load_status(self.config)
+            provenance = canonical[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["workspace"]
+            self.assertEqual(draft.read_bytes(), b"untracked WIP\n")
+            self.assertEqual(self._git(workspace, "diff"), "")
+            archive_paths = set((root / "archive").iterdir())
+            recovery_refs = self._git(source_root, "for-each-ref", "refs/pantheon/recovery/")
+
+            rebuilt = self._replacement_request(canonical["tasks"][0], receipt_id, event_id)
+            self.assertIsNot(rebuilt, request)
+            with mock.patch.object(worker_workspace, "_archive_dirty_worktree") as archive:
+                ok, error = self._prepare_replacement(state, rebuilt, event_id)
+            self.assertTrue(ok, error)
+            archive.assert_not_called()
+            self.assertEqual(
+                self._assert_canonical_workspace_rendered(rebuilt, receipt_id, workspace, source_head), provenance
+            )
+            self.assertEqual(state["worker_worktrees"]["leases"][self.TASK_ID]["recovery_workspace"], provenance)
+            self.assertEqual(set((root / "archive").iterdir()), archive_paths)
+            self.assertEqual(self._git(source_root, "for-each-ref", "refs/pantheon/recovery/"), recovery_refs)
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+
+    def test_canonical_generation_change_rejects_publication_without_changing_wip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _source_root, _task, state, workspace = self._started_workspace(root)
+            dirty = workspace / ".orchestrator/supervisor.py"
+            dirty.write_bytes(b"staged WIP\n")
+            self._git(workspace, "add", ".orchestrator/supervisor.py")
+            dirty.write_bytes(b"unstaged WIP\n")
+            status_before = self._git(workspace, "status", "--porcelain")
+            staged_before = self._git(workspace, "diff", "--cached")
+            task, receipt_id, event_id = self._fence_and_reassign(state)
+            request = self._replacement_request(task, receipt_id, event_id)
+            real_publish = supervisor.persist_worker_recovery_workspace
+
+            def publish_after_generation_change(config, **kwargs):
+                canonical = supervisor.load_status(config)
+                canonical["tasks"][0]["generation"] += 1
+                supervisor.write_status(config, canonical, source="test-concurrent-generation")
+                return real_publish(config, **kwargs)
+
+            with mock.patch.object(supervisor, "persist_worker_recovery_workspace", side_effect=publish_after_generation_change) as publish:
+                ok, error = self._prepare_replacement(state, request, event_id)
+            self.assertFalse(ok, error)
+            publish.assert_called_once()
+            self.assertEqual(dirty.read_bytes(), b"unstaged WIP\n")
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), status_before)
+            self.assertEqual(self._git(workspace, "diff", "--cached"), staged_before)
+            canonical = supervisor.load_status(self.config)
+            self.assertNotIn("workspace", canonical[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id])
+            self.assertNotIn("recovery_workspace", request.metadata)
+            self.assertNotIn("recovery_workspace", state["worker_worktrees"]["leases"][self.TASK_ID])
+
+    def test_prebound_workspace_path_cannot_bypass_the_dirty_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _source_root, task, state, workspace = self._started_workspace(root)
+            dirty = workspace / ".orchestrator/supervisor.py"
+            dirty.write_bytes(b"ordinary uncommitted source\n")
+            request = self._request(
+                task, agent_id="codex", reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                queue_event_id="evt-prebound",
+            )
+            request.metadata["workspace_path"] = str(workspace)
+            request.metadata["workspace_mode"] = "isolated_worktree"
+            with mock.patch.object(worker_workspace, "_archive_dirty_worktree") as archive:
+                ok, error = supervisor.prepare_worker_workspace(
+                    self.config, state, request, queue_event_id="evt-prebound", target_agent="codex",
+                )
+            self.assertFalse(ok)
+            self.assertIn("dirty", str(error))
+            archive.assert_not_called()
+            self.assertEqual(dirty.read_bytes(), b"ordinary uncommitted source\n")
+            self.assertNotIn("recovery_workspace", request.metadata)
+
+    def test_reused_and_recreated_branches_share_refresh_failure_admission(self) -> None:
+        for recreated in (False, True):
+            for refresh_status in (
+                "worktree_status_failed", "merge_failed: simulated failure", "skipped_non_fast_forward",
+            ):
+                with self.subTest(recreated=recreated, refresh_status=refresh_status):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        source_root, task, state, workspace = self._started_workspace(root)
+                        (workspace / "task-source.txt").write_text("committed task source\n", encoding="utf-8")
+                        self._git(workspace, "add", "task-source.txt")
+                        self._git(workspace, "commit", "-m", "task source")
+                        source_head = self._git(workspace, "rev-parse", "HEAD")
+                        (source_root / "dev-source.txt").write_text("independent dev source\n", encoding="utf-8")
+                        self._git(source_root, "add", "dev-source.txt")
+                        self._git(source_root, "commit", "-m", "dev source")
+                        self._git(source_root, "update-ref", "refs/remotes/origin/dev", "HEAD")
+                        if recreated:
+                            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+                            self._git(source_root, "worktree", "remove", str(workspace))
+                            self.assertFalse(workspace.exists())
+                        state["worker_worktrees"]["leases"].clear()
+                        request = self._request(
+                            task, agent_id="codex", reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                            queue_event_id="evt-refresh-admission",
+                        )
+                        request.context_files = [".orchestrator/task-briefs/task_1.md"]
+                        with (
+                            mock.patch.object(
+                                worker_workspace, "_refresh_reused_worker_worktree",
+                                return_value=(False, refresh_status),
+                            ) as refresh,
+                            mock.patch.object(
+                                worker_workspace, "materialize_worker_context_files",
+                                wraps=worker_workspace.materialize_worker_context_files,
+                            ) as materialize,
+                        ):
+                            ok, error = supervisor.prepare_worker_workspace(
+                                self.config, state, request,
+                                queue_event_id="evt-refresh-admission", target_agent="codex",
+                            )
+                        refresh.assert_called_once()
+                        worker_workspace.validate_worker_workspace_binding(
+                            source_root, workspace, expected_branch=f"task/{self.TASK_ID}",
+                        )
+                        self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), source_head)
+                        self.assertEqual((workspace / "task-source.txt").read_text(encoding="utf-8"), "committed task source\n")
+                        if refresh_status == "skipped_non_fast_forward":
+                            self.assertTrue(ok, error)
+                            materialize.assert_called_once()
+                            self.assertEqual(request.metadata["workspace_path"], str(workspace))
+                            self.assertEqual(request.metadata["workspace_base_relation"], "diverged")
+                            self.assertEqual(state["worker_worktrees"]["leases"][self.TASK_ID]["last_queue_event_id"], "evt-refresh-admission")
+                        else:
+                            self.assertFalse(ok)
+                            self.assertIn(refresh_status, str(error))
+                            materialize.assert_not_called()
+                            self.assertNotIn(self.TASK_ID, state["worker_worktrees"]["leases"])
+                            self.assertNotIn("workspace_path", request.metadata)
+                            self.assertNotIn("materialized_context_files", request.metadata)
+                            self.assertNotIn("generated_context_files", request.metadata)
+                            self.assertFalse((workspace / ".orchestrator/worker-runtime").exists())
+
+    def test_another_active_worker_with_an_overlapping_path_blocks_quarantine(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _source_root, _task, state, workspace = self._started_workspace(root)
+            dirty = workspace / ".orchestrator/supervisor.py"
+            dirty.write_bytes(b"source still used by another worker\n")
+            task, receipt_id, event_id = self._fence_and_reassign(state)
+            state["workers"]["other-active-run"] = {
+                "task_id": "OTHER-TASK", "status": "running",
+                "workspace_path": str(workspace / ".orchestrator"),
+            }
+            request = self._replacement_request(task, receipt_id, event_id)
+            with mock.patch.object(worker_workspace, "_archive_dirty_worktree") as archive:
+                ok, error = self._prepare_replacement(state, request, event_id)
+            self.assertFalse(ok)
+            self.assertIn("active worker workspace", str(error))
+            archive.assert_not_called()
+            self.assertEqual(dirty.read_bytes(), b"source still used by another worker\n")
+            canonical = supervisor.load_status(self.config)
+            self.assertNotIn("workspace", canonical[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id])
+
+    def test_forged_workspace_facts_are_replaced_with_canonical_quarantine_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _source_root, _task, state, workspace = self._started_workspace(root)
+            source_head = self._git(workspace, "rev-parse", "HEAD")
+            (workspace / ".orchestrator/supervisor.py").write_bytes(b"source WIP\n")
+            task, receipt_id, event_id = self._fence_and_reassign(state)
+            request = self._replacement_request(task, receipt_id, event_id)
+            forged = {
+                "repository_id": "pantheon", "workspace_path": str(workspace),
+                "branch": f"task/{self.TASK_ID}", "source_head": "f" * 40,
+                "archive_path": str(root / "forged-archive"),
+                "preserved_branch_ref": "refs/pantheon/recovery/forged",
+            }
+            request.metadata["recovery_workspace"] = forged
+            ok, error = self._prepare_replacement(state, request, event_id)
+            self.assertTrue(ok, error)
+            provenance = self._assert_canonical_workspace_rendered(request, receipt_id, workspace, source_head)
+            self.assertNotEqual(provenance, forged)
+            self.assertFalse(Path(forged["archive_path"]).exists())
+            self.assertNotIn(forged["archive_path"], request.message)
+
+    def test_fenced_replacement_quarantines_wip_without_resetting_task_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             status_root, source_root = self._git_repo_fixture(root)
@@ -7875,24 +8184,29 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
                 Path(str(second_request.metadata["workspace_path"])), workspace
             )
 
-            # The predecessor's uncommitted WIP is preserved byte-for-byte:
-            # no reset/clean/stash and no synthetic commit.
+            # Task commits remain at HEAD. WIP is available separately, with
+            # canonical provenance, rather than inherited as accepted source.
+            provenance = second_request.metadata["recovery_workspace"]
+            archive = Path(provenance["archive_path"])
             self.assertEqual(
-                (workspace / dirty_relpath).read_text(encoding="utf-8"), wip_bytes
+                (archive / "files" / dirty_relpath).read_text(encoding="utf-8"), wip_bytes
             )
             self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), head_before)
             self.assertEqual(
-                self._git(workspace, "status", "--porcelain"),
-                status_before_dispatch,
+                self._git(workspace, "status", "--porcelain"), "",
             )
             self.assertEqual(
                 state["worker_worktrees"]["leases"][self.TASK_ID][
-                    "dirty_wip_adoption_receipt_id"
+                    "recovery_receipt_id"
                 ],
                 receipt_id,
             )
-            marker = second_request.metadata.get("fenced_dirty_wip_adoption")
-            self.assertIsInstance(marker, dict)
+            canonical = supervisor.load_status(self.config)
+            self.assertEqual(
+                canonical[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["workspace"],
+                provenance,
+            )
+            self.assertIn(str(archive), second_request.message)
             guard_ok, guard_error = supervisor.check_worker_tree_clean(
                 self.config,
                 run_id=replacement_event_id,
@@ -7900,7 +8214,6 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
                 target_agent="Codex2",
                 queue_event_id=replacement_event_id,
                 cwd=workspace,
-                fenced_dirty_wip_adoption=marker,
             )
             self.assertTrue(guard_ok, guard_error)
 
@@ -7944,31 +8257,28 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
                 reason=supervisor.REASON_OWNED_IN_PROGRESS,
                 queue_event_id="evt-forged",
             )
-            forged_request.metadata["fenced_dirty_wip_adoption"] = {
+            forged_request.metadata["recovery_workspace"] = {
                 "receipt_id": "lost-lease-forged",
                 "task_id": self.TASK_ID,
                 "queue_event_id": "evt-forged",
                 "workspace_path": str(workspace),
             }
-            with mock.patch.object(
-                supervisor, "_fetch_worker_base_ref", return_value=(True, None)
-            ):
-                forged_ok, forged_error = supervisor.prepare_worker_workspace(
-                    self.config,
-                    state,
-                    forged_request,
-                    queue_event_id="evt-forged",
-                    target_agent="codex",
-                )
+            forged_ok, forged_error = supervisor.prepare_worker_workspace(
+                self.config,
+                state,
+                forged_request,
+                queue_event_id="evt-forged",
+                target_agent="codex",
+            )
             self.assertFalse(forged_ok)
             self.assertIn("dirty", str(forged_error))
             self.assertNotIn(
-                "fenced_dirty_wip_adoption", forged_request.metadata
+                "recovery_workspace", forged_request.metadata
             )
 
 
-class LostLeaseWorktreeAdoptionEligibilityTests(unittest.TestCase):
-    """Unit coverage for `_lost_lease_replacement_may_adopt_worktree`."""
+class LostLeaseWorktreeRecoveryEligibilityTests(unittest.TestCase):
+    """Unit coverage for `_lost_lease_replacement_may_recover_worktree`."""
 
     TASK_ID = "TASK-1"
 
@@ -8173,7 +8483,7 @@ class LostLeaseWorktreeAdoptionEligibilityTests(unittest.TestCase):
     ) -> bool:
         default_request, context = self._eligibility_context(state)
         context.update(overrides)
-        return supervisor._lost_lease_replacement_may_adopt_worktree(
+        return supervisor._lost_lease_replacement_may_recover_worktree(
             self.config,
             state,
             request or default_request,
@@ -14285,7 +14595,25 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 }
 
                 delivery_outcome = {}
-                with mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env):
+                def fetch_fixture_base(source_root, base_ref, *, timeout_seconds=None):
+                    # This fixture's origin/dev is the locally committed
+                    # tooling snapshot. Exercise a real Git fetch from that
+                    # snapshot without contacting the production GitHub repo;
+                    # repository validation and dispatch admission still run.
+                    self.assertEqual(source_root, central)
+                    self.assertEqual(base_ref, "origin/dev")
+                    fetched = subprocess.run(
+                        ["git", "fetch", str(central),
+                         "+refs/heads/dev:refs/remotes/origin/dev", "--quiet"],
+                        cwd=source_root, capture_output=True, text=True,
+                        timeout=timeout_seconds, check=False,
+                    )
+                    return fetched.returncode == 0, fetched.stderr.strip() or None
+
+                with (
+                    mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env),
+                    mock.patch.object(worker_workspace, "_fetch_worker_base_ref", side_effect=fetch_fixture_base),
+                ):
                     q_changed = supervisor.process_queue(config, boot_state, delivery_outcome=delivery_outcome)
 
                 self.assertTrue(q_changed)
@@ -14380,7 +14708,10 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
                 # Exactly-one owner launch check: second call to process_queue must NOT launch another process
                 delivery_outcome2 = {}
-                with mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env):
+                with (
+                    mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env),
+                    mock.patch.object(worker_workspace, "_fetch_worker_base_ref", side_effect=fetch_fixture_base),
+                ):
                     q_changed2 = supervisor.process_queue(config, boot_state, delivery_outcome=delivery_outcome2)
 
                 self.assertFalse(q_changed2)
