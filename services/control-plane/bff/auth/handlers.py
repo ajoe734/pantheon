@@ -13,33 +13,23 @@ import os
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import HTTPException
 
 from ..models import ErrorCode
-
-
-@dataclass(frozen=True)
-class AuthDependencies:
-    """Explicit domain dependencies for auth and session handlers."""
-
-    bff_error: Callable[..., HTTPException]
-    dev_login_forbidden_environment: Callable[[], bool]
-    dev_login_identity_registry: Callable[[], Dict[str, Any]]
-    extract_identity: Callable[..., Any]
-    require_read_role: Callable[[Any], None]
-    raise_if_session_logged_out: Callable[[Any], None]
-    session_lifecycle_store: Any
-    bff_me_tenant_payload: Callable[..., Dict[str, Any]]
-    capabilities_for_identity: Callable[[Any], List[str]]
-    bff_auth_stub_enabled: Callable[[], bool]
-    bff_auth_mode: Callable[[], str]
-    bff_source_commit: Callable[[], str]
-    write_roles: frozenset[str]
-    utc_now: Callable[[], str]
+from .policy import (
+    AuthDependencies,
+    SessionLogoutGuard,
+    create_auth_dependencies,
+    create_session_logout_guard,
+    get_session_id,
+    get_session_key,
+    get_session_state,
+    raise_if_session_logged_out,
+)
 
 
 def _first(*values: Any) -> Optional[str]:
@@ -262,7 +252,7 @@ def _session(identity: Any, *, checked_at: str) -> Dict[str, Any]:
         remaining = max(0, int(float(exp) - time.time())) if exp is not None else None
     except (TypeError, ValueError):
         remaining = None
-    sid = _first(claims.get("sid"), claims.get("session_id"), claims.get("jti"), f"bff-session-{identity.operator_id}")
+    sid = get_session_id(identity)
     return {
         "id": sid,
         "authenticated": True,
@@ -290,22 +280,14 @@ def _tenant(identity: Any, requested: Optional[str], deps: AuthDependencies) -> 
 
 
 def _state(identity: Any, deps: AuthDependencies) -> Dict[str, Any]:
-    session_id = _first(
-        _claims(identity).get("sid"),
-        _claims(identity).get("session_id"),
-        _claims(identity).get("jti"),
-        f"bff-session-{identity.operator_id}",
-    )
-    key = f"operator:{identity.operator_id}:session:{session_id}"
-    store = deps.session_lifecycle_store
-    return store.get_session(key) or store.get_session(f"operator:{identity.operator_id}") or {}
+    return get_session_state(identity, deps.session_lifecycle_store)
 
 
 def _idempotency_key(route: str, identity: Any, key: Optional[str]) -> Optional[str]:
     clean = str(key or "").strip()
     if not clean:
         return None
-    sid = _first(_claims(identity).get("sid"), _claims(identity).get("session_id"), _claims(identity).get("jti"), f"bff-session-{identity.operator_id}")
+    sid = get_session_id(identity)
     return f"{route}:{identity.operator_id}:{sid}:{clean}"
 
 
@@ -356,6 +338,10 @@ async def bff_me(
         user = _user(identity, deps)
         session = _session(identity, checked_at=deps.utc_now())
         session["state"] = str(state.get("state") or "active")
+        if state.get("last_refreshed_at"):
+            session["last_refreshed_at"] = state["last_refreshed_at"]
+        if state.get("last_refresh_credential_source"):
+            session["last_refresh_credential_source"] = state["last_refresh_credential_source"]
     except HTTPException as exc:
         raise exc
     data = {
@@ -477,10 +463,6 @@ async def bff_auth_refresh(
         identity = _assert_identity(None, deps, mfa=x_mfa_token, cookie=str(credential))
     else:
         identity = _assert_identity(bearer, deps, mfa=x_mfa_token, cookie=pantheon_session)
-    now = deps.utc_now()
-    state = _state(identity, deps)
-    state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": source})
-    deps.session_lifecycle_store.upsert_session(f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}", state, now=now)
     idem = idempotency_key or x_idempotency_key
     record_key = _idempotency_key("POST /bff/auth/refresh", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}, "source": source})
@@ -492,6 +474,10 @@ async def bff_auth_refresh(
             result = cached["result"]
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
             return result
+    now = deps.utc_now()
+    state = _state(identity, deps)
+    state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": source})
+    deps.session_lifecycle_store.upsert_session(get_session_key(identity), state, now=now)
     result = _lifecycle(identity, "refresh", idem, now, deps=deps)
     descriptor = {"source": source, "session_kind": _session_kind(identity), "sessionKind": _session_kind(identity), "token_kind": identity.token_kind, "tokenKind": identity.token_kind}
     result["data"]["session"]["last_refreshed_at"] = now
@@ -531,7 +517,7 @@ async def bff_logout(
                 response.delete_cookie("pantheon_session", path="/")
             return result
     now = deps.utc_now()
-    key = f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}"
+    key = get_session_key(identity)
     deps.session_lifecycle_store.upsert_session(key, {"state": "logged_out", "logged_out_at": now}, now=now)
     if response is not None:
         response.delete_cookie("pantheon_session", path="/")
@@ -553,7 +539,7 @@ async def bff_switch_tenant(
     tenant["source"] = "session"
     now = deps.utc_now()
     deps.session_lifecycle_store.upsert_session(
-        f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}",
+        get_session_key(identity),
         {"state": "active", "tenant_id": tenant["id"]},
         now=now,
     )
@@ -572,7 +558,7 @@ async def bff_update_locale(
         raise deps.bff_error(400, ErrorCode.VALIDATION_FAILED, "locale is required", "locale must be a non-empty BCP-47-ish language tag", precondition_failed="locale")
     now = deps.utc_now()
     deps.session_lifecycle_store.upsert_session(
-        f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}",
+        get_session_key(identity),
         {"state": "active", "locale": value},
         now=now,
     )
@@ -622,6 +608,22 @@ def _lifecycle(
 
 def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
     deps = dependencies
+    if deps.session_lifecycle_store is not None:
+        guard = deps.raise_if_session_logged_out
+        is_canonical = (
+            isinstance(guard, SessionLogoutGuard)
+            or getattr(guard, "_canonical_guard", False)
+            or guard is raise_if_session_logged_out
+        )
+        if is_canonical and getattr(guard, "store", None) is not deps.session_lifecycle_store:
+            deps = replace(
+                deps,
+                raise_if_session_logged_out=create_session_logout_guard(
+                    deps.session_lifecycle_store,
+                    error_factory=deps.bff_error,
+                ),
+            )
+
     async def _dev_login(*, payload: Dict[str, Any]) -> Dict[str, Any]:
         return await bff_auth_dev_login(payload=payload, deps=deps)
 
