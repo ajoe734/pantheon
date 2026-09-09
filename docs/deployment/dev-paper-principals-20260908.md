@@ -18,6 +18,14 @@ A JWT role label alone is insufficient: downstream Deployment and Runtime must
 not interpret an automated paper approval as permission for canary/live. Static
 short-lived JWTs without renewal would also reproduce an outage after expiry.
 
+Hosted follow-up on 2026-09-09 exposed two independent delivery gaps. Governance's
+standalone image lacked `jsonschema`; PR 5706 adds the dependency and tests both
+lazy candidate validators inside the actual Dockerfile image. Read-only inspection
+also found healthy RuntimeManager and deployment outbox containers configured for
+tenant `default`, while the BFF creates `tenant-dev` plans. The consumer's authenticated
+outbox claim requests and Runtime's plan reads are tenant-filtered, so health cannot prove that
+the correct tenant's events are consumed.
+
 ## System design
 
 1. BFF uses the separately issued `pantheon-dev-paper-provisioner` identity only
@@ -60,6 +68,15 @@ short-lived JWTs without renewal would also reproduce an outage after expiry.
    invent authority for old source or rewrite committed approvals.
    The existing exact-pair lease, gate-before-switch and failure compensation
    remain required.
+6. The dev root lane exports `PANTHEON_DEPLOYMENT_TENANT_ID` from its existing
+   `PANTHEON_DEV_BFF_TENANT_ID` before the root stack Compose update. Both
+   RuntimeManager and the outbox consumer are recreated with the producer's
+   tenant. Generic Compose defaults, credential roles and cross-tenant isolation
+   are unchanged. BFF-only rollback retains these upgraded owners. Regression
+   tests render real Compose configuration and exercise real Deployment routes
+   with the consumer and Runtime header builders: default-tenant claim is empty
+   and plan read is 404; tenant-dev claims the exact event and reads the paper/0
+   plan. This is isolated routing proof, not a hosted executable binding receipt.
 
 Withdrawal is explicit: setting the dev authorization variable to `false` and
 running the dev lane stops the previous issuer, writes a revoked grant marker

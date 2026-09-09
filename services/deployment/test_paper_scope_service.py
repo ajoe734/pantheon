@@ -50,6 +50,58 @@ def test_scoped_paper_zero_capital_plan_is_created_in_dev(client, monkeypatch):
     assert created.json()["scale"]["capital_scale_pct"] == 0
 
 
+def test_dev_tenant_reaches_real_outbox_claim_and_runtime_plan_read(client, monkeypatch):
+    """Wrong-tenant workers stay isolated; matching workers see the exact event."""
+    from services.deployment.outbox_consumer_worker import _deployment_headers
+    from deploy_authority import _deployment_request_headers
+    from services.governance.test_approval_authority import approval_snapshot
+
+    test_client, governance_dir = client
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED", "true")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "isolated-consumer:deployment_consumer,service")
+    # These are isolated owner fixtures, never hosted approvals or credentials.
+    approval_path = governance_dir / "approval_decisions.json"
+    approval = approval_snapshot(
+        decision_id="approval-001", target_id="reg-strat-001-1.2.0",
+        target_version="1.2.0", target_type="registry_entry",
+        candidate_digest="sha256:abc123def4567890", capital_pool_id="pool-001",
+        persona_id="persona-ops", tenant_id="tenant-dev",
+        authorization_scope=copy.deepcopy(DEV_PAPER_AUTHORIZATION_SCOPE),
+    )
+    approval_path.write_text(json.dumps({"approval-001": approval}))
+    registry = json.loads(test_client.registry_snapshot.read_text())
+    registry["reg-strat-001-1.2.0"]["owner_tenant"] = "tenant-dev"
+    test_client.registry_snapshot.write_text(json.dumps(registry))
+    test_client.headers["X-Tenant-Id"] = "tenant-dev"
+    plan_path = "/api/deployment/plans/plan-tenant-dev-routing"
+    created = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-tenant-dev-routing"))
+    assert created.status_code == 201, created.text
+    dispatched = test_client.post(plan_path + "/dispatch", json={"trace_id": "trace-tenant-dev-routing"})
+    assert dispatched.status_code == 200, dispatched.text
+    event_id = dispatched.json()["deployment_saga"]["outbox_event"]["event"]["event_id"]
+    claim_body = {"consumer_name": "isolated-consumer", "lease_seconds": 60, "limit": 1}
+
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "default")
+    invisible = test_client.post("/api/deployment/outbox/claim", json=claim_body, headers=_deployment_headers())
+    assert invisible.status_code == 200 and invisible.json() == []
+    assert test_client.get(plan_path, headers=_deployment_request_headers()).status_code == 404
+
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-dev")
+    claimed = test_client.post("/api/deployment/outbox/claim", json=claim_body, headers=_deployment_headers())
+    assert claimed.status_code == 200, claimed.text
+    assert len(claimed.json()) == 1
+    claim = claimed.json()[0]
+    assert claim["tenant_id"] == "tenant-dev"
+    assert claim["event"]["event_id"] == event_id and claim["claim_token"]
+    plan = test_client.get(plan_path, headers=_deployment_request_headers())
+    assert plan.status_code == 200 and plan.json()["plan_id"] == "plan-tenant-dev-routing"
+    assert plan.json()["target_stage"] == "paper"
+    assert plan.json()["scale"]["capital_scale_pct"] == 0
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "another-tenant")
+    assert test_client.get(plan_path, headers=_deployment_request_headers()).status_code == 404
+
+
 @pytest.mark.parametrize("payload_change,label", [
     ({"target_stage": "canary", "current_stage": "paper"}, "canary"),
     ({"target_stage": "live", "current_stage": "canary"}, "live"),
