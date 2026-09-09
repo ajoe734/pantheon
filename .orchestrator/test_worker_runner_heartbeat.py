@@ -26,6 +26,7 @@ import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
+import common
 from common import canonical_task_state_identity_for_paths, status_command_runtime_record_from_env
 from rewrite.task_state_store import append_state_commit, load_snapshot
 import runtime_state
@@ -2028,6 +2029,127 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertIn("SANDBOX-TASK-1", task_ids)
             self.assertEqual(live_config.read_text(), '{"live": true}\n')
             self.assertEqual(coord_config.read_text(), "{}")
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_real_bubblewrap_worker_git_credential_propagation_and_protected_config(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-git-auth-bwrap-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            _init_repo(central)
+            _init_repo(command_root)
+            _write_status(central)
+
+            # Create linked worktree attached to task/* branch
+            worktree = root / "task-worktree"
+            subprocess.run(
+                ["git", "worktree", "add", "-b", "task/OPS-SANDBOX-001", str(worktree)],
+                cwd=central,
+                check=True,
+                capture_output=True,
+            )
+
+            # Create alias HOME and bin with synthetic gh
+            alias_home = root / "alias-home"
+            alias_home.mkdir()
+            gh_config_dir = root / "host-gh-config"
+            gh_config_dir.mkdir()
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            mock_gh = bin_dir / "gh"
+            mock_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"git-credential\" ] && [ \"$3\" = \"get\" ]; then\n"
+                "  echo \"username=sandbox-user\"\n"
+                "  echo \"password=sandbox-secret-pass\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            mock_gh.chmod(0o755)
+
+            runtime = root / "runtime"
+            runtime.mkdir()
+            task_state_dir = runtime / "task-state"
+            task_state_dir.mkdir()
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
+            append_state_commit(
+                event_log,
+                {"tasks": [{"id": "OPS-SANDBOX-001", "status": "in_progress"}]},
+                source="test-git-auth-bwrap",
+            )
+
+            common_config_file = central / ".git" / "config"
+            initial_config_bytes = common_config_file.read_bytes()
+
+            # Prepare environment via common.preserve_github_cli_auth_env
+            worker_env = {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "HOME": str(alias_home),
+                "GH_CONFIG_DIR": str(gh_config_dir),
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+            }
+            common.preserve_github_cli_auth_env(worker_env, {"HOME": str(root)})
+
+            program = (
+                "import subprocess, sys, os, pathlib\n"
+                "common_config = pathlib.Path(sys.argv[1])\n"
+                "# 1. Demonstrate actual Git credential consumption via synthetic gh helper\n"
+                "res = subprocess.run(\n"
+                "    ['git', 'credential', 'fill'],\n"
+                "    input='protocol=https\\nhost=github.com\\n\\n',\n"
+                "    capture_output=True,\n"
+                "    text=True,\n"
+                ")\n"
+                "assert res.returncode == 0, f'git credential fill failed (rc={res.returncode}): {res.stderr}'\n"
+                "assert 'username=sandbox-user' in res.stdout, f'missing username in stdout: {res.stdout}'\n"
+                "assert 'password=sandbox-secret-pass' in res.stdout, f'missing password in stdout'\n"
+                "# 2. Demonstrate common .git/config is protected and read-only\n"
+                "denied = False\n"
+                "try:\n"
+                "    common_config.write_text('mutated-attacker-config')\n"
+                "except OSError:\n"
+                "    denied = True\n"
+                "assert denied, 'mutation of protected common .git/config was not denied'\n"
+                "# 3. Demonstrate alias HOME .gitconfig was not created\n"
+                "alias_gitconfig = pathlib.Path(os.environ['HOME']) / '.gitconfig'\n"
+                "assert not alias_gitconfig.exists(), f'unexpected alias .gitconfig created: {alias_gitconfig}'\n"
+                "sys.exit(0)\n"
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    [
+                        sys.executable,
+                        "-c",
+                        program,
+                        str(common_config_file),
+                    ],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary=_FUNCTIONAL_BWRAP,
+                )
+
+            proc = subprocess.run(
+                sandbox_args,
+                cwd=worktree,
+                env=worker_env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+
+            # Verify outside sandbox that common config bytes remain identical
+            self.assertEqual(common_config_file.read_bytes(), initial_config_bytes)
 
     def test_bind_worker_sandbox_rejects_unqualified_layout_missing_task_state_dir(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-unqualified-missing-") as temp_dir:
