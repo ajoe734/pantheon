@@ -1,0 +1,33 @@
+# Unaccepted, isolated comparison services only. No product Search activation.
+# Existing shared/hosted containers are outside this overlay's authority.
+
+services:
+  search-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pantheon-search-postgres-test
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pantheon_search
+    ports:
+      - "127.0.0.1:25432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pantheon_search"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: "no"
+
+  search-qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: pantheon-search-qdrant-test
+    ports:
+      - "127.0.0.1:26333:6333"
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: "no"

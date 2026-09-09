@@ -5034,7 +5034,44 @@ class DependencyContractBusy(RuntimeError):
     """Existing dispatch/review authority must settle before a revision."""
 
 
-def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set[str]) -> None:
+def _dependency_contract_inactive_worktree_lease(
+    task_id: str,
+    task: Mapping[str, Any],
+    lease: Mapping[str, Any],
+    queue_events: Mapping[str, Any],
+) -> None:
+    """Raise unless a retained lease is provably inactive allocation metadata.
+
+    Absence of an explicit active/released field is not proof by itself.
+    Every correlated signal must independently agree the lease is inactive:
+    the lease's own identity fields must be well-formed and self-consistent,
+    the queue event it last touched must have settled to completed, and the
+    task's own worker_recovery must already pass the existing settled/held
+    recovery validator. Any missing, inconsistent, or malformed signal falls
+    back to the unconditional rejection.
+    """
+    identity_fields = (
+        "branch", "path", "status_root", "source_root", "repository_id",
+        "base_ref", "base_sha", "last_used_at",
+    )
+    if lease.get("task_id") != task_id or lease.get("workspace_task_id") != task_id:
+        raise DependencyContractBusy("affected task has a worktree lease")
+    for key in identity_fields:
+        value = lease.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise DependencyContractBusy("affected task has a worktree lease")
+    event_id = lease.get("last_queue_event_id")
+    event = queue_events.get(event_id) if isinstance(event_id, str) and event_id.strip() else None
+    if not isinstance(event, Mapping) or event.get("status") != "completed":
+        raise DependencyContractBusy("affected task has a worktree lease")
+    # Delegate to the existing settled-recovery contract; its own busy
+    # reasons already distinguish pending/reassigned/malformed recovery.
+    _dependency_contract_validate_worker_recovery(task_id, task)
+
+
+def _dependency_contract_runtime_fence(
+    runtime: Mapping[str, Any], task_ids: set[str], tasks: Mapping[str, Mapping[str, Any]],
+) -> None:
     settled = {"done", "completed", "failed", "cancelled", "canceled", "superseded", "skipped", "expired"}
 
     def records(value, label):
@@ -5061,12 +5098,16 @@ def _dependency_contract_runtime_fence(runtime: Mapping[str, Any], task_ids: set
             raise DependencyContractBusy("unattributable queued intent")
         if (intent.get("task_id") in task_ids or event.get("task_id") in task_ids) and event.get("status") not in settled:
             raise DependencyContractBusy("affected task has a queued launch intent")
+    queue_events = queue.get("events")
     worktrees = runtime.get("worker_worktrees", {})
     if not isinstance(worktrees, Mapping):
         raise DependencyContractBusy("runtime worktree leases are malformed")
     for lease in records(worktrees.get("leases", {}), "worktree leases"):
-        if lease.get("task_id") in task_ids:
-            raise DependencyContractBusy("affected task has a worktree lease")
+        lease_task_id = lease.get("task_id")
+        if lease_task_id in task_ids:
+            _dependency_contract_inactive_worktree_lease(
+                lease_task_id, tasks.get(lease_task_id, {}), lease, queue_events,
+            )
     supervisor = runtime.get("supervisor", {})
     if not isinstance(supervisor, Mapping):
         raise DependencyContractBusy("runtime supervisor is malformed")
@@ -5181,7 +5222,7 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
         for row in rows for task_id in [row["task_id"]]
     ):
         return {"status": "replayed", "task_ids": sorted(ids), "request_sha256": digest}
-    _dependency_contract_runtime_fence(runtime, ids)
+    _dependency_contract_runtime_fence(runtime, ids, tasks)
     prospective = deepcopy(tasks)
     terminal_facts = state.get(TERMINAL_FACTS_KEY) or {}
     timestamp = iso_now()

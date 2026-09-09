@@ -1888,6 +1888,23 @@ class OrphanUnmergedWorktreeStalenessTests(unittest.TestCase):
 
 
 class RuntimeConfigurationContractTests(unittest.TestCase):
+    def test_fleet_cap_rejects_invalid_authority_and_retired_alias(self) -> None:
+        for value in (None, True, "13", 13.0, -1, [], {}):
+            with self.subTest(value=value):
+                config = config_fixture()
+                config["ready_dispatcher"]["max_concurrent_workers"] = value
+                with self.assertRaisesRegex(ValueError, "max_concurrent_workers"):
+                    supervisor.validate_provider_accounts(config)
+        config = config_fixture()
+        del config["ready_dispatcher"]["max_concurrent_workers"]
+        with self.assertRaisesRegex(ValueError, "max_concurrent_workers"):
+            supervisor.validate_provider_accounts(config)
+        for value in (12, 13, 14, None, True, "13"):
+            config = config_fixture()
+            config["watchdog"] = {"max_active_workers": value}
+            with self.assertRaisesRegex(ValueError, "max_active_workers is retired"):
+                supervisor.validate_provider_accounts(config)
+
     def test_repo_config_uses_one_capacity_and_account_schema(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         supervisor.validate_provider_accounts(config)
@@ -5628,6 +5645,75 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             "configured_no_delivery_endpoint",
             persist.call_args.kwargs["message"],
         )
+
+    def test_unavailable_owner_fallback_preserves_qualified_source_next(self) -> None:
+        # Regression for OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001: the no-receipt
+        # branch of _persist_task_reassignment_locked writes the reassignment
+        # message straight into task["next"], which used to silently drop a
+        # qualified source's handoff/acceptance instructions already stored
+        # there. The ordinary unavailable-owner fallback must append its short
+        # recovery reason instead of replacing them.
+        task = task_fixture(reviewer="Human/Ops")
+        task["next"] = "Qualified source handoff: follow the signed EXECUTION_PLAN and SOURCE_REVIEW."
+        self.config["agents"]["codex"]["provider"] = "missing-provider"
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        message = persist.call_args.kwargs["message"]
+        self.assertIn("Qualified source handoff: follow the signed EXECUTION_PLAN and SOURCE_REVIEW.", message)
+        self.assertIn("Recovery reassigned", message)
+        self.assertIn("configured_no_delivery_endpoint", message)
+
+    def test_unavailable_owner_fallback_does_not_nest_onto_a_prior_recovery_note(self) -> None:
+        # A prior fallback's own generic recovery note must not be re-appended
+        # onto itself on a second, unrelated fallback; that would grow the
+        # field unboundedly across repeated auto-recoveries.
+        task = task_fixture(reviewer="Human/Ops")
+        task["next"] = "Recovery reassigned owner from Codex after durable auth; planner will redispatch normally."
+        self.config["agents"]["codex"]["provider"] = "missing-provider"
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        message = persist.call_args.kwargs["message"]
+        self.assertEqual(message.count("Recovery reassigned"), 1)
 
     def test_configured_fallback_never_escapes_to_an_unrelated_healthy_roster(self) -> None:
         task = task_fixture(reviewer="Human/Ops")

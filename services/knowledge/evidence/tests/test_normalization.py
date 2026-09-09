@@ -66,3 +66,28 @@ def test_source_evidence_normalization_assigns_deterministic_evidence_owner() ->
     assert first.evidence_owner_id == second.evidence_owner_id
     assert first.evidence_item.evidence_item_id.startswith("evi-")
     assert first.evidence_item.metadata["source_owner_id"] == "src-repo-raw"
+
+
+def test_ingest_dedupe_uses_source_tenant_across_completed_batches():
+    from types import SimpleNamespace
+    from services.knowledge.evidence import EvidenceBundleBuilder, InMemoryEvidenceRepository
+    from services.source_ingestion.pipeline import persist_source_evidence_refs
+
+    repository = InMemoryEvidenceRepository()
+    manager = SimpleNamespace(get_connector=lambda _: None)
+    for tenant in ["tenant-b", "tenant-a", None]:
+        metadata = {"body": "same source content", "license_scope": "open"}
+        if tenant:
+            metadata["tenant_id"] = tenant
+        source = SourceRecord(
+            source_id=f"source-{tenant}", connector_id="notes", source_type="internal_note",
+            title="same source", content_ref="https://example.test/same", metadata=metadata,
+        )
+        result = SimpleNamespace(
+            records=[source],
+            run=SimpleNamespace(ingest_run_id=f"run-{tenant}", connector_id="notes", trigger_type="manual", trace_id="trace"),
+        )
+        refs = persist_source_evidence_refs(manager, repository, EvidenceBundleBuilder(repository), None, result)
+        assert refs["source_ids"] == [source.source_id]
+        assert repository.get_bundle(refs["evidence_bundle_id"], tenant_id=tenant).tenant_id == tenant
+    assert len(repository.list_source_records()) == 3

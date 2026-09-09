@@ -1,0 +1,456 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+  "title": "Tenant-qualified owner readback and postgres store resolution checkpoint",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "delivery_state": "in_progress_inbound_auth_and_search_retrieval_hardened",
+  "accepted": false,
+  "source_base_sha": "5d15c7b821a846d24b76ce4f653f990482da0518",
+  "audited_previous_head": "aad34700e262211b7de349921421a61961948749",
+  "historical_delivery": {
+    "original_author": "Antigravity",
+    "original_reviewer": "Codex",
+    "pr": 5630,
+    "review_decision": "reopened; no current approval"
+  },
+  "backend_decision": {
+    "selected": null,
+    "disposition": "candidate_withdrawn_pending_valid_evaluation",
+    "adoption_complete": false
+  },
+  "invalidated_prior_claims": [
+    "The prior 8/8 acceptance is invalid. 210 template-derived fixtures were embedded, while 9790 distractors used random unit vectors. No prior-runtime baseline, source-family holdout split or independent adjudication was established.",
+    "Repeated queries reused LocalEmbeddingEngine._query_cache. Prior p95 did not include fresh embedding plus authorized owner hydration; cold start was measured after all quality queries.",
+    "Qdrant used dense-only search, without required sparse/native-RRF comparison. Total operational cost, image/dependency latest-compatible selection and model cohort numbers were not substantiated.",
+    "The postgres role used in the actual local database is both superuser and BYPASSRLS. RLS support was incorrectly presented as enforced isolation.",
+    "Product request bodies supplied authorization. Candidate memory projection invented tenant/workspace/scope defaults, and owner hydration omitted version/ACL/expiry checks.",
+    "Index tombstone exceptions were suppressed before advancing the checkpoint. Full restart/rebuild recovery, privacy and scope/count/citation nonleakage were not proved.",
+    "Negative semantic matching was evaluator-only; its per-record cosine scan did not migrate the production consumer."
+  ],
+  "scoped_changes": [
+    "Restore product Search main/gateway/index pipeline, Dockerfile and requirements to current-dev sole runtime; preserve additive tenant/as-of checks.",
+    "Restore Memory main and negative_memory to current-dev owner retrieval/writeback and deterministic matching.",
+    "Remove Search service activation from isolated comparison Compose. No existing container or hosted environment was changed.",
+    "Replace misleading evaluator with fail-closed admission report and explicitly unaccepted bounded read-only local diagnostics; exit 2 for unresolved acceptance.",
+    "Invalidate selected-backend contract and unsubstantiated model comparison numbers. Preserve disconnected prototypes for correction, not production adoption.",
+    "Add activation and admission tests that reject implicit DSN activation and legacy success reports."
+  ],
+  "verification": {
+    "status": "retained runtime verified; candidate/task acceptance incomplete",
+    "completed_batches": [
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 63,
+        "subtests_passed": 2,
+        "seconds": 16.08
+      },
+      {
+        "command": "timeout 120s .venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_service_activation_contract.py",
+        "exit_code": 0,
+        "passed": 7,
+        "seconds": 6.29
+      },
+      {
+        "command": "docker exec pantheon-search-postgres-test psql -U postgres -d pantheon_search -Atc 'SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user; SELECT count(*) FROM search_retrieval_index;'",
+        "exit_code": 0,
+        "role": "postgres",
+        "rolsuper": true,
+        "rolbypassrls": true,
+        "corpus_count": 10022
+      },
+      {
+        "command": "timeout 120s .venv-pantheon/bin/python -m pytest -q services/search/tests/test_local_retrieval_isolation.py::TestEvaluationAdmission services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/test_index_pipeline.py",
+        "exit_code": 1,
+        "passed": 65,
+        "failed": 3,
+        "subtests_passed": 4,
+        "seconds": 22.84,
+        "finding": "Baseline test restoration dropped the existing notify URL signature correction. Restored that correction; focused rerun pending."
+      },
+      {
+        "command": "timeout 120s .venv-pantheon/bin/python services/search/evaluation/run_retrieval_eval.py --probe-local --samples 12 --report /tmp/retrieval-local-probe.json",
+        "exit_code": 2,
+        "acceptance": false,
+        "report": {
+          "schema_version": "retrieval_admission.v2",
+          "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+          "evaluated_at": "2026-09-06T08:55:23.418034+00:00",
+          "accepted": false,
+          "disposition": "candidate_withdrawn_pending_valid_evaluation",
+          "chosen_backend": null,
+          "unresolved": {
+            "owner_authorization": "Authenticated server scope and durable owner ACL/version/expiry contract are missing; request body and invented defaults are not authority.",
+            "read_role": "The prior evaluation used postgres superuser/BYPASSRLS; no nonowner, nonbypass runtime query role was proved.",
+            "holdout": "No source-family split, prior-runtime baseline, independent critical-case adjudication or immutable all-real-embedding holdout was supplied.",
+            "comparison": "Qdrant dense-only search is not the required dense/sparse/native-RRF comparison; total operations cost and latest-compatible identities remain unverified.",
+            "consumer_lifecycle": "Owner hydration/version/retention, write receipts, restart/rebuild and failure recovery were not proved through the actual consumers.",
+            "performance": "Prior timing reused query vectors and omitted authorized owner hydration; full 1000-replay concurrency-4 acceptance remains unmeasured.",
+            "privacy": "Zero external inference was asserted without complete transport observation; result/count/citation/snippet nonleakage remains unproved."
+          },
+          "legacy_manifest": {
+            "path": "services/search/evaluation/retrieval_manifest.json",
+            "accepted": false,
+            "reason": "Historical v1 report invalidated; its numerical results are not acceptance evidence."
+          },
+          "local_probe": {
+            "kind": "validation_diagnostics_only",
+            "accepted": false,
+            "role": "postgres",
+            "role_superuser": true,
+            "role_bypassrls": true,
+            "role_table_owner": true,
+            "corpus_count_observed": 10022,
+            "corpus_provenance_verified": false,
+            "model_manifest_sha256": "2b4c492890b17b6cebf933d873e8250d52ee27b1e38ce8f9754c0a369823d4c0",
+            "cold_model_load_seconds": 10.631,
+            "concurrency": 4,
+            "requests_completed": 12,
+            "latency_ms": [
+              502.874,
+              545.771,
+              551.424,
+              555.794,
+              562.088,
+              609.035,
+              612.495,
+              681.306,
+              690.047,
+              766.593,
+              811.082,
+              845.295
+            ],
+            "embedding_and_search_p95_ms": 845.295,
+            "elapsed_seconds": 2.073,
+            "includes_authorized_hydration": false,
+            "external_inference_calls_observed": null,
+            "limitation": "Unadjudicated diagnostic inputs against the historical mixed-vector index; neither relevance nor full-runtime performance acceptance."
+          }
+        }
+      },
+      {
+        "command": "docker compose -f docker-compose.search.yml config --quiet",
+        "exit_code": 0
+      },
+      {
+        "command": "timeout 180s .venv-pantheon/bin/python -m pytest -q services/search services/memory services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 124,
+        "status": "incomplete_timeout",
+        "acceptance": false,
+        "terminal_log": "Reached 64% and further progress without final pytest summary. No passed count or suite success inferred."
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 60s .venv-pantheon/bin/python -m pytest -q services/search/test_postgres_store.py::test_real_postgres_read_only_reload_uses_dependency_topology_for_stable_object services/search/test_index_pipeline.py services/search/tests/test_local_retrieval_isolation.py::TestEvaluationAdmission",
+        "exit_code": 0,
+        "passed": 30,
+        "subtests_passed": 4,
+        "seconds": 9.26,
+        "finding": "Existing notify URL signature correction retained; previous three failures resolved. Real isolated Postgres owner/read-only reload test executed without skip."
+      },
+      {
+        "command": "timeout 120s .venv-pantheon/bin/python services/search/evaluation/run_retrieval_eval.py --probe-local --samples 12 --report /tmp/retrieval-local-probe-final.json",
+        "exit_code": 2,
+        "acceptance": false,
+        "report": {
+          "schema_version": "retrieval_admission.v2",
+          "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+          "evaluated_at": "2026-09-06T08:59:25.338489+00:00",
+          "accepted": false,
+          "disposition": "candidate_withdrawn_pending_valid_evaluation",
+          "chosen_backend": null,
+          "unresolved": {
+            "owner_authorization": "Authenticated server scope and durable owner ACL/version/expiry contract are missing; request body and invented defaults are not authority.",
+            "read_role": "The prior evaluation used postgres superuser/BYPASSRLS; no nonowner, nonbypass runtime query role was proved.",
+            "holdout": "No source-family split, prior-runtime baseline, independent critical-case adjudication or immutable all-real-embedding holdout was supplied.",
+            "comparison": "Qdrant dense-only search is not the required dense/sparse/native-RRF comparison; total operations cost and latest-compatible identities remain unverified.",
+            "consumer_lifecycle": "Owner hydration/version/retention, write receipts, restart/rebuild and failure recovery were not proved through the actual consumers.",
+            "performance": "Prior timing reused query vectors and omitted authorized owner hydration; full 1000-replay concurrency-4 acceptance remains unmeasured.",
+            "privacy": "Zero external inference was asserted without complete transport observation; result/count/citation/snippet nonleakage remains unproved."
+          },
+          "legacy_manifest": {
+            "path": "services/search/evaluation/retrieval_manifest.json",
+            "accepted": false,
+            "reason": "Historical v1 report invalidated; its numerical results are not acceptance evidence."
+          },
+          "local_probe": {
+            "kind": "validation_diagnostics_only",
+            "accepted": false,
+            "role": "postgres",
+            "role_superuser": true,
+            "role_bypassrls": true,
+            "role_table_owner": true,
+            "corpus_count_observed": 10023,
+            "corpus_provenance_verified": false,
+            "model_manifest_sha256": "9aec7058749e4af0737f691cd145dc50ec528925b75d2e3239d5599ea6ee25dc",
+            "cold_model_load_seconds": 12.088,
+            "concurrency": 4,
+            "requests_completed": 12,
+            "latency_ms": [
+              490.607,
+              549.028,
+              602.408,
+              637.445,
+              682.341,
+              738.849,
+              779.647,
+              804.108,
+              818.791,
+              866.055,
+              878.672,
+              926.77
+            ],
+            "embedding_and_search_p95_ms": 926.77,
+            "elapsed_seconds": 2.414,
+            "includes_authorized_hydration": false,
+            "external_inference_calls_observed": null,
+            "limitation": "Unadjudicated diagnostic inputs against the historical mixed-vector index; neither relevance nor full-runtime performance acceptance."
+          }
+        },
+        "note": "Final probe sets connect_timeout=5, statement_timeout=5000 and default_transaction_read_only=on on all metadata/backend connections. Ran alongside prototype regression tests; diagnostic timing is not controlled hardware acceptance."
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python -m pytest -q services/search services/memory services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py --ignore=services/search/tests/test_pg_retrieval.py --ignore=services/search/tests/test_qdrant_backend.py --ignore=services/search/tests/test_local_retrieval_isolation.py --ignore=services/memory/test_search_retrieval.py",
+        "exit_code": 0,
+        "passed": 197,
+        "subtests_passed": 2,
+        "skipped": 0,
+        "seconds": 59.16,
+        "scope": "Complete retained-runtime Search/Memory plus negative matcher and persona bridge regressions. Disconnected candidate suites excluded explicitly; new admission guards independently passed in the 30-test batch. No candidate acceptance inferred."
+      }
+    ],
+    "pending_batches": [],
+    "no_new_backend_acceptance": true
+  },
+  "remaining_implementation": [
+    "Independent reviewer-adjudicated fresh source-derived validation/holdout and executed old-runtime baseline, followed by real 10k-document model embeddings and full selected-runtime gates.",
+    "Correct server authentication, nonowner/nonbypass SQL roles, owner hydration/version/expiry and checkpoint/tombstone recovery within authorized contracts.",
+    "Implement and compare local PG and Qdrant dense/sparse/native-RRF with bounded model candidates and real cost/performance evidence, then retain one production backend.",
+    "Remove unused prototypes and old rankers only after accepted gates, then current-dev exact-head review, required CI, integrator merge and owner done."
+  ],
+  "delivery": {
+    "pr": 5630,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "Draft PR #5630 preserves task checkpoints. No current exact-head approval, merge or done; blocked only for qualified existing Search Postgres reader artifact scope before completing implementation."
+  },
+  "runtime_effect": "Source-only withdrawal; no hosted deployment, external inference provider, canonical data migration or capital-affecting action.",
+  "corrective_anchor": "1597b42254a91bbc7985d0ae7a07082a53c09c87",
+  "resolved_historical_scope_blockers": [
+    {
+      "owner": "Human/Ops",
+      "reason": "Canonical artifact contract omits services/search/evaluation/retrieval_manifest.json, already added by the previous delivery. Qualified artifact-contract correction must authorize its removal; no owner hand-edit of canonical artifacts is allowed."
+    },
+    {
+      "owner": "Human/Ops",
+      "reason": "Required owner schemas/storage identity files are outside the artifact grant. Source/evidence owner maps and Postgres uniqueness use plain IDs; Memory schemas reject undefined fields and do not establish tenant/workspace/ACL/version/expiry authority. Supply an accepted tenant-qualified owner/auth transport contract or authorize its minimal schema/storage scope before Search projection can safely use it.",
+      "owner_contract_surfaces": [
+        "services/knowledge/evidence/repository.py",
+        "services/knowledge/evidence/models.py",
+        "services/source_ingestion/pg_store.py",
+        "services/source_ingestion/connectors/base.py",
+        "services/source_ingestion/source_record.schema.json",
+        "services/memory/institutional_memory_entry.schema.json",
+        "services/memory/persona_memory.schema.json"
+      ],
+      "storage_identity_reference": "services/foundation/postgres_json_store.py; changing this shared store is not prescribed when an owner-approved tenant-qualified record-ID contract can suffice."
+    },
+    {
+      "owner": "Human/Ops",
+      "reason": "services/search/pg_store.py was absent from the canonical artifact grant; Human/Ops granted the artifact to SIMPLIFY-RETRIEVAL-MEMORY-001. PostgresReadOnlyEvidenceRepository.reload now calls self.clear() to clear tenant maps on reload. PostgresSourceEvidenceRepository._scoped_record_id was updated to guarantee non-colliding IDs between legacy and tenanted records, and in-memory rollback on durable write failure was added."
+    }
+  ],
+  "blocking_inputs": [],
+  "owner_readback_checkpoint": {
+    "date": "2026-09-09",
+    "anchor": "3f9125ba4",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "independent_review": "not requested; full implementation incomplete",
+    "changes": [
+      "Explicit tenant_id=None now reads the legacy-only namespace; omitted scope retains the legacy administrative view. Source and evidence dedupe never cross tenant/legacy namespaces.",
+      "Ingest evidence publication scopes the persistent dedupe lookup and rejects mixed-tenant batches before evidence writes.",
+      "Bundle and knowledge construction reject mixed or overridden owner tenancy; bundle rejection occurs before partial source/item writes.",
+      "Search candidate owner hydration, rank text and result citations use tenant-qualified references. Legacy rankers enumerate caller tenant plus existing legacy records before counting; foreign tenant records cannot change these result counts. Legacy ACL semantics remain, not new public attribution.",
+      "Backend candidate remains unaccepted; this checkpoint is not proof of authenticated HTTP scope, version/expiry hydration, RLS, model quality or consumer migration."
+    ],
+    "completed_batches": [
+      {
+        "command": "timeout 90s .venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 43,
+        "seconds": 19.75
+      },
+      {
+        "command": "timeout 90s .venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests/test_normalization.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py",
+        "exit_code": 0,
+        "passed": 52,
+        "seconds": 12.67
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 83,
+        "subtests_passed": 2,
+        "seconds": 20.96
+      }
+    ],
+    "corrected_test_attempts": [
+      {
+        "exit_code": 1,
+        "passed": 36,
+        "failed": 7,
+        "reason": "New fixtures initially treated the existing metadata-backed tenant property as a constructor field; corrected fixtures and reran complete batch."
+      },
+      {
+        "exit_code": 1,
+        "passed": 51,
+        "failed": 1,
+        "reason": "Existing missing-bundle mock did not accept the new tenant keyword; updated mock signature without changing assertion, complete batch rerun passed."
+      }
+    ],
+    "actual_postgres_defect_probe": {
+      "command": "PYTHONPATH=. timeout 30s .venv-pantheon/bin/python /tmp/retrieval-readback-blocker-probe.py",
+      "exit_code": 0,
+      "acceptance_passed": false,
+      "stale_scoped_read_after_delete_and_reload": true,
+      "legacy_overwritten_by_tenant_key_collision": true,
+      "environment": "Existing isolated pantheon-search-postgres-test; unique disposable table created and dropped. Fixture owner role, not RLS acceptance. No hosted or existing data mutation.",
+      "reproducible_script": "import json\nimport uuid\nimport psycopg\nfrom services.source_ingestion.pg_store import PostgresSourceEvidenceRepository\nfrom services.search.pg_store import PostgresReadOnlyEvidenceRepository\nfrom services.source_ingestion.connectors import SourceRecord\n\nDSN = 'postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search?connect_timeout=5'\ntable = 'public.retrieval_scope_probe_' + uuid.uuid4().hex\n\ndef source(source_id, tenant=None):\n    return SourceRecord(source_id=source_id, connector_id='fixture', source_type='internal_note',\n                        title='fixture', content_ref='note://fixture',\n                        metadata={'tenant_id': tenant} if tenant else {})\n\ntry:\n    owner = PostgresSourceEvidenceRepository(DSN, table=table)\n    owner.add_source_record(source('revoked', 'tenant-a'))\n    reader = PostgresReadOnlyEvidenceRepository(DSN, table=table)\n    assert reader.get_source_record('revoked', tenant_id='tenant-a') is not None\n    with psycopg.connect(DSN) as conn:\n        conn.execute(f'DELETE FROM {table}')\n    reader.reload()\n    stale = reader.get_source_record('revoked', tenant_id='tenant-a') is not None\n    assert stale, 'Expected current reload defect was not reproduced'\n    owner.reload()\n    owner.add_source_record(source('t1:a:x'))\n    owner.add_source_record(source('x', 'a'))\n    owner.reload()\n    legacy_lost = owner.get_source_record('t1:a:x', tenant_id=None) is None\n    assert legacy_lost, 'Expected current identity collision was not reproduced'\n    print(json.dumps({'probe': 'isolated_actual_postgres_defect_reproduction',\n                      'stale_scoped_read_after_delete_and_reload': stale,\n                      'legacy_overwritten_by_tenant_key_collision': legacy_lost,\n                      'acceptance_passed': False,\n                      'scope': 'new disposable table; owner fixture role, not RLS acceptance'}))\nfinally:\n    with psycopg.connect(DSN) as conn:\n        conn.execute(f'DROP TABLE IF EXISTS {table}')\n"
+    },
+    "remaining_owner_work": [
+      "Reuse services/runtime_auth_inbound.py strict verified JWT validation and Registry claim completeness semantics in granted Search/Source/Memory call sites. Request bodies must only narrow admitted scope; no new real identity/role grants.",
+      "Complete current owner version/ACL/expiry readback and all frozen model/corpus/comparison/latency/lifecycle gates already listed in original acceptance."
+    ]
+  },
+  "owner_postgres_store_resolution_checkpoint": {
+    "date": "2026-09-09",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "independent_review": "not requested; anchor commit checkpoint",
+    "changes": [
+      "PostgresReadOnlyEvidenceRepository.reload now invokes self.clear() to clear tenant-scoped maps, fixing stale scoped reads after deletion/revocation.",
+      "PostgresSourceEvidenceRepository._scoped_record_id disambiguates legacy and tenanted records by prefixing tenanted records with @t{len}:{tenant}:{id} and escaping legacy records starting with @ as @{id}, preventing unique key collisions under UNIQUE (record_type, record_id).",
+      "PostgresSourceEvidenceRepository write methods now roll back in-memory additions if _upsert fails, preventing uncommitted in-memory-only records upon durable write failures.",
+      "Added unit and real Postgres regression tests in services/source_ingestion/test_postgres_store.py and services/search/test_postgres_store.py covering collision safety, rollback on write error, and delete/reload cache invalidation."
+    ],
+    "completed_batches": [
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 88,
+        "subtests_passed": 2,
+        "seconds": 25.09
+      },
+      {
+        "command": "timeout 90s .venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 44,
+        "seconds": 13.47
+      },
+      {
+        "command": "timeout 90s .venv-pantheon/bin/python -m pytest -q services/knowledge/evidence/tests/test_normalization.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py",
+        "exit_code": 0,
+        "passed": 52,
+        "seconds": 13.37
+      },
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/search/tests/test_service_activation_contract.py services/search/tests/test_local_retrieval_isolation.py::TestEvaluationAdmission",
+        "exit_code": 0,
+        "passed": 10,
+        "subtests_passed": 4,
+        "seconds": 4.59
+      }
+    ],
+    "actual_postgres_resolution_probe": {
+      "command": ".venv-pantheon/bin/python3 probe (reproduction script with fix)",
+      "exit_code": 0,
+      "stale_scoped_read_after_delete_and_reload": false,
+      "legacy_overwritten_by_tenant_key_collision": false,
+      "tenanted_present": true
+    }
+  },
+  "owner_inbound_auth_and_search_retrieval_checkpoint": {
+    "date": "2026-09-09",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "independent_review": "not requested; anchor commit checkpoint",
+    "changes": [
+      "services/search/main.py: Reused services/runtime_auth_inbound.py strict verified JWT validation, required identity claims (sub, exp, tenant, roles), and whitespace rejection. Implemented access context ceiling rule where verified JWT authority dictates actor_ref and tenant_id, while request bodies only narrow roles, access scopes, and filters. Protected search query, v2, alpha-query, compat, reload, and materialize routes with role-based checks.",
+      "services/memory/main.py: Integrated runtime_auth_inbound verification across /api/memory/retrieve, /api/memory/entries, persona-entries, and writeback endpoints. Enforced tenant ceiling on writes (no cross-tenant poisoning) and actor/role narrowing on retrieval.",
+      "services/memory/search_retrieval.py: Updated retrieve_persona_with_backend to support workspace_id filtering, avoid hardcoded default workspace, and enforce entry.is_expired() validation during hydration.",
+      "services/search/pg_retrieval.py: Added fallback to lexical FTS and synthetic rrf_score (ranker_version postgres-rrf-v1) when LocalEmbeddingEngine is not ready, while preserving fail-closed behavior for mode='semantic'.",
+      "services/search/local_embeddings.py: Added _verified state caching on LocalEmbeddingEngine to prevent repeated re-hashing of 2.2GB ONNX model weights on every index and search call.",
+      "Consolidated inbound auth regression suites directly into canonically granted test artifacts: services/search/tests/test_governed_search.py (15 tests) and services/memory/test_main.py (12 tests), retiring ungranted files services/search/tests/test_search_auth.py and services/memory/test_memory_auth.py to maintain 100% artifact compliance (0 ungranted files)."
+    ],
+    "completed_batches": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 59,
+        "seconds": 13.42
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_materialized_index.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/search/tests/test_contracts.py",
+        "exit_code": 0,
+        "passed": 41,
+        "seconds": 10.62
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 100,
+        "subtests_passed": 2,
+        "seconds": 23.77
+      },
+      {
+        "command": "SEARCH_RETRIEVAL_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 60s .venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_pg_retrieval.py services/memory/test_search_retrieval.py",
+        "exit_code": 0,
+        "passed": 9,
+        "seconds": 18.27
+      }
+    ]
+  },
+  "owner_dev_merge_and_verification_checkpoint": {
+    "date": "2026-09-09",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "anchor": "2bb1986db",
+    "dev_base_sha": "a4bc6261aa1f578e787eacc407e9f469ab0a6b2a",
+    "changes": [
+      "Merged origin/dev (commit a4bc6261a) into task branch task/SIMPLIFY-RETRIEVAL-MEMORY-001 with 0 merge conflicts.",
+      "Verified that git merge-base --is-ancestor origin/dev HEAD succeeds.",
+      "Re-executed all four test batches post-merge (209 total tests passed: 59/41/100/9).",
+      "Confirmed 0 ungranted files in PR diff against origin/dev (exactly 46 declared artifact files modified)."
+    ],
+    "completed_batches": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/evidence/tests services/search/tests/test_governed_search.py services/search/tests/test_governed_search_v2.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
+        "exit_code": 0,
+        "passed": 59,
+        "seconds": 13.92
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_materialized_index.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/search/tests/test_contracts.py",
+        "exit_code": 0,
+        "passed": 41,
+        "seconds": 10.93
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/memory/test_main.py services/memory/test_institutional_memory_store.py services/memory/test_persona_memory_store.py services/source_ingestion/tests/test_negative_memory_matcher.py integrations/openclaw/test_persona_memory_bridge.py",
+        "exit_code": 0,
+        "passed": 100,
+        "subtests_passed": 2,
+        "seconds": 24.41
+      },
+      {
+        "command": "SEARCH_RETRIEVAL_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search timeout 60s .venv-pantheon/bin/python3 -m pytest -q services/search/tests/test_pg_retrieval.py services/memory/test_search_retrieval.py",
+        "exit_code": 0,
+        "passed": 9,
+        "seconds": 16.98
+      }
+    ]
+  }
+}

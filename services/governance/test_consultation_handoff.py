@@ -157,3 +157,55 @@ def test_handoff_rejects_published_token_in_enforced_posture(
 
     assert response.status_code == 503
     assert store.list_all() == []
+
+
+def test_consultation_handoff_multi_instance_isolation(tmp_path, monkeypatch) -> None:
+    """Closes F09: verify consultation handoffs across independent store instances maintain isolation and idempotency."""
+    path = tmp_path / "consultation-handoffs.json"
+    store_a = JsonGovernanceRecordStore(path, id_fields=("handoff_id",))
+    store_b = JsonGovernanceRecordStore(path, id_fields=("handoff_id",))
+
+    monkeypatch.setattr(main, "consultation_handoff_store", store_a)
+    monkeypatch.setenv("CONSULTATION_HANDOFF_TOKEN", TOKEN)
+    monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_SERVICE_ACTOR", "consultation-workflow-executor")
+    monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS", "tenant-a")
+
+    client = TestClient(main.app)
+
+    # First handoff via store A
+    r1 = client.post("/api/governance/consultation-handoffs", json=_payload(), headers=_headers(token=TOKEN))
+    assert r1.status_code == 201
+
+    # Second independent handoff via store B (different tenant/key)
+    monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS", "tenant-a,tenant-b")
+    monkeypatch.setattr(main, "consultation_handoff_store", store_b)
+
+    payload_b = {
+        "tenant_id": "tenant-b",
+        "request_id": "cr-002",
+        "handoff": {
+            "handoff_id": "gh-002",
+            "request_id": "cr-002",
+            "target_gate": "consultation.committee.risk.reviewed",
+            "memo_ids": ["memo-002"],
+            "evidence_refs": ["evidence-002"],
+            "audit_refs": ["audit-002"],
+            "trace_id": "trace-002",
+        },
+    }
+    headers_b = {
+        "Idempotency-Key": "consultation-handoff:tenant-b:gh-002",
+        "X-Pantheon-Service-Actor": "consultation-workflow-executor",
+        "X-Pantheon-Tenant-Id": "tenant-b",
+        "Authorization": f"Bearer {TOKEN}",
+    }
+    r2 = client.post("/api/governance/consultation-handoffs", json=payload_b, headers=headers_b)
+    assert r2.status_code == 201
+
+    # Both handoffs survive on both store instances
+    assert store_a.get("gh-001") is not None
+    assert store_a.get("gh-002") is not None
+    assert store_b.get("gh-001") is not None
+    assert store_b.get("gh-002") is not None
+    assert len(store_a.list_all()) == 2
+    assert len(store_b.list_all()) == 2

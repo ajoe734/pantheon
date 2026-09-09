@@ -61,8 +61,7 @@
     "min_disk_free_gb": 2.0,
     "max_disk_used_percent": 95.0,
     "min_memory_available_mb": 512,
-    "max_load_1m": 24.0,
-    "max_active_workers": 12
+    "max_load_1m": 24.0
   },
   "delivery_health": {
     "evidence_ttl_seconds": 300,
@@ -159,40 +158,30 @@
       "Claude": [
         "Claude2",
         "Antigravity",
-        "Antigravity2",
-        "Codex",
-        "Codex2"
+        "Antigravity2"
       ],
       "Claude2": [
         "Claude",
         "Antigravity",
-        "Antigravity2",
-        "Codex",
-        "Codex2"
+        "Antigravity2"
       ],
       "Antigravity": [
         "Antigravity2",
         "Claude",
-        "Claude2",
-        "Codex",
-        "Codex2"
+        "Claude2"
       ],
       "Antigravity2": [
         "Antigravity",
         "Claude",
-        "Claude2",
-        "Codex",
-        "Codex2"
+        "Claude2"
       ],
       "Codex": [
-        "Codex2",
         "Claude",
         "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
-        "Codex",
         "Claude",
         "Claude2",
         "Antigravity",

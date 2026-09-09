@@ -67,6 +67,11 @@ class EvidenceItem:
         object.__setattr__(self, "trace_refs", normalize_strings(self.trace_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
+    @property
+    def tenant_id(self) -> str | None:
+        val = self.metadata.get("tenant_id")
+        return str(val).strip() if val is not None and str(val).strip() else None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "evidence_item_id": self.evidence_item_id,
@@ -137,6 +142,11 @@ class EvidenceBundle:
         object.__setattr__(self, "entitlement_tags", normalize_strings(self.entitlement_tags))
         object.__setattr__(self, "trace_refs", normalize_strings(self.trace_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
+
+    @property
+    def tenant_id(self) -> str | None:
+        val = self.metadata.get("tenant_id")
+        return str(val).strip() if val is not None and str(val).strip() else None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -252,6 +262,11 @@ class KnowledgeObject:
         object.__setattr__(self, "workspace_scope", normalize_strings(self.workspace_scope))
         object.__setattr__(self, "keywords", normalize_strings(self.keywords))
         object.__setattr__(self, "metadata", dict(self.metadata))
+
+    @property
+    def tenant_id(self) -> str | None:
+        val = self.metadata.get("tenant_id")
+        return str(val).strip() if val is not None and str(val).strip() else None
 
     def to_dict(self) -> dict[str, Any]:
         return {

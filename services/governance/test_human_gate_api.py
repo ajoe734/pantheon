@@ -6,8 +6,9 @@ import pytest
 from fastapi import HTTPException
 
 from services.governance import main
+from services.governance.human_gate.decision_model import HumanGateSignature
 from services.governance.human_gate_store import GovernanceHumanGateDecisionStore
-from services.governance.promotion_readiness.signoff_api import SignoffAPI
+from services.governance.promotion_readiness.signoff_api import SignoffAPI, SignoffApiError
 from services.governance.record_store import JsonGovernanceRecordStore
 from services.runtime_auth_inbound import encode_jwt_hs256
 
@@ -183,3 +184,167 @@ def test_human_gate_rejects_wrong_evidence_contract(tmp_path, monkeypatch):
         )
     assert extra_rejected.value.status_code == 422
     assert "evidence_reviewed" in str(extra_rejected.value.detail)
+
+
+def test_human_gate_multi_instance_isolation(tmp_path, monkeypatch) -> None:
+    """Closes F09: verify human gate decisions across independent store instances coordinate without lost updates."""
+    store_file = tmp_path / "human-gates.json"
+    records_a = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+    records_b = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_SECRET", "human-gate-test-secret")
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_JWKS_URI", raising=False)
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL", raising=False)
+
+    # 1. Instance A creates gate 1
+    monkeypatch.setattr(main, "human_gate_record_store", records_a)
+    monkeypatch.setattr(main, "human_gate_api", SignoffAPI(store=GovernanceHumanGateDecisionStore(records_a)))
+    d1 = f"hgd-iso-1-{uuid.uuid4().hex[:6]}"
+    main.create_human_gate(
+        body=_decision_payload(d1),
+        authorization=_headers("approver-1", "approver")["Authorization"],
+        x_mfa_token=None,
+    )
+
+    # 2. Instance B creates gate 2
+    monkeypatch.setattr(main, "human_gate_record_store", records_b)
+    monkeypatch.setattr(main, "human_gate_api", SignoffAPI(store=GovernanceHumanGateDecisionStore(records_b)))
+    d2 = f"hgd-iso-2-{uuid.uuid4().hex[:6]}"
+    main.create_human_gate(
+        body=_decision_payload(d2),
+        authorization=_headers("approver-2", "approver")["Authorization"],
+        x_mfa_token=None,
+    )
+
+    # Both gates survive across both instances
+    assert records_a.get(d1) is not None
+    assert records_a.get(d2) is not None
+    assert records_b.get(d1) is not None
+    assert records_b.get(d2) is not None
+    assert len(records_a.list_all()) == 2
+    assert len(records_b.list_all()) == 2
+
+    # Instance B reads and signs gate 1
+    signed_g1 = main.sign_human_gate(
+        decision_id=d1,
+        body={"role": "approver"},
+        authorization=_headers("approver-1", "approver", mfa=True)["Authorization"],
+        x_mfa_token=None,
+    )
+    assert len(signed_g1["signatures"]) == 1
+
+    # Instance A immediately observes the signature on gate 1
+    g1_from_a = records_a.get(d1)
+    assert len(g1_from_a["signatures"]) == 1
+
+
+def test_mounted_human_gate_interleaved_conflict_isolation(tmp_path, monkeypatch) -> None:
+    """Mounted human gate handlers coordinate duplicate conflict, concurrent CAS signatures, duplicate actor rejection, and revocation across independent store instances."""
+    store_file = tmp_path / "human-gates-intl.json"
+    records_a = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+    records_b = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+    api_a = SignoffAPI(store=GovernanceHumanGateDecisionStore(records_a))
+    api_b = SignoffAPI(store=GovernanceHumanGateDecisionStore(records_b))
+
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_SECRET", "human-gate-test-secret")
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_JWKS_URI", raising=False)
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL", raising=False)
+
+    decision_id = f"hgd-intl-{uuid.uuid4().hex[:6]}"
+    payload = _decision_payload(decision_id)
+
+    # 1. Instance A creates the decision
+    monkeypatch.setattr(main, "human_gate_record_store", records_a)
+    monkeypatch.setattr(main, "human_gate_api", api_a)
+    created = main.create_human_gate(
+        body=payload,
+        authorization=_headers("approver-1", "approver")["Authorization"],
+        x_mfa_token=None,
+    )
+    assert created["decision_id"] == decision_id
+
+    # 2. Instance B attempts duplicate creation with same decision_id -> 409 conflict
+    monkeypatch.setattr(main, "human_gate_record_store", records_b)
+    monkeypatch.setattr(main, "human_gate_api", api_b)
+    with pytest.raises(HTTPException) as dup_exc:
+        main.create_human_gate(
+            body=payload,
+            authorization=_headers("approver-2", "approver")["Authorization"],
+            x_mfa_token=None,
+        )
+    assert dup_exc.value.status_code == 409
+    assert f"decision already exists: {decision_id}" in str(dup_exc.value.detail)
+
+    # 3. Controlled interleaving of signatures across independent instances
+    # Instance B reads the initial decision snapshot
+    snapshot_b = api_b.read_decision(decision_id)
+    assert len(snapshot_b.signatures) == 0
+
+    # Instance A signs as approver and commits to disk
+    monkeypatch.setattr(main, "human_gate_record_store", records_a)
+    monkeypatch.setattr(main, "human_gate_api", api_a)
+    s_a = main.sign_human_gate(
+        decision_id=decision_id,
+        body={"role": "approver"},
+        authorization=_headers("approver-1", "approver", mfa=True)["Authorization"],
+        x_mfa_token=None,
+    )
+    assert len(s_a["signatures"]) == 1
+
+    # Instance B uses mounted signing handler sharing the expected snapshot to prove 409 conflict
+    monkeypatch.setattr(main, "human_gate_record_store", records_b)
+    monkeypatch.setattr(main, "human_gate_api", api_b)
+    orig_require_b = api_b.store.require
+    api_b.store.require = lambda dec_id: snapshot_b
+    with pytest.raises(HTTPException) as cas_exc:
+        main.sign_human_gate(
+            decision_id=decision_id,
+            body={"role": "operator"},
+            authorization=_headers("operator-1", "operator", mfa=True)["Authorization"],
+            x_mfa_token=None,
+        )
+    assert cas_exc.value.status_code == 409
+    assert "human gate changed concurrently" in str(cas_exc.value.detail)
+
+    # Explicit retry from fresh state without sleep synchronization
+    api_b.store.require = orig_require_b
+    s_b = main.sign_human_gate(
+        decision_id=decision_id,
+        body={"role": "operator"},
+        authorization=_headers("operator-1", "operator", mfa=True)["Authorization"],
+        x_mfa_token=None,
+    )
+    assert len(s_b["signatures"]) == 2
+
+    # 4. Duplicate actor signature rejection: approver-1 cannot sign a second role
+    monkeypatch.setattr(main, "human_gate_record_store", records_a)
+    monkeypatch.setattr(main, "human_gate_api", api_a)
+    with pytest.raises(HTTPException) as dup_actor_exc:
+        main.sign_human_gate(
+            decision_id=decision_id,
+            body={"role": "risk_owner"},
+            authorization=_headers("approver-1", "risk_owner", mfa=True)["Authorization"],
+            x_mfa_token=None,
+        )
+    assert dup_actor_exc.value.status_code == 409
+    assert "one authenticated actor may sign only one role" in str(dup_actor_exc.value.detail)
+
+    # 5. Revocation transition: Instance A revokes the gate
+    revoked = main.revoke_human_gate(
+        decision_id=decision_id,
+        body={"reason": "audit clearance revoked"},
+        authorization=_headers("admin-1", "admin", mfa=True)["Authorization"],
+        x_mfa_token=None,
+    )
+    assert revoked["status"] == "revoked"
+
+    # 6. Durable reread by fresh instance C confirms terminal status and all signatures retained
+    records_c = JsonGovernanceRecordStore(store_file, id_fields=("decision_id",))
+    final = records_c.get(decision_id)
+    assert final is not None
+    assert final["status"] == "revoked"
+    assert len(final["signatures"]) == 2
+    roles = {s["role"] for s in final["signatures"]}
+    assert roles == {"approver", "operator"}

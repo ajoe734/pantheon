@@ -1,0 +1,35 @@
+{
+  "contract_version": "pantheon.search-backend-contract.v2",
+  "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+  "accepted": false,
+  "chosen_backend": null,
+  "delivery_state": "candidate_withdrawn_pending_valid_evaluation",
+  "activation_allowed": false,
+  "reason": "Prior evaluation used random-vector distractors, cached embedding timings and superuser SQL; owner authorization/version and independently adjudicated baseline/holdout were not established.",
+  "product_runtime": {
+    "retained_ranker_base": "5d15c7b821a846d24b76ce4f653f990482da0518",
+    "source": "origin/dev at recovery; exact base verified in task evidence",
+    "search": "Original SearchGateway/KeywordIndexAdapter/retriever pipeline; no candidate import, schema setup or DSN activation.",
+    "memory": "Original canonical institutional/persona retrieval and reviewed writeback paths.",
+    "negative_memory": "Original deterministic matching; candidate cosine/full-scan addition withdrawn.",
+    "retained_additive_checks": [
+      "tenant comparison",
+      "as-of cutoff narrowing"
+    ]
+  },
+  "candidate_modules": [
+    "services/search/pg_retrieval.py",
+    "services/search/qdrant_backend.py",
+    "services/search/local_embeddings.py",
+    "services/memory/search_retrieval.py"
+  ],
+  "candidate_status": "Disconnected prototypes, not alternative production backends. Preserve for bounded correction only; unselected production code must be removed before accepted final delivery.",
+  "dependencies_and_models": "requirements.lock and model-manifest.json describe unaccepted candidate artifacts; latest-compatible dependency/image selection and validation remain outstanding.",
+  "infrastructure_consumer": {
+    "task": "OSS-INFRA-PROFILES-001",
+    "instruction": "Do not wire PG/Qdrant candidates into root Compose or activate Search/Memory candidate DSNs. Consume only a later independently accepted selected-backend contract."
+  },
+  "validation_entrypoint": "services/search/evaluation/run_retrieval_eval.py",
+  "validation_exit_status": 2,
+  "rebuild_rollback": "No candidate index migration or production deployment is authorized by this contract. Prior sole runtime remains active; no data-owner changes were made."
+}

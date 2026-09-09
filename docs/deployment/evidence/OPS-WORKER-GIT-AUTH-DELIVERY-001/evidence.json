@@ -1,0 +1,152 @@
+{
+  "schema_version": "pantheon.worker-git-auth-evidence.v1",
+  "task_id": "OPS-WORKER-GIT-AUTH-DELIVERY-001",
+  "title": "Repair worker Git credential propagation and finalization",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "base_sha_at_dispatch": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+  "current_base": "15e2907b5dd0af53a2d6b773f1744d7c955336a7",
+  "task_branch": "task/OPS-WORKER-GIT-AUTH-DELIVERY-001",
+  "depends_on": [
+    "OPS-WORKER-MOUNTS-001"
+  ],
+  "depends_on_status_at_dispatch": "done, satisfied=true",
+  "delivery_state": "ready_for_review",
+  "plan": {
+    "path": "/tmp/pantheon-worker-git-intake-20260909-v2/EXECUTION_PLAN.md",
+    "sha256": "eaeaeea063a49ad807d24babff0e0f116fd7128ff91b47b3c740f555232cd5b8"
+  },
+  "supplements": [
+    {
+      "path": "/tmp/pantheon-worker-git-intake-20260909-v2/SOURCE_REVIEW.md",
+      "sha256": "1d616cc509cfd63b2f115ea7adfbb1d58b35bd6add31c56ac5cc765bfb3adc19"
+    }
+  ],
+  "scope": {
+    "artifacts_count": 8,
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/test_common.py",
+      ".orchestrator/test_adapter_delivery_policy.py",
+      ".orchestrator/test_worker_runner_heartbeat.py",
+      "scripts/git/task_finalize.sh",
+      "scripts/git/test_task_review_merge_gate.py",
+      "docs/operations/worker-atomic-state-mounts.md",
+      "docs/deployment/evidence/OPS-WORKER-GIT-AUTH-DELIVERY-001/evidence.json"
+    ],
+    "owned": [
+      "Per-process Git credential propagation in common.preserve_github_cli_auth_env via GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, and GIT_CONFIG_VALUE_<n> supplying credential.https://github.com.helper = !gh auth git-credential without requiring gh auth setup-git or .gitconfig writes.",
+      "Preservation of existing GIT_CONFIG_COUNT entries without loss or renumbering; preservation of explicit GH_CONFIG_DIR, XDG/source HOME discovery, provider alias HOME isolation, and other-host helpers (e.g. gitlab).",
+      "Non-interactive prompt-free Git failure via GIT_TERMINAL_PROMPT=0 in background worker environments, preventing hangs on terminal input.",
+      "Redacted actionable rejection of malformed indexed git configuration.",
+      "Protected config delivery in scripts/git/task_finalize.sh: pushing explicitly to origin $TASK_BRANCH without -u (--set-upstream) to eliminate EBUSY writes to read-only shared .git/config.",
+      "Real bubblewrap integration test using bind_worker_sandbox with linked task worktree, alias HOME, protected common .git/config, and synthetic gh helper.",
+      "Isolated local Git / linked worktree regressions for task_finalize.sh with protected shared config.",
+      "Runbook documentation of git credential propagation and protected config delivery architecture in worker-atomic-state-mounts.md."
+    ],
+    "not_changing": [
+      "No bypass of bubblewrap isolation or sandbox boundaries.",
+      "No writable config overlay or mount relaxation for shared .git/config.",
+      "No creation, exposure, or printing of tokens; no call to gh auth token or token caching files.",
+      "No alteration to canonical review gates or supervisor merge policy."
+    ],
+    "composes_with": [
+      "OPS-WORKER-MOUNTS-001",
+      "Supervisor worker runner and provider adapters",
+      "scripts/git task lifecycle tools (task_start.sh, worker_commit.py, task_finalize.sh)"
+    ]
+  },
+  "failure_reproduction": {
+    "case_1_ebusy_git_push_u": "task_finalize.sh executed 'git push -u origin $TASK_BRANCH', which attempted to write branch upstream tracking to shared .git/config mounted read-only inside worker sandbox, failing with EBUSY / EROFS.",
+    "case_2_missing_git_credential_helper": "Provider alias HOME isolation broke Git credential helper inheritance, and gh auth setup-git could not write read-only HOME/.gitconfig or .git/config, causing Git to interactively prompt for credentials and hang."
+  },
+  "implementation": {
+    "common": "Extended preserve_github_cli_auth_env to configure GIT_TERMINAL_PROMPT=0, prompt-free GIT_ASKPASS/SSH_ASKPASS, validated indexed git config keys with redacted errors, and per-process Git config (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>) for credential.https://github.com.helper = !gh auth git-credential while preserving explicit supported credential policies, caller helper choices including resets, explicit GH_CONFIG_DIR, and other-host helpers.",
+    "task_finalize": "Updated line 172 to 'git push origin $TASK_BRANCH' without -u, eliminating writes to shared .git/config while retaining explicit origin push target and failure propagation.",
+    "docs": "Updated docs/operations/worker-atomic-state-mounts.md with architecture and runbook details for git credential propagation, protected config delivery, and promotion boundary."
+  },
+  "review_rejection_20260909_fixes": {
+    "rejected_head": "1fffd401ad5b61395f8f7484f97a730b38466679",
+    "p1_gh_helper_overrides_explicit_askpass": {
+      "defect": "common.py preserved a supported PANTHEON_WORKER_GIT_ASKPASS policy but still auto-injected the gh credential.helper into GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> whenever no GitHub helper was already present, so real Git with both a working PAT askpass and a working gh helper used the gh identity instead of the explicit PAT identity.",
+      "fix": ".orchestrator/common.py: automatic gh credential-helper routing is now skipped whenever an explicit supported askpass (PANTHEON_WORKER_GIT_ASKPASS) is configured, so the explicit credential choice is preserved before adding automatic gh routing.",
+      "regression_added": ".orchestrator/test_common.py: test_git_credential_real_subprocess_consumption_and_prompt_free_failure now runs a real Git credential fill with BOTH the PAT askpass and the gh helper usable and asserts the PAT identity wins and no GIT_CONFIG_COUNT entry is auto-injected, plus a companion case with the gh helper unusable."
+    },
+    "p2_stripped_key_validation_not_applied_to_emitted_value": {
+      "defect": "common.py validated a stripped copy of each indexed GIT_CONFIG_KEY_<n> (key_val = str(env[key_var]).strip()) but left the original, unstripped value in env untouched, so a key with leading whitespace or a trailing newline passed preparation and was still emitted to real Git, which exited 128 and echoed the raw key.",
+      "fix": ".orchestrator/common.py: the key is now validated in its exact emitted form (is_valid_git_config_key(key_val) called on the unstripped value); is_valid_git_config_key already rejects any key that differs from its own stripped form or contains a newline, so malformed whitespace/newline keys are now redacted and rejected during preparation instead of reaching Git.",
+      "regression_added": ".orchestrator/test_common.py: test_preserve_github_cli_auth_env_malformed_indexed_config_rejected adds a leading-whitespace key case and a trailing-newline key case, each asserting ValueError with the raw sensitive value redacted from the message, plus real Git subprocess regressions proving the malformed key never reaches Git (both would previously exit 128 with the raw key echoed)."
+    }
+  },
+  "review_rejection_20260909_v2_fixes": {
+    "rejected_head": "c0aa800412bb08fb061d2c9984033f4edbc22b4d",
+    "p1_gh_helper_overrides_explicit_indexed_core_askpass": {
+      "defect": "common.py recognized an explicit indexed core.askPass entry when deciding whether to strip GIT_ASKPASS, but the separate automatic-gh-routing condition only checked has_github_helper and supported_askpass (the PANTHEON_WORKER_GIT_ASKPASS env policy). It did not check has_explicit_core_askpass, so a caller-configured core.askPass entry with no credential.helper still got a gh credential.helper auto-appended. A real isolated Git credential fill with a working synthetic core.askPass and a working synthetic gh returned username=synthetic-explicit before preparation and username=synthetic-gh after preparation (GIT_CONFIG_COUNT 1 -> 2).",
+      "fix": ".orchestrator/common.py: the automatic gh credential-helper routing condition now also excludes `has_explicit_core_askpass`, so an explicit indexed core.askPass entry is preserved as a deliberate credential choice before any automatic gh routing is added, matching the existing PANTHEON_WORKER_GIT_ASKPASS precedence.",
+      "regression_added": ".orchestrator/test_common.py: test_git_credential_real_subprocess_consumption_and_prompt_free_failure adds step 9, a real Git credential fill with a working synthetic core.askPass (no credential.helper configured) and a working synthetic gh, asserting the explicit askpass identity resolves both before and after preparation and that GIT_CONFIG_COUNT stays at 1 (no auto-appended gh helper)."
+    },
+    "p2_git_config_count_validated_on_stripped_copy_only": {
+      "defect": "common.py validated GIT_CONFIG_COUNT by stripping whitespace first (stripped_count = str(raw_count).strip()) and calling str.isdigit() on the stripped copy, then int() on it, but left the original unstripped env value untouched. A trailing newline (e.g. \"1\\n\") is stripped away by .strip() before validation, so it passed preparation, but real `git config --list` parses the raw env value and exits 128 on the embedded newline. A non-ASCII decimal digit such as U+0661 (ARABIC-INDIC DIGIT ONE) also satisfies str.isdigit() and int() in Python but is rejected by real Git as a bogus count. A non-ASCII digit with no integer value, U+00B2 (SUPERSCRIPT TWO), satisfies str.isdigit() but raises an uncaught ValueError from int() that would have escaped preparation.",
+      "fix": ".orchestrator/common.py: GIT_CONFIG_COUNT is now validated on its exact, unstripped emitted value: the raw string must be non-empty, ASCII-only (str.isascii()), and all-digits (str.isdigit()), which rejects whitespace/newlines and every non-ASCII digit form (both the Arabic-Indic and superscript cases) before any int() conversion is attempted, so the redacted actionable ValueError is raised consistently instead of a raw conversion exception or a silently-accepted count Git would reject.",
+      "regression_added": ".orchestrator/test_common.py: test_preserve_github_cli_auth_env_malformed_indexed_config_rejected adds a trailing-newline count case, a non-ASCII Arabic-Indic digit count case, and a non-ASCII superscript digit count case, each asserting ValueError is raised during preparation, plus a real Git subprocess loop over all three raw values proving each would exit 128 (git config --list: bogus count in GIT_CONFIG_COUNT) if it had reached Git unrejected."
+    }
+  },
+  "verification": {
+    "environment": {
+      "python": "3.12.3",
+      "git": "2.43.0",
+      "bwrap": "0.9.0",
+      "pytest": "9.1.1",
+      "interpreter": "/usr/bin/python3"
+    },
+    "checksums": {
+      ".orchestrator/common.py": "d9ea19a6cb1164e7ce860ac9521605052445417620fe9cb86e99480bd2e4d3f6",
+      ".orchestrator/test_common.py": "2e6b89959b56fb047e8b93fe119a7a7afe63cf8485382b4d75b65b0feffa8a2e",
+      ".orchestrator/test_adapter_delivery_policy.py": "e4b4227c37352465205177e7d37ff87f8f453bc7a734549ac853cd004ee95966",
+      ".orchestrator/test_worker_runner_heartbeat.py": "34154d05283a3ab97e3fa4c0ecaf6d2a4c55c89d9609f3f2a9128a2f3a06cf7e",
+      "scripts/git/task_finalize.sh": "f8cac348ed4f8e73afaeab48551903054e15d3a3fa2c5c341561442d0e0396ac",
+      "scripts/git/test_task_review_merge_gate.py": "9afddca25cfa52fd87393acd571ba2b673cd61ff10789a42f0f7dcad0b4e23b9",
+      "docs/operations/worker-atomic-state-mounts.md": "717e4aff2d8c5555b8b665b162a38ae13199ea7341eee23516a3809b4084d28f"
+    },
+    "test_runs": [
+      {
+        "command": "timeout 180s python3 scripts/git/test_task_review_merge_gate.py",
+        "result": "119 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON -u PANTHEON_STATUS_ROOT PYTHONPATH=.orchestrator timeout 180s python3 -m unittest test_common test_adapter_delivery_policy test_worker_runner_heartbeat",
+        "result": "211 passed",
+        "exit_status": 0,
+        "note": "Same suites with these four env vars still set (inherited canonical identity binding of this live worker checkout) reproduce the single pre-existing, unrelated LogicalActivityReaderTests.test_recover_status_activity_outbox_integration failure noted by the prior independent review; unsetting them for the subprocess reproduces the documented clean baseline."
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON -u PANTHEON_STATUS_ROOT PYTHONPATH=.orchestrator timeout 180s python3 -m unittest test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_real_bubblewrap_worker_git_credential_propagation_and_protected_config",
+        "result": "1 passed",
+        "exit_status": 0,
+        "note": "focused real bubblewrap Git credential/protected-config regression, no skip"
+      }
+    ],
+    "post_rejection_v2_reruns": [
+      {
+        "command": "timeout 180s python3 scripts/git/test_task_review_merge_gate.py",
+        "result": "119 passed",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON -u PANTHEON_STATUS_ROOT PYTHONPATH=.orchestrator timeout 180s python3 -m unittest test_common test_adapter_delivery_policy test_worker_runner_heartbeat",
+        "result": "211 passed",
+        "exit_status": 0,
+        "note": "no skips; run against the P1/P2 fixes and their new real-Git regressions for review_rejection_20260909_v2_fixes"
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON -u PANTHEON_STATUS_ROOT PYTHONPATH=.orchestrator timeout 180s python3 -m unittest test_worker_runner_heartbeat.TestCrossRepoLeasedWorktreeWriteBoundary.test_real_bubblewrap_worker_git_credential_propagation_and_protected_config",
+        "result": "1 passed",
+        "exit_status": 0,
+        "note": "focused real bubblewrap Git credential/protected-config regression, no skip"
+      }
+    ]
+  }
+}
