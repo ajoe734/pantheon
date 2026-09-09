@@ -820,6 +820,73 @@ def test_replacing_existing_record_file_preserves_its_mode(tmp_path: Path) -> No
     assert store.get("e-1") == {"id": "e-1", "val": "second"}
 
 
+def test_save_never_mutates_process_global_umask(tmp_path: Path) -> None:
+    """``_save`` must never call ``os.umask`` at all, for new or existing files.
+
+    ``os.umask`` is process-global and is not thread-local: a prior
+    implementation toggled it to 0 and back to read the ambient default,
+    which raced with any unrelated thread creating a file in the same
+    process during that window (observed landing at 0666 instead of the
+    ambient umask's restrictive default). The fix must get the correct
+    mode without ever reading or mutating the process umask.
+    """
+    store_file = tmp_path / "no_umask_call.json"
+    store = JsonGovernanceRecordStore(store_file, id_fields=("id",))
+
+    umask_calls: list[int] = []
+    real_umask = os.umask
+
+    def counting_umask(mask: int) -> int:
+        umask_calls.append(mask)
+        return real_umask(mask)
+
+    with patch("os.umask", counting_umask):
+        store.put({"id": "u-1", "val": "new-file"})
+        store.put({"id": "u-1", "val": "existing-file"})
+
+    assert umask_calls == []
+
+
+def test_final_mode_is_set_before_the_durability_fsync(tmp_path: Path) -> None:
+    """The final mode must land before the fsync that makes the write durable.
+
+    A prior implementation ordered file-fsync before chmod, so the final
+    inode permission metadata was not itself covered by that fsync. When
+    replacing an existing record file, the mode-setting call must happen
+    on the open file descriptor strictly before the file's durability
+    fsync (and before the atomic rename and directory fsync that follow).
+    """
+    import stat
+
+    store_file = tmp_path / "fsync_order.json"
+    store = JsonGovernanceRecordStore(store_file, id_fields=("id",))
+    store.put({"id": "o-1", "val": "first"})
+    os.chmod(store_file, 0o640)
+
+    calls: list[str] = []
+    real_fsync, real_fchmod, real_replace = os.fsync, os.fchmod, os.replace
+
+    def traced_fsync(fd: int) -> None:
+        calls.append("fsync_directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "fsync_file")
+        real_fsync(fd)
+
+    def traced_fchmod(fd: int, mode: int) -> None:
+        calls.append("fchmod")
+        real_fchmod(fd, mode)
+
+    def traced_replace(*args: Any, **kwargs: Any) -> None:
+        calls.append("replace")
+        real_replace(*args, **kwargs)
+
+    with patch("os.fsync", traced_fsync), patch("os.fchmod", traced_fchmod), patch(
+        "os.replace", traced_replace
+    ):
+        store.put({"id": "o-1", "val": "second"})
+
+    assert calls == ["fchmod", "fsync_file", "replace", "fsync_directory"]
+    assert stat.S_IMODE(store_file.stat().st_mode) == 0o640
+
+
 def test_coordinating_journal_store_subclass_does_not_deadlock(tmp_path: Path) -> None:
     """Pass-through subclasses of CoordinatingJsonGovernanceRecordStore do not deadlock."""
     from services.governance.decision_journal import CoordinatingJsonGovernanceRecordStore

@@ -10,7 +10,6 @@ import fcntl
 import json
 import os
 import stat
-import tempfile
 import threading
 import uuid
 from contextlib import contextmanager
@@ -223,22 +222,31 @@ class JsonGovernanceRecordStore:
 
     def _save(self) -> None:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=self.storage_path.parent,
-            prefix=f".{self.storage_path.name}.",
-            suffix=".tmp",
-            delete=False,
-        )
-        temporary_path = Path(handle.name)
         payload = json.dumps(self._records, indent=2, sort_keys=True) + "\n"
+        existing_mode = self._existing_mode()
+        # Pass 0o666 for a brand-new record file so the kernel applies the
+        # ambient umask atomically as part of creation; this never reads or
+        # mutates the process-global umask, so it cannot race with an
+        # unrelated thread's file creation in this process.
+        temporary_path = self.storage_path.with_name(
+            f".{self.storage_path.name}.{uuid.uuid4().hex}.tmp"
+        )
+        fd = os.open(
+            str(temporary_path),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            existing_mode if existing_mode is not None else 0o666,
+        )
         try:
-            with handle:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(payload)
                 handle.flush()
+                if existing_mode is not None:
+                    # Replacing an existing file: the creation mode above may
+                    # have been narrowed by the ambient umask, so restore the
+                    # established mode explicitly before the durability
+                    # fsync below, keeping the final mode inside that fsync.
+                    os.fchmod(handle.fileno(), existing_mode)
                 os.fsync(handle.fileno())
-            os.chmod(temporary_path, self._replacement_mode())
             os.replace(temporary_path, self.storage_path)
             dir_fd = os.open(self.storage_path.parent, os.O_RDONLY)
             try:
@@ -252,23 +260,19 @@ class JsonGovernanceRecordStore:
                 except OSError:
                     pass
 
-    def _replacement_mode(self) -> int:
-        """Mode the published record file should carry after replacement.
+    def _existing_mode(self) -> int | None:
+        """Mode of the currently published record file, if any.
 
-        ``NamedTemporaryFile`` always creates its backing file 0600
-        regardless of umask, and ``os.replace`` publishes that mode as-is.
-        Restore the mode an ordinary ``open()`` would have produced: the
-        existing file's mode when replacing a record that already exists
-        (so an established readable posture is never narrowed), or the
-        umask-controlled default for a brand-new record file.
+        Used to preserve an already-established readable posture (for
+        example a readonly consumer mounting the governance data
+        directory) when replacing an existing record file. ``None`` means
+        this is a brand-new record file, which should instead get the
+        umask-controlled default an ordinary ``open()`` would produce.
         """
         try:
             return stat.S_IMODE(os.stat(self.storage_path).st_mode)
         except FileNotFoundError:
-            pass
-        current_umask = os.umask(0)
-        os.umask(current_umask)
-        return 0o666 & ~current_umask
+            return None
 
 
 class PostgresGovernanceRecordStore:
