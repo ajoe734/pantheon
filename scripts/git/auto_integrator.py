@@ -523,6 +523,12 @@ def resolve_execute_authority(
         raise ExecuteAuthorityError(
             f"live auto-integrator lock must be canonical ({settings.lock_path} != {canonical_lock})"
         )
+    try:
+        orchestrator_common.validate_review_bridge_policy(payload)
+    except (ValueError, TypeError) as exc:
+        raise ExecuteAuthorityError(
+            f"live supervisor config has invalid review bridge policy: {exc}"
+        ) from exc
     settings = Settings(**{**settings.__dict__, "command_runtime_sha": head})
     return status_file, status_root, settings, payload
 
@@ -730,14 +736,30 @@ def is_check_required(item: Mapping[str, Any]) -> bool | None:
     return None
 
 
-def is_ignorable_diagnostic(item: Mapping[str, Any]) -> bool:
+def is_ignorable_diagnostic(
+    item: Mapping[str, Any],
+    *,
+    review_bridge_is_required: bool = True,
+    required_contexts: Sequence[str] | frozenset[str] = (),
+) -> bool:
     """Return true only for an explicitly optional, known diagnostic issuer.
 
     GitHub's ``isRequired`` describes branch-protection requirements, not
     whether a check is merely diagnostic. Some substantive Branch CI jobs are
     intentionally optional, so requiredness alone must never downgrade their
     failures. The workflow provenance is therefore a second mandatory input.
+    Declared required contexts can never be ignored as diagnostic.
     """
+
+    name = check_name(item)
+    if name in required_contexts:
+        return False
+
+    if (
+        not review_bridge_is_required
+        and name == github_review_bridge.CANONICAL_REVIEW_CONTEXT
+    ):
+        return True
 
     if is_check_required(item) is not False:
         return False
@@ -745,17 +767,32 @@ def is_ignorable_diagnostic(item: Mapping[str, Any]) -> bool:
     return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
 
 
-def summarize_status_rollup(rollup: Any) -> CheckSummary:
+def summarize_status_rollup(
+    rollup: Any,
+    *,
+    review_bridge_is_required: bool = True,
+    required_contexts: Sequence[str] = (),
+) -> CheckSummary:
+    required_set = frozenset(required_contexts)
     if not isinstance(rollup, list) or not rollup:
+        if required_set:
+            return CheckSummary("empty", 0, (), tuple(required_contexts), ())
         return CheckSummary("empty")
     failing: list[str] = []
     pending: list[str] = []
     ignored_diagnostic: list[str] = []
+    successful_contexts: set[str] = set()
+
     for item in rollup:
         if not isinstance(item, Mapping):
             pending.append("malformed-check")
             continue
-        is_non_required_diagnostic = is_ignorable_diagnostic(item)
+        name = check_name(item)
+        is_non_required_diagnostic = is_ignorable_diagnostic(
+            item,
+            review_bridge_is_required=review_bridge_is_required,
+            required_contexts=required_set,
+        )
         values = [
             normalize_state(item.get("conclusion")),
             normalize_state(item.get("state")),
@@ -764,25 +801,32 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
         values = [value for value in values if value]
         if any(value in FAILURE_VALUES for value in values):
             if is_non_required_diagnostic:
-                ignored_diagnostic.append(check_name(item))
+                ignored_diagnostic.append(name)
             else:
-                failing.append(check_name(item))
+                failing.append(name)
             continue
         if any(value in PENDING_VALUES for value in values):
             if is_non_required_diagnostic:
-                ignored_diagnostic.append(check_name(item))
+                ignored_diagnostic.append(name)
             else:
-                pending.append(check_name(item))
+                pending.append(name)
             continue
         if any(value in SUCCESS_VALUES for value in values):
+            if name in required_set:
+                successful_contexts.add(name)
             continue
         # GitHub CheckRun often reports status=COMPLETED with a SUCCESS
         # conclusion. If conclusion is absent, treat COMPLETED as pending-ish
         # rather than silently green.
         if is_non_required_diagnostic:
-            ignored_diagnostic.append(check_name(item))
+            ignored_diagnostic.append(name)
         else:
-            pending.append(check_name(item))
+            pending.append(name)
+
+    for context in required_contexts:
+        if context not in successful_contexts and context not in failing and context not in pending:
+            pending.append(context)
+
     if failing:
         return CheckSummary("red", len(rollup), tuple(failing), tuple(pending), tuple(ignored_diagnostic))
     if pending:
@@ -813,21 +857,18 @@ def is_canonical_review_gate_green(rollup: Any) -> bool:
 
 
 def integration_status_rollup(
-    rollup: Any, *, review_bridge_is_required: bool
+    rollup: Any,
+    *,
+    review_bridge_is_required: bool,
+    required_contexts: Sequence[str] = (),
 ) -> CheckSummary:
-    """Summarize checks after removing an explicitly disabled legacy bridge."""
+    """Summarize checks enforcing presence and success of declared contexts."""
 
-    filtered = (
-        [
-            item
-            for item in rollup
-            if review_bridge_is_required
-            or check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT
-        ]
-        if isinstance(rollup, list)
-        else rollup
+    return summarize_status_rollup(
+        rollup,
+        review_bridge_is_required=review_bridge_is_required,
+        required_contexts=required_contexts,
     )
-    return summarize_status_rollup(filtered)
 
 
 def make_integrator_tag_lookup(
@@ -1754,9 +1795,31 @@ def revalidate_before_merge(
             f"PR #{fresh_number} has an auto-merge request at final revalidation.",
         )
 
+    target_config = config
+    if target_config is None:
+        try:
+            target_config = load_json(DEFAULT_CONFIG, {})
+        except Exception:
+            target_config = {}
+    try:
+        review_bridge_is_required, required_checks = (
+            orchestrator_common.validate_review_bridge_policy(target_config)
+        )
+    except (ValueError, TypeError) as exc:
+        raise FinalMergeRevalidationError(
+            "contradictory-review-bridge-policy",
+            f"PR #{fresh_number} has contradictory or invalid review bridge policy: {exc}",
+        )
+
+    repo_required_checks = (
+        required_checks
+        if (candidate.repository_id or "pantheon") == "pantheon"
+        else ()
+    )
     fresh_checks = integration_status_rollup(
         fresh_pr.get("statusCheckRollup"),
-        review_bridge_is_required=orchestrator_common.github_review_bridge_required(config),
+        review_bridge_is_required=review_bridge_is_required,
+        required_contexts=repo_required_checks,
     )
     if fresh_checks.state == "red":
         raise FinalMergeRevalidationError(
@@ -2250,7 +2313,6 @@ def integrate_candidate(
     config: Mapping[str, Any] | None = None,
 ) -> IntegrationResult:
     gate = gate or ReviewGate()
-    config = config or {}
     status_root_dir = status_root if status_root is not None else gate.status_root
     target_root = root if root is not None else candidate.repository_root
 
@@ -2713,11 +2775,38 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    review_bridge_is_required = orchestrator_common.github_review_bridge_required(config)
+    target_config = config
+    if target_config is None:
+        try:
+            target_config = load_json(DEFAULT_CONFIG, {})
+        except Exception:
+            target_config = {}
+    try:
+        review_bridge_is_required, required_checks = (
+            orchestrator_common.validate_review_bridge_policy(target_config)
+        )
+    except (ValueError, TypeError) as exc:
+        detail = f"PR #{number} has contradictory or invalid review bridge policy: {exc}"
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            None,
+            not execute,
+            runner.commands[:],
+        )
     rollup = pr.get("statusCheckRollup")
+    repo_required_checks = (
+        required_checks
+        if (candidate.repository_id or "pantheon") == "pantheon"
+        else ()
+    )
     checks = integration_status_rollup(
         rollup,
         review_bridge_is_required=review_bridge_is_required,
+        required_contexts=repo_required_checks,
     )
     other_failing = [
         c for c in checks.failing if c != github_review_bridge.CANONICAL_REVIEW_CONTEXT

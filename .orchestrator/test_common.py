@@ -3880,5 +3880,235 @@ class TestWriteStatusPrecondition(unittest.TestCase):
             self.assertEqual(snapshot["state"], payload)
 
 
+class ReviewBridgePolicyValidationTests(unittest.TestCase):
+    def test_valid_taskstore_only_mode(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        bridge_required, checks = common.validate_review_bridge_policy(config)
+        self.assertFalse(bridge_required)
+        self.assertEqual(
+            checks,
+            ("Commit trailers", "Runtime mirror guard", "Smoke acceptance"),
+        )
+        self.assertFalse(common.github_review_bridge_required(config))
+
+    def test_valid_external_bridge_mode(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        bridge_required, checks = common.validate_review_bridge_policy(config)
+        self.assertTrue(bridge_required)
+        self.assertEqual(
+            checks,
+            (
+                "Commit trailers",
+                "Runtime mirror guard",
+                "Smoke acceptance",
+                "Pantheon canonical review gate",
+            ),
+        )
+        self.assertTrue(common.github_review_bridge_required(config))
+
+    def test_contradictory_false_mode_with_canonical_gate_fails(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "contradictory review bridge policy: github_review_bridge_required is false, but 'Pantheon canonical review gate' is declared",
+        ):
+            common.validate_review_bridge_policy(config)
+
+        with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
+            common.github_review_bridge_required(config)
+
+    def test_contradictory_true_mode_without_canonical_gate_fails(self) -> None:
+        config = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "contradictory review bridge policy: github_review_bridge_required is true, but 'Pantheon canonical review gate' is missing",
+        ):
+            common.validate_review_bridge_policy(config)
+
+        with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
+            common.github_review_bridge_required(config)
+
+    def test_missing_or_malformed_review_gate_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "review_gate configuration is required"):
+            common.validate_review_bridge_policy({"branch_workflow": {"task_pr": {"required_status_checks": []}}})
+
+        with self.assertRaisesRegex(ValueError, "review_gate.github_review_bridge_required is required"):
+            common.validate_review_bridge_policy({
+                "review_gate": {},
+                "branch_workflow": {"task_pr": {"required_status_checks": []}},
+            })
+
+        with self.assertRaisesRegex(ValueError, "review_gate.github_review_bridge_required must be a boolean"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": "false"},
+                "branch_workflow": {"task_pr": {"required_status_checks": []}},
+            })
+
+    def test_missing_or_malformed_branch_workflow_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required"):
+            common.validate_review_bridge_policy({"review_gate": {"github_review_bridge_required": False}})
+
+        with self.assertRaisesRegex(ValueError, "branch_workflow.task_pr configuration is required"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {},
+            })
+
+        with self.assertRaisesRegex(ValueError, "branch_workflow.task_pr.required_status_checks is required"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {"task_pr": {}},
+            })
+
+    def test_duplicate_or_empty_checks_fail(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate check"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Commit trailers",
+                        ]
+                    }
+                },
+            })
+
+        with self.assertRaisesRegex(ValueError, "items must be non-empty strings"):
+            common.validate_review_bridge_policy({
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "  ",
+                        ]
+                    }
+                },
+            })
+
+    def test_load_config_rejects_contradictory_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": {"github_review_bridge_required": False},
+                    "branch_workflow": {
+                        "task_pr": {
+                            "required_status_checks": [
+                                "Commit trailers",
+                                "Pantheon canonical review gate",
+                            ]
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
+                common.load_config(cfg_path)
+
+    def test_validate_review_bridge_policy_rejects_empty_and_non_dict(self) -> None:
+        with self.assertRaisesRegex(ValueError, "config must be a mapping"):
+            common.validate_review_bridge_policy(None)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "config must be a mapping"):
+            common.validate_review_bridge_policy("not a mapping")  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+            common.validate_review_bridge_policy({})
+
+    def test_load_config_rejects_empty_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            cfg_path.write_text(json.dumps({}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+    def test_load_config_rejects_missing_or_malformed_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            # Missing review_gate
+            cfg_path.write_text(
+                json.dumps({"branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required"):
+                common.load_config(cfg_path)
+
+            # Missing branch_workflow
+            cfg_path.write_text(
+                json.dumps({"review_gate": {"github_review_bridge_required": False}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required"):
+                common.load_config(cfg_path)
+
+            # Malformed review_gate section (not a mapping)
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": "invalid",
+                    "branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}},
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+            # Malformed branch_workflow section (not a mapping)
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": {"github_review_bridge_required": False},
+                    "branch_workflow": 12345,
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+
 if __name__ == "__main__":
     unittest.main()
