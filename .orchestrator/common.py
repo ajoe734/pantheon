@@ -40,6 +40,74 @@ DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 
 
+CANONICAL_REVIEW_GATE_CONTEXT = "Pantheon canonical review gate"
+CANONICAL_REVIEW_CONTEXT = CANONICAL_REVIEW_GATE_CONTEXT
+
+
+def validate_review_bridge_policy(
+    config: Mapping[str, Any],
+) -> tuple[bool, tuple[str, ...]]:
+    """Validate review bridge toggle and declared task PR checks.
+
+    Defines one fail-closed relationship between
+    ``review_gate.github_review_bridge_required`` and
+    ``branch_workflow.task_pr.required_status_checks``:
+    - when the bridge is false, 'Pantheon canonical review gate' must be absent;
+    - when it is true, that context must be present.
+
+    Missing, malformed, duplicated, or contradictory policy fails closed.
+    """
+
+    if not isinstance(config, Mapping):
+        raise ValueError("config must be a mapping")
+
+    review_gate = config.get("review_gate")
+    if not isinstance(review_gate, Mapping):
+        raise ValueError("review_gate configuration is required and must be a mapping")
+    bridge_required = review_gate.get("github_review_bridge_required")
+    if bridge_required is None:
+        raise ValueError("review_gate.github_review_bridge_required is required")
+    if not isinstance(bridge_required, bool):
+        raise ValueError("review_gate.github_review_bridge_required must be a boolean")
+
+    branch_workflow = config.get("branch_workflow")
+    if not isinstance(branch_workflow, Mapping):
+        raise ValueError("branch_workflow configuration is required and must be a mapping")
+    task_pr = branch_workflow.get("task_pr")
+    if not isinstance(task_pr, Mapping):
+        raise ValueError("branch_workflow.task_pr configuration is required and must be a mapping")
+    raw_checks = task_pr.get("required_status_checks")
+    if raw_checks is None:
+        raise ValueError("branch_workflow.task_pr.required_status_checks is required")
+    if not isinstance(raw_checks, (list, tuple)):
+        raise ValueError("branch_workflow.task_pr.required_status_checks must be a sequence of strings")
+    checks: list[str] = []
+    seen: set[str] = set()
+    for check in raw_checks:
+        if not isinstance(check, str) or not check.strip():
+            raise ValueError("branch_workflow.task_pr.required_status_checks items must be non-empty strings")
+        if check in seen:
+            raise ValueError(
+                f"branch_workflow.task_pr.required_status_checks contains duplicate check: {check!r}"
+            )
+        seen.add(check)
+        checks.append(check)
+
+    has_canonical = CANONICAL_REVIEW_GATE_CONTEXT in seen
+    if not bridge_required and has_canonical:
+        raise ValueError(
+            f"contradictory review bridge policy: github_review_bridge_required is false, "
+            f"but {CANONICAL_REVIEW_GATE_CONTEXT!r} is declared in branch_workflow.task_pr.required_status_checks"
+        )
+    if bridge_required and not has_canonical:
+        raise ValueError(
+            f"contradictory review bridge policy: github_review_bridge_required is true, "
+            f"but {CANONICAL_REVIEW_GATE_CONTEXT!r} is missing from branch_workflow.task_pr.required_status_checks"
+        )
+
+    return bridge_required, tuple(checks)
+
+
 def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
     """Return whether development review must publish GitHub proof.
 
@@ -53,7 +121,11 @@ def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
     a new runtime packaging dependency.
     """
 
-    review_gate = config.get("review_gate")
+    if isinstance(config, Mapping) and "review_gate" in config and "branch_workflow" in config:
+        bridge_required, _ = validate_review_bridge_policy(config)
+        return bridge_required
+
+    review_gate = config.get("review_gate") if isinstance(config, Mapping) else None
     if not isinstance(review_gate, Mapping):
         return True
     value = review_gate.get("github_review_bridge_required")
@@ -554,6 +626,7 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     config = load_json(config_file, default={})
     if LOCAL_CONFIG_PATH.exists():
         config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
+    validate_review_bridge_policy(config)
     return config
 
 
@@ -1324,6 +1397,68 @@ def apply_claude_oauth_token_file(env: dict[str, str], runtime: dict[str, Any]) 
     return env
 
 
+def _claude_status_first_value(payload: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:
+    """Read one non-empty scalar from Claude auth-status data without exposing it."""
+
+    queue: list[Mapping[str, Any]] = [payload]
+    seen: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for key in keys:
+            value = current.get(key)
+            if value in (None, "", [], {}):
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+        for value in current.values():
+            if isinstance(value, Mapping):
+                queue.append(value)
+    return None
+
+
+def claude_oauth_refresh_lock_key(
+    auth_status_payload: Mapping[str, Any] | None,
+    *,
+    fallback: str | None = None,
+) -> str | None:
+    """Return an opaque mutex key for one Claude OAuth account.
+
+    ``providers.*.account`` governs scheduler capacity and can intentionally be
+    distinct for separate worker lanes.  OAuth refreshes instead need to
+    serialize profiles that authenticate to the same Claude account.  A live
+    auth-status response supplies that identity; only its digest reaches the
+    lock filename.  The configured account remains the backwards-compatible
+    fallback when status does not identify an account.
+    """
+
+    if isinstance(auth_status_payload, Mapping) and auth_status_payload.get("loggedIn") is not False:
+        identity = _claude_status_first_value(
+            auth_status_payload,
+            (
+                "orgId",
+                "organizationId",
+                "organizationUUID",
+                "organizationUuid",
+                "orgUUID",
+                "orgUuid",
+            ),
+        ) or _claude_status_first_value(
+            auth_status_payload,
+            ("email", "userEmail", "accountEmail", "username"),
+        )
+        if identity:
+            digest = hashlib.sha256(
+                f"claude-oauth-refresh:{identity.casefold()}".encode("utf-8")
+            ).hexdigest()[:32]
+            return f"claude-oauth-{digest}"
+    normalized_fallback = str(fallback or "").strip()
+    return normalized_fallback or None
+
+
 @contextmanager
 def _claude_oauth_refresh_serialization(account_lock_key: str | None) -> Generator[None, None, None]:
     """Serialize outbound OAuth refresh calls sharing one Claude account.
@@ -1461,6 +1596,7 @@ def claude_auth_ready(
     env: dict[str, str] | None = None,
     refresh_if_needed: bool = True,
     account_lock_key: str | None = None,
+    auth_status_payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """One auth decision: ready, rejected/unavailable, or ClaudeAuthRetry.
 
@@ -1484,25 +1620,31 @@ def claude_auth_ready(
             return True
         if not refresh_if_needed:
             return False
-        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
+        refresh_lock_key = claude_oauth_refresh_lock_key(
+            auth_status_payload, fallback=account_lock_key
+        )
+        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=refresh_lock_key)
         if refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0):
             refreshed_token = str(refreshed.get("accessToken") or "").strip()
             if refreshed_token.startswith("sk-ant-") and env is not None:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = refreshed_token
             return True
         return False
-    try:
-        status = run_command([binary, "auth", "status"], env=env)
-    except (OSError, subprocess.TimeoutExpired):
-        raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
-    if status.returncode != 0 or not status.stdout:
-        return False
-    try:
-        payload = json.loads(status.stdout)
-    except json.JSONDecodeError:
-        raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
-    if not isinstance(payload, dict):
-        raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
+    payload: Mapping[str, Any] | None = auth_status_payload
+    if payload is None:
+        try:
+            status = run_command([binary, "auth", "status"], env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
+        if status.returncode != 0 or not status.stdout:
+            return False
+        try:
+            parsed_payload = json.loads(status.stdout)
+        except json.JSONDecodeError:
+            raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
+        if not isinstance(parsed_payload, Mapping):
+            raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
+        payload = parsed_payload
     if not payload.get("loggedIn"):
         return False
     loaded = load_claude_oauth_tokens(env)
@@ -1513,7 +1655,10 @@ def claude_auth_ready(
         return True
     if not refresh_if_needed:
         return False
-    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
+    refresh_lock_key = claude_oauth_refresh_lock_key(
+        payload, fallback=account_lock_key
+    )
+    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=refresh_lock_key)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
 

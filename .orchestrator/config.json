@@ -814,8 +814,7 @@
       "required_status_checks": [
         "Commit trailers",
         "Runtime mirror guard",
-        "Smoke acceptance",
-        "Pantheon canonical review gate"
+        "Smoke acceptance"
       ],
       "max_open_hours": 24
     },

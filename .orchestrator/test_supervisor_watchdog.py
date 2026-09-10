@@ -42,6 +42,16 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.state_file = self.root / "state.json"
         self.activity_log = self.root / "activity-log.jsonl"
         self.config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ],
+                },
+            },
             "ready_dispatcher": {"max_concurrent_workers": 13},
             "paths": {
                 "state_file": str(self.state_file),

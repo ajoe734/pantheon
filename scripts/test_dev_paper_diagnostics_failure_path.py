@@ -27,6 +27,7 @@ import http.server
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -771,10 +772,14 @@ def setup_compensation_fixture(
     *,
     rollback_bff: str,
     rollback_fe: str,
-    deploy_exit: int = 0,
     audit_file: Path | None = None,
     compensation_lease_id: str = "22222222-2222-4222-8222-222222222222",
 ) -> tuple[Path, Path, Path]:
+    # The compensator rejects evidence below a group/world-accessible parent.
+    # `git clone` would otherwise create this test-only parent at the process
+    # umask before the fixture writes its private evidence outputs.
+    tmp.mkdir(parents=True, mode=0o700, exist_ok=True)
+    tmp.chmod(0o700)
     lease_ctrl = tmp / "lease-controller"
     subprocess.run(["git", "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
     # A shallow source checkout may contain the pinned commit only in
@@ -787,11 +792,28 @@ def setup_compensation_fixture(
     subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
     subprocess.run(["git", "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    # This is an offline test fixture, not hosted rollback evidence.  The
+    # production compensator now consumes only an exact sealed baseline plus a
+    # durably acknowledged candidate receipt; model both sides so the
+    # fresh-lease tests continue to exercise a successful *admitted* restore
+    # rather than reviving the former source-SHA-only fallback.
     release_root = tmp / "release-root"
     (release_root / "scripts").mkdir(parents=True, exist_ok=True)
-    deploy_script = release_root / "scripts" / "deploy_nonprod_vm.sh"
-    deploy_script.write_text(f"#!/usr/bin/env bash\nexit {deploy_exit}\n", encoding="utf-8")
-    deploy_script.chmod(0o755)
+    for name in (
+        "capture_dev_artifact_baseline.py",
+        "dev_candidate_receipt.py",
+        "dev_artifact_compensation_evidence.py",
+        "dev_release_artifact_driver.py",
+        "dev_release_artifacts.py",
+    ):
+        target = release_root / "scripts" / name
+        shutil.copyfile(REPO_ROOT / "scripts" / name, target)
+        target.chmod(0o644)
+    subprocess.run(["git", "init", "--quiet", str(release_root)], check=True)
+    subprocess.run(["git", "-C", str(release_root), "config", "user.name", "Pantheon fixture"], check=True)
+    subprocess.run(["git", "-C", str(release_root), "config", "user.email", "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(release_root), "add", "scripts"], check=True)
+    subprocess.run(["git", "-C", str(release_root), "commit", "--quiet", "-m", "fixture controller"], check=True)
 
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -904,6 +926,185 @@ os.execv("/usr/bin/python3", ["python3"] + sys.argv[1:])
     return lease_ctrl, release_root, bin_dir
 
 
+def install_compensation_artifact_fixture(
+    tmp: Path,
+    release_root: Path,
+    *,
+    rollback_bff: str,
+    rollback_fe: str,
+    failed_bff: str,
+    failed_fe: str,
+    candidate_id: str,
+    deploy_exit: int,
+) -> dict[str, str]:
+    """Create a private, canonical actions-download compensation admission.
+
+    The real compensator is intentionally exercised with the actual evidence
+    modules copied into the temporary controller checkout.  No source commit
+    is treated as a substitute for an image/FE artifact here.
+    """
+    controller_sha = subprocess.run(
+        ["git", "-C", str(release_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    identity = {
+        "candidate_id": candidate_id,
+        "run_id": "999",
+        "attempt": "1",
+        "controller_sha": controller_sha,
+        "candidate_backend_sha": failed_bff,
+        "candidate_frontend_sha": failed_fe,
+        "previous_backend_sha": rollback_bff,
+        "previous_frontend_sha": rollback_fe,
+    }
+
+    def canonical(value: dict) -> bytes:
+        return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    def private_write(path: Path, raw: bytes) -> Path:
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        path.parent.chmod(0o700)
+        path.write_bytes(raw)
+        path.chmod(0o600)
+        return path
+
+    services = ("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler")
+    baseline_services = {}
+    archives = {}
+    for index, service in enumerate(services, 1):
+        image = "sha256:" + str(index) * 64
+        baseline_services[service] = {"image_id": image, "oci_revision": rollback_bff, "repo_digests": None}
+        archives[image] = {"name": image[7:] + "-" + "9" * 64 + ".tar", "sha256": "9" * 64, "size": 1}
+    image_bundle = {
+        "schema_version": "pantheon.dev-bff-image-bundle.v1",
+        "source_sha": rollback_bff,
+        "services": baseline_services,
+        "archives": archives,
+    }
+    capture_lease = "12345678-1234-4234-8234-123456789abc"
+    frontend = {
+        "target": "/var/www/pantheon-dev-fe-releases/prior-fixture",
+        "dist_sha256": "7" * 64,
+        "manifest_sha256": "6" * 64,
+        "frontend_sha": rollback_fe,
+        "backend_sha": rollback_bff,
+    }
+    baseline = {
+        "schema_version": "pantheon.dev-release-artifact-baseline.v1",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": identity,
+        "capture_lease_id": capture_lease,
+        "captured_at": "2026-09-09T00:00:00Z",
+        "image_bundle": image_bundle,
+        "image_bundle_sha256": hashlib.sha256(canonical(image_bundle)).hexdigest(),
+        "compose_sha256": "8" * 64,
+        "frontend": frontend,
+        "baseline_nonsecret_config": {
+            "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
+        },
+    }
+    baseline_raw = canonical(baseline)
+    baseline_hash = hashlib.sha256(baseline_raw).hexdigest()
+    candidate_services = {}
+    for index, service in enumerate(services, 4):
+        candidate_services[service] = {
+            "image_id": "sha256:" + str(index) * 64,
+            "oci_revision": failed_bff,
+            "git_sha": None if service == "loop-run-projector-scheduler" else failed_bff,
+            "compose_image": "pantheon-" + service,
+        }
+    candidate_record = {
+        "schema_version": "pantheon.dev-candidate-image-admission.v1",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": identity,
+        "seal_lease_id": capture_lease,
+        "sealed_at": "2026-09-09T00:01:00Z",
+        "baseline_manifest_sha256": baseline_hash,
+        "candidate_compose_sha256": "5" * 64,
+        "image_override_sha256": "",
+        "services": candidate_services,
+    }
+    candidate_override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
+                                        for service, row in candidate_services.items()}}
+    candidate_record["image_override_sha256"] = hashlib.sha256(canonical(candidate_override)).hexdigest()
+    artifact_root = "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts"
+    remote_folder = f"{artifact_root}/baseline-999-1-{candidate_id}"
+    receipt = {
+        "candidate_image_manifest_path": f"{remote_folder}/candidate-images.json",
+        "candidate_image_manifest_sha256": hashlib.sha256(canonical(candidate_record)).hexdigest(),
+        "candidate_image_manifest": candidate_record,
+        "candidate_image_override_path": f"{remote_folder}/candidate-images.override.json",
+        "candidate_image_override_sha256": candidate_record["image_override_sha256"],
+    }
+    retained = tmp / "pantheon-dev-artifacts-999-1"
+    retained.mkdir(mode=0o700, exist_ok=True)
+    retained.chmod(0o700)
+    baseline_path = private_write(retained / "baseline" / "artifact-baseline.json", baseline_raw)
+    receipt_path = private_write(retained / "candidate" / "candidate-receipt.json", canonical(receipt))
+    readback = {
+        "schema_version": "pantheon.dev-artifact-readback.v1",
+        "operation": "restore",
+        "manifest_sha256": baseline_hash,
+        "identity": identity,
+        "pre_restore_source_observations": ["unavailable_http_503"],
+        "image_readback_verified": True,
+        "images": {service: row["image_id"] for service, row in baseline_services.items()},
+        "frontend": frontend,
+        "baseline_nonsecret_config_verified": True,
+        "protected_owners_unchanged": True,
+        "owners": {
+            "governance": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                           "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "registry": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                         "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "deployment": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                           "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "runtime-manager": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                                "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "deployment-outbox-consumer": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                                            "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "capital": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                        "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "dev-paper-principal-issuer": None,
+        },
+        "public": {
+            "source_sha": rollback_bff,
+            "fe_manifest_bytes_verified": True,
+            "strict_auth_denials_verified": True,
+            "authenticated_viewer_readback_verified": True,
+        },
+    }
+    deploy_script = release_root / "scripts" / "deploy_nonprod_vm.sh"
+    readback_text = canonical(readback).decode()
+    deploy_script.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        f"[[ {deploy_exit} -eq 0 ]] || exit {deploy_exit}\n"
+        "artifact_readback=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ $1 == --artifact-readback-out ]]; then artifact_readback=${2:?}; shift 2; else shift; fi\n"
+        "done\n"
+        "[[ -n $artifact_readback ]]\n"
+        f"printf '%s' {shlex.quote(readback_text)} > \"$artifact_readback\"\n"
+        "chmod 0600 \"$artifact_readback\"\n",
+        encoding="utf-8",
+    )
+    deploy_script.chmod(0o755)
+    return {
+        "controller_sha": controller_sha,
+        "baseline_path": str(baseline_path),
+        "baseline_hash": baseline_hash,
+        "receipt_path": str(receipt_path),
+        "candidate_manifest_hash": receipt["candidate_image_manifest_sha256"],
+    }
+
+
 def execute_fresh_lease_compensation(
     tmp: Path,
     *,
@@ -921,9 +1122,18 @@ def execute_fresh_lease_compensation(
         tmp,
         rollback_bff=rollback_bff,
         rollback_fe=rollback_fe,
-        deploy_exit=deploy_exit,
         audit_file=audit_file,
         compensation_lease_id=compensation_lease_id,
+    )
+    artifact = install_compensation_artifact_fixture(
+        tmp,
+        release_root,
+        rollback_bff=rollback_bff,
+        rollback_fe=rollback_fe,
+        failed_bff=failed_bff,
+        failed_fe=failed_fe,
+        candidate_id=rc_id,
+        deploy_exit=deploy_exit,
     )
 
     MockRollbackHandler.backend_sha = rollback_bff
@@ -937,6 +1147,7 @@ def execute_fresh_lease_compensation(
 
     log_file = tmp / "controller.log"
     log_file.write_text("failure log detail\n", encoding="utf-8")
+    log_file.chmod(0o600)
     evidence_out = tmp / "release-compensation.json"
 
     env = {
@@ -955,14 +1166,23 @@ def execute_fresh_lease_compensation(
         "DEV_BFF_URL": f"http://127.0.0.1:{port}",
         "DEV_FE_URL": f"http://127.0.0.1:{port}",
         "REMOTE_USER": "testuser",
-        "DEV_VM": "pantheon-dev",
+        "DEV_VM": "pantheon-dev-deploy",
         "DEV_ZONE": "asia-east1-b",
-        "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-proj",
+        "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "RUNNER_TEMP": str(tmp),
         "GITHUB_REPOSITORY": "ajoe734/pantheon",
         "GITHUB_RUN_ID": "999",
         "GITHUB_RUN_ATTEMPT": "1",
         "GITHUB_SERVER_URL": "https://github.com",
+        "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA": artifact["controller_sha"],
+        "PANTHEON_DEV_ARTIFACT_BASELINE_FILE": artifact["baseline_path"],
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": artifact["baseline_hash"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE": artifact["receipt_path"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256": artifact["candidate_manifest_hash"],
+        "PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_ID": "123",
+        "PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_SHA256": "1" * 64,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_ID": "456",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_SHA256": "4" * 64,
     }
     if audit_file:
         env["FAKE_LEASE_AUDIT_FILE"] = str(audit_file)

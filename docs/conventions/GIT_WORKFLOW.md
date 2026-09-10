@@ -424,6 +424,26 @@ Task-ID: <task-id>
 Reviewer: <name, must differ from LLM-Agent>
 ```
 
+Operator-authorized development-tooling delivery does not require the product
+`Reviewer` trailer. It still requires a valid subject, `LLM-Agent`, `Task-ID`
+and actual validation; a supplied reviewer must still be independent.
+
+Branch CI uses `check_commit_trailers.py --delivery-class auto` for **both PR
+and push** events. Each non-merge commit is classified using the single
+`docs/02-architecture/component-boundary.yaml` manifest and
+`scripts/component_boundary.py`. A tooling exemption requires nonempty,
+fully mapped changes with no product-runtime path. Product, mixed, unknown or
+empty changes retain the product trailer requirements. Renames include both
+source and destination, and later reversions cannot hide earlier product
+changes in the range. Missing/unreadable classification evidence fails closed.
+
+The `delivery:tooling` PR label records the explicit tooling delivery intent;
+it is not a substitute for source classification and cannot make a product
+commit pass the tooling trailer rules. Existing canonical review and execution
+authorization remain separate. For pre-commit message validation, use the
+explicit `product` or operator-authorized `tooling` class; `auto` requires a
+committed `--range` or `--rev` to inspect.
+
 (The legacy `Wave:` trailer is **dropped** in the new model. The
 trailer check tolerates legacy commits that carry it but does not
 require it on new commits.)
