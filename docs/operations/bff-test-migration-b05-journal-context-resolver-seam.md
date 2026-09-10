@@ -542,8 +542,16 @@ def resolve_agora_interaction_context_ref(
 | **Decision Journal Fallback (Non-Dict Records)** | Store returns mixed objects containing non-dicts (e.g. `None`, strings) | Discards non-dict rows cleanly without `TypeError` | Non-dict filtering preserved; no method signature crashes. |
 
 ### 4.2 Composition Root Binding in `main.py`
-In `main.py`, `_resolve_agora_interaction_context_ref` delegates directly to the new seam:
+In legacy `main.py`, `_trade_journal_allowed` was imported only locally inside the legacy resolver block at line 22349:
 ```python
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+```
+If a delegation wrapper references `_trade_journal_allowed` as a module global without an explicit top-level import, Python raises `NameError: name '_trade_journal_allowed' is not defined` immediately upon evaluation, before any context kind can resolve.
+
+To ensure deterministic execution without `NameError`, two compatible patterns are supported:
+1. **Explicit Module Import Binding (Recommended)**: Explicitly import `_trade_journal_allowed` at the composition root and pass it to the seam:
+```python
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
 from .agora.interaction.context_resolver import (
     filter_agora_private_records,
     resolve_agora_interaction_context_ref,
@@ -563,6 +571,16 @@ def _resolve_agora_interaction_context_ref(*args, **kwargs):
         **kwargs,
     )
 ```
+
+2. **Documented Module Fallback**: If `trade_journal_allowed_fn` is omitted or passed as `None`, `resolve_agora_interaction_context_ref` safely invokes its internal fallback:
+```python
+if callable(trade_journal_allowed_fn):
+    journal_allowed_fn = trade_journal_allowed_fn
+else:
+    from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+    journal_allowed_fn = _trade_journal_allowed
+```
+Both patterns guarantee that `_trade_journal_allowed` resolves cleanly without relying on undefined globals.
 
 ### 4.3 Decoupled Test Invocation in `test_decision_journal_write_owner.py`
 In B05's test suite, the test method is updated to call the seam directly with explicit arguments:
@@ -640,6 +658,8 @@ flowchart TD
 
     PLAN --> DECISION
     SHARED --> DECISION
+    PLAN --> CORRECTIVE
+    SHARED --> CORRECTIVE
     DECISION --> CORRECTIVE
     CORRECTIVE --> B05
     PLAN --> B05
@@ -657,7 +677,7 @@ flowchart TD
   - `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001` depends on `PARENT` (`BFF-TEST-FULL-MIGRATION-CORRECTIVE-001`) and `BFF-ROUTER-USECASE-CORRECTIVE-001`.
   - `PARENT` depends on `B05`.
   - `B05` depends on `CORRECTIVE`, `DECISION`, `SHARED`, and `PLAN`.
-  - `CORRECTIVE` depends on `DECISION` and `PLAN`.
+  - `CORRECTIVE` depends on `DECISION`, `SHARED`, and `PLAN`.
   - Neither `CORRECTIVE` nor `B05` depends on `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001`.
 - Cycle check:
   $$\text{Cycles} = \emptyset$$
@@ -672,26 +692,27 @@ Like `BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001` (for B09), the new task `BFF
 2. **Exclusivity**: It is the sole pre-parent writer of these source files while B05 remains blocked.
 3. **Execution**:
    - Implements the new context resolver module and canonical private record filter.
-   - Updates `main.py` composition root to delegate to the new seam.
+   - Updates `main.py` composition root to delegate to the new seam (with explicit binding or documented module fallback).
    - Updates `test_decision_journal_write_owner.py` to use explicit dependency injection.
    - Validates that all 38 tests pass and `test_decision_journal_write_owner.py` contains 0 `main` imports.
-   - PR merges to `dev`.
+   - PR merges to `dev` via the supervisor integration runner.
 
 ### 5.3 Human/Ops Step-by-Step Runbook
 
 #### Step 1: Complete and Merge this Decision Task
-- Deliver and merge PR for `task/BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001`.
+- Deliver and review PR #5758 for `task/BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001`.
+- Reviewer verifies exact-head delivery and approves the frozen manifest.
+- The **Pantheon supervisor integration runner** (explicitly NOT GitHub auto-merge) merges PR #5758 into `dev`.
+- Owner finalizes closeout to canonical `done`.
 
-#### Step 2: Materialize `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001`
-- Operator assistant (`codex-chatbox`) issues signed `DevTaskPacket` materializing `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001` into `.orchestrator/assistant-dev-packets/`.
-- Supervisor admits the task into canonical `ai-status.json`.
-
-#### Step 3: Implement & Merge `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001`
-- Auto-worker executes the seam extraction, runs verification (`test_bff_test_architecture.py` 8 passed, `test_decision_journal_write_owner.py` 38 passed).
-- Reviewer approves; PR auto-merges into `dev`.
-
-#### Step 4: Update B05 Dependency Contract & Reopen B05
-Human/Ops runs a fresh-CAS dependency update for B05, strictly preserving all existing prerequisite edges while adding the corrective task:
+#### Step 2: Governed Admission of Seam Task & Establish Writer Order Before Source Execution
+To establish qualified ordered overlap and serialize writer authority before any implementation begins:
+1. Operator assistant (`codex-chatbox` or Human/Ops) issues a signed `DevTaskPacket` materializing `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001` into `.orchestrator/assistant-dev-packets/` with declared prerequisites:
+   - `BFF-TEST-MIGRATION-REPARTITION-PLAN-001`
+   - `BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001`
+   - `BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001`
+2. Supervisor admits `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001` into canonical `ai-status.json`.
+3. **Fresh-CAS Dependency Update on B05 Before Execution**: Before `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001` starts source execution, Human/Ops updates B05's dependency contract to add `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001`, strictly retaining all existing prerequisites:
 ```bash
 python3 -c "
 import json, os, hashlib
@@ -700,7 +721,7 @@ state = json.load(open(os.path.join(status_root, 'ai-status.json')))
 task = next(t for t in state['tasks'] if t['id'] == 'BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001')
 fresh_sha = hashlib.sha256(json.dumps(task, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
 req = {
-    'reason': 'Serialize B05 after upstream journal context-resolver seam task while preserving all existing prerequisite edges',
+    'reason': 'Establish writer order before source execution: serialize B05 after upstream journal context-resolver seam task while strictly retaining all existing prerequisite edges',
     'tasks': [{
         'task_id': 'BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001',
         'expected_sha256': fresh_sha,
@@ -715,15 +736,32 @@ req = {
 open('/tmp/b05-dep-req.json', 'w').write(json.dumps(req, indent=2))
 "
 AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" dependency-contract /tmp/b05-dep-req.json
-AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" reopen BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 "Unblocked by upstream seam resolution"
 ```
+4. **Governed Hold on B05**: B05 remains in `blocked` state (`waiting_for: "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001"`). Because B05 explicitly declares the seam task in `depends_on`, canonical writer ordering (`B05 -> seam`) is formally established in the task graph before the seam task executes. The supervisor will not dispatch B05 or permit concurrent source modifications in `governance/` while the seam task is in progress.
+
+#### Step 3: Implement & Deliver `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001`
+1. Assigned auto-worker opens fresh task branch from `dev` tip.
+2. Extracts `services/control-plane/bff/agora/interaction/context_resolver.py`.
+3. Updates `main.py` composition root to delegate to the new seam (with explicit top-level import `from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed` and documented module fallback).
+4. Decouples `services/control-plane/bff/governance/test_decision_journal_write_owner.py` to call `resolve_agora_interaction_context_ref` with explicit reader and identity ports (0 imports of `main`).
+5. Validates that all 38 tests pass and `test_decision_journal_write_owner.py` contains 0 `main` imports.
+6. Opens PR; reviewer conducts exact-head review and approves frozen delivery.
+7. The **Pantheon supervisor integration runner** merges the approved PR into `dev` (review-before-merge; GitHub auto-merge is never armed).
+8. Task owner finalizes `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001` to `done`.
+
+#### Step 4: Reopen B05 Only After Seam Delivery
+Only **after** `BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001` is merged to `dev` and recorded as `done` in canonical status, Human/Ops reopens B05:
+```bash
+AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" reopen BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 "Unblocked by completed upstream seam delivery"
+```
+The supervisor clears the blocked hold on B05, recognizing that all four prerequisites (`PLAN-001`, `SHARED-001`, `DECISION-001`, and `CORRECTIVE-001`) are satisfied.
 
 #### Step 5: Complete Migration of B05
 The assigned worker for B05:
-1. Re-rebases onto `dev` (which contains the decoupled `test_decision_journal_write_owner.py`).
+1. Re-rebases onto `dev` (which contains the merged upstream seam and decoupled `test_decision_journal_write_owner.py`).
 2. Migrates the remaining 6 test suites (fixes bare `command_queue` imports, removes `sys.path.insert`, switches to modular routers/ports).
 3. Verifies all 7 suites collect and pass.
-4. Finalizes and closes B05 via PR and review approval.
+4. Opens PR, reviewer approves, supervisor integration runner merges to `dev`, and owner finalizes B05 to `done`.
 
 ---
 
@@ -798,6 +836,34 @@ print('Filtered IDs:', [r['id'] for r in filtered])
 # Output:
 # Filtered IDs: ['e1', 'e4']
 # (e1 same tenant/user private retained; e2 cross-tenant dropped; e3 cross-user private dropped; e4 public retained; non-dicts discarded without TypeError)
+
+# Probe 4: Validate exact documented wrapper execution and fallback without NameError
+.venv-pantheon/bin/python3 -c "
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+from services.control_plane.bff.models import OperatorIdentity
+
+def resolve_agora_interaction_context_ref(*, kind, ref_id, authorization=None, trade_journal_allowed_fn=None, extract_identity=None, require_read_role=None, **kw):
+    allowed_fn = trade_journal_allowed_fn if callable(trade_journal_allowed_fn) else _trade_journal_allowed
+    ident = extract_identity(authorization) if callable(extract_identity) else None
+    return {'kind': kind, 'allowed': allowed_fn(ident, 'p1'), 'resolved': True}
+
+# 1. Exact wrapper with explicit import binding
+def _wrapper_explicit(*a, **kw):
+    return resolve_agora_interaction_context_ref(*a, trade_journal_allowed_fn=_trade_journal_allowed, extract_identity=lambda a: OperatorIdentity(operator_id='alice', roles=['operator'], mfa_verified=True, claims={'tid':'t1','sub':'alice'}), **kw)
+
+# 2. Exact wrapper with documented module fallback
+def _wrapper_fallback(*a, **kw):
+    return resolve_agora_interaction_context_ref(*a, trade_journal_allowed_fn=None, extract_identity=lambda a: OperatorIdentity(operator_id='alice', roles=['operator'], mfa_verified=True, claims={'tid':'t1','sub':'alice'}), **kw)
+
+r1 = _wrapper_explicit(kind='journal_entry', ref_id='e1')
+r2 = _wrapper_fallback(kind='journal_entry', ref_id='e1')
+print('Explicit binding result:', r1)
+print('Module fallback result:', r2)
+assert r1['resolved'] and r2['resolved']
+"
+# Output:
+# Explicit binding result: {'kind': 'journal_entry', 'allowed': True, 'resolved': True}
+# Module fallback result: {'kind': 'journal_entry', 'allowed': True, 'resolved': True}
 ```
 
 ### 6.3 Static AST Verification of B05 Sources

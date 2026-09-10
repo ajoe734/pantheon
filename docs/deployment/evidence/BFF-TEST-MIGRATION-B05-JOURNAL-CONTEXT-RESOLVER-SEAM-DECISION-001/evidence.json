@@ -20,8 +20,8 @@
   ],
   "document_proof": {
     "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md": {
-      "sha256": "166a7f6170f44b15f6e2901669a03dc7654a6d837e40563c6f827eefdd8ed148",
-      "bytes": 43156
+      "sha256": "851fb6a06a442cab32fe17ce75bb0fb50077760d0f17d41f883055f66a1a06f2",
+      "bytes": 48760
     }
   },
   "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
@@ -91,7 +91,7 @@
       "trading_room_store_fn",
       "utc_now"
     ],
-    "composition_binding": "services/control-plane/bff/main.py delegates to resolve_agora_interaction_context_ref with composition root globals.",
+    "composition_binding": "services/control-plane/bff/main.py delegates to resolve_agora_interaction_context_ref with explicit top-level import or documented module fallback.",
     "test_binding": "test_decision_journal_write_owner.py imports resolve_agora_interaction_context_ref directly, passing reader and identity without importing main.",
     "focused_decision_event_rejection": "Preserves 503 DEPENDENCY_UNAVAILABLE rejection with precondition_failed='decision_event_source_route_unavailable' when focused_object.kind=='decision_event' and focused_object.id==ref_id.",
     "schema_resolution": "Path(__file__).resolve().parents[4] / 'telemetry' / 'trade_episode_projection.schema.json' points to services/telemetry, or explicit trade_episode_schema_path parameter.",
@@ -112,9 +112,9 @@
   "topological_ordering_proof": [
     "1. BFF-TEST-MIGRATION-REPARTITION-PLAN-001 (done)",
     "2. BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001 (done)",
-    "3. BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001 (this task)",
-    "4. BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001 (materialized upstream qualified ordered overlap)",
-    "5. BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 (unblocked child batch; depends_on preserves 1, 2, 3 and adds 4)",
+    "3. BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001 (this task; merged to dev via supervisor integration runner)",
+    "4. BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001 (admitted upstream seam task; fresh-CAS B05 dependency update establishes writer order before source execution)",
+    "5. BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 (governed hold during seam execution; unblocked child batch reopened only after seam delivery is merged to dev via supervisor integration runner)",
     "6. BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 (parent test migration task)",
     "7. JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (downstream journal runtime task)"
   ],
@@ -127,7 +127,7 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/governance/test_decision_journal_write_owner.py",
       "exit_code": 0,
-      "result": "46 passed, 3 warnings, 9 subtests passed in 33.96s; verified architectural classification and journal parity test baseline."
+      "result": "46 passed, 3 warnings, 9 subtests passed in 36.80s; verified architectural classification and journal parity test baseline."
     },
     {
       "command": ".venv-pantheon/bin/python3 -c \"from services.control_plane.bff.agora.service import AgoraService; AgoraService._private_record_visible({'id': '1'}, None)\"",
@@ -138,6 +138,16 @@
       "command": ".venv-pantheon/bin/python3 -c \"from pathlib import Path; p = Path('services/control-plane/bff/agora/interaction/context_resolver.py'); print((p.resolve().parents[3] / 'telemetry').exists(), (p.resolve().parents[4] / 'telemetry').exists())\"",
       "exit_code": 0,
       "result": "Reproduced Defect 2: parents[3] returns False (services/control-plane/telemetry does not exist); parents[4] returns True (services/telemetry exists); resolved by using parents[4] and injectable schema path parameter."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -c \"from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed; from services.control_plane.bff.models import OperatorIdentity; f = lambda *a, **kw: {'kind': kw['kind'], 'allowed': _trade_journal_allowed(kw.get('extract_identity')(None), 'p1'), 'resolved': True}; r1 = f(kind='journal_entry', ref_id='e1', extract_identity=lambda a: OperatorIdentity('alice', ['operator'], True, {'tid':'t1','sub':'alice'})); r2 = f(kind='journal_entry', ref_id='e1', extract_identity=lambda a: OperatorIdentity('alice', ['operator'], True, {'tid':'t1','sub':'alice'}), trade_journal_allowed_fn=None); assert r1['resolved'] and r2['resolved']; print('ok')\"",
+      "exit_code": 0,
+      "result": "Validated Probe 4: Executed exact documented wrapper with both explicit _trade_journal_allowed binding and documented module fallback; proved clean execution with zero NameError."
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "result": "19 passed in 38.48s; verified smoke acceptance failure path pipeline test suite cleanly passes with zero JSONDecodeError."
     },
     {
       "command": "git status -sb",
