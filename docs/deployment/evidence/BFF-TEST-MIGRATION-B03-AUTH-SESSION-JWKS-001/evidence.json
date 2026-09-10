@@ -1,0 +1,127 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+  "batch_id": "B03_auth_session_jwks",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "delivery_state": "ready_for_independent_review",
+  "migrated_artifacts": {
+    "services/control-plane/bff/test_bff_auth_facade.py": {
+      "bytes": 50809,
+      "sha256": "2464c949eee30315af6d06042367ba097d67ae44a1527554b9aa95e1a52b0114",
+      "tests_passed": 85,
+      "tests_failed": 0,
+      "imports_main": false,
+      "mutates_sys_path": false
+    },
+    "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py": {
+      "bytes": 6924,
+      "sha256": "eb69de2ef5a5a88f31e647b8a27809d0d63e81634ff2dff5206e5b2a95b2a0d7",
+      "tests_passed": 13,
+      "tests_failed": 0,
+      "imports_main": false,
+      "mutates_sys_path": false
+    },
+    "services/control-plane/bff/test_bff_session_auth_me_contract.py": {
+      "bytes": 41835,
+      "sha256": "67960df71490ee0adbcfea09bc0ff901ca6889161658d05266888903e6c2305e",
+      "tests_passed": 44,
+      "tests_failed": 0,
+      "imports_main": false,
+      "mutates_sys_path": false
+    },
+    "services/control-plane/bff/tests/test_auth_jwks_strict.py": {
+      "bytes": 27028,
+      "sha256": "a392636e8da0b7a4652708d62059dbbca90f4e7b95d09545fd44fa8dee78f398",
+      "tests_passed": 26,
+      "tests_failed": 0,
+      "imports_main": false,
+      "mutates_sys_path": false
+    },
+    "services/control-plane/bff/tests/test_bff_jwks_prewarm.py": {
+      "bytes": 3983,
+      "sha256": "6cf94272c9998817a88e324a656767ac2a01daad1d41349dd23bd2447f228b02",
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "imports_main": false,
+      "mutates_sys_path": false
+    },
+    "services/control-plane/bff/tests/test_confirm_token_lifecycle.py": {
+      "bytes": 7060,
+      "sha256": "007753ab785a8b8374bd88ef6190ca8f292faf9d6e58afa194947d680aae593c",
+      "tests_passed": 2,
+      "tests_failed": 0,
+      "imports_main": false,
+      "mutates_sys_path": false
+    }
+  },
+  "architectural_seams_used": [
+    "services.control_plane.bff.auth.policy (create_auth_dependencies, extract_identity*, bff_error, require_read_role, bff_me_tenant_payload, create_session_logout_guard)",
+    "services.control_plane.bff.auth.handlers (create_auth_handlers)",
+    "services.control_plane.bff.auth.service (AuthFacadeService)",
+    "services.control_plane.bff.auth.router (create_auth_router)",
+    "services.control_plane.bff.session_lifecycle_store (SessionLifecycleStore)",
+    "services.control_plane.bff.core.app_factory (create_settings_router)",
+    "services.control_plane.bff.command_adapters.router (create_command_adapters_router, CommandStore)",
+    "services.runtime_auth_inbound (encode_jwt_hs256, dynamic prewarm delegation)"
+  ],
+  "decoupling_summary": {
+    "composition_root_isolation": "All 6 test files decoupled from services/control-plane/bff/main.py. Zero imports of main remain.",
+    "sys_path_cleanliness": "All sys.path.insert calls removed. Standard package resolution via services.control_plane utilized.",
+    "state_isolation": "Eliminated global monkeypatching of main.session_lifecycle_store, main.settings_store, and main.command_store. Isolated stores instantiated per test fixture.",
+    "behavior_preservation": "All 175 tests across the 6 suites pass with identical contract semantics, including resolution of the 4 pre-existing session contract test failures caused by global store leakage."
+  },
+  "verification": [
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_auth_facade.py",
+      "exit_code": 0,
+      "result": "85 passed"
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+      "exit_code": 0,
+      "result": "13 passed"
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "exit_code": 0,
+      "result": "44 passed"
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_auth_jwks_strict.py",
+      "exit_code": 0,
+      "result": "26 passed"
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+      "exit_code": 0,
+      "result": "5 passed"
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
+      "exit_code": 0,
+      "result": "2 passed"
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed"
+    },
+    {
+      "command": "Batch pytest on all 6 B03 suites",
+      "exit_code": 0,
+      "result": "175 passed, 4 warnings in 48.25s"
+    },
+    {
+      "command": "AST and sys.path scan across all 6 B03 suites",
+      "exit_code": 0,
+      "result": "0 main imports, 0 sys.path mutations, 0 bff_main references"
+    }
+  ],
+  "review": {
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}

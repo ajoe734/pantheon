@@ -13,12 +13,201 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-BFF_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-sys.path.insert(0, str(REPO_ROOT))
+import os
+import re
+from typing import Any, List, Optional
 
-import main as bff_main
+from fastapi import FastAPI, Response
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
+
+from services.control_plane.bff.auth.policy import (
+    bff_auth_stub_enabled as _bff_auth_stub_enabled,
+    extract_identity as _extract_identity,
+    extract_identity_jwt as _extract_identity_jwt,
+    is_production_strict_mode as _is_production_strict_mode,
+)
+
+_DEFAULT_LOVABLE_CORS_ORIGINS = [
+    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "https://preview--pantheon-dev.lovable.app",
+    "https://preview--pantheon-ai-system-front-dev.lovable.app",
+    "https://preview--pantheon-ai-system-front-staging-live.lovable.app",
+    "https://preview--pantheon.lovable.app",
+    "https://preview--pantheon-ai-system-front.lovable.app",
+    "https://pantheon-dev.lovable.app",
+    "https://pantheon-ai-system-front-dev.lovable.app",
+    "https://pantheon-ai-system-front-staging-live.lovable.app",
+    "https://pantheon.lovable.app",
+    "https://pantheon-ai-system-front.lovable.app",
+    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
+    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
+    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
+]
+_DEV_LOOPBACK_CORS_ORIGINS = [
+    "http://127.0.0.1:4173",
+    "http://localhost:4173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
+_DEV_LOVABLE_CORS_ORIGINS = {
+    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "https://preview--pantheon-dev.lovable.app",
+    "https://preview--pantheon-ai-system-front-dev.lovable.app",
+    "https://pantheon-dev.lovable.app",
+    "https://pantheon-ai-system-front-dev.lovable.app",
+    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
+}
+_LOVABLE_PREVIEW_UUIDS = (
+    "b75d3452-f667-4cf4-893a-1061de45b347"
+    "|140c41d5-9cd8-4d6b-ba02-66d5941d0dbe"
+)
+_LOVABLE_PREVIEW_ORIGIN_REGEX = (
+    r"https://id-preview(?:-[a-f0-9]+)?--({})"
+    r"\.lovable\.app"
+).format(_LOVABLE_PREVIEW_UUIDS)
+_LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(
+    r"^" + _LOVABLE_PREVIEW_ORIGIN_REGEX + r"$"
+)
+
+_CORS_ALLOW_HEADERS = [
+    "Accept",
+    "Accept-Language",
+    "Authorization",
+    "Cache-Control",
+    "Content-Type",
+    "If-Match",
+    "X-BFF-Api-Version",
+    "X-Confirm-Token",
+    "Idempotency-Key",
+    "Last-Event-ID",
+    "X-Correlation-Id",
+    "X-Dry-Run",
+    "X-Idempotency-Key",
+    "X-Locale",
+    "X-MFA-Token",
+    "X-Request-Id",
+    "X-Refresh-Token",
+    "X-Tenant-Id",
+    "X-Trace-Id",
+]
+_CORS_EXPOSE_HEADERS = [
+    "ETag",
+    "X-BFF-Api-Version",
+    "X-Correlation-Id",
+    "X-Request-Id",
+]
+
+
+def _normalized_origin(origin: str) -> str:
+    return origin.strip().rstrip("/")
+
+
+def _dedupe_origins(origins: List[str]) -> List[str]:
+    deduped: List[str] = []
+    seen = set()
+    for origin in origins:
+        cleaned = _normalized_origin(origin)
+        if cleaned and cleaned not in seen:
+            deduped.append(cleaned)
+            seen.add(cleaned)
+    return deduped
+
+
+def _cors_origins_from_env() -> List[str]:
+    raw = os.getenv("PANTHEON_BFF_CORS_ORIGINS", "")
+    origins = _dedupe_origins(raw.split(",")) if raw.strip() else list(_DEFAULT_LOVABLE_CORS_ORIGINS)
+    if _is_production_strict_mode():
+        origins = [
+            origin
+            for origin in origins
+            if origin not in _DEV_LOVABLE_CORS_ORIGINS and origin != "*"
+        ]
+    else:
+        origins = origins + _DEV_LOOPBACK_CORS_ORIGINS
+    return _dedupe_origins(origins)
+
+
+def _cors_origin_allowed(origin: Optional[str]) -> bool:
+    if not origin:
+        return False
+    normalized = _normalized_origin(origin)
+    if normalized in _cors_origins_from_env():
+        return True
+    if not _is_production_strict_mode() and _LOVABLE_PREVIEW_ORIGIN_PATTERN.fullmatch(origin):
+        return True
+    return False
+
+
+def _with_cors_actual_response_headers(request: Request, headers: dict[str, str]) -> dict[str, str]:
+    response_headers = dict(headers)
+    origin = request.headers.get("origin")
+    if not origin or not _cors_origin_allowed(origin):
+        return response_headers
+
+    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
+    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
+    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
+
+    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
+    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
+    if "Origin" not in {part.title() for part in vary_parts}:
+        vary_parts.append("Origin")
+    if vary_parts:
+        response_headers["Vary"] = ", ".join(vary_parts)
+    return response_headers
+
+
+def _pack_d_http_exception_response(
+    request: Request,
+    exc: HTTPException,
+) -> JSONResponse:
+    headers = _with_cors_actual_response_headers(
+        request,
+        dict(getattr(exc, "headers", None) or {}),
+    )
+    detail = exc.detail
+    content: dict[str, Any] = detail if isinstance(detail, dict) else {"detail": detail}
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=content,
+        headers=headers,
+    )
+
+
+class _PantheonCORSMiddleware(CORSMiddleware):
+    def preflight_response(self, request_headers: Any) -> Response:
+        response = super().preflight_response(request_headers)
+        if response.status_code != 200:
+            return response
+        headers = dict(response.headers)
+        headers.pop("content-length", None)
+        headers.pop("content-type", None)
+        return Response(status_code=204, headers=headers)
+
+
+def _build_bff_app() -> FastAPI:
+    cors_origins = _cors_origins_from_env()
+    strict = _is_production_strict_mode()
+    preview_regex = None if strict else _LOVABLE_PREVIEW_ORIGIN_REGEX
+    built_app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
+    if cors_origins or preview_regex:
+        middleware_kwargs: dict[str, Any] = dict(
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=_CORS_ALLOW_HEADERS,
+            expose_headers=_CORS_EXPOSE_HEADERS,
+        )
+        if preview_regex:
+            middleware_kwargs["allow_origin_regex"] = preview_regex
+        built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
+
+    @built_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    async def _catchall(path: str):
+        return {"ok": True}
+
+    return built_app
 
 try:
     from cryptography.hazmat.backends import default_backend
@@ -45,7 +234,7 @@ JWKS_ENV = {
 
 
 def _cors_preflight(origin: str):
-    client = TestClient(bff_main._build_bff_app())
+    client = TestClient(_build_bff_app())
     return client.options(
         "/any-route",
         headers={
@@ -60,7 +249,7 @@ def test_default_lovable_cors_origins_include_preview_dev_and_prod(monkeypatch) 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "https://preview--pantheon-dev.lovable.app" in origins
     assert "https://pantheon-dev.lovable.app" in origins
@@ -76,11 +265,11 @@ def test_dev_loopback_cors_origins_present_with_explicit_override(monkeypatch) -
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "http://127.0.0.1:4173" in origins
     assert "http://localhost:4173" in origins
-    assert bff_main._cors_origin_allowed("http://127.0.0.1:4173")
+    assert _cors_origin_allowed("http://127.0.0.1:4173")
 
     allowed = _cors_preflight("http://127.0.0.1:4173")
     assert allowed.status_code == 204
@@ -95,10 +284,10 @@ def test_production_strict_mode_excludes_dev_loopback_origins(monkeypatch) -> No
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "production")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "http://127.0.0.1:4173" not in origins
-    assert not bff_main._cors_origin_allowed("http://127.0.0.1:4173")
+    assert not _cors_origin_allowed("http://127.0.0.1:4173")
 
 
 def test_strict_cors_rejects_unlisted_origin(monkeypatch) -> None:
@@ -120,14 +309,14 @@ def test_cors_exposes_bff_client_response_headers(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    client = TestClient(bff_main._build_bff_app())
+    client = TestClient(_build_bff_app())
     response = client.get("/any-route", headers={"Origin": "https://pantheon-dev.lovable.app"})
 
     exposed = {
         header.strip()
         for header in response.headers["access-control-expose-headers"].split(",")
     }
-    assert exposed == set(bff_main._CORS_EXPOSE_HEADERS)
+    assert exposed == set(_CORS_EXPOSE_HEADERS)
     assert "ETag" in exposed
 
 
@@ -146,7 +335,7 @@ def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkey
             ],
         }
     )
-    response = bff_main._pack_d_http_exception_response(
+    response = _pack_d_http_exception_response(
         request,
         HTTPException(
             status_code=403,
@@ -166,7 +355,7 @@ def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkey
         == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
     )
     assert response.headers["access-control-allow-credentials"] == "true"
-    assert response.headers["access-control-expose-headers"] == ", ".join(bff_main._CORS_EXPOSE_HEADERS)
+    assert response.headers["access-control-expose-headers"] == ", ".join(_CORS_EXPOSE_HEADERS)
     assert "Origin" in response.headers["vary"]
 
 
@@ -183,7 +372,7 @@ def test_pack_d_http_exception_response_does_not_add_cors_for_unlisted_origin(mo
             "headers": [(b"origin", b"https://evil.example.com")],
         }
     )
-    response = bff_main._pack_d_http_exception_response(
+    response = _pack_d_http_exception_response(
         request,
         HTTPException(status_code=403, detail={"error": "FORBIDDEN", "message": "Nope"}),
     )
@@ -197,7 +386,7 @@ def test_lovable_cors_preflight_accepts_bff_client_headers(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    client = TestClient(bff_main._build_bff_app())
+    client = TestClient(_build_bff_app())
     response = client.options(
         "/bff/me",
         headers={
@@ -219,7 +408,7 @@ def test_lovable_cors_preflight_accepts_bff_client_headers(monkeypatch) -> None:
     }
     assert response.status_code == 204
     assert response.headers["access-control-allow-origin"] == "https://pantheon-dev.lovable.app"
-    assert {header.lower() for header in bff_main._CORS_ALLOW_HEADERS}.issubset(allowed)
+    assert {header.lower() for header in _CORS_ALLOW_HEADERS}.issubset(allowed)
 
 
 def test_production_strict_mode_filters_dev_cors_override(monkeypatch) -> None:
@@ -230,7 +419,7 @@ def test_production_strict_mode_filters_dev_cors_override(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "production")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "https://pantheon-dev.lovable.app" not in origins
     assert "*" not in origins
@@ -241,13 +430,13 @@ def test_dev_stub_is_disabled_in_strict_mode(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
 
-    assert bff_main._bff_auth_stub_enabled() is False
+    assert _bff_auth_stub_enabled() is False
     with pytest.raises(HTTPException) as exc_info:
-        bff_main._extract_identity("Bearer op-dev:operator")
+        _extract_identity("Bearer op-dev:operator")
     assert exc_info.value.status_code == 401
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    identity = bff_main._extract_identity("Bearer op-dev:operator")
+    identity = _extract_identity("Bearer op-dev:operator")
     assert identity.operator_id == "op-dev"
 
 
@@ -318,7 +507,7 @@ def test_jwks_strict_accepts_configured_issuer_and_audience(monkeypatch) -> None
         monkeypatch.setenv(name, value)
 
     with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
-        identity = bff_main._extract_identity_jwt(f"Bearer {token}")
+        identity = _extract_identity_jwt(f"Bearer {token}")
 
     assert identity.operator_id == "op-jwks"
     assert "operator" in identity.roles
@@ -333,7 +522,7 @@ def test_jwks_strict_rejects_issuer_mismatch(monkeypatch) -> None:
 
     with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
         with pytest.raises(HTTPException) as exc_info:
-            bff_main._extract_identity_jwt(f"Bearer {token}")
+            _extract_identity_jwt(f"Bearer {token}")
 
     assert exc_info.value.status_code == 401
     assert "AUTH_JWT_ISSUER_MISMATCH" in json.dumps(exc_info.value.detail)
@@ -348,7 +537,7 @@ def test_jwks_strict_rejects_audience_mismatch(monkeypatch) -> None:
 
     with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
         with pytest.raises(HTTPException) as exc_info:
-            bff_main._extract_identity_jwt(f"Bearer {token}")
+            _extract_identity_jwt(f"Bearer {token}")
 
     assert exc_info.value.status_code == 401
     assert "AUTH_JWT_AUDIENCE_MISMATCH" in json.dumps(exc_info.value.detail)
@@ -366,7 +555,7 @@ def test_jwks_strict_refreshes_once_for_rotated_kid(monkeypatch) -> None:
         "services.runtime_auth_inbound._fetch_jwks_keys",
         side_effect=[[old_jwk], [new_jwk]],
     ) as fetch:
-        identity = bff_main._extract_identity_jwt(f"Bearer {token}")
+        identity = _extract_identity_jwt(f"Bearer {token}")
 
     assert identity.operator_id == "op-rotated"
     assert fetch.call_count == 2
@@ -382,7 +571,7 @@ def test_execute_plans_lovableproject_in_default_origins(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" in origins
 
@@ -394,7 +583,7 @@ def test_execute_plans_lovableproject_survives_production_strict_filter(monkeypa
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "production")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" in origins
 
@@ -406,7 +595,7 @@ def test_self_hosted_dev_fe_origin_in_default_origins(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" in origins
 
@@ -418,7 +607,7 @@ def test_self_hosted_dev_fe_origin_filtered_in_production_strict(monkeypatch) ->
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "production")
 
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
 
     assert "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" not in origins
 
@@ -431,7 +620,7 @@ def test_static_id_preview_survives_production_strict_filter(monkeypatch) -> Non
     monkeypatch.setenv("PANTHEON_ENV", "production")
 
     origin = "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app"
-    origins = bff_main._cors_origins_from_env()
+    origins = _cors_origins_from_env()
     resp = _cors_preflight(origin)
 
     assert origin in origins
@@ -520,9 +709,9 @@ def test_cors_origin_allowed_includes_preview_regex(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
-    assert bff_main._cors_origin_allowed(
+    assert _cors_origin_allowed(
         "https://id-preview-a7067bd5--140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovable.app"
     )
-    assert not bff_main._cors_origin_allowed(
+    assert not _cors_origin_allowed(
         "https://id-preview-a7067bd5--aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.lovable.app"
     )
