@@ -1,0 +1,94 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "batch_group": "B02_ask_assistant_workshop",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "depends_on": [
+    "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+  ],
+  "pairwise_disjoint_scope": {
+    "target_files_count": 4,
+    "target_files": [
+      "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py"
+    ],
+    "retained_parent_foundation_untouched": [
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "results": {
+    "test_assistant_agora_ask": {
+      "file": "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "changes": "Removed import main as bff_main and sys.path mutations; mounted create_identity_router on isolated FastAPI app with injected AgoraService instance; updated mock targets to patch.object(ops_module, 'OpenClawOpsClient', ...)",
+      "tests_passed": 8,
+      "tests_total": 8
+    },
+    "test_assistant_context_pack": {
+      "file": "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "changes": "Removed import main as bff_main and sys.path mutations; mounted create_assistant_router with _make_collect_source helper invoking compose_context_pack; registered HTTP exception handler to format detail error envelopes",
+      "tests_passed": 5,
+      "tests_total": 5
+    },
+    "test_console_data_agora_projection": {
+      "file": "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "changes": "Removed import main as bff_main, global read_store monkeypatching, and sys.path mutations; mounted create_agora_router with read_surface=ports; bound in-memory journal with tenant-isolated projections",
+      "tests_passed": 1,
+      "tests_total": 1
+    },
+    "test_workshop_stream_ag_be_sw_004": {
+      "file": "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "changes": "Removed sys.path.insert(0, BFF_DIR) and unused _workshop_client importing main; qualified agora imports to services.control_plane.bff.agora; mounted create_strategy_workshop_router on isolated FastAPI instance for fail-closed route validation",
+      "tests_passed": 25,
+      "tests_total": 25
+    }
+  },
+  "static_checks": {
+    "main_composition_root_imports": 0,
+    "sys_path_mutations": 0,
+    "global_read_store_monkeypatches": 0,
+    "verdict": "passed"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "result": "8 passed in 5.12s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "result": "5 passed in 4.44s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "result": "1 passed in 7.84s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "25 passed, 1 warning in 11.50s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "39 passed, 1 warning in 23.83s",
+      "exit_code": 0
+    },
+    {
+      "command": "AST static analysis checking 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatches",
+      "result": "All 4 files passed AST checks cleanly with zero violations",
+      "exit_code": 0
+    }
+  ],
+  "review": {
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}
