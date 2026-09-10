@@ -1,0 +1,85 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-AUTO-WORKER-READINESS-SEMANTICS-DOC-001",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "05dfc375f0a097cc4544f029cce811a6383d5112",
+  "anchor_commit": "0c694af751f7d7ca9671158f96443c24aeae53ec",
+  "source_commit": "0c694af751f7d7ca9671158f96443c24aeae53ec",
+  "identity_note": "All modified documentation bytes are committed in anchor_commit (0c694af751f7d7ca9671158f96443c24aeae53ec). This manifest adds the review evidence. The exact PR head and manifest blob will be frozen by the governed owner handoff.",
+  "delivery_nature": {
+    "documentation_only": true,
+    "statement": "This delivery updates operational documentation only (docs/operations/auto-worker-readiness.md) and does not activate, modify, or deploy any live policy, configuration, supervisor code, worker lease, provider credential, or canonical task assignment."
+  },
+  "runtime_identities": {
+    "command_runtime_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+    "live_supervisor_config": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "task_worktree_base": "origin/dev@05dfc375f0a097cc4544f029cce811a6383d5112"
+  },
+  "live_policy_keys": {
+    "worker_reassignment.enabled": true,
+    "worker_reassignment.max_reassignments_per_cycle": 4,
+    "worker_reassignment.load_balance.enabled": true,
+    "worker_reassignment.load_balance.min_saturated_seconds": 900,
+    "worker_reassignment.failure_loop.enabled": true,
+    "worker_reassignment.failure_loop.max_failures_in_window": 3,
+    "worker_reassignment.failure_loop.window_seconds": 3600,
+    "worker_reassignment.failure_loop.max_auto_reassignments": 1
+  },
+  "wording_map": {
+    "authorities_probe_semantics": {
+      "before": "- A fresh provider probe may clear a runtime auth/quota pause. A missing or stale probe never proves health and never triggers task reassignment.",
+      "after": "- A fresh provider probe may clear a runtime auth/quota pause. Probe freshness does not prove runtime health, and a missing or stale probe does not prove health either. Neither immediately triggers task reassignment. However, when load balancing is enabled, a qualifying transient signal can start an optional guarded load-balance watch.",
+      "rationale": "Corrects the absolute claim that a stale or missing probe never triggers task reassignment. Explains that probe freshness does not prove health and that while neither immediately reassigns tasks, a qualifying transient signal can initiate a guarded load-balance watch when enabled."
+    },
+    "dispatch_semantics_and_recovery_lanes": {
+      "before": "Terminal auth, terminal quota, unknown-agent, or configured-zero-capacity assignments may be changed by the bounded recovery reconciler. Temporary capacity pressure, probe timeout, stale cache, and ordinary worker failure do not change task assignment.\n\nHuman/Ops may always correct a current owner/reviewer through canonical `ai-status assign`; repository branch/PR/check governance does not grant or revoke that runtime authority.",
+      "after": "### Automatic recovery lanes and safeguards\n\nThe supervisor provides bounded automatic reassignment across three distinct recovery lanes. None of these lanes launches workers directly; each operates by committing a CAS task update through canonical `persist_task_reassignment` (respecting generation fences and lease locks), after which the normal planner evaluates dispatch on a subsequent pass.\n\n1. Durable unavailability recovery (reconcile_unavailable_assignments): Covers terminal auth, terminal quota, unknown agent identity, or configured zero capacity. Governed by worker_reassignment.enabled and max_reassignments_per_cycle; targets reviewer_fallbacks or owner_fallbacks; never infers unavailability from probe staleness alone.\n2. Guarded load-balance recovery (reconcile_unavailable_assignments): Governed by worker_reassignment.load_balance.enabled and min_saturated_seconds. Applies strictly to unleased not-yet-started work (todo or review_approved), never touching in_progress or blocked tasks. Evaluates saturated lanes (assignment_saturated_recoverable) or transiently blocked lanes (assignment_transiently_blocked_recoverable). Requires a continuous configured hold (min_saturated_seconds) before committing reassignment to a healthy fallback with spare capacity; does not reassign immediately.\n3. Repeated-failure-loop recovery (reconcile_failure_loops): Governed by worker_reassignment.failure_loop keys (enabled, max_failures_in_window, window_seconds, max_auto_reassignments). An ordinary single worker failure does not trigger reassignment. When failures hit max_failures_in_window within window_seconds, reassigns to owner_fallbacks up to max_auto_reassignments; further failures escalate to an explicit Human/Ops hold rather than bouncing indefinitely.\n\n### Authority boundary\n\nThese automated lanes reuse existing TaskStore CAS mutations and generation fencing; they do not introduce a second authority or bypass active leases. Human/Ops retains supreme authority and may always correct a current owner or reviewer through canonical `ai-status assign`.",
+      "rationale": "Replaces the overbroad statement that temporary capacity pressure, probe timeout, stale cache, and ordinary worker failure do not change assignment. Distinguishes single worker failures from repeated-failure loops, details load-balance eligibility and hold duration, and references configuration keys without hard-coding fleet parameters."
+    }
+  },
+  "document_proof": {
+    "docs/operations/auto-worker-readiness.md": {
+      "base_sha256": "a6df5101669f87a7471fdb52a21e926057ea7687fb9b41c5c36522738638b021",
+      "candidate_sha256": "7384343d5932986d8c049282a0a7c406e4d1e98c81fb271a3eb64f8d9d925a51",
+      "scope_confirmed": true
+    }
+  },
+  "validation": {
+    "checks": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"LoadBalanceReassignmentTests or FailureLoopAutoGovernanceTests or RuntimeConfigurationContractTests or AccountHealthAndRecoveryContractTests\"",
+        "exit_code": 0,
+        "result": "passed",
+        "terminal_output": "47 passed, 277 deselected, 19 subtests passed in 6.74s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",
+        "exit_code": 0,
+        "result": "passed",
+        "terminal_output": "{\"drift\": [], \"intentional\": [], \"missing\": [...], \"fleet_capacity_errors\": [], \"repository_source_drift\": [], \"repository_integration_drift\": [], \"dev_root_behind\": null, \"fixed\": [], \"exit_code\": 0}"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "exit_code": 0,
+        "result": "passed"
+      }
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "instructions": "Review the frozen PR head, documentation clarity, accuracy of the three automatic recovery lanes against supervisor.py and live configuration, before/after wording map, and read-only verification evidence."
+  },
+  "live_activation": {
+    "status": "not_applicable",
+    "note": "Documentation delivery only. No live configuration, supervisor code, or deployment activation is required or performed."
+  }
+}
