@@ -7,11 +7,9 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.tests.fixtures.training_fixture import create_training_test_client
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -20,19 +18,17 @@ OPERATOR_AUTH = "Bearer test-operator:operator"
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         tracked_env = {
             "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
             "INTERACTION_SOURCE_STORE_PATH": os.environ.get("INTERACTION_SOURCE_STORE_PATH"),
         }
         os.environ["STRATEGY_SEED_STORE_PATH"] = os.path.join(td, "strategy_seeds.jsonl")
         os.environ["INTERACTION_SOURCE_STORE_PATH"] = os.path.join(td, "interaction_records.jsonl")
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        store = create_training_read_surface_double()
+        client = create_training_test_client(store)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -536,58 +532,52 @@ def test_tw04_existing_snapshot_backfills_drawdown_evidence_route():
 
 @contextmanager
 def _seeded_client_with_degraded_session():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        store = create_training_read_surface_double()
-        degraded_session = {
-            "session_id": "trn-degraded-001",
-            "persona_id": "persona-alpha",
-            "objective": "Degraded surface test session.",
-            "status": "completed",
-            "started_at": "2026-04-20T10:00:00Z",
-            "ended_at": "2026-04-20T10:30:00Z",
-            "replay_resolution": {
-                "state": "pending_decision",
-                "decision_at": None,
-                "decision_by": None,
-                "note": None,
-            },
-            "artifacts": {
-                "before_artifact_ref": "artifact-degraded-before",
-                "candidate_artifact_ref": "artifact-degraded-candidate",
-                "after_artifact_ref": None,
-            },
-            "meta": {
-                "surfaces": {
-                    "trainer_replay": "degraded",
-                }
-            },
-            "events": [
-                {
-                    "event_id": "tevt-degraded-001",
-                    "session_id": "trn-degraded-001",
-                    "actor": "operator",
-                    "actor_label": "Operator",
-                    "event_type": "message",
-                    "message_body": "Test message.",
-                    "summary": "Degraded session test event.",
-                    "emitted_at": "2026-04-20T10:00:05Z",
-                    "sequence_number": 1,
-                    "outcome_signal": None,
-                    "evidence_ref": None,
-                    "patch_delta": None,
-                    "eval_ref": None,
-                    "artifact_refs": None,
-                }
-            ],
-        }
-        store.add_replay(degraded_session)
-        bff_main.read_store = store
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    store = create_training_read_surface_double()
+    degraded_session = {
+        "session_id": "trn-degraded-001",
+        "persona_id": "persona-alpha",
+        "objective": "Degraded surface test session.",
+        "status": "completed",
+        "started_at": "2026-04-20T10:00:00Z",
+        "ended_at": "2026-04-20T10:30:00Z",
+        "replay_resolution": {
+            "state": "pending_decision",
+            "decision_at": None,
+            "decision_by": None,
+            "note": None,
+        },
+        "artifacts": {
+            "before_artifact_ref": "artifact-degraded-before",
+            "candidate_artifact_ref": "artifact-degraded-candidate",
+            "after_artifact_ref": None,
+        },
+        "meta": {
+            "surfaces": {
+                "trainer_replay": "degraded",
+            }
+        },
+        "events": [
+            {
+                "event_id": "tevt-degraded-001",
+                "session_id": "trn-degraded-001",
+                "actor": "operator",
+                "actor_label": "Operator",
+                "event_type": "message",
+                "message_body": "Test message.",
+                "summary": "Degraded session test event.",
+                "emitted_at": "2026-04-20T10:00:05Z",
+                "sequence_number": 1,
+                "outcome_signal": None,
+                "evidence_ref": None,
+                "patch_delta": None,
+                "eval_ref": None,
+                "artifact_refs": None,
+            }
+        ],
+    }
+    store.add_replay(degraded_session)
+    client = create_training_test_client(store)
+    yield client
 
 
 def test_tw04_detail_degraded_surface_suppresses_cta():

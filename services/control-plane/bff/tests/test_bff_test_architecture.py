@@ -25,9 +25,9 @@ REPO_ROOT = TESTS_DIR.parents[3]
 INVENTORY_PATH = TESTS_DIR / "bff_test_architecture_inventory.json"
 
 TASK_REVIEW_EVIDENCE = {
-    "task": "BFF-TEST-ARCH-001",
+    "task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
     "owner": "Antigravity2",
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "base": "dev",
     "scope": (
         "Decouple BFF tests from composition globals: classify test files into "
@@ -38,7 +38,9 @@ TASK_REVIEW_EVIDENCE = {
     "verification": (
         "Run test_bff_test_architecture.py alongside migrated suites "
         "(test_governance_router, test_operations_consultation_ports, "
-        "test_read_surface_caller_migration, test_cw01-04)."
+        "test_read_surface_caller_migration, test_cw01-04, test_ask_001/003/004, "
+        "test_consultation_surfaces, test_settings_contract, test_pkt001, "
+        "test_bff_logout, test_bff_auth_refresh, test_bff_me_session_bootstrap, test_bff_me_locale)."
     ),
 }
 
@@ -53,7 +55,7 @@ def _load_inventory() -> Dict[str, Any]:
 
 def test_inventory_file_is_present_and_well_formed() -> None:
     data = _load_inventory()
-    assert data["task_id"] == "BFF-TEST-ARCH-001"
+    assert data["task_id"] in {"BFF-TEST-ARCH-001", "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"}
     assert "version" in data
     assert "composition_allowlist" in data
     assert "migrated_suites" in data
@@ -159,10 +161,127 @@ def test_no_global_monkeypatching_in_migrated_suites() -> None:
     assert not offenders, f"Migrated suites must not patch global read_store:\n{msg}"
 
 
+def _scan_ast_main_importers(paths: Sequence[Path]) -> List[str]:
+    importers: List[str] = []
+    for file_path in paths:
+        if not file_path.is_file():
+            continue
+        try:
+            tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            found = False
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "main" or alias.name.endswith(".main"):
+                        found = True
+                        break
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and (
+                    node.module == "main"
+                    or node.module.endswith(".main")
+                    or (node.module.startswith("services.control_plane.bff") and any(a.name == "main" for a in node.names))
+                ):
+                    found = True
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "__import__":
+                    if node.args and isinstance(node.args[0], ast.Constant) and "main" in str(node.args[0].value):
+                        found = True
+                elif isinstance(func, ast.Attribute) and func.attr == "import_module":
+                    if node.args and isinstance(node.args[0], ast.Constant) and "main" in str(node.args[0].value):
+                        found = True
+                elif isinstance(func, ast.Attribute) and func.attr in ("run", "Popen", "check_output", "check_call"):
+                    for arg in node.args:
+                        if isinstance(arg, ast.List):
+                            for elt in arg.elts:
+                                if isinstance(elt, ast.Constant) and "main.py" in str(elt.value):
+                                    found = True
+            if found:
+                try:
+                    rel = str(file_path.relative_to(BFF_DIR))
+                except ValueError:
+                    rel = str(file_path)
+                importers.append(rel)
+                break
+    return sorted(set(importers))
+
+
+def test_inventory_declarations_match_live_ast_scan() -> None:
+    """Ensure every catalog entry's imports_main declaration matches live AST reality."""
+    data = _load_inventory()
+    mismatches: List[str] = []
+    for entry in data["tests"]:
+        file_path = BFF_DIR / entry["file"]
+        actual_importer = bool(_scan_ast_main_importers([file_path]))
+        declared = entry["imports_main"]
+        if actual_importer != declared:
+            mismatches.append(f"{entry['file']}: declared imports_main={declared}, actual={actual_importer}")
+    assert not mismatches, f"Inventory declared imports_main mismatches on disk:\n" + "\n".join(mismatches)
+
+
 def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
     data = _load_inventory()
     baseline = data["audited_baseline_main_importers"]
     current = data["current_main_importers"]
 
-    assert current <= 211, f"Expected current main importers <= 211, got {current}"
+    # 1. Exact count reconciliation: no arbitrary ceiling; current must match live catalog scan exactly
+    catalog_paths = [BFF_DIR / entry["file"] for entry in data["tests"]]
+    catalog_importers = _scan_ast_main_importers(catalog_paths)
+    assert len(catalog_importers) == current, (
+        f"Inventory current_main_importers ({current}) does not match live AST count ({len(catalog_importers)})"
+    )
+    assert current <= 192, f"Expected current main importers <= 192, got {current}"
     assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
+
+    # 2. Live scan across all test files, helpers, fixtures, conftest, and smoke suites
+    all_test_files: List[Path] = []
+    for p in BFF_DIR.resolve().glob("**/*.py"):
+        if ".venv" in p.parts or "__pycache__" in p.parts:
+            continue
+        if (
+            p.name.startswith("test_")
+            or p.name.endswith("_test.py")
+            or "tests" in p.parts
+            or "fixtures" in p.name
+            or p.name == "conftest.py"
+            or "smoke" in p.name
+        ):
+            all_test_files.append(p)
+
+    ast_importers = set(_scan_ast_main_importers(all_test_files))
+    # Migrated suites must NEVER appear in live importer scan (direct, dynamic, or subprocess)
+    for migrated in data["migrated_suites"]:
+        assert migrated not in ast_importers, (
+            f"Migrated suite {migrated} was detected importing main via live scan!"
+        )
+
+
+def test_conftest_and_fixtures_do_not_mutate_sys_path() -> None:
+    """Ensure conftest.py, knowledge fixtures, and all shared fixtures do not mutate sys.path."""
+    target_files = [
+        BFF_DIR / "tests" / "conftest.py",
+        BFF_DIR / "tests" / "knowledge_read_port_fixtures.py",
+    ]
+    fixtures_dir = BFF_DIR / "tests" / "fixtures"
+    if fixtures_dir.is_dir():
+        for p in fixtures_dir.glob("*.py"):
+            target_files.append(p)
+
+    offenders: List[str] = []
+    for file_path in target_files:
+        if not file_path.is_file():
+            continue
+        tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr in ("insert", "append"):
+                    val = func.value
+                    if isinstance(val, ast.Attribute) and val.attr == "path":
+                        if isinstance(val.value, ast.Name) and val.value.id == "sys":
+                            offenders.append(f"{file_path.name}:{node.lineno}: sys.path.{func.attr}")
+
+    msg = "\n".join(f"  {o}" for o in offenders)
+    assert not offenders, f"Conftest/fixture files must not mutate sys.path:\n{msg}"

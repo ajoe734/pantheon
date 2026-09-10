@@ -8,10 +8,8 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.tests.fixtures.training_fixture import create_training_test_client
+from services.control_plane.bff.test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -22,9 +20,9 @@ def _seeded_client(
     *,
     allow_local_snapshot_fallback: bool = True,
     service_backed_preview_store: bool = False,
+    utc_now: Any = None,
 ):
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         original_preview_store = os.environ.get("PANTHEON_BFF_TRAINER_PREVIEW_STORE")
         if service_backed_preview_store:
             os.environ["PANTHEON_BFF_TRAINER_PREVIEW_STORE"] = os.path.join(
@@ -33,12 +31,12 @@ def _seeded_client(
             )
         else:
             os.environ.pop("PANTHEON_BFF_TRAINER_PREVIEW_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        read_store = create_training_read_surface_double()
+        kw = {"utc_now": utc_now} if utc_now else {}
+        client = create_training_test_client(read_store, **kw)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             if original_preview_store is None:
                 os.environ.pop("PANTHEON_BFF_TRAINER_PREVIEW_STORE", None)
             else:
@@ -80,13 +78,12 @@ def test_tw03_get_preview_returns_backend_owned_compare_payload() -> None:
 
 
 def test_tw03_pending_preview_supports_eval_lookup_and_polling_contract() -> None:
-    with _seeded_client() as client:
-        with mock.patch.object(bff_main, "utc_now", return_value="2026-04-20T19:50:00Z"):
-            response = client.get(
-                "/api/v1/trainer/sessions/trn-20260419-001/preview",
-                params={"eval_id": "teval-20260419-015"},
-                headers={"Authorization": OPERATOR_AUTH},
-            )
+    with _seeded_client(utc_now=lambda: "2026-04-20T19:50:00Z") as client:
+        response = client.get(
+            "/api/v1/trainer/sessions/trn-20260419-001/preview",
+            params={"eval_id": "teval-20260419-015"},
+            headers={"Authorization": OPERATOR_AUTH},
+        )
         assert response.status_code == 200, response.text
 
         payload = response.json()

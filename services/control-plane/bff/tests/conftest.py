@@ -2,17 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-
-
-BFF_DIR = Path(__file__).resolve().parents[1]
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 
 @pytest.fixture

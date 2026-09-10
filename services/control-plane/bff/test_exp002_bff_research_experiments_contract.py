@@ -19,12 +19,8 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.tests.fixtures.research_fixture import create_research_test_client
 
 OPERATOR_AUTH = "Bearer exp002-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -118,26 +114,13 @@ _SEED_EXPERIMENTS = {
 
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
     store = create_in_memory_read_surface_ports(
         research_knowledge_source_kwargs={
             "research_experiments_store": _SEED_EXPERIMENTS if fallback else {},
         }
     )
     store.create_research_experiment = store.research_knowledge_source.create_research_experiment
-    bff_main.read_store = store
-    bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    try:
-        yield TestClient(bff_main.app)
-    finally:
-        bff_main.read_store = original_store
-        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+    yield create_research_test_client(store)
 
 
 # ---------------------------------------------------------------------------

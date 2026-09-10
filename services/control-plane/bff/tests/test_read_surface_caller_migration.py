@@ -216,7 +216,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 if isinstance(node.value, ast.Name) and node.value.id == "read_store":
                     read_store_attrs.add(node.attr)
 
-        self.assertEqual(len(read_store_attrs), 55, "Expected exactly 55 read_store attributes in main.py")
+        self.assertEqual(len(read_store_attrs), 50, "Expected exactly 50 read_store attributes in main.py")
 
         ports_instance = create_read_surface_ports()
 
@@ -237,9 +237,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 54)
+        self.assertEqual(len(mapped_reads), 49)
         self.assertEqual(len(deferred_writes), 1)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 55)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 50)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
@@ -694,6 +694,7 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
             command_store=bff_main.command_store,
             persona_write_owner=bff_main.persona_write_owner,
             ranking_write_owner=bff_main.ranking_write_owner,
+            strategy_write_owner=bff_main.strategy_write_owner,
             settings_store=bff_main.settings_store,
         )
         test_app = bff_main._build_bff_app()

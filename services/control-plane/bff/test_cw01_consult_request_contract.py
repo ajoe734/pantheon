@@ -170,7 +170,7 @@ class _ConsultRequestReadStore:
         if dataset != "consult_requests":
             return "missing"
         if _consultation_service_configured():
-            return "consultation_service_store"
+            return "service_store"
         if self._consult_request_store_path():
             return "service_store"
         return "missing"

@@ -9,10 +9,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.tests.fixtures.training_fixture import create_training_test_client
+from services.control_plane.bff.test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -49,13 +47,11 @@ def _seeded_client(*, service_backed_control_store: bool = False):
         else:
             os.environ.pop("PANTHEON_BFF_TRAINER_CONTROL_STORE", None)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        read_store = create_training_read_surface_double()
+        client = create_training_test_client(read_store)
         try:
             yield client, control_store_path
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

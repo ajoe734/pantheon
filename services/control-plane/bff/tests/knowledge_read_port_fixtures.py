@@ -9,15 +9,9 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-_BFF_DIR = Path(__file__).resolve().parent.parent
-if str(_BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(_BFF_DIR))
-
-from ports import (  # noqa: E402
+from services.control_plane.bff.ports import (
     DefaultResearchKnowledgeSourcePort,
     ReadSurfacePorts,
     create_in_memory_persona_capital_runtime_port,
