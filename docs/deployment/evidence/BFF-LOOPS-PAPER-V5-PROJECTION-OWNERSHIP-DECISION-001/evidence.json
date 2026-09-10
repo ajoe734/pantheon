@@ -18,7 +18,7 @@
       "fake projection callback as migration proof"
     ]
   },
-  "decision_document_sha256": "3b3308cec834d4ff4b5b5b5e8d15d416d33ba3d93a11facdccf3cf9f142c3fe6",
+  "decision_document_sha256": "96059bc87196b23f7e5e44fd78d10440a2941a45e5579e995b3c02cb02c09728",
   "decision_status": "proposed_for_independent_exact_head_review",
   "future_packet": {
     "artifacts": [
@@ -1088,9 +1088,9 @@
       "result": "Anchor commit 1a4f60b78 has required task/agent/reviewer trailers."
     },
     {
-      "command": "git diff --check",
+      "command": "git diff --check origin/dev (full task diff, including working tree)",
       "exit_code": 0,
-      "result": "No whitespace errors."
+      "result": "Removed three Markdown trailing spaces found by the committed-range check; corrected full task diff passes."
     }
   ],
   "writer_gates": {

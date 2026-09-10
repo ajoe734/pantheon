@@ -1,8 +1,8 @@
 # B14 loops / paper V5 projection ownership decision
 
-Task: `BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001`  
-Owner: Codex · independent reviewer: Antigravity  
-Audited source: `fb142e4f4e9289a984e42e563de16ce58c079b71` (`origin/dev`, 2026-09-10)  
+Task: `BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001`
+Owner: Codex · independent reviewer: Antigravity
+Audited source: `fb142e4f4e9289a984e42e563de16ce58c079b71` (`origin/dev`, 2026-09-10)
 Status: decision proposed for exact-head review; source extraction is not delivered.
 
 ## Decision and boundary
