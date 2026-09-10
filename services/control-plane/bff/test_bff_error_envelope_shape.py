@@ -1,22 +1,14 @@
 from __future__ import annotations
 
 import os
-import uuid
-from typing import Any, Dict, Optional
+import sys
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from services.control_plane.bff.auth.policy import (
-    _PACK_D_D21_ERROR_BEHAVIOR,
-    bff_error,
-    pack_d_error_metadata,
-)
+from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.models import ErrorCode
+
 
 PACK_D_D21_ERROR_CODES = [
     "RESOURCE_NOT_FOUND",
@@ -48,181 +40,39 @@ PACK_D_D21_ERROR_CODES = [
 ]
 
 
-def _pack_d_direct_error_response(
-    *,
-    status_code: int,
-    code: Any,
-    message: Any,
-    details: Optional[Dict[str, Any]] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> JSONResponse:
-    metadata = pack_d_error_metadata(code, status_code=status_code)
-    correlation_id = str(uuid.uuid4())
-    content: Dict[str, Any] = {
-        "error": {
-            "code": metadata["code"],
-            "i18nKey": metadata["i18nKey"],
-            "message": str(message),
-            "retryable": metadata["retryable"],
-            "userActionable": metadata["userActionable"],
-            "details": dict(details or {}),
-        },
-        "meta": {"correlationId": correlation_id},
-    }
-    if extra:
-        content.update(extra)
-    return JSONResponse(
-        status_code=status_code,
-        content=content,
-        headers={"X-Correlation-Id": correlation_id},
-    )
+def _install_error_envelope_test_routes() -> None:
+    if getattr(bff_main.app.state, "error_envelope_test_routes_installed", False):
+        return
 
-
-def _build_error_envelope_app() -> FastAPI:
-    app = FastAPI()
-
-    @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
-        correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
-        detail = exc.detail
-        if isinstance(detail, dict) and "error" in detail:
-            error_payload = dict(detail["error"])
-            if "details" in error_payload and isinstance(error_payload["details"], dict):
-                error_payload["details"] = {
-                    k: v for k, v in error_payload["details"].items() if k != "correlationId"
-                }
-            content = {
-                "error": error_payload,
-                "meta": {"correlationId": correlation_id},
-            }
-        else:
-            code = "RESOURCE_NOT_FOUND" if exc.status_code == 404 else "VALIDATION_FAILED"
-            metadata = pack_d_error_metadata(code, status_code=exc.status_code)
-            content = {
-                "error": {
-                    "code": metadata["code"],
-                    "i18nKey": metadata["i18nKey"],
-                    "message": str(detail or "Error"),
-                    "retryable": metadata["retryable"],
-                    "userActionable": metadata["userActionable"],
-                    "details": {"reason": str(detail or "")},
-                },
-                "meta": {"correlationId": correlation_id},
-            }
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=content,
-            headers={"X-Correlation-Id": correlation_id},
-        )
-
-    @app.exception_handler(RequestValidationError)
-    async def _validation_exception_handler(request: Request, exc: RequestValidationError):
-        correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
-        metadata = pack_d_error_metadata("VALIDATION_FAILED", status_code=422)
-        content = {
-            "error": {
-                "code": metadata["code"],
-                "i18nKey": metadata["i18nKey"],
-                "message": "Request validation failed",
-                "retryable": metadata["retryable"],
-                "userActionable": metadata["userActionable"],
-                "details": {
-                    "reason": "REQUEST_VALIDATION_ERROR",
-                    "errors": exc.errors(),
-                },
-            },
-            "meta": {"correlationId": correlation_id},
-        }
-        return JSONResponse(
-            status_code=422,
-            content=content,
-            headers={"X-Correlation-Id": correlation_id},
-        )
-
-    @app.exception_handler(ValueError)
-    async def _value_error_handler(request: Request, exc: ValueError):
-        correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
-        metadata = pack_d_error_metadata("VALIDATION_FAILED", status_code=400)
-        content = {
-            "error": {
-                "code": metadata["code"],
-                "i18nKey": metadata["i18nKey"],
-                "message": str(exc),
-                "retryable": metadata["retryable"],
-                "userActionable": metadata["userActionable"],
-                "details": {"reason": "VALUE_ERROR"},
-            },
-            "meta": {"correlationId": correlation_id},
-        }
-        return JSONResponse(
-            status_code=400,
-            content=content,
-            headers={"X-Correlation-Id": correlation_id},
-        )
-
-    @app.exception_handler(Exception)
-    async def _generic_exception_handler(request: Request, exc: Exception):
-        correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
-        metadata = pack_d_error_metadata("INTERNAL_ERROR", status_code=500)
-        content = {
-            "error": {
-                "code": metadata["code"],
-                "i18nKey": metadata["i18nKey"],
-                "message": "Internal server error",
-                "retryable": metadata["retryable"],
-                "userActionable": metadata["userActionable"],
-                "details": {"reason": "INTERNAL_SERVER_ERROR"},
-            },
-            "meta": {"correlationId": correlation_id},
-        }
-        return JSONResponse(
-            status_code=500,
-            content=content,
-            headers={"X-Correlation-Id": correlation_id},
-        )
-
-    @app.get("/bff/me")
-    async def _bff_me_endpoint(request: Request):
-        auth = request.headers.get("Authorization")
-        if not auth or not auth.startswith("Bearer "):
-            raise bff_error(
-                401,
-                ErrorCode.AUTH_REQUIRED,
-                "Authentication required",
-                "Token is absent or not a Bearer token",
-                correlation_id=request.headers.get("X-Correlation-Id"),
-            )
-        return {"data": {"operator_id": "op-test"}}
-
-    @app.get("/__test/error-envelope/request-validation")
+    @bff_main.app.get("/__test/error-envelope/request-validation")
     async def _request_validation_probe(limit: int):
         return {"limit": limit}
 
-    @app.get("/__test/error-envelope/value-error")
+    @bff_main.app.get("/__test/error-envelope/value-error")
     async def _value_error_probe():
         raise ValueError("Synthetic invalid request")
 
-    @app.get("/__test/error-envelope/generic-500")
+    @bff_main.app.get("/__test/error-envelope/generic-500")
     async def _generic_500_probe():
         raise RuntimeError("Synthetic server failure")
 
-    @app.get("/__test/error-envelope/direct-json-response")
+    @bff_main.app.get("/__test/error-envelope/direct-json-response")
     async def _direct_json_response_probe():
-        return _pack_d_direct_error_response(
+        return bff_main._pack_d_direct_error_response(
             status_code=503,
             code="DEPENDENCY_UNAVAILABLE",
             message="Synthetic direct response failure",
             details={"reason": "SYNTHETIC_DIRECT_RESPONSE"},
         )
 
-    return app
+    bff_main.app.state.error_envelope_test_routes_installed = True
 
 
-_APP = _build_error_envelope_app()
+_install_error_envelope_test_routes()
 
 
 def _client() -> TestClient:
-    return TestClient(_APP, raise_server_exceptions=False)
+    return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
 def _assert_error_envelope(
@@ -258,7 +108,7 @@ def test_error_code_enum_matches_pack_d_d21_allowlist() -> None:
 
 
 def test_error_behavior_matrix_covers_pack_d_d21_allowlist() -> None:
-    behavior = _PACK_D_D21_ERROR_BEHAVIOR
+    behavior = bff_main._PACK_D_D21_ERROR_BEHAVIOR
 
     assert list(behavior.keys()) == PACK_D_D21_ERROR_CODES
     for flags in behavior.values():

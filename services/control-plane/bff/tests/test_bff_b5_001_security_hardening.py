@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
+import sys
 import tempfile
-import uuid
 from contextlib import contextmanager
 from typing import Iterator
 
-from fastapi import FastAPI, Header, Request
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.action_catalog import get_catalog_entry
 from services.control_plane.bff.command_executor import execute_command_with_status
 from services.control_plane.bff.command_queue import CommandStore
@@ -25,182 +23,38 @@ HEADERS = {
     "X-Request-Id": "req-bff-b5-sec",
 }
 
-_current_command_store: CommandStore | None = None
-_current_read_store = None
-_two_man_signatures: set[str] = set()
 
-
-def _create_test_app() -> FastAPI:
-    app = FastAPI()
-
-    @app.post("/bff/v1/commands")
-    async def submit_command(
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ):
-        payload = await request.json()
-        command = payload.get("command")
-        target = payload.get("target") or {}
-        params = payload.get("params") or {}
-        target_id = target.get("id") or ""
-
-        human_gate_item_id = params.get("human_gate_item_id")
-        if human_gate_item_id and human_gate_item_id != target_id:
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "error": {
-                        "code": "VALIDATION_FAILED",
-                        "message": "Human gate target mismatch",
-                        "details": {"reason": "HUMAN_GATE_TARGET_MISMATCH"},
-                    }
-                },
-            )
-
-        decision_id = target_id.removeprefix("approval:")
-        decision = _current_read_store.get_approval_decision(decision_id) if _current_read_store else None
-
-        auth = authorization or ""
-        token = auth.removeprefix("Bearer ").strip()
-        caller_id = token.split(":")[0]
-
-        if command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
-            if decision and decision.get("requester_id") == caller_id:
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "error": {
-                            "code": "OPERATION_NOT_ALLOWED",
-                            "message": "Self approval forbidden",
-                            "details": {"reason": "HUMAN_GATE_SELF_APPROVAL_FORBIDDEN"},
-                        }
-                    },
-                )
-
-        if command == "HumanGateRevoke" and decision and decision.get("downstream_effect_status") == "executed":
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": {
-                        "code": "CONFLICT",
-                        "message": "Downstream effect already executed",
-                        "details": {
-                            "reason": "HUMAN_GATE_REVOKE_DOWNSTREAM_EXECUTED",
-                            "suggestion": "compensating action required",
-                        },
-                    }
-                },
-            )
-
-        if decision and decision.get("risk_level") == "high":
-            two_man_sig_id = payload.get("twoManSignatureId") or params.get("two_man_signature_id")
-            if not two_man_sig_id or two_man_sig_id not in _two_man_signatures:
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "error": {
-                            "code": "CONFLICT",
-                            "message": "Two man signature required for high risk action",
-                            "details": {"reason": "TWO_MAN_SIGNATURE_MISSING"},
-                        }
-                    },
-                )
-
-        if command == "HumanGateExtendTtl":
-            ttl_seconds = params.get("ttlSeconds") or 0
-            max_ttl = int(os.getenv("PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS", "86400"))
-            if ttl_seconds > max_ttl:
-                return JSONResponse(
-                    status_code=422,
-                    content={
-                        "error": {
-                            "code": "VALIDATION_FAILED",
-                            "message": "TTL exceeds cap",
-                            "details": {
-                                "reason": "HUMAN_GATE_TTL_EXCEEDS_CAP",
-                                "maxTtlSeconds": max_ttl,
-                            },
-                        }
-                    },
-                )
-
-        cmd_id = f"cmd-{uuid.uuid4().hex[:8]}"
-        two_man_id = payload.get("twoManSignatureId") or params.get("two_man_signature_id")
-        cmd_params = dict(params)
-        if two_man_id:
-            cmd_params["two_man_signature_id"] = two_man_id
-
-        cmd_record = {
-            "command_id": cmd_id,
-            "command": command,
-            "target": target,
-            "status": CommandStatus.EXECUTED.value,
-            "params": cmd_params,
-            "audit": {
-                "precondition_evidence": {
-                    "two_man_signature_id": two_man_id,
-                } if two_man_id else {}
-            },
-        }
-        if _current_command_store:
-            _current_command_store._save_command(cmd_record)
-
-        return JSONResponse(
-            status_code=202,
-            content={"data": {"command_id": cmd_id, "status": "admitted"}},
-        )
-
-    @app.post("/bff/v5/interventions/{signature_id}/two-man-sign")
-    async def two_man_sign(
-        signature_id: str,
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ):
-        auth = authorization or ""
-        token = auth.removeprefix("Bearer ").strip()
-        op_id = token.split(":")[0]
-
-        _two_man_signatures.add(signature_id)
-        cmd_id = f"cmd-sign-{uuid.uuid4().hex[:8]}"
-        cmd_record = {
-            "command_id": cmd_id,
-            "status": CommandStatus.EXECUTED.value,
-            "params": {
-                "twoManSignatureId": signature_id,
-                "signerOperatorIds": [op_id],
-            },
-        }
-        if _current_command_store:
-            _current_command_store._save_command(cmd_record)
-
-        return JSONResponse(
-            status_code=202,
-            content={"data": {"command_id": cmd_id, "status": "executed"}},
-        )
-
-    return app
+async def _noop_process_command(_command_id: str) -> None:
+    return None
 
 
 @contextmanager
 def _isolated_b5_security_client() -> Iterator[TestClient]:
-    global _current_command_store, _current_read_store, _two_man_signatures
     with tempfile.TemporaryDirectory() as td:
-        _current_command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        original_command_store = bff_main.command_store
+        original_read_store = bff_main.read_store
+        original_worker = bff_main._process_command_stub
+        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         store = create_in_memory_read_surface_ports()
         store.approval_decisions = {}
         store.get_approval_decision = lambda decision_id: store.approval_decisions.get(str(decision_id))
         store.list_approval_decisions = lambda **kw: list(store.approval_decisions.values())
-        _current_read_store = store
-        _two_man_signatures = set()
-        app = _create_test_app()
+        bff_main.read_store = store
+        bff_main._process_command_stub = _noop_process_command
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        bff_main._COMMAND_AUTH_CONTEXT.clear()
+        bff_main._V5_INTERVENTIONS_STORE.clear()
         try:
-            yield TestClient(app, raise_server_exceptions=False)
+            yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:
-            _current_command_store = None
-            _current_read_store = None
-            _two_man_signatures.clear()
+            bff_main.command_store = original_command_store
+            bff_main.read_store = original_read_store
+            bff_main._process_command_stub = original_worker
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._COMMAND_AUTH_CONTEXT.clear()
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
 
 
 def _seed_approval(
@@ -223,8 +77,7 @@ def _seed_approval(
     }
     if downstream_effect_status:
         record["downstream_effect_status"] = downstream_effect_status
-    if _current_read_store is not None:
-        _current_read_store.approval_decisions[decision_id] = record
+    bff_main.read_store.approval_decisions[decision_id] = record
 
 
 def _submit_human_gate(
@@ -276,8 +129,7 @@ def _create_human_gate_two_man_signature(client: TestClient, signature_id: str, 
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["command_id"]
-        assert _current_command_store is not None
-        record = _current_command_store.get_command(command_id)
+        record = bff_main.command_store.get_command(command_id)
         assert record is not None
         assert record["status"] == CommandStatus.EXECUTED.value
         assert record["params"]["signerOperatorIds"] == [operator_id]
@@ -341,8 +193,7 @@ def test_high_risk_human_gate_requires_two_man_and_records_evidence() -> None:
 
         assert accepted.status_code == 202, accepted.text
         command_id = accepted.json()["data"]["command_id"]
-        assert _current_command_store is not None
-        record = _current_command_store.get_command(command_id)
+        record = bff_main.command_store.get_command(command_id)
         assert record is not None
         assert record["audit"]["precondition_evidence"]["two_man_signature_id"] == "tms-b5-sec-high"
         assert record["params"]["two_man_signature_id"] == "tms-b5-sec-high"

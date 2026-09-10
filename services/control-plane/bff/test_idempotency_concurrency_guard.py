@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
-from typing import Any, Dict, Optional
+import sys
+from pathlib import Path
 
-from fastapi import Body, FastAPI, Header
-import httpx
+from services.control_plane.bff import main as bff_main
 
 HEADERS = {
     "Authorization": "Bearer op-conc:operator,admin:mfa",
@@ -23,36 +22,11 @@ HEADERS = {
 }
 
 
-def _build_concurrency_guard_app() -> FastAPI:
-    app = FastAPI()
-    idempotency_cache: Dict[str, Dict[str, Any]] = {}
-
-    @app.post("/bff/evolution-programs", status_code=201)
-    async def create_evolution_program(
-        payload: Dict[str, Any] = Body(...),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ):
-        # Synchronous check-then-store without awaited yield point
-        key = (idempotency_key or "default").strip()
-        if key in idempotency_cache:
-            return idempotency_cache[key]
-
-        created = {
-            "program_id": f"evp-{uuid.uuid4().hex[:8]}",
-            "name": payload.get("name"),
-            "status": "draft",
-        }
-        idempotency_cache[key] = created
-        return created
-
-    return app
-
-
 def test_concurrent_same_key_creates_single_resource() -> None:
-    app = _build_concurrency_guard_app()
+    import httpx
 
     async def run():
-        transport = httpx.ASGITransport(app=app)
+        transport = httpx.ASGITransport(app=bff_main.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             tasks = [
                 c.post("/bff/evolution-programs", headers=HEADERS, json={"name": "conc"})

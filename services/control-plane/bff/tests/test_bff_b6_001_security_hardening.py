@@ -3,157 +3,22 @@ from __future__ import annotations
 
 import json
 import os
-import re
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import FastAPI, Header, Request
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.management_ai_store import (
-    ManagementAiAttachmentStore,
-    ManagementAiConversationStore,
-)
+from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6-sec:operator"}
 
-_read_store = None
-_MGMT_NL_IDEMPOTENCY: dict = {}
-_sse_buffers: dict = {"ask": []}
-_MGMT_AI_CONVERSATION_STORE = None
-
 
 def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def _create_test_app() -> FastAPI:
-    app = FastAPI()
-
-    @app.post("/bff/management/nl/ask")
-    async def nl_ask(
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ):
-        payload = await request.json()
-        question = str(payload.get("question") or "")
-        byte_len = len(question.encode("utf-8"))
-        if byte_len > 2048:
-            return JSONResponse(
-                status_code=413,
-                content={
-                    "error": {
-                        "code": "REQUEST_TOO_LARGE",
-                        "message": f"Management NL question exceeds size limit ({byte_len} bytes > 2048 bytes)",
-                        "details": {"precondition_failed": "question_size"},
-                    }
-                },
-            )
-
-        # High risk classification check
-        cleaned = re.sub(r"\s+", " ", question.strip().lower())
-        evasion_prefixes = ("請幫我", "請", "麻煩", "幫我", "please ", "can you ")
-        stripped = cleaned
-        for p in evasion_prefixes:
-            if stripped.startswith(p):
-                stripped = stripped[len(p):].strip()
-                break
-
-        if "重啟 runtime" in stripped or "restart runtime" in stripped:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "error": {
-                        "code": "OPERATION_NOT_ALLOWED",
-                        "message": "NL query matches high-risk action pattern and was refused by policy",
-                        "details": {
-                            "refused": True,
-                            "matched_category": "runtime_control",
-                            "matched_pattern": "重啟 runtime" if "重啟 runtime" in stripped else "restart runtime",
-                            "safe_alternatives": "Use runtime control actions.",
-                            "precondition_failed": "high_risk_nl_policy",
-                        },
-                    }
-                },
-            )
-
-        # Audit event record check
-        if _read_store is not None and hasattr(_read_store, "record_agora_audit_event"):
-            try:
-                _read_store.record_agora_audit_event({
-                    "action": "management.nl.ask.accepted",
-                    "targetType": "ManagementNLExchange",
-                    "sessionId": payload.get("session_id"),
-                })
-            except Exception:
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "error": {
-                            "code": "DEPENDENCY_UNAVAILABLE",
-                            "message": "Management NL audit write failed",
-                            "details": {"precondition_failed": "audit_write"},
-                        }
-                    },
-                )
-
-        caller_tenant_id = os.getenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
-        focus = payload.get("focus")
-
-        if focus == "portfolio":
-            bindings = [
-                b for b in (_read_store.list_runtime_bindings() if _read_store else [])
-                if b.get("tenant_id") == caller_tenant_id
-            ]
-            total_pnl = 0.0
-            total_trades = 0
-            for b in bindings:
-                telem = _read_store.get_telemetry_summary(b.get("runtime_id")) if _read_store else None
-                if telem:
-                    total_pnl += telem.get("pnl", 0.0)
-                    total_trades += telem.get("total_trades", 0)
-            return JSONResponse(
-                status_code=202,
-                content={
-                    "data": {
-                        "status": "accepted",
-                        "summary_context": {
-                            "portfolio": {
-                                "total_pnl": total_pnl,
-                                "total_trades": total_trades,
-                            }
-                        },
-                    }
-                },
-            )
-
-        if focus == "trading_pulse":
-            linked_entities = [("runtime", "rt-alpha")]
-            refs = _read_store.list_evidence_refs(
-                tenant_id=caller_tenant_id,
-                linked_entities=linked_entities,
-            ) if _read_store else []
-            return JSONResponse(
-                status_code=202,
-                content={
-                    "data": {
-                        "status": "accepted",
-                        "evidence_refs": refs,
-                    }
-                },
-            )
-
-        return JSONResponse(
-            status_code=202,
-            content={"data": {"status": "accepted", "summary_context": {}}},
-        )
-
-    return app
 
 
 @contextmanager
@@ -163,7 +28,6 @@ def _seeded_client(
     *,
     evidence_refs: dict | None = None,
 ) -> Iterator[TestClient]:
-    global _read_store, _MGMT_NL_IDEMPOTENCY, _sse_buffers, _MGMT_AI_CONVERSATION_STORE
     read_surface_path = tmp_path / "read_surfaces.json"
     seeded_data = {
         "capital_pools": {
@@ -228,6 +92,7 @@ def _seeded_client(
         monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_REF_STORE", raising=False)
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+    original_store = bff_main.read_store
     store = create_in_memory_read_surface_ports()
     capital_pools = list(seeded_data["capital_pools"].values())
     runtime_bindings = list(seeded_data["runtime_bindings"].values())
@@ -287,20 +152,19 @@ def _seeded_client(
         ]
 
     store.list_evidence_refs = list_evidence_refs
-    _read_store = store
-    _MGMT_NL_IDEMPOTENCY.clear()
-    _MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore(
+    bff_main.read_store = store
+    bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
-        attachment_store=ManagementAiAttachmentStore(storage_path="off"),
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
     )
-    _sse_buffers["ask"].clear()
-    app = _create_test_app()
+    bff_main._sse_buffers["ask"].clear()
     try:
-        yield TestClient(app, raise_server_exceptions=False)
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
     finally:
-        _read_store = None
-        _MGMT_NL_IDEMPOTENCY.clear()
-        _sse_buffers["ask"].clear()
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
 
 
 def test_nl_ask_tenant_scopes_portfolio_summary(tmp_path, monkeypatch) -> None:
@@ -405,7 +269,7 @@ def test_high_risk_classifier_uses_boundaries_and_cjk_synonyms(tmp_path, monkeyp
 
 def test_happy_path_audit_failure_fails_closed_before_session_side_effects(tmp_path, monkeypatch) -> None:
     with _seeded_client(tmp_path, monkeypatch) as client:
-        store = _read_store
+        store = bff_main.read_store
 
         def fail_audit(event: dict) -> dict:
             raise OSError("audit store unavailable")
@@ -420,5 +284,5 @@ def test_happy_path_audit_failure_fails_closed_before_session_side_effects(tmp_p
         assert resp.status_code == 503, resp.text
         assert resp.json()["error"]["details"]["precondition_failed"] == "audit_write"
         assert store.get_agora_session("audit-fail-session") is None
-        assert _MGMT_NL_IDEMPOTENCY == {}
-        assert list(_sse_buffers["ask"]) == []
+        assert bff_main._MGMT_NL_IDEMPOTENCY == {}
+        assert list(bff_main._sse_buffers["ask"]) == []

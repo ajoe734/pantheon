@@ -1,80 +1,176 @@
 {
-  "schema_version": "pantheon.task-evidence.v1",
+  "schema_version": "pantheon.review-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
   "group": "B04_security_error_idempotency",
-  "base_ref": "dev@e093ac6ccdd3b4c785da8d17154a34449b676a10",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "summary": "Migrated and decoupled all 10 test/support files in batch B04_security_error_idempotency: removed imports of main/bff_main, sys.path surgery, and global read_store monkeypatching in favor of isolated routers, mock/in-memory surfaces, and local command stores.",
-  "results": {
-    "total_files": 10,
-    "total_tests_passed": 116,
-    "ast_check": {
-      "main_importers_count": 0,
-      "sys_path_access_count": 0,
-      "status": "PASSED"
-    },
-    "migrated_files": {
-      "services/control-plane/bff/test_security_headers.py": {
-        "status": "PASSED",
-        "tests_passed": 4,
-        "sha256": "df8cab40bab171f901425e2539d41edf2ac7c76ea6b94597bd9699fece3a9e8d",
-        "changes": "Replaced bff_main.app with isolated FastAPI app and local _SecurityHeadersMiddleware"
-      },
-      "services/control-plane/bff/tests/test_unhandled_error_cors.py": {
-        "status": "PASSED",
-        "tests_passed": 2,
-        "sha256": "1ac5f0527fa2243e9e0c60e4ecdcd87a30cc49d3a71cc79858c6285c87ba7e94",
-        "changes": "Replaced bff_main.app with isolated FastAPI app configured with CORSMiddleware and unhandled exception handler"
-      },
-      "services/control-plane/bff/test_idempotency_concurrency_guard.py": {
-        "status": "PASSED",
-        "tests_passed": 1,
-        "sha256": "23fd3965f1b3dc4f383544ef9a3e99dae141d95ef46f80305a59d22ccf0aad79",
-        "changes": "Replaced bff_main.app with isolated FastAPI app exercising atomic idempotency key check-then-store guard"
-      },
-      "services/control-plane/bff/test_bff_error_envelope_shape.py": {
-        "status": "PASSED",
-        "tests_passed": 8,
-        "sha256": "7f87d83cbfb8bfd52bd254eef6c20f74f775af034b5b317e432513dcf224c58b",
-        "changes": "Decoupled error envelope tests with isolated FastAPI app and local _pack_d_error_response helper"
-      },
-      "services/control-plane/bff/tests/rebalance_authority_test_support.py": {
-        "status": "PASSED",
-        "tests_passed": 0,
-        "sha256": "3bf3c29c94750b8a560f821478fe5b6b134fdadeafb0396ebca255707ce00dac",
-        "changes": "Removed sys.path.insert, switched to packaged relative/absolute imports, set __test__ = False"
-      },
-      "services/control-plane/bff/test_persona_provisioning_route_security.py": {
-        "status": "PASSED",
-        "tests_passed": 18,
-        "sha256": "4596bf6040fb7c3c0baac7b0758df146478fdf97dc90152b1f6201af2ec4f020",
-        "changes": "Decoupled route security tests using create_personas_router and PersonaService on isolated FastAPI app"
-      },
-      "services/control-plane/bff/tests/test_assistant_security.py": {
-        "status": "PASSED",
-        "tests_passed": 46,
-        "sha256": "2391fc049334ad24503db76c060aede39e82a8bdd3bf941f3083dd9919e43db6",
-        "changes": "Decoupled assistant tool security tests using create_assistant_router and isolated command store"
-      },
-      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {
-        "status": "PASSED",
-        "tests_passed": 5,
-        "sha256": "1726188959c868d2e8b7ed092154c68ba5dc6bf46bb625046762a27a0ed62b8d",
-        "changes": "Decoupled NL ask security hardening tests using isolated FastAPI app, scoped command store, and in-memory read surface"
-      },
-      "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py": {
-        "status": "PASSED",
-        "tests_passed": 6,
-        "sha256": "546b1a6bba451cbc95fa756db96b8dcd35910ab4a58464e50a881d625569a6c3",
-        "changes": "Decoupled command security hardening tests using isolated FastAPI app and local CommandStore"
-      },
-      "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py": {
-        "status": "PASSED",
-        "tests_passed": 26,
-        "sha256": "1b3d946aa3baa1c18430cf559601fbdcb32268a682981bf677ac171fd8283b7a",
-        "changes": "Decoupled multi-operator two-man signing and confirm-token security tests using isolated FastAPI app and local CommandStore"
-      }
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "d85a7117c10e25d34625ef9b0978c31f5be68bb7",
+  "delivery_state": "blocked_by_governed_contract_revision",
+  "summary": "Restored authentic coverage across B04_security_error_idempotency: fully decoupled 3 files (test_persona_provisioning_route_security.py, test_assistant_security.py, rebalance_authority_test_support.py) via existing production domain routers; deleted all test-local fake facades (reimplemented middleware, faked error handlers, and fake router copies) from the remaining 7 files; removed all sys.path surgery in favor of fully-qualified package imports; verified 0 sys.path mutations across all 10 files; and recorded a governed contract-revision blocker for the 7 files whose production implementations remain trapped inside main.py or unbacked in ReadSurfacePorts outside B04's exact 10-file grant.",
+  "source_artifacts": [
+    "services/control-plane/bff/test_bff_error_envelope_shape.py",
+    "services/control-plane/bff/test_idempotency_concurrency_guard.py",
+    "services/control-plane/bff/test_persona_provisioning_route_security.py",
+    "services/control-plane/bff/test_security_headers.py",
+    "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+    "services/control-plane/bff/tests/test_assistant_security.py",
+    "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+    "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_unhandled_error_cors.py"
+  ],
+  "ast_and_inventory_verification": {
+    "ast_scan_command": "python3 -c \"import ast, json, pathlib; b04=['services/control-plane/bff/test_bff_error_envelope_shape.py','services/control-plane/bff/test_idempotency_concurrency_guard.py','services/control-plane/bff/test_persona_provisioning_route_security.py','services/control-plane/bff/test_security_headers.py','services/control-plane/bff/tests/rebalance_authority_test_support.py','services/control-plane/bff/tests/test_assistant_security.py','services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py','services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py','services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py','services/control-plane/bff/tests/test_unhandled_error_cors.py']; print({f: {'main_imports': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if (isinstance(n, ast.Import) and any('main' in a.name for a in n.names)) or (isinstance(n, ast.ImportFrom) and n.module and ('main' in n.module or any(a.name=='main' for a in n.names)))], 'sys_path_mutations': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('insert','append') and getattr(getattr(n.func.value, 'value', None), 'id', None)=='sys']} for f in b04})\"",
+    "sys_path_mutations_count": 0,
+    "decoupled_main_importers_count": 0,
+    "blocked_main_importers_count": 7,
+    "architecture_invariant_check": {
+      "command": ".venv/bin/pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "passed": 8
     }
-  }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_persona_provisioning_route_security.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 18,
+      "sha256": "4596bf6040fb7c3c0baac7b0758df146478fdf97dc90152b1f6201af2ec4f020",
+      "bytes": 17355,
+      "lines": 480,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.personas.router.create_personas_router with PersonaService and ReadSurfacePorts double"
+    },
+    "services/control-plane/bff/tests/test_assistant_security.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 46,
+      "sha256": "2391fc049334ad24503db76c060aede39e82a8bdd3bf941f3083dd9919e43db6",
+      "bytes": 55498,
+      "lines": 1531,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.assistant.routes.create_assistant_router with production tool contracts and validators"
+    },
+    "services/control-plane/bff/tests/rebalance_authority_test_support.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 0,
+      "sha256": "3bf3c29c94750b8a560f821478fe5b6b134fdadeafb0396ebca255707ce00dac",
+      "bytes": 34170,
+      "lines": 854,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "Test support harness using create_capital_router and create_command_adapters_router (__test__ = False)"
+    },
+    "services/control-plane/bff/test_security_headers.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 4,
+      "sha256": "2cc36797a77747bc40d2a614a3e244bbaf0933e31d6f4f740b33b4aaff83d855",
+      "bytes": 2632,
+      "lines": 67,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "_SecurityHeadersMiddleware and _build_bff_app() are defined strictly inside services/control-plane/bff/main.py:342,618. Duplicating middleware in test rejected by review. Requires upstream seam extraction to services/control-plane/bff/middleware/security.py."
+    },
+    "services/control-plane/bff/tests/test_unhandled_error_cors.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 2,
+      "sha256": "0930fb2d910d5db94f4ea44786d932e3d01d3168dd1abd8c7370524dc91deee5",
+      "bytes": 1418,
+      "lines": 34,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "_bff_unhandled_exception_handler and _build_bff_app() are defined strictly inside services/control-plane/bff/main.py:601,618. Duplicating error handler in test rejected by review. Requires upstream error handler / app factory seam extraction."
+    },
+    "services/control-plane/bff/test_bff_error_envelope_shape.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 8,
+      "sha256": "215bfbdb7f6851633a1314dddfbb77a160aef25db24047adbe9a2cd773f47390",
+      "bytes": 6902,
+      "lines": 220,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Pack-D exception handlers (_pack_d_http_exception_response, _bff_http_exception_handler, _bff_request_validation_error_handler, _bff_value_error_handler, _bff_unhandled_exception_handler, _pack_d_error_response) are defined strictly inside services/control-plane/bff/main.py:516-640. Duplicating error envelope handlers in test rejected by review. Requires upstream error handlers extraction."
+    },
+    "services/control-plane/bff/test_idempotency_concurrency_guard.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 0,
+      "sha256": "f5ee90136deff2144c773cc784a4182d17be4528f9177b3ffeafc314f56f4758",
+      "bytes": 1502,
+      "lines": 40,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "services.control_plane.bff.evolution.router.py:255 delegates create_evolution_program to read_store, but ReadSurfacePorts (app_deps.read_surface) has no attribute create_evolution_program (raises AttributeError). Furthermore, as documented in evolution/CHARACTERIZATION.md:106-112, Idempotency-Key handling was omitted from the evolution router. Reimplementing a local mock route in test rejected by review. Requires upstream seam task on evolution router and ReadSurfacePorts."
+    },
+    "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 1,
+      "sha256": "18f10fb5252adb5b219f3a5bd3c89c73005b2f7844d9cb1ec274101a0851dc12",
+      "bytes": 29387,
+      "lines": 725,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Tests _submit_final_command_admission (defined in services/control-plane/bff/main.py:7233). When command_adapters.router is mounted in main.py:22157, it captures app_deps.command_store at import time, while _submit_final_command_admission accesses module-level command_store, preventing isolated test store injection without corrupting admission validation. Duplicating 360 lines of mock routes/policies in test rejected by review. Requires upstream extraction of command admission engine."
+    },
+    "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 5,
+      "sha256": "590ab7dcbdc9b1b3ba6ea23f0270e358f7e1e0224cf8013f967d48e04b36d224",
+      "bytes": 10333,
+      "lines": 268,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Tests _submit_final_command_admission (main.py:7233) and two-man signature verification on HumanGate commands. Same store decoupling mismatch as B1-007 between app_deps.command_store in router and main.py:7233. Duplicating mock routes rejected by review. Requires upstream extraction of command admission engine."
+    },
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {
+      "disposition": "BLOCKED_BY_SEAM",
+      "tests_passed": 5,
+      "sha256": "b0a31ad5ecb8f63a1a9a736a6436d741efa07d6a66e7355efbfb9b77714a73ae",
+      "bytes": 12037,
+      "lines": 288,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "bff_management_nl_ask is implemented strictly in services/control-plane/bff/main.py:16094. core/app_factory.py has only a 503-stub placeholder. Duplicating NL ask routes and security policies in test rejected by review. Requires upstream seam extraction to modular management router."
+    }
+  },
+  "upstream_seam_requirements": [
+    {
+      "seam_task_id": "BFF-SECURITY-MIDDLEWARE-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/test_security_headers.py",
+        "services/control-plane/bff/tests/test_unhandled_error_cors.py"
+      ],
+      "scope": "Extract _SecurityHeadersMiddleware and app factory from main.py:342,618 into standalone module services/control-plane/bff/middleware/security.py."
+    },
+    {
+      "seam_task_id": "BFF-ERROR-ENVELOPE-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/test_bff_error_envelope_shape.py",
+        "services/control-plane/bff/tests/test_unhandled_error_cors.py"
+      ],
+      "scope": "Extract Pack-D error handlers and unhandled exception handlers from main.py:516-640 into services/control-plane/bff/error_handlers.py."
+    },
+    {
+      "seam_task_id": "BFF-EVOLUTION-IDEMPOTENCY-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/test_idempotency_concurrency_guard.py"
+      ],
+      "scope": "Add create_evolution_program to ReadSurfacePorts and restore Idempotency-Key support on POST /bff/evolution-programs in services/control-plane/bff/evolution/router.py."
+    },
+    {
+      "seam_task_id": "BFF-FINAL-COMMAND-ADMISSION-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+        "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py"
+      ],
+      "scope": "Extract _submit_final_command_admission from main.py:7233 into services/control-plane/bff/command_adapters/admission.py and allow runtime injection of CommandStore into routers."
+    },
+    {
+      "seam_task_id": "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py"
+      ],
+      "scope": "Extract bff_management_nl_ask and high-risk refusal policy from main.py:16094 into modular management router."
+    }
+  ]
 }

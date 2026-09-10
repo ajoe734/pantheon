@@ -2,28 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Iterator
 
-import pytest
-from fastapi import FastAPI, Header, Request
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.auth.policy import extract_identity
+import pytest
+from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.models import (
-    AuditContext,
-    CommandStatus,
-    CommandType,
-    ObjectType,
-    OperatorCommand,
-    TargetObject,
-    utc_now,
-)
+from services.control_plane.bff.models import CommandStatus
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
@@ -38,468 +28,35 @@ SECONDARY_HEADERS = {
     "X-Trace-Id": "trace-bff-b1-007-secondary",
 }
 
-_TWO_MAN_SIGNER_LIST_FIELDS = (
-    "signer_operator_ids",
-    "signerOperatorIds",
-    "operator_ids",
-    "operatorIds",
-)
-_TWO_MAN_SIGNER_FIELDS = (
-    "first_operator_id",
-    "firstOperatorId",
-    "primary_operator_id",
-    "primaryOperatorId",
-    "second_operator_id",
-    "secondOperatorId",
-    "secondOperatorSignature",
-    "second_operator_signature",
-    "signed_by",
-    "signedBy",
-    "confirmed_by",
-    "confirmedBy",
-)
 
-
-def _two_man_signers(record: dict[str, Any]) -> set[str]:
-    params = record.get("params") or {}
-    audit = record.get("audit") or {}
-    signers: set[str] = set()
-    for source in (params, audit):
-        for field in _TWO_MAN_SIGNER_LIST_FIELDS:
-            raw = source.get(field)
-            if isinstance(raw, list):
-                signers.update(str(value).strip() for value in raw if str(value or "").strip())
-        for field in _TWO_MAN_SIGNER_FIELDS:
-            value = str(source.get(field) or "").strip()
-            if value:
-                signers.add(value)
-    actor = record.get("actor_id") or record.get("actorId") or (record.get("audit") or {}).get("operator_id")
-    if actor:
-        signers.add(str(actor).strip())
-    return signers
-
-
-def _extract_caller_id(authorization: str | None) -> str:
-    if not authorization:
-        return "unknown"
-    token = authorization.removeprefix("Bearer ").strip()
-    return token.split(":")[0]
-
-
-def _extract_caller_roles(authorization: str | None) -> list[str]:
-    if not authorization:
-        return []
-    token = authorization.removeprefix("Bearer ").strip()
-    parts = token.split(":")
-    if len(parts) > 1:
-        return [r.strip() for r in parts[1].split(",") if r.strip()]
-    return []
-
-
-_current_command_store: CommandStore | None = None
-_current_read_store: Any = None
-_current_app: FastAPI | None = None
-_confirm_tokens: dict[str, Any] = {}
-_two_man_signatures: dict[str, set[str]] = {}
-_two_man_targets: dict[str, str] = {}
-_idempotency_map: dict[tuple[str, str], Any] = {}
-
-
-def _create_security_test_app() -> FastAPI:
-    app = FastAPI()
-
-    @app.post("/bff/confirm-tokens", status_code=201)
-    async def create_confirm_token(
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ):
-        payload = await request.json()
-        token_id = payload.get("tokenId") or ""
-        _confirm_tokens[token_id] = {
-            "tokenId": token_id,
-            "command": payload.get("command"),
-            "target": payload.get("target"),
-            "operator_id": payload.get("operator_id"),
-            "reason": payload.get("reason"),
-            "status": "issued",
-        }
-        return JSONResponse(status_code=201, content={"data": {"tokenId": token_id, "status": "issued"}})
-
-    @app.get("/bff/confirm-tokens/{token_id}")
-    async def get_confirm_token(token_id: str):
-        token = _confirm_tokens.get(token_id)
-        if not token:
-            return JSONResponse(status_code=404, content={"error": {"code": "NOT_FOUND", "message": "Token not found"}})
-        return JSONResponse(status_code=200, content={"data": token})
-
-    @app.post("/bff/confirm-tokens/{token_id}/redeem")
-    async def redeem_confirm_token(token_id: str, request: Request):
-        token = _confirm_tokens.get(token_id)
-        if token:
-            token["status"] = "redeemed"
-        cmd_id = f"cmd-redeem-{uuid.uuid4().hex[:8]}"
-        redeem_record = {
-            "command_id": cmd_id,
-            "type": CommandType.CONFIRM_TOKEN_REDEEM.value,
-            "status": CommandStatus.EXECUTED.value,
-            "target": {"type": "ConfirmToken", "id": token_id},
-            "params": {"tokenId": token_id},
-        }
-        if _current_command_store:
-            _current_command_store._save_command(redeem_record)
-        return JSONResponse(status_code=202, content={"data": {"tokenId": token_id, "status": "redeemed"}})
-
-    @app.post("/bff/v5/interventions/{target_id}/two-man-sign")
-    async def two_man_sign(
-        target_id: str,
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ):
-        caller_id = _extract_caller_id(authorization)
-        roles = _extract_caller_roles(authorization)
-        if "reviewer" in roles and "operator" not in roles and "approver" not in roles:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "error": {
-                        "code": "OPERATION_NOT_ALLOWED",
-                        "message": "Reviewer role cannot create two man signatures",
-                        "details": {"reason": "ROLE_NOT_PERMITTED"},
-                    }
-                },
-            )
-
-        payload = await request.json()
-        sig_id = payload.get("twoManSignatureId") or ""
-
-        idem_key = (caller_id, idempotency_key or "")
-        if idempotency_key and idem_key in _idempotency_map:
-            cached = _idempotency_map[idem_key]
-            return JSONResponse(status_code=202, content=cached)
-
-        cmd_id = f"cmd-sign-{uuid.uuid4().hex[:8]}"
-        cmd_record = {
-            "command_id": cmd_id,
-            "type": "V5InterventionAction",
-            "command": "RemediateSentinelIntervention",
-            "target": {"type": "SentinelIntervention", "id": target_id},
-            "status": CommandStatus.EXECUTED.value,
-            "params": {
-                "twoManSignatureId": sig_id,
-                "signerOperatorIds": [caller_id],
-            },
-            "audit": {
-                "operator_id": caller_id,
-            },
-        }
-        if _current_command_store:
-            _current_command_store._save_command(cmd_record)
-
-        _two_man_signatures.setdefault(sig_id, set()).add(caller_id)
-        _two_man_targets[sig_id] = target_id
-
-        resp_content = {
-            "data": {
-                "command_id": cmd_id,
-                "status": "executed",
-            },
-            "meta": {
-                "idempotency": {
-                    "replayed": False,
-                }
-            },
-        }
-        if idempotency_key:
-            _idempotency_map[idem_key] = {
-                "data": {"command_id": cmd_id, "status": "executed"},
-                "meta": {"idempotency": {"replayed": True}},
-            }
-        return JSONResponse(status_code=202, content=resp_content)
-
-    @app.post("/bff/v5/interventions/{target_id}/claim")
-    async def claim(
-        target_id: str,
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ):
-        caller_id = _extract_caller_id(authorization)
-        payload = await request.json()
-        cmd_id = f"cmd-claim-{uuid.uuid4().hex[:8]}"
-        cmd_record = {
-            "command_id": cmd_id,
-            "type": "ClaimSentinelIntervention",
-            "status": "admitted",
-            "target": {"type": "SentinelIntervention", "id": target_id},
-            "params": payload,
-            "audit": {"operator_id": caller_id},
-        }
-        if _current_command_store:
-            _current_command_store._save_command(cmd_record)
-        return JSONResponse(status_code=202, content={"data": {"command_id": cmd_id}})
-
-    @app.post("/bff/v5/interventions/{target_id}/remediate")
-    async def remediate(
-        target_id: str,
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        x_confirm_token: str | None = Header(default=None, alias="X-Confirm-Token"),
-    ):
-        caller_id = _extract_caller_id(authorization)
-        payload = await request.json()
-
-        idem_key = (caller_id, idempotency_key or "")
-        if idempotency_key and idem_key in _idempotency_map:
-            cached = _idempotency_map[idem_key]
-            return JSONResponse(status_code=202, content=cached)
-
-        if idempotency_key and _current_command_store:
-            for rec in _current_command_store._get_all_commands():
-                if rec.get("command_id") == "cmd-specialized-preupgrade" and idempotency_key == "idem-specialized-preupgrade":
-                    if x_confirm_token and x_confirm_token in _confirm_tokens:
-                        _confirm_tokens[x_confirm_token]["status"] = "redeemed"
-                    resp = {"data": {"command_id": rec.get("command_id")}}
-                    _idempotency_map[idem_key] = resp
-                    return JSONResponse(status_code=202, content=resp)
-
-        if not x_confirm_token or x_confirm_token not in _confirm_tokens:
-            return JSONResponse(
-                status_code=428,
-                content={"error": {"code": "PRECONDITION_REQUIRED", "message": "Confirm token required", "details": {"reason": "CONFIRM_TOKEN_INVALID"}}},
-            )
-        token = _confirm_tokens[x_confirm_token]
-        if token.get("status") == "redeemed":
-            return JSONResponse(
-                status_code=428,
-                content={"error": {"code": "PRECONDITION_REQUIRED", "message": "Confirm token already redeemed", "details": {"reason": "CONFIRM_TOKEN_INVALID"}}},
-            )
-
-        token["status"] = "redeemed"
-        token_redeem_cmd_id = f"cmd-redeem-{uuid.uuid4().hex[:8]}"
-        redeem_record = {
-            "command_id": token_redeem_cmd_id,
-            "type": CommandType.CONFIRM_TOKEN_REDEEM.value,
-            "status": CommandStatus.EXECUTED.value,
-            "target": {"type": "ConfirmToken", "id": x_confirm_token},
-            "params": {"tokenId": x_confirm_token},
-        }
-        if _current_command_store:
-            _current_command_store._save_command(redeem_record)
-
-        cmd_id = f"cmd-remed-{uuid.uuid4().hex[:8]}"
-        cmd_record = {
-            "command_id": cmd_id,
-            "type": "RemediateSentinelIntervention",
-            "status": "admitted",
-            "target": {"type": "SentinelIntervention", "id": target_id},
-            "params": payload,
-            "audit": {
-                "operator_id": caller_id,
-                "precondition_evidence": {
-                    "confirm_token_id": x_confirm_token,
-                    "approval_decision_id": payload.get("approvalDecisionId"),
-                    "two_man_signature_id": payload.get("twoManSignatureId"),
-                },
-            },
-        }
-        if _current_command_store:
-            _current_command_store._save_command(cmd_record)
-
-        resp = {"data": {"command_id": cmd_id}}
-        if idempotency_key:
-            _idempotency_map[idem_key] = resp
-        return JSONResponse(status_code=202, content=resp)
-
-    @app.post("/bff/v1/commands")
-    async def submit_command(
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        x_confirm_token: str | None = Header(default=None, alias="X-Confirm-Token"),
-    ):
-        caller_id = _extract_caller_id(authorization)
-        payload = await request.json()
-        command = payload.get("command") or ""
-        target = payload.get("target") or {}
-        target_id = target.get("id") or ""
-        params = payload.get("params") or {}
-
-        idem_key = (caller_id, idempotency_key or "")
-        if idempotency_key and idem_key in _idempotency_map:
-            cached = _idempotency_map[idem_key]
-            return JSONResponse(
-                status_code=202,
-                content={
-                    "data": {"command_id": cached["command_id"]},
-                    "meta": {"idempotency": {"replayed": True}},
-                },
-            )
-
-        if command == "V5InterventionAction":
-            cmd_id = f"cmd-v5-{uuid.uuid4().hex[:8]}"
-            cmd_record = {
-                "command_id": cmd_id,
-                "type": "V5InterventionAction",
-                "status": "admitted",
-                "target": target,
-                "params": params,
-            }
-            if _current_command_store:
-                _current_command_store._save_command(cmd_record)
-            if idempotency_key:
-                _idempotency_map[idem_key] = {"command_id": cmd_id}
-            return JSONResponse(status_code=202, content={"data": {"command_id": cmd_id}})
-
-        if command == "PauseExecution":
-            cmd_id = f"cmd-pause-{uuid.uuid4().hex[:8]}"
-            cmd_record = {
-                "command_id": cmd_id,
-                "type": "PauseExecution",
-                "status": "admitted",
-                "target": target,
-                "params": params,
-            }
-            if _current_command_store:
-                _current_command_store._save_command(cmd_record)
-            if idempotency_key:
-                _idempotency_map[idem_key] = {"command_id": cmd_id}
-            return JSONResponse(
-                status_code=202,
-                content={
-                    "data": {"command_id": cmd_id},
-                    "meta": {"idempotency": {"replayed": False}},
-                },
-            )
-
-        if command == "RemediateSentinelIntervention":
-            # 1. Confirm token validation
-            token_id = x_confirm_token or payload.get("confirmTokenId")
-            if not token_id or token_id not in _confirm_tokens:
-                return JSONResponse(
-                    status_code=428,
-                    content={"error": {"code": "PRECONDITION_REQUIRED", "message": "Confirm token invalid", "details": {"reason": "CONFIRM_TOKEN_INVALID"}}},
-                )
-            token = _confirm_tokens[token_id]
-            if token.get("status") == "redeemed":
-                return JSONResponse(
-                    status_code=428,
-                    content={"error": {"code": "PRECONDITION_REQUIRED", "message": "Confirm token already redeemed", "details": {"reason": "CONFIRM_TOKEN_INVALID"}}},
-                )
-            if token.get("operator_id") != caller_id:
-                return JSONResponse(
-                    status_code=428,
-                    content={"error": {"code": "PRECONDITION_REQUIRED", "message": "Confirm token caller mismatch", "details": {"reason": "CONFIRM_TOKEN_CALLER_MISMATCH"}}},
-                )
-
-            # 2. Approval decision validation
-            approval_id = payload.get("approvalDecisionId")
-            decision = None
-            if _current_read_store and hasattr(_current_read_store, "_data"):
-                decision = _current_read_store._data.get("approval_decisions", {}).get(approval_id)
-            if not decision:
-                return JSONResponse(
-                    status_code=409,
-                    content={"error": {"code": "CONFLICT", "message": "Approval decision not found", "details": {"reason": "APPROVAL_DECISION_NOT_FOUND"}}},
-                )
-            if decision.get("target_id") != target_id:
-                return JSONResponse(
-                    status_code=409,
-                    content={"error": {"code": "CONFLICT", "message": "Approval decision binding mismatch", "details": {"reason": "APPROVAL_DECISION_BINDING_MISMATCH"}}},
-                )
-            if decision.get("state") == "consumed":
-                return JSONResponse(
-                    status_code=409,
-                    content={"error": {"code": "CONFLICT", "message": "Approval decision already consumed", "details": {"reason": "APPROVAL_DECISION_CONSUMED"}}},
-                )
-
-            # 3. Two man signature validation
-            sig_id = payload.get("twoManSignatureId")
-            if not sig_id or sig_id not in _two_man_signatures:
-                return JSONResponse(
-                    status_code=409,
-                    content={"error": {"code": "CONFLICT", "message": "Two man signature not found", "details": {"reason": "TWO_MAN_SIGNATURE_NOT_FOUND"}}},
-                )
-            signers = _two_man_signatures[sig_id]
-            if len(signers) < 2:
-                return JSONResponse(
-                    status_code=409,
-                    content={"error": {"code": "CONFLICT", "message": "Two man signature signer mismatch", "details": {"reason": "TWO_MAN_SIGNATURE_SIGNER_MISMATCH"}}},
-                )
-            if _two_man_targets.get(sig_id) != target_id:
-                return JSONResponse(
-                    status_code=409,
-                    content={"error": {"code": "CONFLICT", "message": "Two man signature binding mismatch", "details": {"reason": "TWO_MAN_SIGNATURE_BINDING_MISMATCH"}}},
-                )
-
-            token["status"] = "redeemed"
-            decision["state"] = "consumed"
-
-            cmd_id = f"cmd-remed-{uuid.uuid4().hex[:8]}"
-            sanitized_params = {k: v for k, v in params.items() if "bearer" not in str(k).lower() and "bearer" not in str(v).lower()}
-            cmd_record = {
-                "command_id": cmd_id,
-                "type": "RemediateSentinelIntervention",
-                "status": "admitted",
-                "target": target,
-                "params": sanitized_params,
-                "audit": {
-                    "operator_id": caller_id,
-                    "precondition_evidence": {
-                        "confirm_token_id": token_id,
-                        "approval_decision_id": approval_id,
-                        "two_man_signature_id": sig_id,
-                    },
-                },
-            }
-            if _current_command_store:
-                _current_command_store._save_command(cmd_record)
-
-            if idempotency_key:
-                _idempotency_map[idem_key] = {"command_id": cmd_id}
-
-            return JSONResponse(
-                status_code=202,
-                content={
-                    "data": {"command_id": cmd_id, "status": "admitted"},
-                    "meta": {"idempotency": {"replayed": False}},
-                },
-            )
-
-        return JSONResponse(status_code=200, content={"data": {"status": "ok"}})
-
-    return app
+async def _noop_process_command(_command_id: str) -> None:
+    return None
 
 
 @contextmanager
 def _isolated_security_client() -> Iterator[TestClient]:
-    global _current_command_store, _current_read_store, _current_app
-    global _confirm_tokens, _two_man_signatures, _two_man_targets, _idempotency_map
     with tempfile.TemporaryDirectory() as td:
-        _current_command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        original_command_store = bff_main.command_store
+        original_read_store = bff_main.read_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         store = create_in_memory_read_surface_ports()
         store._data = {"approval_decisions": {}}
-        store.get_approval_decision = (
+        store.get_approval_decision = (  # type: ignore[method-assign]
             lambda decision_id: store._data["approval_decisions"].get(decision_id)
         )
-        _current_read_store = store
-        _confirm_tokens = {}
-        _two_man_signatures = {}
-        _two_man_targets = {}
-        _idempotency_map = {}
-        _current_app = _create_security_test_app()
+        bff_main.read_store = store
+        bff_main._process_command_stub = _noop_process_command
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        bff_main._COMMAND_AUTH_CONTEXT.clear()
         try:
-            yield TestClient(_current_app)
+            yield TestClient(bff_main.app)
         finally:
-            _current_command_store = None
-            _current_read_store = None
-            _current_app = None
-            _confirm_tokens.clear()
-            _two_man_signatures.clear()
-            _two_man_targets.clear()
-            _idempotency_map.clear()
+            bff_main.command_store = original_command_store
+            bff_main.read_store = original_read_store
+            bff_main._process_command_stub = original_worker
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._COMMAND_AUTH_CONTEXT.clear()
 
 
 def _seed_approval_decision(
@@ -509,20 +66,19 @@ def _seed_approval_decision(
     target_id: str = "int-sec-001",
     state: str = "approved",
 ) -> None:
-    if _current_read_store is not None:
-        if not hasattr(_current_read_store, "_data"):
-            _current_read_store._data = {}
-        _current_read_store._data.setdefault("approval_decisions", {})[decision_id] = {
-            "id": decision_id,
-            "decision_id": decision_id,
-            "outcome": "approved",
-            "state": state,
-            "command": command,
-            "target_type": "SentinelIntervention",
-            "target_id": target_id,
-            "reviewer": "governance",
-            "risk_level": "critical",
-        }
+    if not hasattr(bff_main.read_store, "_data"):
+        bff_main.read_store._data = {}
+    bff_main.read_store._data.setdefault("approval_decisions", {})[decision_id] = {
+        "id": decision_id,
+        "decision_id": decision_id,
+        "outcome": "approved",
+        "state": state,
+        "command": command,
+        "target_type": "SentinelIntervention",
+        "target_id": target_id,
+        "reviewer": "governance",
+        "risk_level": "critical",
+    }
 
 
 def _error_reason(response) -> str:
@@ -576,8 +132,7 @@ def _create_bound_two_man_signature(
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["command_id"]
-        assert _current_command_store is not None
-        stored = _current_command_store.get_command(command_id)
+        stored = bff_main.command_store.get_command(command_id)
         assert stored is not None
         assert stored["status"] == CommandStatus.EXECUTED.value
     return command_id
@@ -619,10 +174,9 @@ def test_final_command_validates_bound_preconditions_and_redacts_bearer() -> Non
         )
 
         assert response.status_code == 202, response.text
-        assert _current_command_store is not None
         records = [
             record
-            for record in _current_command_store._get_all_commands()
+            for record in bff_main.command_store._get_all_commands()
             if record["type"] == "RemediateSentinelIntervention"
         ]
         assert len(records) == 1
@@ -686,16 +240,15 @@ def test_specialized_remediation_consumes_token_and_preserves_same_key_replay() 
         )
         assert reused.status_code == 428, reused.text
         assert _error_reason(reused) == "CONFIRM_TOKEN_INVALID"
-        assert _current_command_store is not None
         guarded_records = [
             record
-            for record in _current_command_store._get_all_commands()
+            for record in bff_main.command_store._get_all_commands()
             if record["type"] == "RemediateSentinelIntervention"
         ]
         redemption_records = [
             record
-            for record in _current_command_store._get_all_commands()
-            if record["type"] == CommandType.CONFIRM_TOKEN_REDEEM.value
+            for record in bff_main.command_store._get_all_commands()
+            if record["type"] == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
             and record.get("target", {}).get("id") == "ct-specialized-001"
         ]
         assert len(guarded_records) == 1
@@ -716,28 +269,35 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
             "twoManSignatureId": "tms-specialized-upgrade",
         }
         merged_params = {**payload, "intervention_id": target_id}
-        identity = extract_identity(PRIMARY_HEADERS["Authorization"])
-        cmd = OperatorCommand(
-            command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-            target=TargetObject(
-                type=ObjectType.SENTINEL_INTERVENTION,
+        identity = bff_main._extract_identity(PRIMARY_HEADERS["Authorization"])
+        cmd = bff_main.OperatorCommand(
+            command=bff_main.CommandType.REMEDIATE_SENTINEL_INTERVENTION,
+            target=bff_main.TargetObject(
+                type=bff_main.ObjectType.SENTINEL_INTERVENTION,
                 id=target_id,
             ),
             action="remediate_sentinel_intervention",
             params=merged_params,
-            audit_context=AuditContext(reason=payload["reason"]),
+            audit_context=bff_main.AuditContext(reason=payload["reason"]),
+        )
+        foundation = bff_main._build_foundation_command_context(
+            cmd=cmd,
+            identity=identity,
+            raw_payload={**payload, "intervention_id": target_id},
+            trace_id=PRIMARY_HEADERS["X-Trace-Id"],
+            correlation_id=PRIMARY_HEADERS["X-Correlation-Id"],
+            request_id=PRIMARY_HEADERS["X-Request-Id"],
+            idempotency_key=idempotency_key,
         )
         command_id = "cmd-specialized-preupgrade"
-        foundation = {
-            "environment": "pantheon-dev",
-            "actor_ref": {"operator_id": identity.operator_id},
-            "idempotency_record": {"status": "succeeded", "result_ref": f"command:{command_id}"},
-        }
-        submitted_at = utc_now()
-        stored_params = dict(merged_params)
-        serialized_foundation = json.loads(json.dumps(foundation, default=str))
-        assert _current_command_store is not None
-        _current_command_store.submit_command(
+        foundation["idempotency_record"] = foundation["idempotency_record"].with_status(
+            "succeeded",
+            result_ref=f"command:{command_id}",
+        )
+        submitted_at = bff_main.utc_now()
+        stored_params = bff_main._stored_command_params(cmd, identity)
+        serialized_foundation = bff_main._serialize_foundation_context(foundation)
+        bff_main.command_store.submit_command(
             command_id=command_id,
             command_type=cmd.command,
             target=cmd.target,
@@ -755,7 +315,7 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
             },
             foundation_context=serialized_foundation,
         )
-        _current_command_store.update_status(command_id, CommandStatus.EXECUTED)
+        bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
 
         replay = client.post(
             f"/bff/v5/interventions/{target_id}/remediate",
@@ -776,7 +336,7 @@ def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
         assert token_state.json()["data"]["status"] == "redeemed"
         guarded_records = [
             record
-            for record in _current_command_store._get_all_commands()
+            for record in bff_main.command_store._get_all_commands()
             if record["type"] == "RemediateSentinelIntervention"
         ]
         assert len(guarded_records) == 1
@@ -907,8 +467,7 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
             },
         )
         assert forged_victim.status_code == 202, forged_victim.text
-        assert _current_command_store is not None
-        record = _current_command_store.get_command(
+        record = bff_main.command_store.get_command(
             forged_victim.json()["data"]["command_id"]
         )
         assert record is not None
@@ -946,8 +505,8 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
 @pytest.mark.parametrize(
     "signer_alias",
     (
-        *_TWO_MAN_SIGNER_LIST_FIELDS,
-        *_TWO_MAN_SIGNER_FIELDS,
+        *bff_main._TWO_MAN_SIGNER_LIST_FIELDS,
+        *bff_main._TWO_MAN_SIGNER_FIELDS,
     ),
 )
 def test_every_two_man_signer_alias_is_server_sanitized(
@@ -962,7 +521,7 @@ def test_every_two_man_signer_alias_is_server_sanitized(
 
         forged_value: object = (
             ["op-primary", "op-victim"]
-            if signer_alias in _TWO_MAN_SIGNER_LIST_FIELDS
+            if signer_alias in bff_main._TWO_MAN_SIGNER_LIST_FIELDS
             else "op-victim"
         )
         signed = client.post(
@@ -980,12 +539,11 @@ def test_every_two_man_signer_alias_is_server_sanitized(
             },
         )
         assert signed.status_code == 202, signed.text
-        assert _current_command_store is not None
-        record = _current_command_store.get_command(
+        record = bff_main.command_store.get_command(
             signed.json()["data"]["command_id"]
         )
         assert record is not None
-        assert _two_man_signers(record) == {"op-primary"}
+        assert bff_main._two_man_signers(record) == {"op-primary"}
         assert record["params"]["signerOperatorIds"] == ["op-primary"]
         if signer_alias != "signerOperatorIds":
             assert signer_alias not in record["params"]
@@ -1024,8 +582,7 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
             },
         )
         assert generic.status_code == 202, generic.text
-        assert _current_command_store is not None
-        _current_command_store.update_status(
+        bff_main.command_store.update_status(
             generic.json()["data"]["command_id"], CommandStatus.EXECUTED
         )
 
@@ -1055,8 +612,7 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
             },
         )
         assert claim.status_code == 202, claim.text
-        assert _current_command_store is not None
-        _current_command_store.update_status(
+        bff_main.command_store.update_status(
             claim.json()["data"]["command_id"], CommandStatus.EXECUTED
         )
 
@@ -1079,8 +635,7 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
         signature_id = "tms-race-shared"
 
         def sign(headers: dict[str, str]) -> dict:
-            assert _current_app is not None
-            local_client = TestClient(_current_app)
+            local_client = TestClient(bff_main.app)
             response = local_client.post(
                 "/bff/v5/interventions/int-sec-001/two-man-sign",
                 headers={**headers, "Idempotency-Key": "shared-concurrent-tms-key"},
@@ -1108,10 +663,9 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
         assert len(command_ids) == 2
         assert primary["meta"]["idempotency"]["replayed"] is False
         assert secondary["meta"]["idempotency"]["replayed"] is False
-        assert _current_command_store is not None
         sign_records = [
             record
-            for record in _current_command_store._get_all_commands()
+            for record in bff_main.command_store._get_all_commands()
             if record["type"] == "V5InterventionAction"
         ]
         assert len(sign_records) == 2
@@ -1158,8 +712,7 @@ def test_idempotency_replay_is_scoped_by_operator_id() -> None:
         )
         assert first.status_code == 202, first.text
         first_id = first.json()["data"]["command_id"]
-        assert _current_command_store is not None
-        _current_command_store.update_status(first_id, CommandStatus.EXECUTED)
+        bff_main.command_store.update_status(first_id, CommandStatus.EXECUTED)
 
         second = client.post(
             "/bff/v1/commands",
