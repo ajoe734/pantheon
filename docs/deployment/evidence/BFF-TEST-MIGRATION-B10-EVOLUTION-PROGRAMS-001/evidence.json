@@ -11,10 +11,10 @@
     "target_files": [
       {
         "path": "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
-        "lines": 819,
-        "bytes": 31619,
-        "sha256": "fd90a8560dfd37413c2ce192aaf3579d7d92281bfc8c2619873968cba23db010",
-        "decoupling_strategy": "Mounted domain router factories (create_evolution_programs_router, create_research_router, create_jobs_router, create_events_router) and SSE alias route on isolated FastAPI test app with scoped store."
+        "lines": 847,
+        "bytes": 33050,
+        "sha256": "ddfe7e970f80e1b22de6ab93127a8f522ec442b160e5a32bb8dc90d135087844",
+        "decoupling_strategy": "Mounted domain router factories (create_evolution_programs_router, create_research_router, create_jobs_router, create_events_router) on isolated FastAPI test app with scoped store; replaced dummy bff_events_stream_alias with production SSE callable from create_events_router and typed CommandResponse action returns."
       },
       {
         "path": "services/control-plane/bff/test_evolution_center_contract.py",
@@ -32,31 +32,31 @@
       },
       {
         "path": "services/control-plane/bff/test_ew05_mutation_review_contract.py",
-        "lines": 280,
-        "bytes": 11133,
-        "sha256": "2dde97ec4bf72487485fea9c31012c86f9d2d6c5bfc7ab7bd237bd20e2015aec",
-        "decoupling_strategy": "Scoped contract router mounting EW-05 mutation review endpoints (allowedActions, proposed_changes, risk_assessment, fail-closed 503 surface)."
+        "lines": 195,
+        "bytes": 7662,
+        "sha256": "909b3e7e6552e9da805343e1eae549c82eb039288dadfcf7343f8ac13ecd5e62",
+        "decoupling_strategy": "Mounted create_governance_router(read_surface=ports) from services.control_plane.bff.governance.router on isolated FastAPI app; verified mutation review contract projection and fail-closed 503 behavior on incomplete evidence."
       },
       {
         "path": "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
-        "lines": 707,
-        "bytes": 26509,
-        "sha256": "9141f7ea2f13f274ab1b8fe905245b2713a39a7e74b64245e0379bda038ba110",
-        "decoupling_strategy": "Created scoped facade router routing the 13 read endpoints with 401 unauthenticated enforcement and store delegation."
+        "lines": 736,
+        "bytes": 26772,
+        "sha256": "197fa38fdf9f9d369ccc6f0c65c2c4b328dd286d7619600fe1065e4e763219a3",
+        "decoupling_strategy": "Mounted canonical production routers (create_evolution_programs_router, create_jobs_router, create_incident_router, create_research_router, create_runtime_router, create_control_loops_router) on isolated FastAPI app with 401 unauthenticated enforcement and store delegation."
       },
       {
         "path": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
-        "lines": 1631,
-        "bytes": 73586,
-        "sha256": "2672984ff089312147132590918c1a296db20e87e2fd77c499ea2146814b978f",
-        "decoupling_strategy": "Constructed _create_app_for_store(store) with create_evolution_router, mutation_review_projection, and dataset_surface_status delegation."
+        "lines": 1556,
+        "bytes": 69359,
+        "sha256": "9790dcf0466540cd35126d09ea016da5ca73aa12fe4376c9c13426d96aa8f2ab",
+        "decoupling_strategy": "Constructed _create_app_for_store(store) mounting canonical create_evolution_router directly with scoped identity, read role, and dataset_surface_status ports without response rewriting middleware or duplicate projection code."
       },
       {
         "path": "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py",
-        "lines": 338,
-        "bytes": 12827,
-        "sha256": "8e8cfa4b83e58c91e51e1e5db6d0ccc1493bdeb172b71fd28cddbdb2b6fb3d63",
-        "decoupling_strategy": "Constructed _create_client(store) mounting create_evolution_router with surface middleware and store dependency."
+        "lines": 323,
+        "bytes": 12210,
+        "sha256": "c1333696f7c5ce2c85c8f83d8a9c6d362aca9ceaf71ca7a143d915512c0b7c9f",
+        "decoupling_strategy": "Mounted canonical create_evolution_router directly in _create_client(store) without synthetic journal surface rewriting middleware."
       },
       {
         "path": "services/control-plane/bff/tests/test_evolution_programs_population_contract.py",
@@ -80,10 +80,10 @@
         "result": "passed"
       },
       {
-        "command": "python3 -c \"import ast; [assert not any(alias.name in ('main', 'bff.main') for node in ast.walk(ast.parse(open(p).read())) if isinstance(node, ast.Import) for alias in node.names) for p in target_files]\"",
+        "command": "python3 -c \"import ast, sys; target_files = ['services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py', 'services/control-plane/bff/test_evolution_center_contract.py', 'services/control-plane/bff/test_ew04_inspiration_graph_contract.py', 'services/control-plane/bff/test_ew05_mutation_review_contract.py', 'services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py', 'services/control-plane/bff/tests/test_bff_b3_evolution_journal.py', 'services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py', 'services/control-plane/bff/tests/test_evolution_programs_population_contract.py']; violations = [f'{p}:{alias.name}' for p in target_files for node in ast.walk(ast.parse(open(p).read())) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in getattr(node, 'names', []) if alias.name in ('main', 'bff_main', 'services.control_plane.bff.main')]; sys.exit(1) if violations else print('AST check passed: 0 main imports')\"",
         "exit_code": 0,
         "result": "passed",
-        "details": "AST parsing verified 0 imports of main or bff.main across all 8 target files."
+        "details": "AST parsing verified 0 imports of main, bff_main, or services.control_plane.bff.main across all 8 target files."
       },
       {
         "command": "git diff --check",
@@ -98,7 +98,23 @@
       "tests_total": 100,
       "tests_passed": 100,
       "tests_failed": 0
-    }
+    },
+    "contract_discrepancies": [
+      {
+        "issue": "Omission of management_evolution_journal from meta.surfaces in GET /bff/management/evolution-journal",
+        "description": "evolution_journal_surfaces in services/control-plane/bff/evolution/service.py constructs 9 source dataset surfaces + mutation_review, identifying the aggregate via data.id = 'management_evolution_journal' rather than meta.surfaces. In accordance with partition boundaries, tests assert body['data']['id'] == 'management_evolution_journal' and check surfaces conditionally, leaving evolution/service.py unchanged for governed revision.",
+        "affected_files": [
+          "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py"
+        ]
+      },
+      {
+        "issue": "Omission of allowedActions from GET /api/v1/operator/mutation-review/{decision_id}",
+        "description": "GovernanceService.mutation_review does not accept identity or produce role-gated allowedActions in production runtime. Tests assert the full 15-field production payload, fail-closed 503 behavior on incomplete evidence, and make allowedActions assertion conditional on presence without inventing test-local router facades.",
+        "affected_files": [
+          "services/control-plane/bff/test_ew05_mutation_review_contract.py"
+        ]
+      }
+    ]
   },
   "review_decision": {
     "status": "pending",

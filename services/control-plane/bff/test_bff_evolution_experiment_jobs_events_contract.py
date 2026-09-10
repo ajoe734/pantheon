@@ -14,12 +14,21 @@ from typing import Any, Iterator, Optional
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.models import ErrorCode
-from services.control_plane.bff.evolution.router import create_evolution_programs_router
-from services.control_plane.bff.research.router import create_research_router
-from services.control_plane.bff.jobs.router import create_jobs_router
 from services.control_plane.bff.events.router import create_events_router
+from services.control_plane.bff.events.service import EventStreamService
+from services.control_plane.bff.evolution.router import create_evolution_programs_router
+from services.control_plane.bff.jobs.router import create_jobs_router
+from services.control_plane.bff.models import (
+    ActionCommandStatus,
+    CommandReceipt,
+    CommandReceiptStatus,
+    CommandResponse,
+    CommandRoutingPath,
+    CommandSubmissionResponse,
+    ErrorCode,
+)
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.research.router import create_research_router
 
 
 OPERATOR_TOKEN = "Bearer op-gap-004:operator"
@@ -265,53 +274,77 @@ def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAP
         if surface.get("status") == "unavailable":
             raise HTTPException(status_code=503, detail="unavailable")
 
-    def _submit_prog_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> dict:
+    def _submit_prog_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
         prog = app.state.store.get_evolution_program(entity_id)
         if not prog:
             raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Program {entity_id} not found")
         rcpt = f"rcpt-prog-{action_id}-{entity_id}"
-        return {
-            "status": "accepted",
-            "data": {
-                "command": "EvolutionProgramAction",
-                "status": "accepted",
-                "receipt_id": rcpt,
-                "receipt": {"status": "accepted", "receipt_id": rcpt},
-                "routing_path": "direct",
-            },
-        }
+        receipt = CommandReceipt(
+            receipt_id=rcpt,
+            command="EvolutionProgramAction",
+            status=CommandReceiptStatus.ACCEPTED,
+            accepted_at="2026-06-01T00:00:00Z",
+            routing_path=CommandRoutingPath.DIRECT,
+        )
+        return CommandResponse[CommandSubmissionResponse](
+            status=ActionCommandStatus.ACCEPTED,
+            data=CommandSubmissionResponse(
+                receipt_id=rcpt,
+                command="EvolutionProgramAction",
+                status=CommandReceiptStatus.ACCEPTED,
+                accepted_at="2026-06-01T00:00:00Z",
+                routing_path=CommandRoutingPath.DIRECT,
+                receipt=receipt,
+            ),
+        )
 
-    def _submit_exp_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> dict:
+    def _submit_exp_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
         exp = app.state.store.get_research_experiment(entity_id)
         if not exp:
             raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Experiment {entity_id} not found")
         rcpt = f"rcpt-exp-{action_id}-{entity_id}"
-        return {
-            "status": "accepted",
-            "data": {
-                "command": "ExperimentAction",
-                "status": "accepted",
-                "receipt_id": rcpt,
-                "receipt": {"status": "accepted", "receipt_id": rcpt},
-                "routing_path": "direct",
-            },
-        }
+        receipt = CommandReceipt(
+            receipt_id=rcpt,
+            command="ExperimentAction",
+            status=CommandReceiptStatus.ACCEPTED,
+            accepted_at="2026-06-01T00:00:00Z",
+            routing_path=CommandRoutingPath.DIRECT,
+        )
+        return CommandResponse[CommandSubmissionResponse](
+            status=ActionCommandStatus.ACCEPTED,
+            data=CommandSubmissionResponse(
+                receipt_id=rcpt,
+                command="ExperimentAction",
+                status=CommandReceiptStatus.ACCEPTED,
+                accepted_at="2026-06-01T00:00:00Z",
+                routing_path=CommandRoutingPath.DIRECT,
+                receipt=receipt,
+            ),
+        )
 
-    def _submit_job_action(job_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> dict:
+    def _submit_job_action(job_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
         job = app.state.store.get_job_bff(job_id)
         if not job:
             raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Job {job_id} not found")
         rcpt = f"rcpt-job-{action_id}-{job_id}"
-        return {
-            "status": "accepted",
-            "data": {
-                "command": "JobAction",
-                "status": "accepted",
-                "receipt_id": rcpt,
-                "receipt": {"status": "accepted", "receipt_id": rcpt},
-                "routing_path": "direct",
-            },
-        }
+        receipt = CommandReceipt(
+            receipt_id=rcpt,
+            command="JobAction",
+            status=CommandReceiptStatus.ACCEPTED,
+            accepted_at="2026-06-01T00:00:00Z",
+            routing_path=CommandRoutingPath.DIRECT,
+        )
+        return CommandResponse[CommandSubmissionResponse](
+            status=ActionCommandStatus.ACCEPTED,
+            data=CommandSubmissionResponse(
+                receipt_id=rcpt,
+                command="JobAction",
+                status=CommandReceiptStatus.ACCEPTED,
+                accepted_at="2026-06-01T00:00:00Z",
+                routing_path=CommandRoutingPath.DIRECT,
+                receipt=receipt,
+            ),
+        )
 
     app.include_router(create_evolution_programs_router(
         read_surface=lambda: app.state.store,
@@ -792,17 +825,12 @@ def test_events_list_degraded_when_unavailable() -> None:
 # Events stream alias (should still be 200)
 # ---------------------------------------------------------------------------
 
-async def bff_events_stream_alias(
-    channel: str = "system",
-    last_event_id: Optional[str] = None,
-    authorization: Optional[str] = None,
-) -> Response:
-    return Response(
-        content=b"",
-        status_code=200,
-        media_type="text/event-stream",
-        headers={"X-SSE-Channel": channel},
-    )
+_events_stream_router = create_events_router(
+    event_stream_service=EventStreamService(channels=("inbox", "system"))
+)
+bff_events_stream_alias = next(
+    r.endpoint for r in _events_stream_router.routes if getattr(r, "path", None) == "/api/v1/stream/{channel}"
+)
 
 
 def test_events_stream_non_404() -> None:

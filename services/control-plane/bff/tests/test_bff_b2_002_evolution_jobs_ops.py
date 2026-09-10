@@ -26,10 +26,17 @@ import tempfile
 from typing import Any, Callable, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.evolution.router import create_evolution_programs_router
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.jobs.router import create_jobs_router
+from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.runtime.router import create_runtime_router
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2-002:operator"}
 NO_AUTH_HEADERS: dict = {}
@@ -160,131 +167,153 @@ class _B2002TestClient(TestClient):
         self.app.state.store = val
 
 
+class _Identity:
+    def __init__(self, op_id: str, roles: set[str]):
+        self.operator_id = op_id
+        self.roles = roles
+
+
+def _extract_identity(auth: Optional[str] = None) -> Optional[_Identity]:
+    if not auth or not auth.startswith("Bearer "):
+        return None
+    token = auth[len("Bearer "):].strip()
+    if ":" in token:
+        op_id, roles_str = token.split(":", 1)
+        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+    else:
+        op_id = token
+        roles = {"operator", "viewer", "reviewer", "admin"}
+    return _Identity(op_id, roles)
+
+
+def _require_read(identity: Optional[_Identity]) -> None:
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _require_operator(identity: Optional[_Identity]) -> None:
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    roles = getattr(identity, "roles", set()) or set()
+    if "operator" not in roles and "admin" not in roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"error": {"code": str(code), "message": message, "reason": reason or message, **kwargs}},
+    )
+
+
+def _utc_now() -> str:
+    return "2026-06-01T00:00:00Z"
+
+
+def _page_slice(items: list[Any], page_token: Optional[str] = None, page_size: int = 20) -> tuple[list[Any], Optional[str]]:
+    return list(items[:page_size]), None
+
+
+def _snapshot_meta(snapshot_at: str = "2026-06-01T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+    return {"snapshot_at": snapshot_at, **kwargs}
+
+
+def _dataset_surface_status(dataset: str, *, snapshot_at: str = "2026-06-01T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+    return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at}
+
+
+def _read_surface_meta(surface_name: str, read_type: str, *, snapshot_at: str = "2026-06-01T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+    return {"snapshot_at": snapshot_at, "surface": surface_name, **kwargs}
+
+
 def _create_app(store: _EvolutionJobsOpsTestStore) -> FastAPI:
     app = FastAPI()
     app.state.store = store
 
-    def _auth_check(authorization: Optional[str] = Header(None)) -> None:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-    router = APIRouter()
-
-    # 1. Evolution Programs
-    @router.get("/bff/evolution-programs")
-    async def list_evolution_programs(auth: None = Depends(_auth_check)) -> dict:
-        items = app.state.store.list_evolution_programs()
-        return {
-            "items": items,
-            "page_info": {"total": len(items), "next_page_token": None},
-            "meta": {"snapshot_at": "2026-06-01T00:00:00Z"},
-        }
-
-    @router.post("/bff/evolution-programs", status_code=201)
-    async def create_evolution_program(payload: dict, auth: None = Depends(_auth_check)) -> dict:
-        prog_id = f"prog-{uuid.uuid4().hex[:8]}"
-        return app.state.store.create_evolution_program(
-            prog_id,
-            name=payload.get("name", "Program"),
-            params=payload,
+    app.include_router(
+        create_evolution_programs_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            require_operator_role=_require_operator,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=_dataset_surface_status,
         )
-
-    @router.get("/bff/evolution-programs/{id}")
-    async def get_evolution_program(id: str, auth: None = Depends(_auth_check)) -> dict:
-        item = app.state.store.get_evolution_program(id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Program not found")
-        return {"data": item, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    @router.get("/bff/evolution-programs/{id}/runs")
-    async def get_evolution_program_runs(id: str, auth: None = Depends(_auth_check)) -> dict:
-        prog = app.state.store.get_evolution_program(id)
-        if not prog:
-            raise HTTPException(status_code=404, detail="Program not found")
-        items = app.state.store.list_evolution_program_runs(id)
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    @router.get("/bff/evolution-programs/{id}/candidates")
-    async def get_evolution_program_candidates(id: str, auth: None = Depends(_auth_check)) -> dict:
-        items = app.state.store.list_evolution_program_candidates(id)
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 2. Jobs
-    @router.get("/bff/jobs")
-    async def list_jobs(auth: None = Depends(_auth_check)) -> dict:
-        items = app.state.store.list_jobs_bff()
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    @router.get("/bff/jobs/{id}")
-    async def get_job(id: str, auth: None = Depends(_auth_check)) -> dict:
-        item = app.state.store.get_job_bff(id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Job not found")
-        return {"data": item, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 3. Alerts
-    @router.get("/bff/alerts")
-    async def list_alerts(auth: None = Depends(_auth_check)) -> dict:
-        items = getattr(app.state.store, "list_alerts", lambda: [])()
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 4. Incidents
-    @router.get("/bff/incidents")
-    async def list_incidents(auth: None = Depends(_auth_check)) -> dict:
-        items = getattr(app.state.store, "list_incidents", lambda: [])()
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 5. Audit
-    @router.get("/bff/audit")
-    async def list_audit(auth: None = Depends(_auth_check)) -> dict:
-        items = getattr(app.state.store, "list_audit_events", lambda: [])()
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 6. Artifacts
-    @router.get("/bff/artifacts")
-    async def list_artifacts(auth: None = Depends(_auth_check)) -> dict:
-        items = getattr(app.state.store, "list_candidate_artifacts", lambda: [])()
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 7. Runtimes
-    @router.get("/bff/runtimes")
-    async def list_runtimes(auth: None = Depends(_auth_check)) -> dict:
-        items = getattr(app.state.store, "list_runtime_bindings", lambda: [])()
-        return {"items": items, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    @router.get("/bff/runtimes/{id}")
-    async def get_runtime(id: str, auth: None = Depends(_auth_check)) -> dict:
-        item = getattr(app.state.store, "get_runtime_binding", lambda rid: None)(id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Runtime not found")
-        return {"data": item, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 8. Loop Runs
-    @router.get("/bff/v5/loop-runs")
-    async def list_loop_runs(auth: None = Depends(_auth_check)) -> dict:
-        ok, items = app.state.store.list_loop_runs()
-        return {
-            "items": items,
-            "page_info": {"total": len(items), "next_page_token": None},
-            "meta": {"snapshot_at": "2026-06-01T00:00:00Z"},
-        }
-
-    @router.get("/bff/v5/loop-runs/{id}")
-    async def get_loop_run(id: str, auth: None = Depends(_auth_check)) -> dict:
-        ok, item = app.state.store.get_loop_run(id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Loop run not found")
-        return {"data": item, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    # 9. Sentinel Findings
-    @router.get("/bff/v5/sentinel/findings/{id}")
-    async def get_sentinel_finding(id: str, auth: None = Depends(_auth_check)) -> dict:
-        ok, item = app.state.store.get_sentinel_finding(id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Finding not found")
-        return {"data": item, "meta": {"snapshot_at": "2026-06-01T00:00:00Z"}}
-
-    app.include_router(router)
+    )
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            read_surface_meta=_read_surface_meta,
+            dataset_surface_status=_dataset_surface_status,
+            raise_if_read_surface_unavailable=lambda s, label="": None,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **k: {},
+        )
+    )
+    app.include_router(
+        create_incident_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            require_operator_role=_require_operator,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=_dataset_surface_status,
+            read_surface_meta=_read_surface_meta,
+            raise_if_read_surface_unavailable=lambda s, label="": None,
+        )
+    )
+    app.include_router(
+        create_research_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=_dataset_surface_status,
+            include_prepared_subrouters=True,
+        )
+    )
+    app.include_router(
+        create_runtime_router(
+            read_surface=lambda: app.state.store,
+            dependencies={
+                "_extract_identity": _extract_identity,
+                "_require_read_role": _require_read,
+                "_require_operator_role": _require_operator,
+                "utc_now": _utc_now,
+                "_dataset_surface_status": _dataset_surface_status,
+                "_page_slice": _page_slice,
+                "_snapshot_meta": _snapshot_meta,
+                "_meta_staleness": lambda: None,
+                "_raise_if_read_surface_unavailable": lambda s, label="": None,
+                "_bff_error": _bff_error,
+            },
+        )
+    )
+    app.include_router(
+        create_control_loops_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            require_operator_role=_require_operator,
+            bff_error=_bff_error,
+            utc_now_fn=_utc_now,
+        )
+    )
     return app
 
 

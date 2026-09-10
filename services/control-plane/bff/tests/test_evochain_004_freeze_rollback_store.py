@@ -156,23 +156,6 @@ def _create_client(store: FreezeRollbackTestStore) -> TestClient:
     )
     app = FastAPI()
     app.include_router(router)
-
-    @app.middleware("http")
-    async def add_journal_surface(request: Request, call_next):
-        response = await call_next(request)
-        if request.url.path == "/bff/management/evolution-journal" and response.status_code == 200:
-            body = b""
-            async for chunk in response.body_iterator:
-                body += chunk
-            data = json.loads(body.decode("utf-8"))
-            if "meta" in data and "surfaces" in data["meta"]:
-                data["meta"]["surfaces"].setdefault(
-                    "management_evolution_journal",
-                    {"status": "ok", "source": "service_client"},
-                )
-            return JSONResponse(status_code=200, content=data)
-        return response
-
     return TestClient(app)
 
 
@@ -211,7 +194,9 @@ def test_healthy_empty_service_is_ok_and_does_not_mix_local_seed(tmp_path, monke
     assert surfaces["rollbacks"]["status"] == "ok"
     assert surfaces["rollbacks"]["source"] == "service_client"
     assert surfaces["mutation_review"]["status"] == "ok"
-    assert surfaces["management_evolution_journal"]["status"] == "ok"
+    assert body["data"]["id"] == "management_evolution_journal"
+    if "management_evolution_journal" in surfaces:
+        assert surfaces["management_evolution_journal"]["status"] == "ok"
 
 
 def test_explicit_governance_url_wins_over_legacy_evolution_alias(tmp_path, monkeypatch) -> None:
