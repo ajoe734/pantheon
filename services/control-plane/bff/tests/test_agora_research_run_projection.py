@@ -7,11 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
 
 
 _OPERATOR_AUTH = "Bearer agora-test-user:operator"
@@ -22,9 +18,11 @@ _SCHEMA_PATH = (
 
 
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    try:
+        from services.control_plane.bff.tests.test_agora_strategy_workshop import _workshop_client
+    except ImportError:
+        from test_agora_strategy_workshop import _workshop_client
+    return _workshop_client(monkeypatch)
 
 
 def _headers(idempotency_key: str | None = None, if_match: str | None = None) -> dict[str, str]:
@@ -189,7 +187,7 @@ def test_route_get_research_run_provenance_validation(
 ) -> None:
     """Route-level tests verifying fail-closed schema/version/terminal/owner/correlation receipt validation."""
     client = _client(monkeypatch)
-    store = getattr(bff_main, "research_store", None)
+    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
     assert store is not None
 
     workshop_id = "ws-prov-route-test"
