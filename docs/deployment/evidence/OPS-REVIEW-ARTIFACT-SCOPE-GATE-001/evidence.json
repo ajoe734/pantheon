@@ -1,0 +1,90 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-REVIEW-ARTIFACT-SCOPE-GATE-001",
+  "title": "Implement fail-closed pull-request diff-scope gate at handoff admission",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "timestamp": "2026-09-10T03:18:00Z",
+  "regression_resolved": {
+    "issue": "#5736",
+    "description": "PR #5736 contained an undeclared 11th file that entered review against a 10-artifact contract because handoff admission did not validate the pull request's complete diff against the declared artifact scope.",
+    "resolution": "Enforced strict fail-closed diff-scope validation at handoff admission via validate_task_artifact_diff_scope in .orchestrator/rewrite/task_contract.py. All PR files and rename sources are boundedly enumerated via list_pull_request_files and matched against the declared artifact patterns. Any undeclared file immediately rejects handoff admission with SystemExit without mutating canonical state."
+  },
+  "scope": {
+    "owned": [
+      "Fail-closed pull-request diff-scope gate at handoff admission in task_contract.py",
+      "Bounded and complete pull request file enumeration in github_review_bridge.py with MAX_PULL_REQUEST_FILES cap",
+      "Safe repository-relative path validation for PR files and rename sources",
+      "Exact, directory-prefix, and wildcard pattern matching (* and **) for task artifact contracts",
+      "Multi-repository path normalization integration with multi_repo_registry",
+      "Post-enumeration snapshot revalidation against concurrent head/base drift",
+      "Unit and integration tests for pagination, renames, drift, malformed data, and state non-mutation"
+    ],
+    "not_changing": [
+      "Auto-integrator policy code and authority untouched",
+      "Task-review merge gate and branch protection configuration untouched",
+      "No hand-editing of canonical task state or state store",
+      "Product runtime and deployment scripts untouched"
+    ]
+  },
+  "source_artifacts": {
+    ".orchestrator/rewrite/task_contract.py": "eb0081c8f29e735d8bf02765995aa530a5f5b424c0cdcc4bea5f7e94570fc3f9",
+    "scripts/git/github_review_bridge.py": "286739f94fd164083ae814eae5601182bd6a37fef0d518145e7ca13988c78a6d",
+    "scripts/git/test_github_review_bridge.py": "8f83a671c5db03d1ebf14c200484d1d5e63f643b377f3de6b987cca9ce81ec90",
+    "scripts/test_ai_status.py": "9f348c72abb7908136df0c4d2f9fa4350f41cbe6c9f88f276487553a38dee9cf"
+  },
+  "acceptance_verification": {
+    "criterion_1": {
+      "statement": "Handoff admission rejects any proposed pull request whose diff contains files outside the task artifact contract (preventing #5736 undeclared file regression).",
+      "status": "PASSED",
+      "evidence": "Implemented validate_task_artifact_diff_scope and hooked it into validate_handoff_pr_delivery_binding in .orchestrator/rewrite/task_contract.py. Verified by test_handoff_rejects_pr_diff_exceeding_artifact_contract_regression_5736 where a PR with 11 files against a 10-artifact contract is rejected."
+    },
+    "criterion_2": {
+      "statement": "Complete, bounded pull request file enumeration via GitHub API with pagination, cap enforcement, and safe path validation.",
+      "status": "PASSED",
+      "evidence": "Implemented list_pull_request_files with MAX_PULL_REQUEST_FILES=3000, per-page enumeration, safe repo-relative path checks, and previous_filename rename tracking in scripts/git/github_review_bridge.py. Verified with 8 unit tests in test_github_review_bridge.py covering pagination, termination, malformed items, traversal, and overruns."
+    },
+    "criterion_3": {
+      "statement": "Artifact pattern matching supports exact paths, directory prefixes, star (*) and double-star (**) wildcards, and cross-repository normalization.",
+      "status": "PASSED",
+      "evidence": "Implemented matches_artifact_pattern and task_normalized_artifact_patterns in task_contract.py. Verified by test_handoff_accepts_directory_prefix_and_wildcard_grants and test_handoff_accepts_cross_repository_normalized_artifacts."
+    },
+    "criterion_4": {
+      "statement": "PR snapshot is revalidated after diff enumeration to guard against concurrent push or drift during enumeration.",
+      "status": "PASSED",
+      "evidence": "Implemented revalidate_pull_request_snapshot in github_review_bridge.py and invoked immediately following file diff validation in task_contract.py. Verified by test_revalidate_pull_request_snapshot_* unit tests and test_handoff_rejects_on_concurrent_pr_snapshot_drift integration test."
+    },
+    "criterion_5": {
+      "statement": "Fail-closed non-mutation: handoff scope rejection leaves canonical task state, delivery binding, approval state, and external proof unmutated.",
+      "status": "PASSED",
+      "evidence": "Diff scope check runs inside validate_handoff_pr_delivery_binding prior to state update or intent mutation. Verified by test_handoff_scope_failure_leaves_canonical_state_unmutated confirming task status, delivery_binding, and overall state remain strictly unchanged on failure."
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "python3 -m unittest scripts.git.test_github_review_bridge",
+      "python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests",
+      "python3 -m py_compile .orchestrator/rewrite/task_contract.py scripts/git/github_review_bridge.py scripts/test_ai_status.py scripts/git/test_github_review_bridge.py",
+      "git diff --check"
+    ],
+    "results": [
+      "Ran 65 tests in scripts.git.test_github_review_bridge: OK",
+      "Ran 152 tests in scripts.test_ai_status.ReviewApprovedWorkflowTests: OK",
+      "py_compile succeeded with zero errors on all modified files",
+      "git diff --check reported clean diff with no whitespace errors"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "Confirm validate_task_artifact_diff_scope rejects PRs with files not in task artifact contract",
+      "Confirm list_pull_request_files correctly pages up to MAX_PULL_REQUEST_FILES and validates filenames",
+      "Confirm matches_artifact_pattern handles exact, directory prefixes, * and ** wildcards",
+      "Confirm revalidate_pull_request_snapshot prevents concurrent head/base drift",
+      "Confirm canonical state is completely unmutated on scope gate failure"
+    ]
+  }
+}
