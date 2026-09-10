@@ -3,11 +3,11 @@
   "task_id": "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
   "batch_id": "B17_router_sse_surfaces",
   "title": "Router and SSE surfaces",
-  "owner": "Antigravity2",
-  "reviewer": "Codex",
+  "owner": "Claude",
+  "reviewer": "Claude2",
   "target_repo": "pantheon",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
+  "base_sha": "6f00d0eb38e57946fe784de493df4606a55169b3",
   "scope": {
     "batch_source_files": [
       "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
@@ -147,5 +147,15 @@
   "verification_commands": [
     ".venv/bin/pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py services/control-plane/bff/test_pkt003_lineage_view_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/test_pkt013_operator_home_contract.py services/control-plane/bff/test_pkt014_paper_live_drift_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/tests/test_bff_lineage_contract.py services/control-plane/bff/tests/test_sse_backpressure.py (91 passed)",
     ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
-  ]
+  ],
+  "refresh": {
+    "reason": "origin/dev advanced past the recorded base_sha before handoff; owner merged current dev tip and re-ran the full suite before re-handoff",
+    "previous_base_sha": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
+    "merged_dev_tip": "6f00d0eb38e57946fe784de493df4606a55169b3",
+    "no_owned_source_files_changed_by_merge": true,
+    "verification_command": ".venv-pantheon/bin/python3 -m pytest -q <the 11 owned suites> services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "verification_result": "99 passed in 40.04s",
+    "diff_check": "git diff --check 6f00d0eb3...HEAD exits 0 (no whitespace/EOF errors)",
+    "ast_scan": "no main imports, sys.path mutations, or subprocess calls found in the 11 owned files"
+  }
 }
