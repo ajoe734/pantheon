@@ -319,6 +319,27 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertEqual(decision.reason, DispatchBlockReason.ACCOUNT_RETRY_AFTER)
         self.assertEqual(decision.health_refresh_targets, ())
 
+    def test_expired_account_cannot_bypass_endpoint_refresh_cooldown(self) -> None:
+        for endpoint_record in (
+            HealthRecord(HealthState.RETRY_AFTER, retry_at=NOW + timedelta(seconds=120)),
+            HealthRecord(HealthState.UNAVAILABLE, refresh_at=NOW + timedelta(seconds=120)),
+        ):
+            with self.subTest(state=endpoint_record.state):
+                reason, refresh = health_gate_for_endpoint(
+                    endpoint_id="codex-1", account_id="codex-account", now=NOW,
+                    endpoint_health={"codex-1": endpoint_record},
+                    account_health={"codex-account": HealthRecord(HealthState.UNKNOWN)},
+                )
+                self.assertIn(reason, {DispatchBlockReason.ENDPOINT_RETRY_AFTER, DispatchBlockReason.ENDPOINT_HEALTH_UNAVAILABLE})
+                self.assertIsNone(refresh)
+                reason, refresh = health_gate_for_endpoint(
+                    endpoint_id="codex-1", account_id="codex-account", now=NOW + timedelta(seconds=121),
+                    endpoint_health={"codex-1": endpoint_record},
+                    account_health={"codex-account": HealthRecord(HealthState.UNKNOWN)},
+                )
+                self.assertEqual(reason, DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+                self.assertEqual(refresh, HealthRefreshTarget(HealthScope.ENDPOINT, "codex-1"))
+
     def test_account_capacity_and_task_lease_are_distinct_closed_gates(self) -> None:
         capacity = evaluate_dispatch_intent(
             intent(),

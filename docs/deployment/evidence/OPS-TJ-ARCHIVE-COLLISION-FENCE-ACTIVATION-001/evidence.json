@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-TJ-ARCHIVE-COLLISION-FENCE-ACTIVATION-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "delivery_class": "development_tooling_archive_collision_fence",
+  "source_identity": {
+    "base_commit": "6e47504746b3acd02bbce537440778095ea905e0",
+    "implementation_commit": "a16868a9f5115f01b01199d01f17b2409670b2c2",
+    "files_sha256": {
+      "scripts/ai_status.py": "766e6908ab406cf02da36946b2fdb555876d8107c7ca686b8ebabb3421197710",
+      "scripts/test_ai_status.py": "1f26b241fc1565deaf1120387faacc2c76b69298f31dda8fb91846bef3e25087",
+      ".orchestrator/rewrite/task_state_store.py": "b96699f34ef4e3e2ae6280e4efda345f912a21a0d08ecc4a61dacb26f58a8b65",
+      ".orchestrator/rewrite/test_task_state_store.py": "ea087e95d9acd39e5c0ccaec7ed190ba01655ae4402b9495a7d37fee18715d34",
+      "docs/operations/task-archive-collision-reconciliation.md": "71a1c75a7bc4856ca8afa93271edb2f681473cd2c1aec516d607332a8f5450ae"
+    }
+  },
+  "dispatch_runtime": {
+    "sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+    "status_root": "/home/chloe_ong_dev_cctech_support_com/code/pantheon",
+    "qualified_for_new_fence": false
+  },
+  "scope": {
+    "live_mutations_performed": false,
+    "archive_files_changed": false,
+    "new_authority_or_scheduler": false,
+    "command": "archive_collision_fence <parent-id> <request-json-file>"
+  },
+  "preflight_and_transaction_outcomes": [
+    "Real CLI accepts explicit local Human/Ops, exact todo CAS, completed nonmatching archive, idle V2 runtime.",
+    "Rejects absent local flag, worker run identity, asserted agent impersonation, generic foreign-owner blocker, malformed or unavailable runtime, worker/worktree leases.",
+    "Rejects unknown parent, matching archive, missing/malformed/noncompleted archive, stale archive bytes, changed generation/scope/CAS, non-todo lifecycle states, existing terminal fact or disposition.",
+    "Activation only changes parent status/hold metadata and the existing collision disposition marker; preserves generation, assignment, scope, dependencies, archive bytes, and existing terminal facts.",
+    "Exact request replay preserves the activation parent; changed reason/CAS/archive/actor or permanent disposition cannot replay activation.",
+    "TaskStore fences reopen, unblock, drop, scope/marker mutation, premature protected terminal facts, and premature archive outbox.",
+    "Fresh post-fence parent digest and activation digest are independently qualified before archive_reconcile atomically upgrades the marker and stages the existing outbox.",
+    "CLI recovery, exact reconciliation replay, and headless journal replay retain the blocked parent and immutable activation binding; no worker dispatch or parent terminal fact."
+  ],
+  "validation": [
+    {
+      "command": "timeout 90 /tmp/ops-tj-fence-venv/bin/python -m pytest scripts/test_ai_status.py -k ArchiveCollision -q",
+      "exit_code": 0,
+      "status": "passed",
+      "terminal_output": [
+        "...............                                       [100%]",
+        "15 passed, 482 deselected, 19 subtests passed in 4.81s"
+      ],
+      "test_summary": [
+        "15 passed, 482 deselected, 19 subtests passed in 4.81s"
+      ],
+      "output_sha256": "7b6a49df75055a3a71a506b386b4e08273f8a3a737a4aa3fb770990b153be4af"
+    },
+    {
+      "command": "timeout 90 /tmp/ops-tj-fence-venv/bin/python -m pytest .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_machine.py -q",
+      "exit_code": 0,
+      "status": "passed",
+      "terminal_output": [
+        "..............................................................................                                             [100%]",
+        "78 passed, 22 subtests passed in 7.08s"
+      ],
+      "test_summary": [
+        "78 passed, 22 subtests passed in 7.08s"
+      ],
+      "output_sha256": "144f930ad3706fec0c6f6e38383e1f39480b5568253f5500fc38ce83d3a41c1f"
+    },
+    {
+      "command": "timeout 60 /tmp/ops-tj-fence-venv/bin/python -c 'import sys; sys.path.insert(0, \".orchestrator\"); import test_supervisor; import pytest; raise SystemExit(pytest.main([\"scripts/test_ai_status.py\", \"-k\", \"DependencyContractBatchTests\", \"-q\"]))'",
+      "exit_code": 0,
+      "status": "passed",
+      "terminal_output": [
+        ".................. [ 81%]",
+        "....                                [100%]",
+        "22 passed, 475 deselected, 91 subtests passed in 15.82s"
+      ],
+      "test_summary": [
+        "22 passed, 475 deselected, 91 subtests passed in 15.82s"
+      ],
+      "output_sha256": "41417a300c2171a01c50bfc10e6489b87cd7545de95c99a43ebf55ae3b1da10b"
+    },
+    {
+      "command": "timeout 240 /tmp/ops-tj-fence-venv/bin/python -m pytest scripts/test_ai_status.py .orchestrator/rewrite/test_task_state_store.py -q",
+      "exit_code": 124,
+      "status": "timed_out_not_passed",
+      "terminal_output": [
+        ".......................................................... [ 46%]",
+        "............................................... [ 55%]",
+        "................................... [ 61%]",
+        "................................................................. [ 73%]",
+        "............................................................ [ 84%]",
+        "........................."
+      ],
+      "test_summary": [],
+      "output_sha256": "8cb8f01b28b57395347f02de6050585636b26460725235f1ef25bc6d35de0c84"
+    },
+    {
+      "command": "PATH=\"/tmp/ops-tj-fence-venv/bin:$PATH\" PYTHON=/tmp/ops-tj-fence-venv/bin/python timeout 180 scripts/run-acceptance.sh smoke",
+      "exit_code": 1,
+      "status": "stage0_and_diagnostics_passed_then_missing_firebase_admin",
+      "terminal_output": [
+        "",
+        "----------------------------------------------------------------------",
+        "Ran 1 test in 0.000s",
+        "",
+        "FAILED (errors=1)",
+        "✗ execution-grant-issuer-suite (exit 1)"
+      ],
+      "test_summary": [
+        "Ran 7 tests in 0.007s",
+        "OK",
+        "Ran 56 tests in 0.014s",
+        "OK",
+        "13/13 checks passed",
+        "Results: 10/10 test groups passed",
+        "Ran 36 tests in 0.013s",
+        "OK",
+        "Ran 26 tests in 2.997s",
+        "OK",
+        "23 passed, 2 skipped in 11.52s",
+        "71 passed in 16.31s",
+        "19 passed in 33.85s",
+        "Ran 1 test in 0.000s"
+      ],
+      "output_sha256": "59c58a70c50b4782242dc57142c89cdc9012497a7fd45e5bf7c33b3326f45be8"
+    },
+    {
+      "command": "timeout 90 /tmp/ops-tj-fence-venv/bin/python -m unittest discover -s .orchestrator/execution_grant_issuer -p \"test_*.py\"",
+      "exit_code": 0,
+      "status": "passed_after_installing_pinned_issuer_requirements",
+      "terminal_output": [
+        "...................................................................",
+        "----------------------------------------------------------------------",
+        "Ran 67 tests in 1.847s",
+        "",
+        "OK"
+      ],
+      "test_summary": [
+        "Ran 67 tests in 1.847s",
+        "OK"
+      ],
+      "output_sha256": "fa74f1e7c67512cd1b0055956adff6bf58761463d0f27737f741495033e46a5f"
+    },
+    {
+      "command": "timeout 90 /tmp/ops-tj-fence-venv/bin/python -m unittest deploy/execution-grant-issuer/test_run_server.py scripts/test_request_execution_grant.py",
+      "exit_code": 0,
+      "status": "passed_after_installing_pinned_issuer_requirements",
+      "terminal_output": [
+        "✓ Grant locally verified against trusted issuer 'test-signer-cli' (fp: 638dba00fb663c30...)",
+        "Wrote signed execution grant to /tmp/tmpk7529kcm/grant.json",
+        "Submitting execution grant for DEV502-TRACE-001 via governed CLI...",
+        "✓ Execution grant successfully verified and submitted for DEV502-TRACE-001.",
+        "Wrote prepared challenge request to /tmp/tmpikqoj8a4/prep.json",
+        "✓ Grant locally verified against trusted issuer 'test-signer-cli' (fp: test-fp...)"
+      ],
+      "test_summary": [
+        "Ran 38 tests in 9.244s",
+        "OK"
+      ],
+      "output_sha256": "4ed3377cc25a24c3d62740fc04cbf220304d17d21a38dd76405fb5a8d332f458"
+    }
+  ],
+  "validation_limits": [
+    "Full regression batch timed out at 240 seconds and is not claimed passed. Its early failures include the existing duplicate test_supervisor module-name fixture import; explicitly preloading .orchestrator/test_supervisor yields 22 passing dependency tests.",
+    "System Python lacked pytest; a task-specific virtual environment supplies dependencies. First smoke attempt failed because a nested python3 selected the externally managed system environment; final smoke uses the virtual environment on PATH. That smoke batch passed stage0 validation/baseline and 19 diagnostics tests, then failed on missing firebase_admin. Installing deploy/execution-grant-issuer/requirements.txt allowed all remaining smoke suites to pass in separate bounded batches; the whole initial script is not claimed passed."
+  ],
+  "review_and_promotion_handoff": {
+    "review_status": "pending independent exact-head admission; this manifest is not reviewer approval",
+    "merge_status": "pending supervisor integrator after independent review and required checks",
+    "promotion_status": "pending merged source; no promotion performed by this source worker",
+    "steps": [
+      "Reviewer Antigravity2 reviews the frozen PR head and this committed manifest through governed approve.",
+      "Supervisor integrator merges that exact approved head to dev after required checks.",
+      "Existing sync-dev-root/promote-supervisor-runtime flow materializes and seals the exact merged runtime; preserve the live coordination root and task-state journal.",
+      "Verify supervisor_runtime_health.py --repo <promoted-runtime> --config-path <installed-live-config> --require-watchdog --json and record exact command/supervisor/watchdog SHA and health before live operator use.",
+      "Only afterward, a separate explicit local Human/Ops action may activate the live collision fence with fresh parent/archive identity.",
+      "Qualify, independently review, and merge fresh post-fence evidence; then separately execute archive_reconcile and verify blocked parent, outbox recovery, receipts, and byte preservation."
+    ],
+    "live_tj_fence_authorized_or_proven_by_this_artifact": false
+  }
+}

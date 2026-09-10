@@ -19,6 +19,7 @@ from common import (
     ROOT,
     apply_claude_oauth_token_file,
     claude_auth_ready,
+    ClaudeAuthRetry,
     claude_credentials_path,
     command_exists,
     config_path,
@@ -862,12 +863,21 @@ def _claude_auth_probe(
     account_lock_key = str(
         (config.get("providers", {}).get(provider_id, {}) or {}).get("account") or ""
     ).strip() or None
-    ready = claude_auth_ready(
-        binary,
-        env=env,
-        refresh_if_needed=True,
-        account_lock_key=account_lock_key,
-    )
+    try:
+        ready = claude_auth_ready(
+            binary,
+            env=env,
+            refresh_if_needed=True,
+            account_lock_key=account_lock_key,
+        )
+    except ClaudeAuthRetry as exc:
+        return {
+            **_auth_probe_record(
+                provider_id, "claude", ready=False,
+                method="claude_auth_status_refresh", metadata=metadata,
+            ),
+            **exc.as_probe(),
+        }
     record = _auth_probe_record(
         provider_id,
         "claude",

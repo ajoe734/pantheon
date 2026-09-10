@@ -1,0 +1,125 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-CI-SMOKE-ACCEPTANCE-TIMEOUT-001",
+  "title": "Bound required Smoke acceptance jobs and verify the workflow contract",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "9efcb763c44fdaf3f9f73dcafe4d9d3bf5e0fd91",
+  "source_baseline": "pantheon-origin-dev@fd6341a8a84dbfc57bf7f6f31f6be0997f713388",
+  "incident_evidence_5736": {
+    "pr": 5736,
+    "pr_title": "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001: fence runtime promotion",
+    "pr_head_ref": "task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+    "pr_head_sha": "2f30e2b5489e2ec9de84f5bda650e1346e66f999",
+    "run_id": 34423815450,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34423815450",
+    "job_id": 102704766980,
+    "job_name": "Smoke acceptance",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34423815450/job/102704766980",
+    "job_started_at": "2026-09-10T01:02:40Z",
+    "job_completed_at": "2026-09-10T02:38:18Z",
+    "duration_seconds": 5738,
+    "duration_human": "95m38s",
+    "job_conclusion": "cancelled",
+    "stuck_step": {
+      "name": "Run tooling smoke gate",
+      "started_at": "2026-09-10T01:03:38Z",
+      "completed_at": "2026-09-10T02:38:15Z",
+      "duration_seconds": 5677,
+      "duration_human": "94m37s",
+      "conclusion": "cancelled"
+    },
+    "diagnosis": "Smoke acceptance had no job-level timeout-minutes declared in .github/workflows/branch-ci.yml. The job remained running for ~95 minutes until superseded and cancelled by workflow concurrency due to a newer commit push. Without a declared job timeout, GitHub Actions applies the default 360-minute limit."
+  },
+  "timing_baseline": {
+    "metric_source": "Recent completed Branch CI Smoke acceptance runs across dev/PR pipeline",
+    "median_seconds": 196,
+    "median_human": "3m16s",
+    "p90_seconds": 418,
+    "p90_human": "6m58s",
+    "p95_seconds": 504,
+    "p95_human": "8m24s",
+    "max_seconds": 696,
+    "max_human": "11m36s",
+    "configured_job_timeout_minutes": 30,
+    "rationale": "30 minutes provides a 2.5x safety buffer above the maximum observed run of 11m36s to prevent false positives from transient runner load, while strictly bounding worst-case step hangs well below GitHub's 360-minute default."
+  },
+  "scope": {
+    "owned": [
+      ".github/workflows/branch-ci.yml: jobs.smoke.timeout-minutes: 30",
+      ".github/workflows/branch-ci.yml: unconditional 'Verify workflow contract' step running python3 -m unittest scripts.test_branch_ci_gate_selection",
+      "scripts/test_branch_ci_gate_selection.py: parse workflow and verify 30-minute timeout, named contract step, unconditional execution, exact command, step order, and preserved step timeouts",
+      "docs/deployment/evidence/OPS-CI-SMOKE-ACCEPTANCE-TIMEOUT-001/evidence.json"
+    ],
+    "not_changing": [
+      "Branch protection rules and required check names (Commit trailers, Runtime mirror guard, Smoke acceptance)",
+      "Workflow triggers, concurrency groups, or checkout settings",
+      "Existing step timeouts (5m on sandbox provision, 3m on sandbox boundary check)",
+      "Component boundary classification and conditional gate selection logic",
+      "Supervisor, auto-worker, runtime, deployment, or product code"
+    ],
+    "composes_with": [
+      "Dev integration pipeline and branch-ci required checks",
+      "All upcoming task PRs requiring Smoke acceptance"
+    ]
+  },
+  "local_verification": [
+    {
+      "command": "python3 -m unittest -v scripts.test_branch_ci_gate_selection",
+      "tests_run": 9,
+      "skips": 0,
+      "failures": 0,
+      "errors": 0,
+      "duration_seconds": 0.054,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest -v scripts.test_component_boundary",
+      "tests_run": 8,
+      "skips": 0,
+      "failures": 0,
+      "errors": 0,
+      "duration_seconds": 0.035,
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/component_boundary.py --path .github/workflows/branch-ci.yml --path scripts/test_branch_ci_gate_selection.py --path docs/deployment/evidence/OPS-CI-SMOKE-ACCEPTANCE-TIMEOUT-001/evidence.json --json",
+      "exit_code": 0,
+      "result": "delivery_touched=true, tooling_only=true, development_tooling_touched=false, product_touched=false"
+    }
+  ],
+  "github_pr_ci": {
+    "status": "passed",
+    "pr": 5739,
+    "pr_url": "https://github.com/ajoe734/pantheon/pull/5739",
+    "head_sha": "9399504d7a6aff8ee71b41364f2c8f4006f4cb5c",
+    "workflow_run_id": 34431924051,
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/34431924051",
+    "smoke_job_id": 102729128269,
+    "smoke_job_url": "https://github.com/ajoe734/pantheon/actions/runs/34431924051/job/102729128269",
+    "smoke_job_duration_seconds": 130,
+    "smoke_job_duration_human": "2m10s",
+    "smoke_job_conclusion": "success",
+    "contract_step": {
+      "name": "Verify workflow contract",
+      "command": "python3 -m unittest scripts.test_branch_ci_gate_selection",
+      "started_at": "2026-09-10T03:06:02Z",
+      "completed_at": "2026-09-10T03:06:02Z",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "all_jobs": {
+      "Runtime mirror guard": "success (21s, ID 102729046191)",
+      "Python packaging provision": "success (25s, ID 102729046408)",
+      "Commit trailers": "success (18s, ID 102729046461)",
+      "Smoke acceptance": "success (2m10s, ID 102729128269)"
+    }
+  }
+}
