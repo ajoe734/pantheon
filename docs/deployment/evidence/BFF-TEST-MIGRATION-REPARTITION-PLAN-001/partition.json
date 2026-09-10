@@ -661,7 +661,7 @@
     "evidence_task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
     "head_sha": "1198bef2b4b514705bc1a9d19c406b4b3c2c7880",
     "observed_origin_dev_sha": "fd6341a8a84dbfc57bf7f6f31f6be0997f713388",
-    "planning_base_sha": "9b867623884b5e8f2322beca801e872f2ce92a82",
+    "planning_base_sha": "0649c5e7732ef82c7b0faecf4ecf83e50f3e7fdf",
     "pull_request": 5714
   },
   "status": "frozen_repartition_plan",

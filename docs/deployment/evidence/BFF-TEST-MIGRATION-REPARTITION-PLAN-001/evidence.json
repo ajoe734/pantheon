@@ -1,5 +1,5 @@
 {
-  "base_sha": "9b867623884b5e8f2322beca801e872f2ce92a82",
+  "base_sha": "0649c5e7732ef82c7b0faecf4ecf83e50f3e7fdf",
   "delivery_nature": {
     "documentation_only": true,
     "statement": "This delivery provides operational documentation, machine-readable exact-file partition evidence, and canonical parent contract revision requests only. It does not modify production code, test suites, test inventory fixtures, hosted deployment configurations, supervisor code, or canonical task states."
@@ -8,7 +8,7 @@
   "document_proof": {
     "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json": {
       "bytes": 34786,
-      "sha256": "287f2a45ed69fefaf3e0e99f87aa9cec10c0913e2586c443c789ed74ef3555aa"
+      "sha256": "e5aa3684659cf9c370ff713c09f029ab2ad9938ba358012e97a9aaa441123883"
     },
     "docs/operations/bff-test-migration-repartition.md": {
       "bytes": 20508,

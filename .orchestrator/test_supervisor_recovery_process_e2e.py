@@ -127,6 +127,16 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
         self.addCleanup(setattr, common, "ROOT", self.original_common_root)
 
         self.config = config_fixture(self.status_root)
+        self.config["review_gate"] = {"github_review_bridge_required": False}
+        self.config["branch_workflow"] = {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                ],
+            },
+        }
         self.config["paths"]["approval_queue"] = str(
             self.status_root / ".orchestrator" / "approval-queue.json"
         )

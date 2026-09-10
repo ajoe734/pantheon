@@ -85,11 +85,13 @@ hold tier via `record_failure_loop_blocker` (intended to commit via a locked
 `BLOCK` transition, status outbox, and sync path rather than
 `persist_task_reassignment`), in the current live runtime implementation that
 escalation call is a no-op that returns `None` before any status mutation or write:
-`supervisor.py` lines 9001 and 9107 pass the `TaskAction.BLOCK` Enum object
-directly into `rewrite_task_machine.transition()`, for which `coerce_action`
-returns `None` and causes `transition()` to raise `TransitionError`. The internal
-handler catches `TransitionError` and returns `None`, so no escalation hold is
-written pending a separate governed source repair.
+while `supervisor.py:9001` is the separate missing-handoff blocker path, only
+`supervisor.py:9107` is the failure-loop escalation path (`_prepare_failure_loop_blocker_locked`);
+line 9107 passes the `TaskAction.BLOCK` Enum object directly into
+`rewrite_task_machine.transition()`, for which `coerce_action` returns `None`
+and causes `transition()` to raise `TransitionError`. The internal handler
+catches `TransitionError` and returns `None`, so no escalation hold is written
+pending a separate governed source repair.
 
 1. **Durable unavailability recovery (`reconcile_unavailable_assignments`)**:
    - Master switch: `worker_reassignment.enabled` (default `false`), bounded
@@ -131,10 +133,12 @@ written pending a separate governed source repair.
        evaluates dispatch admission readiness via `agent_can_take_task`. It
        triggers when the incumbent owner cannot take the task (due to a transient
        reason such as a stale/missing health probe, provider retry-after window,
-       unready endpoint/account in the delivery health state, or temporary zero
-       capacity) while at least one configured fallback candidate satisfies
-       `agent_can_take_task`. It evaluates dispatch readiness/health gates, not
-       current load or spare capacity.
+       or unready endpoint/account in the delivery health state) while at least one
+       configured fallback candidate satisfies `agent_can_take_task`. (Configured
+       zero capacity routes through durable unavailability before load balancing
+       is evaluated, so it must not be listed as a transient lane example.) It
+       evaluates dispatch readiness/health gates, not current load or spare
+       capacity.
    - Safeguards and hold duration: neither condition triggers immediate
      reassignment. Instead, the task enters a supervisor tracking state
      (`load_balance_watch`). The qualifying condition must persist continuously
@@ -183,8 +187,10 @@ written pending a separate governed source repair.
        activity event in the status outbox, write the status file, and
        synchronize the status pipeline and activity log).
        However, in current live runtime, this escalation tier does not function
-       and is a complete no-op: `supervisor.py` lines 9001 and 9107 pass the
-       `TaskAction.BLOCK` Enum object directly to
+       and is a complete no-op: while `supervisor.py:9001` is the separate
+       missing-handoff blocker path, only `supervisor.py:9107` is the
+       failure-loop escalation path (`_prepare_failure_loop_blocker_locked`).
+       Line 9107 passes the `TaskAction.BLOCK` Enum object directly to
        `rewrite_task_machine.transition(...)`, while `task_machine.coerce_action`
        returns `None` for Enum instances, raising `TransitionError`.
        `_prepare_failure_loop_blocker_locked` catches `TransitionError` and
