@@ -57,6 +57,23 @@ def collision_parent_digest(task: Mapping[str, Any]) -> str:
     }})
 
 
+def _validate_collision_activation(marker: dict, row: dict) -> None:
+    activation = marker.get("activation")
+    if not isinstance(activation, dict):
+        raise TaskStateStoreError("archive collision activation is invalid")
+    request = activation.get("request")
+    archive = activation.get("archive")
+    if (activation.get("actor") != "Human/Ops" or not activation.get("activated_at")
+            or not isinstance(request, dict) or not isinstance(archive, dict)
+            or request.get("schema") != "pantheon.archive-collision-fence.v1"
+            or not isinstance(request.get("reason"), str) or not request["reason"].strip()
+            or not isinstance(request.get("parent"), dict)
+            or archive.get("task_id") != row.get("id")
+            or any(request["parent"].get(key) != value for key, value in archive.items())
+            or request["parent"].get("active_generation") != row.get("generation")):
+        raise TaskStateStoreError("archive collision activation binding is invalid")
+
+
 def validate_archive_collision_fences(new_state: dict, previous_state: dict | None) -> None:
     """Keep a reconciled collision blocked through commits, recovery and replay.
 
@@ -72,7 +89,15 @@ def validate_archive_collision_fences(new_state: dict, previous_state: dict | No
         row = rows.get(task_id, {})
         marker = row.get(ARCHIVE_COLLISION_KEY)
         old_marker = old.get(ARCHIVE_COLLISION_KEY)
-        if old_marker is not None and marker != old_marker:
+        upgrading = (isinstance(old_marker, dict) and old_marker.get("phase") == "activation"
+                     and isinstance(marker, dict) and "phase" not in marker
+                     and marker.get("activation") == old_marker.get("activation")
+                     and marker.get("parent_sha256") == old_marker.get("parent_sha256")
+                     and marker.get("evidence_sha256")
+                     and isinstance(marker.get("parent_archive"), dict)
+                     and all(marker["parent_archive"].get(key) == value
+                             for key, value in old_marker.get("activation", {}).get("archive", {}).items()))
+        if old_marker is not None and marker != old_marker and not upgrading:
             raise TaskStateStoreError("archive collision disposition cannot be removed or replaced")
         if marker is None:
             continue
@@ -82,6 +107,32 @@ def validate_archive_collision_fences(new_state: dict, previous_state: dict | No
             raise TaskStateStoreError("archive collision parent fence changed")
         if task_id in facts:
             raise TaskStateStoreError("archive collision parent cannot receive a terminal fact")
+        if "activation" in marker:
+            _validate_collision_activation(marker, row)
+        if marker.get("phase") == "activation":
+            if (marker.get("qualified_facts") != {}
+                    or marker.get("withheld_task_ids") != list(row.get("depends_on") or [])):
+                raise TaskStateStoreError("archive collision activation cannot qualify facts")
+            if previous_state is not None:
+                if facts != old_facts:
+                    # Activation is not terminal fact authority. Existing facts
+                    # remain untouched; unrelated later task completion is allowed.
+                    protected = {task_id, *(row.get("depends_on") or [])}
+                    if any(facts.get(dep) != old_facts.get(dep) for dep in protected):
+                        raise TaskStateStoreError("archive collision activation cannot admit facts")
+                if old_marker is None:
+                    activation = marker["activation"]
+                    expected = copy.deepcopy(old)
+                    expected.update(status="blocked", waiting_for="Human/Ops",
+                                    next=activation["request"]["reason"],
+                                    last_update=activation["activated_at"])
+                    if (old.get("status") != "todo"
+                            or sha256_json(old) != activation["request"]["parent"].get("active_sha256")
+                            or collision_parent_digest(expected) != marker["parent_sha256"]):
+                        raise TaskStateStoreError("archive collision activation requires exact todo CAS")
+            continue
+        if "phase" in marker:
+            raise TaskStateStoreError("archive collision unknown fence phase")
         qualified = marker.get("qualified_facts")
         withheld = marker.get("withheld_task_ids")
         if not isinstance(qualified, dict) or not isinstance(withheld, list):
