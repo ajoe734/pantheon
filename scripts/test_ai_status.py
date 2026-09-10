@@ -3703,6 +3703,10 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertIsNone(ai_status.get_task(state, "BATCH-CONFLICT-ALIASES"))
 
     def test_human_ops_reassignment_is_not_blocked_by_retired_wave_state(self) -> None:
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
         state = {
             "agents": [
                 {"name": "Codex", "current_task_ids": ["WAVE-RETIRED-ONE"]},
@@ -10206,6 +10210,10 @@ class DiscoverOpenPullRequestForBranchTests(unittest.TestCase):
 class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
 
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
@@ -13426,6 +13434,10 @@ class DependencyTrackCommandTests(unittest.TestCase):
 class TaskMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -14428,6 +14440,78 @@ class TaskMetadataTests(unittest.TestCase):
         updated = ai_status.get_task(self.state, "REOPEN-REASSIGN-001")
         self.assertEqual(updated["generation"], 2)
         self.assertNotIn(ai_status.REVIEW_REQUEUE_INTENT_KEY, updated)
+
+    def test_reassignment_rejects_unsettled_runtime_without_assignment_or_audit_changes(self) -> None:
+        worker = {"task_id": "ASSIGN-FENCE", "task_generation": 1, "status": "running"}
+        intent = {"task_id": "ASSIGN-FENCE", "task_generation": 1}
+        cases = []
+        for status in ("running", "waiting_approval", "suspended_approval", "retry_backoff", "stalled", "unknown"):
+            cases.append(("active worker", {"workers": {"run": {**worker, "status": status,
+                "lease_expires_at": "2000-01-01T00:00:00Z", "pid": None}}}))
+        for status in ("pending", "queued", "processing", "launching", "running", "retry_backoff"):
+            cases.append(("dispatch intent", {"queue": {"events": {"evt": {"status": status, "intent": intent}}}}))
+        for key, launch in (("launch_intent", intent), ("launch_receipt", {"worker": worker}),
+                            ("launch_receipt", {"worker": {**worker, "status": "completed"}})):
+            cases.append((f"unsettled {key}", {"supervisor": {"runtime_phase_reservations": {"poll": {key: launch}}}}))
+        cases.extend([
+            ("malformed", {"workers": []}),
+            ("malformed", {"queue": {"events": {"evt": {"status": "queued", "intent": None}}}}),
+            ("malformed", {"supervisor": {"runtime_phase_reservations": {"poll": {"launch_receipt": {}}}}}),
+            ("active worker", {"workers": {"run": {"status": "running"}}}),
+        ])
+        self.state["tasks"].append({"id": "ASSIGN-FENCE", "owner": "Codex", "reviewer": "Claude",
+                                    "status": "in_progress", "generation": 1})
+        for reason, overlay in cases:
+            for owner, reviewer in (("Copilot", "Claude"), ("Codex", "Copilot")):
+                with self.subTest(reason=reason, overlay=overlay, owner=owner, reviewer=reviewer):
+                    ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+                        "version": 2, "workers": {}, "queue": {"events": {}}, **overlay,
+                    }))
+                    before = deepcopy(self.state)
+                    audit = self._test_log_file.read_bytes()
+                    with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}), \
+                         self.assertRaisesRegex(SystemExit, reason):
+                        ai_status.command_assign(self.state, ["ASSIGN-FENCE", owner, reviewer])
+                    self.assertEqual(self.state, before)
+                    self.assertEqual(self._test_log_file.read_bytes(), audit)
+
+    def test_reassignment_requires_readable_raw_runtime(self) -> None:
+        self.state["tasks"].append({"id": "ASSIGN-FENCE", "owner": "Codex", "reviewer": "Claude",
+                                    "status": "in_progress", "generation": 1})
+        for content in (None, "{", "[]", '{"version": 1}'):
+            with self.subTest(content=content):
+                if content is None:
+                    ai_status.ORCHESTRATOR_STATE_FILE.unlink()
+                else:
+                    ai_status.ORCHESTRATOR_STATE_FILE.write_text(content)
+                before = deepcopy(self.state)
+                with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}), \
+                     self.assertRaisesRegex(SystemExit, "runtime admission snapshot"):
+                    ai_status.command_assign(self.state, ["ASSIGN-FENCE", "Copilot", "Claude"])
+                self.assertEqual(self.state, before)
+
+    def test_reassignment_after_settlement_advances_once_and_preserves_other_runtime(self) -> None:
+        self.state["tasks"].append({"id": "ASSIGN-FENCE", "owner": "Codex", "reviewer": "Claude",
+                                    "status": "in_progress", "generation": 1})
+        runtime = {"version": 2, "workers": {
+            "old": {"task_id": "ASSIGN-FENCE", "task_generation": 1, "status": "completed"},
+            "other": {"task_id": "OTHER", "status": "running"}},
+            "queue": {"events": {"old": {"status": "completed", "intent": {"task_id": "ASSIGN-FENCE"}}}},
+            "worker_worktrees": {"leases": {"ASSIGN-FENCE": {"task_id": "ASSIGN-FENCE", "path": "/retained"}}},
+            "supervisor": {"runtime_phase_reservations": {"other": {
+                "launch_intent": {"task_id": "OTHER"}, "launch_receipt": {"worker": {"task_id": "OTHER"}}}}}}
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(runtime))
+        raw = ai_status.ORCHESTRATOR_STATE_FILE.read_bytes()
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "TASK_ASSIGN_EXPECTED_OWNER": "Codex"}), ai_status.buffer_activity_events() as events:
+            ai_status.command_assign(self.state, ["ASSIGN-FENCE", "Copilot", "Claude"])
+            self.assertEqual(self.state["tasks"][0]["generation"], 2)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["type"], "task_reassigned")
+            with self.assertRaises(SystemExit):
+                ai_status.command_assign(self.state, ["ASSIGN-FENCE", "Copilot", "Claude"])
+            self.assertEqual(self.state["tasks"][0]["generation"], 2)
+            self.assertEqual(len(events), 1)
+        self.assertEqual(ai_status.ORCHESTRATOR_STATE_FILE.read_bytes(), raw)
 
     def test_human_ops_assignment_rejects_active_worker_recovery(self) -> None:
         task = {
