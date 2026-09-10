@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-TJ-ARCHIVE-COLLISION-RECONCILIATION-001",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "delivery_class": "development_tooling_archive_collision_repair",
+  "scope": {
+    "reconciliation_command": "archive_reconcile <parent-id> <merged-evidence-file> <evidence-commit>",
+    "operator_role": "Human/Ops only",
+    "live_mutations_performed": false,
+    "archive_files_preserved": true
+  },
+  "verified_behavior": [
+    "lifecycle transition (BLOCKED, reconcile_collision) -> BLOCKED preserves parent non-dispatchability",
+    "TaskStore collision fence prevents unblock, drop, marker removal, or scope mutation on collision parent",
+    "TaskStore rejects admission of terminal fact for parent or withheld dependency",
+    "Fact-first counterexample is rejected before collision disposition is committed",
+    "Qualified dependency archives are verified byte-for-byte with merged delivery lineage and independent review",
+    "Withheld dependency remains out of terminal facts without blocking qualified siblings",
+    "Recovery through status_archive_outbox is atomic, durable, and idempotent on replay",
+    "Headless journal replay preserves collision fence and prevents dispatch"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v .orchestrator/rewrite/test_task_machine.py .orchestrator/rewrite/test_task_state_store.py scripts/test_ai_status.py -k collision",
+      "result": "passed",
+      "tests": 23
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v .orchestrator/rewrite/test_task_machine.py .orchestrator/rewrite/test_task_state_store.py",
+      "result": "passed",
+      "tests": 66
+    }
+  ],
+  "promotion_boundary": "This implementation task delivers source code, tests, and runbook only. It does not perform live mutations on TJ-E2E-012 or dependency task rows. Live reconciliation must be performed by Human/Ops after the validated commit is merged and promoted to the command runtime."
+}
