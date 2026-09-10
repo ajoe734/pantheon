@@ -1,0 +1,101 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-CI-RED-32855B0F8136",
+  "recorded_at": "2026-09-10T09:49:01.825845+00:00",
+  "status": "diagnosed_blocked_on_artifact_contract",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "delivery_complete": false,
+  "original_pr": {
+    "autoMergeRequest": null,
+    "baseRefName": "dev",
+    "headRefName": "task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+    "headRefOid": "2f30e2b5489e2ec9de84f5bda650e1346e66f999",
+    "number": 5736,
+    "state": "OPEN",
+    "url": "https://github.com/ajoe734/pantheon/pull/5736"
+  },
+  "helper_base_sha": "e01b0ba9ad095bd04a95142f50a83f073290ee84",
+  "command_runtime_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+  "ci": {
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34434065398",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34434065398/job/102735510114",
+    "conclusion": "cancelled",
+    "started_at": "2026-09-10T03:38:38Z",
+    "completed_at": "2026-09-10T09:38:58Z",
+    "last_test_output_at": "2026-09-10T03:40:26Z"
+  },
+  "root_cause": {
+    "summary": "The new promotion_launch_guard holds runtime admission through the full start_worker_for_request call. Recovery materialization synchronously runs ai_status.py recover, whose child needs runtime admission; the parent waits for the child while holding its lock.",
+    "stack": [
+      "promotion_launch_guard.guarded",
+      "start_worker_for_request",
+      "mark_worker_recovery_materialized",
+      "sync_status_pipeline",
+      "subprocess.run / communicate"
+    ],
+    "reproducing_test": "test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_sigkill_recovers_receipt_and_launches_one_replacement_generation",
+    "auto_integrator_change_needed": false,
+    "why_focused_review_missed_it": "Original review ran supervisor, runtime/runner, and promotion/readiness suites; CI also runs the separate process recovery E2E suite."
+  },
+  "validation": [
+    {
+      "name": "original_supervisor_suite",
+      "exit_status": 0,
+      "result": "328 tests passed in 57.802s",
+      "output_sha256": "4238012f394a5f34f27ebcc45ccf4d5b0fc41d1f6702aea3a64adba17737b99c",
+      "terminal_output": "visor.WorkerLeaseApprovalWaitProgressTests.test_quiet_foreground_validation_is_not_fenced_as_stalled) ... ok\ntest_running_with_fresh_log_mtime_but_no_work_progress_is_stale (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_running_with_fresh_log_mtime_but_no_work_progress_is_stale) ... ok\ntest_running_with_fresh_progress_is_fresh (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_running_with_fresh_progress_is_fresh) ... ok\ntest_running_with_one_hour_analysis_progress_is_fresh (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_running_with_one_hour_analysis_progress_is_fresh) ... ok\ntest_running_with_stale_progress_is_still_stale (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_running_with_stale_progress_is_still_stale) ... ok\ntest_stale_provider_loop_is_fenced_for_existing_lease_recovery (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_stale_provider_loop_is_fenced_for_existing_lease_recovery) ... ok\ntest_successful_dead_owner_after_handoff_reaps_without_lost_lease (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_successful_dead_owner_after_handoff_reaps_without_lost_lease) ... ok\ntest_successful_dead_owner_without_handoff_keeps_lost_lease_recovery (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_successful_dead_owner_without_handoff_keeps_lost_lease_recovery) ... ok\ntest_suspended_approval_with_stale_progress_is_exempted (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_suspended_approval_with_stale_progress_is_exempted) ... ok\ntest_waiting_approval_with_stale_progress_is_exempted (test_supervisor.WorkerLeaseApprovalWaitProgressTests.test_waiting_approval_with_stale_progress_is_exempted) ... ok\n\n----------------------------------------------------------------------\nRan 328 tests in 57.802s\n\nOK\n"
+    },
+    {
+      "name": "original_process_e2e_reproduction",
+      "exit_status": 1,
+      "result": "50s faulthandler deadline: deadlock, not passed; preceding CLI fixture also failed under inherited worker environment",
+      "output_sha256": "c2b348538f6f991a5f134fd600ebfeee0c9b78f9b29055ab23278c78d1b8bcaf",
+      "terminal_output": "etting config variable advice.detachedHead to false\n\nok\n/usr/lib/python3.12/unittest/suite.py:107: ResourceWarning: unclosed file <_io.BufferedReader name=3>\n  for index, test in enumerate(self):\nResourceWarning: Enable tracemalloc to get the object allocation traceback\ntest_human_ops_cli_reopen_reaches_one_worker_through_fresh_scheduler (test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_human_ops_cli_reopen_reaches_one_worker_through_fresh_scheduler)\nExercise the real CLI producer and fresh-process queue consumer. ... Note: switching to '2f30e2b5489e2ec9de84f5bda650e1346e66f999'.\n\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them, and you can discard any commits you make in this\nstate without impacting any branches by switching back to a branch.\n\nIf you want to create a new branch to retain commits you create, you may\ndo so (now or later) by using -c with the switch command. Example:\n\n  git switch -c <new-branch-name>\n\nOr undo this operation with:\n\n  git switch -\n\nTurn off this advice by setting config variable advice.detachedHead to false\n\nFAIL\ntest_review_requeue_survives_two_hard_process_crash_boundaries_once (test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_review_requeue_survives_two_hard_process_crash_boundaries_once) ... Note: switching to '2f30e2b5489e2ec9de84f5bda650e1346e66f999'.\n\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them, and you can discard any commits you make in this\nstate without impacting any branches by switching back to a branch.\n\nIf you want to create a new branch to retain commits you create, you may\ndo so (now or later) by using -c with the switch command. Example:\n\n  git switch -c <new-branch-name>\n\nOr undo this operation with:\n\n  git switch -\n\nTurn off this advice by setting config variable advice.detachedHead to false\n\nok\ntest_sigkill_recovers_receipt_and_launches_one_replacement_generation (test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_sigkill_recovers_receipt_and_launches_one_replacement_generation) ... Note: switching to '2f30e2b5489e2ec9de84f5bda650e1346e66f999'.\n\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them, and you can discard any commits you make in this\nstate without impacting any branches by switching back to a branch.\n\nIf you want to create a new branch to retain commits you create, you may\ndo so (now or later) by using -c with the switch command. Example:\n\n  git switch -c <new-branch-name>\n\nOr undo this operation with:\n\n  git switch -\n\nTurn off this advice by setting config variable advice.detachedHead to false\n\nTimeout (0:00:50)!\nThread 0x0000781a74d55080 (most recent call first):\n  File \"/usr/lib/python3.12/selectors.py\", line 415 in select\n  File \"/usr/lib/python3.12/subprocess.py\", line 2115 in _communicate\n  File \"/usr/lib/python3.12/subprocess.py\", line 1209 in communicate\n  File \"/usr/lib/python3.12/subprocess.py\", line 550 in run\n  File \"/tmp/drain-fence-ci-repro-32855/.orchestrator/supervisor.py\", line 6125 in sync_status_pipeline\n  File \"/tmp/drain-fence-ci-repro-32855/.orchestrator/supervisor.py\", line 9967 in mark_worker_recovery_materialized\n  File \"/tmp/drain-fence-ci-repro-32855/.orchestrator/supervisor.py\", line 3519 in start_worker_for_request\n  File \"/tmp/drain-fence-ci-repro-32855/.orchestrator/supervisor.py\", line 3235 in guarded\n  File \"/tmp/drain-fence-ci-repro-32855/.orchestrator/test_supervisor_recovery_process_e2e.py\", line 391 in test_sigkill_recovers_receipt_and_launches_one_replacement_generation\n  File \"/usr/lib/python3.12/unittest/case.py\", line 589 in _callTestMethod\n  File \"/usr/lib/python3.12/unittest/case.py\", line 634 in run\n  File \"/usr/lib/python3.12/unittest/case.py\", line 690 in __call__\n  File \"/usr/lib/python3.12/unittest/suite.py\", line 122 in run\n  File \"/usr/lib/python3.12/unittest/suite.py\", line 84 in __call__\n  File \"/usr/lib/python3.12/unittest/suite.py\", line 122 in run\n  File \"/usr/lib/python3.12/unittest/suite.py\", line 84 in __call__\n  File \"/usr/lib/python3.12/unittest/suite.py\", line 122 in run\n  File \"/usr/lib/python3.12/unittest/suite.py\", line 84 in __call__\n  File \"/usr/lib/python3.12/unittest/runner.py\", line 240 in run\n  File \"/usr/lib/python3.12/unittest/main.py\", line 281 in runTests\n  File \"/usr/lib/python3.12/unittest/main.py\", line 105 in __init__\n  File \"<string>\", line 1 in <module>\n"
+    },
+    {
+      "name": "isolated_prototype_failing_test",
+      "exit_status": 0,
+      "result": "1 test passed in 5.919s",
+      "output_sha256": "6cfdb3b1315d83b4410d0a770845a7579ba45e6fc283405232c6416aa2ba3f37",
+      "terminal_output": "test_sigkill_recovers_receipt_and_launches_one_replacement_generation (test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_sigkill_recovers_receipt_and_launches_one_replacement_generation) ... Note: switching to '2f30e2b5489e2ec9de84f5bda650e1346e66f999'.\n\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them, and you can discard any commits you make in this\nstate without impacting any branches by switching back to a branch.\n\nIf you want to create a new branch to retain commits you create, you may\ndo so (now or later) by using -c with the switch command. Example:\n\n  git switch -c <new-branch-name>\n\nOr undo this operation with:\n\n  git switch -\n\nTurn off this advice by setting config variable advice.detachedHead to false\n\nok\n\n----------------------------------------------------------------------\nRan 1 test in 5.919s\n\nOK\n"
+    },
+    {
+      "name": "isolated_prototype_process_e2e_suite",
+      "exit_status": 0,
+      "result": "5 tests passed in 26.751s",
+      "output_sha256": "bf5cfb625ff8881ae0d27f9d8c7952b33a5812c32ee8985b8474826311c7b095",
+      "terminal_output": "y setting config variable advice.detachedHead to false\n\nok\ntest_sigkill_recovers_receipt_and_launches_one_replacement_generation (test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_sigkill_recovers_receipt_and_launches_one_replacement_generation) ... Note: switching to '2f30e2b5489e2ec9de84f5bda650e1346e66f999'.\n\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them, and you can discard any commits you make in this\nstate without impacting any branches by switching back to a branch.\n\nIf you want to create a new branch to retain commits you create, you may\ndo so (now or later) by using -c with the switch command. Example:\n\n  git switch -c <new-branch-name>\n\nOr undo this operation with:\n\n  git switch -\n\nTurn off this advice by setting config variable advice.detachedHead to false\n\nok\ntest_spawn_before_receipt_crash_adopts_exact_process_once (test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_spawn_before_receipt_crash_adopts_exact_process_once)\nKill the supervisor inside deliver(), before a receipt can exist. ... Note: switching to '2f30e2b5489e2ec9de84f5bda650e1346e66f999'.\n\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them, and you can discard any commits you make in this\nstate without impacting any branches by switching back to a branch.\n\nIf you want to create a new branch to retain commits you create, you may\ndo so (now or later) by using -c with the switch command. Example:\n\n  git switch -c <new-branch-name>\n\nOr undo this operation with:\n\n  git switch -\n\nTurn off this advice by setting config variable advice.detachedHead to false\n\nok\n\n----------------------------------------------------------------------\nRan 5 tests in 26.751s\n\nOK\n"
+    }
+  ],
+  "commands": {
+    "provision": "PANTHEON_DEPENDENCY_PYTHON=/tmp/drain-fence-deps-32855/bin/python python3 scripts/dev/provision_python_distribution.py",
+    "baseline": "PYTHONPATH=.orchestrator timeout --kill-after=5s 100s .venv-pantheon/bin/python -m unittest -v test_supervisor",
+    "deadlock": "PYTHONPATH=.orchestrator timeout --kill-after=5s 80s .venv-pantheon/bin/python -c 'import faulthandler, unittest; faulthandler.dump_traceback_later(50, exit=True); unittest.main(module=None, argv=[\"unittest\", \"-v\", \"test_supervisor_recovery_process_e2e\"])'",
+    "prototype": "PYTHONPATH=.orchestrator timeout --kill-after=5s 90s .venv-pantheon/bin/python -c 'import os, faulthandler, unittest; [os.environ.pop(k) for k in list(os.environ) if k.startswith((\"PANTHEON_\", \"ORCH_\"))]; faulthandler.dump_traceback_later(80, exit=True); unittest.main(module=None, argv=[\"unittest\", \"-v\", \"test_supervisor_recovery_process_e2e\"])'"
+  },
+  "prototype": {
+    "scope": "Isolated disposable clone of original PR head; source patch is diagnostic only, not applied to task branch or original PR.",
+    "patch": "diff --git a/.orchestrator/supervisor.py b/.orchestrator/supervisor.py\nindex 9a6eff8a0..b72a2742b 100644\n--- a/.orchestrator/supervisor.py\n+++ b/.orchestrator/supervisor.py\n@@ -3232,7 +3232,14 @@ def promotion_launch_guard(operation):\n             request = args[0] if args else kwargs.get(\"request\")\n             if not promotion_state.promotion_launch_allowed(current, runtime, request.task_id if request is not None else None):\n                 return False, \"runtime_promotion_fenced\", None\n-            return operation(config, state, *args, **kwargs)\n+            result = operation(config, state, *args, **kwargs)\n+        # The recovery projection child acquires runtime admission itself.\n+        # Its canonical receipt is already durable; run projection after unlock.\n+        if (result[0] and request is not None\n+                and request.metadata.get(\"recovery_receipt_id\")\n+                and config.get(\"paths\", {}).get(\"status_file\")):\n+            sync_status_pipeline(config)\n+        return result\n     return guarded\n \n \n@@ -3523,6 +3530,7 @@ def start_worker_for_request(\n             task_generation=int(request.metadata.get(\"task_generation\") or 0),\n             queue_event_id=str(queue_event_id or \"\"),\n             worker_run_id=str(worker_run_id),\n+            sync_projection=False,\n         )\n     write_activity_log(\n         config,\n@@ -9945,6 +9953,7 @@ def mark_worker_recovery_materialized(\n     task_generation: int,\n     queue_event_id: str,\n     worker_run_id: str,\n+    sync_projection: bool = True,\n ) -> bool:\n     if not all((receipt_id, task_id, queue_event_id, worker_run_id)):\n         return False\n@@ -9964,7 +9973,8 @@ def mark_worker_recovery_materialized(\n         )\n     if not applied:\n         return False\n-    sync_status_pipeline(config)\n+    if sync_projection:\n+        sync_status_pipeline(config)\n     return True\n \n \n",
+    "patch_sha256": "37806de2358e41e120902df1bad921cddc8e04e65fbcf67d3473d1a2f66a447f",
+    "boundary": "Keep launch and canonical receipt durable under admission; run projection subprocess after unlock. Existing direct materialization callers retain default sync.",
+    "limitations": [
+      "Prototype is not independently reviewed or production ready. Add explicit lock-release regression and bounded subprocess tests before implementation delivery.",
+      "Source merge and live runtime promotion have not occurred."
+    ]
+  },
+  "required_next_steps": [
+    "Human/Ops must expand this blocked task artifact contract to .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, and .orchestrator/test_supervisor_recovery_process_e2e.py, or redispatch the original task owner to reopen PR #5736 under its own task lease.",
+    "Apply and review a bounded source correction; compose it with current dev and the original promotion patch without modifying a frozen approved head silently.",
+    "Rerun process E2E plus promotion/launch coverage and Branch CI; refresh evidence and obtain independent exact-head approval before supervisor integration.",
+    "Recheck the separate failing Pantheon canonical review gate after the new owner handoff; CI success alone does not grant merge authority."
+  ],
+  "governance": {
+    "current_artifacts": [
+      "scripts/git/auto_integrator.py",
+      "docs/deployment/evidence/INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-CI-RED-32855B0F8136/evidence.json"
+    ],
+    "artifact_contract_actor": "Human/Ops only; scripts/ai_status.py command_artifact_contract",
+    "original_task_mutation": "Current worker lease is bound to this helper task; status mutation of the source task is rejected by the task mismatch guard.",
+    "completion": "Neither original PR updated/superseded nor helper done; this evidence preserves diagnostic progress only."
+  }
+}
