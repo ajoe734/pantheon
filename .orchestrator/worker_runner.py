@@ -838,7 +838,7 @@ def worker_runtime_config(coordination_root: Path) -> dict[str, Any]:
 
 def validate_promotion_admission(coordination_root: Path, command_runtime: dict[str, str]) -> None:
     state = promotion_state.load_runtime_state(worker_runtime_config(coordination_root))
-    if not promotion_state.promotion_admission_allowed(state, command_runtime):
+    if not promotion_state.promotion_launch_allowed(state, command_runtime):
         raise RuntimeError("worker_runner: runtime promotion admission fenced")
 
 

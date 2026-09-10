@@ -701,11 +701,20 @@ def promotion_runtime(identity: Mapping[str, Any]) -> dict[str, str]:
 
 def promotion_admission_allowed(state: Mapping[str, Any], runtime: Mapping[str, Any]) -> bool:
     fence = state.get("promotion", {})
+    if not isinstance(fence, dict):
+        return False
     if not fence:
         return True
     if not isinstance(fence, dict) or fence.get("phase") not in {"ready", "rolled_back"}:
         return False
     return promotion_runtime(runtime) == fence.get("admitted_runtime")
+
+
+def promotion_launch_allowed(state: Mapping[str, Any], runtime: Mapping[str, Any]) -> bool:
+    if not promotion_admission_allowed(state, runtime):
+        return False
+    return all(receipt.get("status") == "consumed"
+               for receipt in state.get("promotion", {}).get("receipts", {}).values())
 
 
 def begin_promotion(state: dict[str, Any], incumbent: Mapping[str, Any], candidate: Mapping[str, Any]) -> str:
@@ -792,7 +801,15 @@ def finish_promotion(state: dict[str, Any], epoch: str, *, rollback: bool = Fals
     fence = state.get("promotion", {})
     if fence.get("epoch") != epoch or fence.get("phase") not in {"draining", "verifying"}:
         raise RuntimeError("stale promotion epoch")
+    if not rollback and any(receipt.get("status") not in {"drained", "consumed"}
+                            for receipt in fence["receipts"].values()):
+        raise RuntimeError("unconfirmed drain receipt prevents promotion admission")
     fence["phase"] = "rolled_back" if rollback else "ready"
+    if rollback:
+        # Unconfirmed signals remain ordinary crash recovery. They are never
+        # promoted into planned receipts merely because rollback succeeded.
+        fence["receipts"] = {run: receipt for run, receipt in fence["receipts"].items()
+                             if receipt.get("status") in {"drained", "consumed"}}
     fence["admitted_runtime"] = fence["incumbent" if rollback else "candidate"]
     fence["finished_at"] = utc_now()
 

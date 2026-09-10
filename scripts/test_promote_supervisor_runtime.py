@@ -16,12 +16,18 @@ import pytest
 
 import promote_supervisor_runtime as promotion
 
+_REAL_VERIFY_PROMOTION_HEALTH = promotion.verify_promotion_health
+_REAL_VERIFY_DRAIN_CAPABILITY = promotion.verify_incumbent_drain_capability
 _REAL_VERIFY_WORKER_SANDBOX = promotion.verify_worker_sandbox
 _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS = promotion.verify_execution_authorization_barriers
 
 
 @pytest.fixture(autouse=True)
 def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Existing replacement fixtures use fake PIDs/minimal source trees. Health
+    # and capability are exercised explicitly by the promotion-drain tests.
+    monkeypatch.setattr(promotion, "verify_promotion_health", lambda *a, **k: {"verified": True})
+    monkeypatch.setattr(promotion, "verify_incumbent_drain_capability", lambda *a, **k: None)
     runtime_parent = tmp_path / "command-runtimes"
     monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", runtime_parent)
     monkeypatch.setattr(
@@ -457,7 +463,7 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched"
+    assert result["outcome"] == "launched", result.get("error", result)
     assert result["command_runtime_seal"]["outcome"] == "sealed"
     assert result["worker_sandbox_preflight"]["outcome"] == "available"
     assert result["stopped_pid"] == 41
@@ -477,7 +483,7 @@ def test_replace_quiesces_incumbent_before_draining_its_writers(
 
     candidate, status_root = _candidate(tmp_path)
     live_config = tmp_path / "runtime" / "live.json"
-    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json"), "state_file": str(status_root / ".orchestrator/worker-runtime/state.json")}}
     live_config.parent.mkdir(parents=True)
     live_config.write_text(json.dumps(incumbent), encoding="utf-8")
     events: list[str] = []
@@ -512,7 +518,7 @@ def test_replace_quiesces_incumbent_before_draining_its_writers(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched"
+    assert result["outcome"] == "launched", result.get("error", result)
     assert events == ["stop", "drain", "launch"]
 
 
@@ -523,7 +529,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
 
     candidate, status_root = _candidate(tmp_path)
     live_config = tmp_path / "runtime" / "live.json"
-    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json"), "state_file": str(status_root / ".orchestrator/worker-runtime/state.json")}}
     live_config.parent.mkdir(parents=True)
     live_config.write_text(json.dumps(incumbent), encoding="utf-8")
     lock_events: list[str] = []
@@ -574,7 +580,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched"
+    assert result["outcome"] == "launched", result.get("error", result)
     assert lock_events == ["entered", "exited"]
 
 
@@ -583,7 +589,7 @@ def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
 ) -> None:
     candidate, status_root = _candidate(tmp_path)
     live_config = tmp_path / "runtime" / "live.json"
-    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+    incumbent = {"paths": {"status_file": str(status_root / "ai-status.json"), "state_file": str(status_root / ".orchestrator/worker-runtime/state.json")}}
     live_config.parent.mkdir(parents=True)
     live_config.write_text(json.dumps(incumbent), encoding="utf-8")
     events: list[str] = []
@@ -742,7 +748,7 @@ def test_status_root_replacement_stops_pid_from_installed_config(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched"
+    assert result["outcome"] == "launched", result.get("error", result)
     assert stopped == [old_pid]
 
 
@@ -918,7 +924,7 @@ def test_replace_supervisor_records_coordination_code_sync(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched"
+    assert result["outcome"] == "launched", result.get("error", result)
     assert result["coordination_code_sync"]["outcome"] == "preserved"
     assert (status_root / ".orchestrator" / "supervisor.py").read_text(
         encoding="utf-8"
@@ -946,7 +952,7 @@ def test_replace_supervisor_survives_coordination_code_sync_failure(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched"
+    assert result["outcome"] == "launched", result.get("error", result)
     assert result["exit_code"] == 0
     assert result["stopped_pid"] == 41
     assert result["launched_pid"] == 42

@@ -95,6 +95,7 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
             "process_generation": wr.worker_process_generation_id(
                 task_id=task["id"], worker_run_id=run_id, queue_event_id="fixture-dispatch",
                 pid=proc.pid, pid_start_ticks=ticks),
+            "lease_acquired_at": datetime.now(timezone.utc).isoformat(),
             "status": "running", "lease_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
             "command": command, "workspace_path": env.get("PANTHEON_WORKTREE_ROOT"),
             "workspace_source_root": str(central.parent / "shared-pantheon")
@@ -116,14 +117,18 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
         if mutate_store:
             mutate_store(journal)
         if publish_receipt:
-            runtime_state = ({"supervisor": {"runtime_phase_reservations": {
+            runtime_snapshot = ({"supervisor": {"runtime_phase_reservations": {
                 "delivery": {"launch_receipt": {"worker": worker}}}}}
                 if receipt_in_phase else {"workers": {run_id: worker}})
+            runtime_snapshot["queue"] = {"version": 2, "events": {"fixture-dispatch": {
+                "intent": {"event_id": "fixture-dispatch", "task_id": worker["task_id"]},
+                "status": "started", "run_id": run_id,
+            }}}
             # Production V2 workers read their launch receipt from the
             # worker-runtime state file, not the retired `.orchestrator` leaf.
             wr.write_json(
                 central / ".orchestrator" / "worker-runtime" / "state.json",
-                runtime_state,
+                {**runtime_state.default_state(), **runtime_snapshot},
             )
         if during_run:
             during_run(proc, journal, state)
@@ -177,9 +182,9 @@ def _write_status(path: Path) -> None:
         encoding="utf-8",
     )
     (path / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
-    (path / ".orchestrator" / "worker-runtime" / "state.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
     (path / ".orchestrator" / "worker-runtime" / "approval-queue.json").write_text("[]", encoding="utf-8")
-    (path / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
     (path / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
     (path / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
     (path / ".orchestrator" / "runtime-admission.lock").touch()
@@ -629,7 +634,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             }
             (central / "ai-status.json").write_text(json.dumps(status_data) + "\n", encoding="utf-8")
             (central / ".orchestrator").mkdir(parents=True, exist_ok=True)
-            (central / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+            (central / ".orchestrator" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
             (central / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
             (central / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
 
@@ -2378,6 +2383,38 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertFalse(self.marker.exists(), "unauthorized provider child produced an effect")
         self.assertFalse(self.heartbeat.exists(), "entry published a starting marker before authorization")
         self.assertFalse(self.runner_status.exists(), "entry published status before authorization")
+
+    def test_planned_sigterm_publishes_bound_receipt_from_real_runner(self):
+        seen = {}
+        def drain(proc, _journal, _state):
+            deadline = time.monotonic() + 10
+            while not self.marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(self.marker.exists())
+            config = wr.worker_runtime_config(self.central)
+            with runtime_state.runtime_state_update(config) as state:
+                worker = next(iter(state["workers"].values()))
+                old = worker["status_command_runtime"]
+                runtime_state.begin_promotion(state, old, {"root": "/candidate", "head": "b" * 40})
+                seen["receipt"] = runtime_state.prepare_promotion_drain(state, worker)
+            proc.terminate()
+        proc = self.run_worker(code="from pathlib import Path; import time; Path('provider-effect').touch(); time.sleep(20)", during_run=drain)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        terminal = json.loads(self.runner_status.read_text())
+        self.assertEqual(terminal["status"], "promotion_drained")
+        self.assertEqual(terminal["signal"], 15)
+        self.assertEqual(terminal["promotion_drain_digest"], seen["receipt"]["digest"])
+
+    def test_unplanned_sigterm_has_no_promotion_receipt(self):
+        def terminate(proc, _journal, _state):
+            deadline = time.monotonic() + 10
+            while not self.marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(self.marker.exists())
+            proc.terminate()
+        proc = self.run_worker(code="from pathlib import Path; import time; Path('provider-effect').touch(); time.sleep(20)", during_run=terminate)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        self.assertNotIn("promotion_drain_digest", json.loads(self.runner_status.read_text()))
 
     def test_exact_canonical_receipt_and_reservation_launch_once(self):
         proc = self.run_worker()

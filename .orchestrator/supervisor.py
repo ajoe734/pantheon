@@ -3229,7 +3229,7 @@ def promotion_launch_guard(operation):
         with runtime_state_lock(config):
             current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
             runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
-            if not promotion_state.promotion_admission_allowed(current, runtime):
+            if not promotion_state.promotion_launch_allowed(current, runtime):
                 return False, "runtime_promotion_fenced", None
             return operation(config, state, *args, **kwargs)
     return guarded
@@ -3630,7 +3630,7 @@ def process_queue(
     with runtime_state_lock(config):
         current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
         runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
-        if not promotion_state.promotion_admission_allowed(current, runtime):
+        if not promotion_state.promotion_launch_allowed(current, runtime):
             return False
     if not bool(ready_dispatch_settings(config).get("enabled", False)):
         return False
@@ -12772,7 +12772,19 @@ def recover_lost_worker_lease(
     task = canonical_task_with_archive_proof(
         config, task_index_from_status(config, status).get(task_id), state=status,
     )
+    if drain and task is not None:
+        existing = _canonical_worker_recovery_receipt(status, task)
+        if existing and existing.get("receipt_id") == "promotion-drain-" + drain["digest"]:
+            # Replay after TaskStore committed but the detached runtime CAS
+            # lost. Adopt the one canonical continuation; never mint another.
+            drain["status"] = "consumed"
+            drain["recovery_receipt_id"] = existing["receipt_id"]
+            _fence_lost_worker_runtime(config, state, worker, existing)
+            return True
     if task is None or not worker_matches_current_task_generation(worker, task):
+        if drain:
+            drain["status"] = "consumed"
+            drain["resolution"] = "canonical_task_generation_advanced"
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12832,6 +12844,9 @@ def recover_lost_worker_lease(
         status="held" if held else "pending",
     )
     if drain:
+        receipt["type"] = "worker_promotion_drained"
+        receipt["receipt_id"] = "promotion-drain-" + drain["digest"]
+        receipt["dedupe_key"] = "promotion-drain:" + drain["digest"]
         receipt["promotion_drain"] = deepcopy(drain)
     persist_worker_recovery_receipt(
         config,
