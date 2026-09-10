@@ -1,4 +1,193 @@
 {
+  "consumer_migration": {
+    "acceptance_universe_preserved": {
+      "b14_full_run_files": 11,
+      "batch_completion_claimed": false,
+      "partition_files": 184
+    },
+    "admission_authority": "authorized Human/Ops governed artifact/dependency-contract operations with fresh complete-row CAS; supervisor dispatch only after complete readback",
+    "contract_changes_applied": false,
+    "focused_full_file_batches": [
+      [
+        "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "services/control-plane/bff/test_srclive_overlay_contract.py"
+      ],
+      [
+        "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "services/control-plane/bff/test_bff_promotion_review_governance.py"
+      ]
+    ],
+    "graph_limit": "Static proposed subgraph including accepted partition edges only. ROLE:accepted-B03-source-seam is non-executable; resolve actual ID and check the entire current canonical graph before dispatch. No canonical dependencies changed.",
+    "no_reverse_dependency": [
+      "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+      "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+      "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+      "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+      "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+      "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+      "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001"
+    ],
+    "obsolete_finmind_assertion_mapping": {
+      "absent_symbols": [
+        "_live_source_health_by_connector",
+        "_overlay_live_finmind_health"
+      ],
+      "all_green_state": "live_readback_ok",
+      "no_truth": "preserve original unavailable provider and state",
+      "provider_status": "retain read_ok for live FinMind",
+      "requirements": "record baseline failures and independently review assertion correspondence; no skip/xfail, lost coverage, legacy wrappers or product DTO changes",
+      "row_count": "source.row_count_last_run and source.rowCountLastRun == 8"
+    },
+    "partition_path": "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json",
+    "partition_sha256": "7d5ab6fbfd5d7ff30bf3767dd4adcf23be0f8c192d07c92b6f8832cec9ebc230",
+    "proposed_dependency_graph": {
+      "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001",
+        "ROLE:accepted-B03-source-seam"
+      ],
+      "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001": [
+        "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+        "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+        "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+        "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+        "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+        "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+        "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+        "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+        "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+        "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+        "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      ],
+      "BFF-TEST-MIGRATION-B01-AGORA-CORE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ]
+    },
+    "read_only_composition_consumer": "services/control-plane/bff/tests/test_bff_main_composition.py; export allowlist strings are not patches/imports; must pass unchanged",
+    "sequence": [
+      "finish existing overlapping writers or obtain governed handback",
+      "remove five paths from overlapping grants, then add exact paths to seam; no partial admission",
+      "preserve prerequisites; add seam prerequisite to B05/B07/B14/B15 and B05 journal corrective; validate complete canonical DAG",
+      "single exact-head PR contains projection extraction and five bounded consumer edits; full-file and focused suites pass",
+      "after seam merge and canonical done remove temporary seam grants and restore original grants with lease checks and fresh CAS; rebase consumer PRs"
+    ],
+    "strategy": "atomic source and bounded consumer edits after explicit temporary artifact transfers",
+    "transfers": [
+      {
+        "change": "canonical delta import and real instance health builder with explicit empty read fixture",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      },
+      {
+        "change": "replace main loader patch and overlay call with registry/snapshot-backed instance in source-to-health drill",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      },
+      {
+        "change": "replace all five main loader patches and overlay calls with registry/snapshot-backed instance",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      },
+      {
+        "change": "replace source-truth patches and calls; map two absent FinMind helper tests to current DTO with reviewed assertion correspondence",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      },
+      {
+        "change": "replace forbidden main loader patch with two observable read-port counters, zero-call assertions, and positive fixture control",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "path": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      }
+    ]
+  },
   "decision": {
     "cache_owner": "one cache per explicit PersonaService instance; same instance shared by app persona and runtime consumers",
     "canonical_module": "services/control-plane/bff/personas/service.py",
@@ -18,7 +207,7 @@
       "fake projection callback as migration proof"
     ]
   },
-  "decision_document_sha256": "96059bc87196b23f7e5e44fd78d10440a2941a45e5579e995b3c02cb02c09728",
+  "decision_document_sha256": "bc564089e5edcc7777920e77ed39f6a842f937dc7a50ab70f3ca728236e50ed4",
   "decision_status": "proposed_for_independent_exact_head_review",
   "future_packet": {
     "artifacts": [
@@ -26,7 +215,12 @@
       "services/control-plane/bff/personas/service.py",
       "services/control-plane/bff/personas/test_health_projection.py",
       "services/control-plane/bff/personas/test_health_projection_wiring.py",
-      "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001/evidence.json"
+      "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001/evidence.json",
+      "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+      "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+      "services/control-plane/bff/test_srclive_overlay_contract.py",
+      "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+      "services/control-plane/bff/test_bff_promotion_review_governance.py"
     ],
     "consumer_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
     "id": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
@@ -44,12 +238,13 @@
   "limits": [
     "Static AST audit and documentary validation only; no product pytest or hosted tests executed.",
     "Future packet is proposed, not an admitted source grant.",
-    "Legacy tests that patch main require migration in their owning batches.",
+    "Five projection consumers must migrate atomically in the future seam under explicit temporary grants; remaining batch work follows only after grants are restored.",
     "Independent review, required checks, merge and canonical done are pending; their authority is the frozen canonical binding and GitHub readback, not this pre-review record."
   ],
   "owner": "Codex",
-  "recorded_at": "2026-09-10T08:04:14Z",
+  "recorded_at": "2026-09-10T08:47:00Z",
   "reviewer": "Antigravity",
+  "revision_reason": "P1 reopen: close missing governed, cycle-free migration path for named main projection test consumers.",
   "schema_version": "pantheon.bff.projection-ownership-decision.v1",
   "scope": {
     "b14_migration_delivered": false,

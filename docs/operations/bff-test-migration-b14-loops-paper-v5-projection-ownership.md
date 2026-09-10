@@ -152,13 +152,107 @@ Exact proposed writable artifacts (no wildcard grants):
 3. `services/control-plane/bff/personas/test_health_projection.py` (new focused service tests)
 4. `services/control-plane/bff/personas/test_health_projection_wiring.py` (new static composition and real-router injection tests)
 5. `docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001/evidence.json`
+6. `services/control-plane/bff/test_p0_tw_paper_activate_honesty.py`
+7. `services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py`
+8. `services/control-plane/bff/test_srclive_overlay_contract.py`
+9. `services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py`
+10. `services/control-plane/bff/test_bff_promotion_review_governance.py`
 
 `runtime/router.py` and `runtime/service.py` are read-only consumers for this
-packet: the existing callback key/signature suffices. B14's eleven tests and
-evidence remain B14-owned. Parent catalog/gates and the source-health/fleet tests
-owned by other migration batches are not added implicitly. If preflight finds
-an additional required source or test edit, revise the governed contract before
-execution; no out-of-scope compatibility wrapper may hide the missing grant.
+packet: the existing callback key/signature suffices. Items 6–10 are explicit
+**proposed temporary file transfers**, required before this packet may execute;
+the current docs task has no grant to edit them. The transfer protocol below
+supersedes the previous instruction to leave all consumer fixes downstream.
+B14's evidence, parent catalog/gates, and every other test remain outside this
+packet. If preflight finds another required edit, revise the governed contract
+before execution; no compatibility wrapper may hide a missing grant.
+
+### Atomic consumer migration and governed file transfers (P1 correction)
+
+**Delete main's projection definitions/loader/cache only in the same reviewed
+source-seam PR that updates every affected test call/import/patch below.** A
+bound overlay alias does not redirect a monkeypatch of main's old loader into
+the service instance. A direct delta import alone does not solve that problem.
+There is no supported intermediate merge with inert patches, absent symbols,
+or a source seam waiting on its downstream B14 consumer.
+
+Paths in this table are relative to `services/control-plane/bff/`. Batch IDs
+and full paths are reproduced in the evidence `consumer_migration` section
+from the accepted repartition's `partition.json`.
+
+| Exact test file | Current partition owner | Source-seam edit and required assertion coverage |
+| --- | --- | --- |
+| `test_p0_tw_paper_activate_honesty.py` | B14 | Import the canonical service delta; call the real instance builder with an explicit empty read fixture. Retain unavailable return, TW default persona, seed and telemetry assertions. |
+| `test_loop_auto_bff004_cross_loop_drill.py` | B14 | Replace the main loader patch and overlay call in the source-to-health drill with the real instance overlay and explicit registry/health snapshot fixture. Preserve provider, binding, health-source and live-ingestion assertions; leave other drills for B14. |
+| `test_srclive_overlay_contract.py` | B15 | Replace all five main-loader patches/overlay calls with explicit service/read-port fixtures. Retain all-green summary, TW/US/crypto connector mapping, unavailable credential and missing-truth assertions. |
+| `test_pathreon_market_persona_fleet_contract.py` | B07 | Migrate all source-truth patches/overlay calls and the two obsolete FinMind overlay tests to the canonical instance and read-port fixture. Preserve credential/degraded behavior, source mapping, row count, live status and missing-truth intent as detailed below; unrelated fleet routes remain B07 work. |
+| `test_bff_promotion_review_governance.py` | B05 | Replace the readiness test's forbidden main-loader patch with observable counters at both injected read-port methods `get_source_connector_registry` and `get_source_health_usage_snapshot`. Assert zero calls as well as the existing two batched reads and forbidden fleet subreads. Its unrelated journal/router migration stays downstream. |
+
+The two FinMind tests already name absent `_live_source_health_by_connector`
+and `_overlay_live_finmind_health` exports in the audited source. Do not restore
+them or treat this pre-existing failure as a pass. Record baseline outcomes and
+an explicit assertion correspondence in the seam evidence: live FinMind still
+becomes `read_ok`; the current canonical all-green state is
+`live_readback_ok`; row count 8 is asserted on the FinMind source's
+`row_count_last_run` (and camel alias), replacing the obsolete top-level
+`finmind_live_row_count_last_run`; no truth preserves the original unavailable
+provider/state. These mappings follow the existing service projection and
+`_upgrade_all_green_data_source_state`, not a production DTO change. Require
+independent review of this correspondence; no skipped/xfail tests, deleted
+coverage, or restored legacy wrapper is acceptable.
+
+Use fixtures that exercise the real loader through its registry and snapshot
+ports, not a patched loader/method result. For the readiness negative-read
+test, record calls independently of thrown exceptions because enrichment
+contains exceptions; include a fixture control proving those counters increment
+when the real overlay is invoked on a fresh service. Preserve the original
+endpoint request/output checks while replacing its obsolete negative sentinel.
+The static composition suite's delta/builder strings are an export allowlist,
+not imports or patches; it stays read-only and must pass unchanged. At source
+admission, rescan all references, including `_overlay_live_finmind_health`,
+and reject any newly discovered unassigned consumer.
+
+The supervisor/development bridge must arrange for authorized Human/Ops contract
+admission through governed artifact/dependency-contract operations with fresh
+complete-row CAS digests; this document is a proposal and performs none of them:
+
+1. Read the current canonical rows, dependencies, exact artifacts, open PRs and
+   leases for the seam, B05/B07/B14/B15 and their admitted corrective writers.
+   In particular reconcile B14 PR #5751 and the proposed B05 journal seam's
+   overlapping governance test grant. Let an existing writer finish and release
+   its lease or obtain an explicit governed handback before transfer.
+2. Temporarily remove items 6–10 from all overlapping writer grants before adding
+   those exact paths to this source-seam task. Retain each batch's other files,
+   evidence and prerequisites. Only the seam holds these five file leases during
+   extraction, and acceptance limits its edits to the projection consumers above.
+   Record removals/additions and original destination tasks in the seam admission
+   evidence. Partial contract application is not dispatch-ready.
+3. Add the seam as a prerequisite of B05, B07, B14 and B15, preserving their
+   existing prerequisites. Serialize the B05 journal corrective behind the seam
+   as well before restoring its overlapping grant. The seam depends only on
+   this decision, the accepted B03 source seam and their upstream prerequisites;
+   it must not depend on any of those consumer batches, their corrective writers,
+   or the parent migration. Validate the **entire current canonical graph** for
+   cycles before dispatch, not just this proposed subgraph. A pre-existing path
+   from B03 to a consumer/parent needs a governed graph correction first.
+4. Deliver production extraction and the five bounded consumer edits atomically
+   at one exact reviewed head. Validate all five full files plus the focused
+   service/router/composition suites; preserve collection and assertion coverage.
+   A partial patch or uncollected/failing batch does not authorize symbol removal
+   to merge. Record any pre-existing failures separately; do not claim them green.
+5. After the seam is reviewed, merged and canonically done, remove the five
+   temporary grants from the seam and restore them to their original batches
+   using fresh CAS and lease checks. Restore the B05 corrective overlap only
+   under its serialized lease. Read back contracts before redispatch. Rebase
+   consumer PRs on the merged seam; they retain full batch acceptance and may
+   not restore main projection patches. This transfer does not mark a batch done
+   or alter the 184-file final acceptance universe or the eleven-file B14 run.
+
+This order is cycle-free by construction for the added edges: decision + B03
+source seam → atomic B14 source seam → B05/B07/B14/B15 → parent. Other main
+writers still follow the serial order below. Neither a downstream migration nor
+parent cleanup unlocks the source seam. No worker may infer these transfers
+from this document without canonical admission readback.
 
 ### API and dependency direction
 
@@ -254,14 +348,21 @@ timeout 180 "$PANTHEON_PY" -m pytest -q \
   services/control-plane/bff/test_bff_runtimes_contract.py \
   services/control-plane/bff/test_pkt010_runtime_state_board_contract.py \
   services/control-plane/bff/tests/test_bff_main_composition.py
+timeout 180 "$PANTHEON_PY" -m pytest -q \
+  services/control-plane/bff/test_p0_tw_paper_activate_honesty.py \
+  services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py \
+  services/control-plane/bff/test_srclive_overlay_contract.py
+timeout 180 "$PANTHEON_PY" -m pytest -q \
+  services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py \
+  services/control-plane/bff/test_bff_promotion_review_governance.py
 ```
 
 After that seam merges, B14 migrates its eleven exact partition files to real
 service/router seams, including the honesty test and cross-loop source-health
 drill. Its focused run must collect all eleven files and preserve each assertion.
-Other batch owners must replace main-loader monkeypatches in the caller inventory
-with explicit service fixtures under their own grants. Do not count legacy
-tests as passing because their patched globals have become unused. Source-seam
+The five projection consumer edits already land atomically with the seam;
+restored batch owners handle only their remaining migrations and full acceptance.
+Do not count tests as passing because their patched globals became unused. Source-seam
 and B14 manifests record separate outcomes; source-seam completion is not B14
 migration completion.
 
