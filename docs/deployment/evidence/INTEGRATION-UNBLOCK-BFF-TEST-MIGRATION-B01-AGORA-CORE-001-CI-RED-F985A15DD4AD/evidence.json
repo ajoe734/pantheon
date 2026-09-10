@@ -1,0 +1,37 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-CI-RED-F985A15DD4AD",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "1a46c158c210d82ef93f43ed5db24087f417512f",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-CI-RED-F985A15DD4AD/evidence.json"
+  ],
+  "source_task": "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/5760",
+  "original_head": "5ac94fb9151c3f6dbb21a51924a074817ff28fb3",
+  "original_base": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
+  "root_cause": {
+    "workflow": "Persona Owner Contract",
+    "check": "Persona provisioning owner contracts",
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/34474829564/attempts/1",
+    "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression",
+    "failure": "OSError: [Errno 39] Directory not empty: compensation/lease-controller/.git/info during TemporaryDirectory cleanup",
+    "result": "1 failed, 1247 passed, 1 skipped, 9 subtests passed; exit 1",
+    "mechanism": "Fixture Git automatic maintenance can leave a detached writer alive during strict temporary-directory cleanup. The old PR head does not contain the merged fixture maintenance repair.",
+    "fix_pr": "https://github.com/ajoe734/pantheon/pull/5773",
+    "fix_commit": "a4e7171cc8140ca2790cb4d148a3dcae8ce1ef06",
+    "fix_merge": "80e283038b131369ab357bc20687631ee67e3613",
+    "fix_evidence": "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-FIXTURE-GIT-CLEANUP-001/evidence.json",
+    "integrator_disposition": "No auto_integrator.py change needed: rejecting a substantive failed CI check is correct."
+  },
+  "review_gate_observation": {
+    "canonical_source_status": "review_approved",
+    "github_context": "Pantheon canonical review gate",
+    "github_state": "failure",
+    "proof_tag_lookup": "GET git/ref/tags/pantheon-review/approve/5ac94fb9151c3f6dbb21a51924a074817ff28fb3 returned HTTP 404",
+    "required_followup": "The source owner and reviewer must renew the exact-head governed handoff and approval after the PR refresh. This unblock task does not manufacture approval proof or use the old approval for a new head."
+  },
+  "validation": [],
+  "delivery_status": "diagnosis anchored; CI rerun and current-dev fixture verification in progress"
+}
