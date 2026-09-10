@@ -204,7 +204,8 @@
         "STRUCT-RETIRE-001"
       ],
       "depends_on_after_plan": [
-        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
       ],
       "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001/evidence.json",
       "group": "B08_strategy_capital_ranking",
@@ -290,7 +291,8 @@
         "STRUCT-RETIRE-001"
       ],
       "depends_on_after_plan": [
-        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
       ],
       "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001/evidence.json",
       "group": "B11_management_assistant_ops",
@@ -324,7 +326,8 @@
         "STRUCT-RETIRE-001"
       ],
       "depends_on_after_plan": [
-        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
       ],
       "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001/evidence.json",
       "group": "B12_management_console_read_models",
@@ -490,7 +493,8 @@
         "STRUCT-RETIRE-001"
       ],
       "depends_on_after_plan": [
-        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
       ],
       "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001/evidence.json",
       "group": "B18_cross_cutting_consolidation",
@@ -522,9 +526,16 @@
       "services/control-plane/bff/tests/test_bff_test_architecture.py",
       "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json"
     ],
+    "baseline_pre_revision_observation": {
+      "canonical_cas_digest": "692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2",
+      "generation": 24,
+      "notes": "Pre-revision baseline observation at generation 24 before Step 2 artifact narrowing and Step 3 child admission. Non-executable at Step 4; Step 4 requires a fresh complete-row CAS digest computed dynamically from canonical state after Step 2 and Step 3.",
+      "status": "blocked"
+    },
     "current_generation": 24,
     "current_status": "blocked",
     "dependency_contract_request_template": {
+      "cas_execution_requirement": "Human/Ops must compute a fresh complete-row CAS digest of BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 dynamically from canonical state after completing Step 2 artifact narrowing and Step 3 child admission. The pre-revision baseline digest 692d7238... is non-executable at Step 4 because Step 2 mutates the parent task row across multiple revisions.",
       "reason": "Operator-authorized parent dependency update: serialize test migration parent after prerequisite planning task BFF-TEST-MIGRATION-REPARTITION-PLAN-001 and all 18 decoupled child batches (B01-B18), preserving existing dependencies (BFF-TEST-ARCH-001, JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001, BFF-AUTH-SESSION-SEAM-PREREQUISITE-001) and blocked hold semantics.",
       "tasks": [
         {
@@ -552,7 +563,7 @@
             "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
             "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
           ],
-          "expected_sha256": "692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2",
+          "expected_sha256": "<FRESH_COMPLETE_ROW_CAS_DIGEST_POST_ARTIFACT_NARROWING_AND_CHILD_ADMISSION>",
           "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
         }
       ]
@@ -634,6 +645,7 @@
       {
         "assigned_batch": "B04_security_error_idempotency",
         "assigned_task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "consumer_dependency_rule": "Consumer batches B08, B11, B12, and B18 declare an explicit task dependency on BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001 to ensure rebalance_authority_test_support.py is decoupled before consumers execute.",
         "file": "services/control-plane/bff/tests/rebalance_authority_test_support.py",
         "imported_by_external_batches": [
           "B08_strategy_capital_ranking",
@@ -641,7 +653,7 @@
           "B12_management_console_read_models",
           "B18_cross_cutting_consolidation"
         ],
-        "notes": "Imports main as bff_main; provides MarketPersonaProjectionTestDouble and fixture context managers. Decoupled within B04 to ensure consumers test without global mutation."
+        "notes": "Imports main as bff_main; provides MarketPersonaProjectionTestDouble and fixture context managers. Decoupled within B04 to ensure consumers test without global mutation. Consumer batches B08, B11, B12, and B18 depend on B04."
       }
     ],
     "shared_test_fixtures": [

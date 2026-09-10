@@ -7,15 +7,15 @@
   "delivery_state": "ready_for_independent_review",
   "document_proof": {
     "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json": {
-      "bytes": 34786,
-      "sha256": "e5aa3684659cf9c370ff713c09f029ab2ad9938ba358012e97a9aaa441123883"
+      "bytes": 36220,
+      "sha256": "16e4a9347ee6f78d0fd71d17d3fa998037a20ddfc26d687a9fc1ee1ee00f24bd"
     },
     "docs/operations/bff-test-migration-repartition.md": {
-      "bytes": 20508,
-      "sha256": "cd10c67e8e9ea0c94ec0c69a1805b77a81255062506a3ff3463aefd3a4b5a7af"
+      "bytes": 25859,
+      "sha256": "ac6d00a22c1622782a1ca9e85ca6f4f969ff5e0a1670040efdff284e5845c9fb"
     }
   },
-  "owner": "Antigravity",
+  "owner": "Antigravity2",
   "packet_materialization_layout": {
     "max_tasks_per_packet": 16,
     "packets": [
@@ -53,10 +53,12 @@
   },
   "parent_task_reference": {
     "base_sha": "2b4c83dee61a7943f12e3a8a3275a487755fe98c",
+    "baseline_pre_revision_observation": "Observed at canonical generation 24 prior to planning execution; non-executable at Step 4.",
     "canonical_cas_digest": "692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2",
     "canonical_generation": 24,
     "canonical_hold_receipt": "lost-lease-972da928c370db43096eb771f9c9440effc6c620542077844dec2c1c985fe087",
     "canonical_status": "blocked",
+    "cas_execution_requirement": "Human/Ops must compute fresh complete-row CAS digest dynamically from canonical state after Step 2 artifact narrowing and Step 3 child admission before executing dependency-contract; baseline pre-revision digest 692d7238... is non-executable at Step 4.",
     "head_sha": "1198bef2b4b514705bc1a9d19c406b4b3c2c7880",
     "observed_origin_dev_sha": "fd6341a8a84dbfc57bf7f6f31f6be0997f713388",
     "open_pr": 5714,
@@ -70,6 +72,13 @@
   },
   "partition_proof": {
     "allowlist_overlap": false,
+    "b04_consumer_batches": [
+      "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+      "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+      "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+      "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+    ],
+    "b04_dependency_enforced": true,
     "batches_count": 18,
     "graph_acyclic": true,
     "migrated_overlap": false,
@@ -131,10 +140,10 @@
         "terminal_output": "Verified: partition matches PR #5714 planned and mislabeled decoupled suites exactly"
       },
       {
-        "command": "python3 -c \"import json, os; from collections import defaultdict, deque; status_root = os.environ.get('PANTHEON_STATUS_ROOT', '.'); status_data = json.load(open(os.path.join(status_root, 'ai-status.json'))); tasks = {t['id']: t for t in status_data.get('tasks', [])}; d = json.load(open('docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json')); children = [c['task_id'] for c in d['candidate_children']]; all_nodes = set(tasks.keys()) | set(children); graph = defaultdict(list); in_degree = defaultdict(int); [graph['BFF-TEST-MIGRATION-REPARTITION-PLAN-001'].append(c) or in_degree.update({c: in_degree[c] + 1}) for c in children]; [graph[dep].append(tid) or in_degree.update({tid: in_degree[tid] + 1}) for tid, t in tasks.items() for dep in (set(t.get('depends_on', [])) | (set(children) | {'BFF-TEST-MIGRATION-REPARTITION-PLAN-001'} if tid == 'BFF-TEST-FULL-MIGRATION-CORRECTIVE-001' else set())) if dep in all_nodes]; q = deque([n for n in all_nodes if in_degree[n] == 0]); visited = 0; [(visited := visited + 1) for _ in iter(lambda: q.popleft() if q else None, None) if _ is not None and not [in_degree.update({nxt: in_degree[nxt] - 1}) or (q.append(nxt) if in_degree[nxt] == 0 else None) for nxt in graph[_]]]; assert visited == len(all_nodes); print(f'Verified: DAG is strictly acyclic ({visited}/{len(all_nodes)} nodes visited)')\"",
+        "command": "python3 -c \"import json, os; from collections import defaultdict, deque; status_root = os.environ.get('PANTHEON_STATUS_ROOT', '.'); status_data = json.load(open(os.path.join(status_root, 'ai-status.json'))); tasks = {t['id']: t for t in status_data.get('tasks', [])}; d = json.load(open('docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json')); child_tasks = {c['task_id']: c for c in d['candidate_children']}; children_ids = set(child_tasks.keys()); all_nodes = set(tasks.keys()) | children_ids; graph = defaultdict(list); in_degree = defaultdict(int); [graph[dep].append(cid) or in_degree.update({cid: in_degree[cid] + 1}) for cid, c in child_tasks.items() for dep in c.get('depends_on_after_plan', ['BFF-TEST-MIGRATION-REPARTITION-PLAN-001'])]; [graph[dep].append(tid) or in_degree.update({tid: in_degree[tid] + 1}) for tid, t in tasks.items() for dep in (set(t.get('depends_on', [])) | (children_ids | {'BFF-TEST-MIGRATION-REPARTITION-PLAN-001'} if tid == 'BFF-TEST-FULL-MIGRATION-CORRECTIVE-001' else set())) if dep in all_nodes]; q = deque(sorted([n for n in all_nodes if in_degree[n] == 0])); topo = []; [(topo.append(curr) or [in_degree.update({nxt: in_degree[nxt] - 1}) or (q.append(nxt) if in_degree[nxt] == 0 else None) for nxt in sorted(graph[curr])]) for _ in iter(lambda: q.popleft() if q else None, None) if _ is not None for curr in [_]]; assert len(topo) == len(all_nodes); idx_b04 = topo.index('BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001'); assert all(idx_b04 < topo.index(c) for c in ['BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001', 'BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001', 'BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001', 'BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001']); print(f'Verified: DAG is strictly acyclic ({len(topo)}/{len(all_nodes)} nodes) and B04 precedes B08/B11/B12/B18')\"",
         "exit_code": 0,
         "result": "passed",
-        "terminal_output": "Verified: DAG is strictly acyclic (66/66 nodes visited)"
+        "terminal_output": "Verified: DAG is strictly acyclic (65/65 nodes) and B04 precedes B08/B11/B12/B18"
       },
       {
         "command": "git diff --check",

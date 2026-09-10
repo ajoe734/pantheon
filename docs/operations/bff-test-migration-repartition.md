@@ -1,9 +1,9 @@
 # BFF Test Migration Repartition and Parent Contract Revision Plan
 
-Status: governed planning prerequisite complete (`BFF-TEST-MIGRATION-REPARTITION-PLAN-001`)  
-Target repo: `ajoe734/pantheon`  
-Associated PR: [#5714](https://github.com/ajoe734/pantheon/pull/5714) anchor rebaselined  
-Delivery scope: documentation and machine-readable evidence only; no production or test code changes  
+Status: governed planning prerequisite complete (`BFF-TEST-MIGRATION-REPARTITION-PLAN-001`)
+Target repo: `ajoe734/pantheon`
+Associated PR: [#5714](https://github.com/ajoe734/pantheon/pull/5714) anchor rebaselined
+Delivery scope: documentation and machine-readable evidence only; no production or test code changes
 
 ---
 
@@ -87,6 +87,7 @@ The following fixtures are already decoupled from `main` globals and are inherit
 - **Current State**: Directly imports `main as bff_main`, mutates `bff_main.read_store` and `bff_main.command_store`, and instantiates `TestClient(bff_main.app)`.
 - **Assignment**: Placed within **B04 (`BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001`)** for decoupling.
 - **Consumer Batches**: Imported by test suites in B08 (`test_bff_rebalance_proposals.py`, `test_ppl_alloc_012_ranking_projection.py`), B11 (`test_management_nl_assistant_provider.py`), B12 (`test_management_read_budget.py`), and B18 (`test_bff_emergency_containment.py`).
+- **Consumer Dependency Rule**: Because B04 is assigned the decoupling of `rebalance_authority_test_support.py`, consumer batches B08, B11, B12, and B18 must declare an explicit task dependency on `BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001` in addition to `BFF-TEST-MIGRATION-REPARTITION-PLAN-001`. This ensures `rebalance_authority_test_support.py` is safely decoupled and stabilized before any consumer test suites execute.
 
 ---
 
@@ -107,27 +108,27 @@ The 184 remaining non-allowlisted test files are grouped into 18 domain-oriented
 
 ### 4.2 Batch Summary Table
 
-| Batch | Domain Group | Task ID | File Count | Unique Evidence Path |
-|---|---|---|:---:|---|
-| **B01** | Agora Core | `BFF-TEST-MIGRATION-B01-AGORA-CORE-001` | 17 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B01-AGORA-CORE-001/evidence.json` |
-| **B02** | Ask Assistant & Workshops | `BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001` | 4 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001/evidence.json` |
-| **B03** | Auth, Session & JWKS | `BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001` | 6 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001/evidence.json` |
-| **B04** | Security, Errors & Idempotency | `BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001` | 10 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001/evidence.json` |
-| **B05** | Governance Approvals | `BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001` | 7 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001/evidence.json` |
-| **B06** | Governance Audit Committee | `BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001` | 5 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001/evidence.json` |
-| **B07** | Persona Provisioning | `BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001` | 17 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001/evidence.json` |
-| **B08** | Strategy Capital & Ranking | `BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001` | 13 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001/evidence.json` |
-| **B09** | Research & Knowledge | `BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001` | 10 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001/evidence.json` |
-| **B10** | Evolution Programs | `BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001` | 8 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001/evidence.json` |
-| **B11** | Management Assistant & Ops | `BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001` | 16 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001/evidence.json` |
-| **B12** | Management Console Read Models | `BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001` | 9 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001/evidence.json` |
-| **B13** | Runtime Health & Readiness | `BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001` | 10 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001/evidence.json` |
-| **B14** | Loops & Paper V5 | `BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001` | 11 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json` |
-| **B15** | Deployment & Hosted | `BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001` | 6 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001/evidence.json` |
-| **B16** | Command Write & Workflow | `BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001` | 10 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001/evidence.json` |
-| **B17** | Router & SSE Surfaces | `BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001` | 11 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/evidence.json` |
-| **B18** | Cross-Cutting & Consolidation | `BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001` | 14 | `docs/deployment/evidence/BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001/evidence.json` |
-| **Total** | **All 18 Batches** | — | **184** | — |
+| Batch | Domain Group | Task ID | File Count | Dependencies After Plan | Unique Evidence Path |
+|---|---|---|:---:|---|---|
+| **B01** | Agora Core | `BFF-TEST-MIGRATION-B01-AGORA-CORE-001` | 17 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B01-AGORA-CORE-001/evidence.json` |
+| **B02** | Ask Assistant & Workshops | `BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001` | 4 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001/evidence.json` |
+| **B03** | Auth, Session & JWKS | `BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001` | 6 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001/evidence.json` |
+| **B04** | Security, Errors & Idempotency | `BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001` | 10 | `PLAN-001` (owns `rebalance_authority_test_support.py`) | `docs/deployment/evidence/BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001/evidence.json` |
+| **B05** | Governance Approvals | `BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001` | 7 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001/evidence.json` |
+| **B06** | Governance Audit Committee | `BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001` | 5 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001/evidence.json` |
+| **B07** | Persona Provisioning | `BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001` | 17 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001/evidence.json` |
+| **B08** | Strategy Capital & Ranking | `BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001` | 13 | `PLAN-001`, `B04` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001/evidence.json` |
+| **B09** | Research & Knowledge | `BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001` | 10 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001/evidence.json` |
+| **B10** | Evolution Programs | `BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001` | 8 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001/evidence.json` |
+| **B11** | Management Assistant & Ops | `BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001` | 16 | `PLAN-001`, `B04` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001/evidence.json` |
+| **B12** | Management Console Read Models | `BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001` | 9 | `PLAN-001`, `B04` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001/evidence.json` |
+| **B13** | Runtime Health & Readiness | `BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001` | 10 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001/evidence.json` |
+| **B14** | Loops & Paper V5 | `BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001` | 11 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json` |
+| **B15** | Deployment & Hosted | `BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001` | 6 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001/evidence.json` |
+| **B16** | Command Write & Workflow | `BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001` | 10 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001/evidence.json` |
+| **B17** | Router & SSE Surfaces | `BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001` | 11 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/evidence.json` |
+| **B18** | Cross-Cutting & Consolidation | `BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001` | 14 | `PLAN-001`, `B04` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001/evidence.json` |
+| **Total** | **All 18 Batches** | — | **184** | — | — |
 
 *The complete file-by-file listing for each batch is preserved in `docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json`.*
 
@@ -168,13 +169,23 @@ AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" artifact-contrac
 - **Packet 1 (16 tasks)**: `pkt-bff-test-migration-children-part1-20260910` containing `BFF-TEST-MIGRATION-B01-AGORA-CORE-001` through `BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001`.
 - **Packet 2 (2 tasks)**: `pkt-bff-test-migration-children-part2-20260910` containing `BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001` and `BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001`.
 
-Each child declares `depends_on: ["BFF-TEST-MIGRATION-REPARTITION-PLAN-001"]`, its exact source files, and a unique evidence path.
+Each child declares its exact source files, a unique evidence path, and:
+- All child tasks declare `depends_on: ["BFF-TEST-MIGRATION-REPARTITION-PLAN-001"]`.
+- Consumer batches B08, B11, B12, and B18 additionally declare `"BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"` because they import shared `rebalance_authority_test_support.py` decoupled by B04.
 
-### Step 4: Parent Dependency Contract Revision (Fresh CAS Digest)
+### Step 4: Parent Dependency Contract Revision (Fresh CAS Digest Requirement)
 
-With the children admitted, Human/Ops updates the parent dependency contract to depend on the planning task and all 18 children. The request requires the exact CAS digest of the complete parent task row:
+With the children admitted, Human/Ops updates the parent dependency contract to depend on the planning prerequisite task and all 18 children.
 
-- **Current Parent Row CAS Digest**: `692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2`
+> [!IMPORTANT]
+> **Fresh Complete-Row CAS Requirement**:
+> The parent task row CAS digest `692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2` is the **pre-revision baseline observation** at generation 24 prior to planning execution.
+>
+> It is **not executable directly at Step 4** because Step 2 (`artifact-contract`) mutates the parent task row across six sequential remove/add operations, altering `artifacts`, `generation`, and `last_update`. Submitting the baseline `692d` digest after Step 2 will fail canonical CAS verification (`dependency-contract expected-state CAS failed`).
+>
+> Therefore, the payload below is a **fresh-CAS request template**. Immediately prior to submitting the dependency contract, Human/Ops must compute the fresh complete-row CAS digest from canonical state after Step 2 artifact narrowing and Step 3 child admission are complete.
+
+- **Pre-Revision Baseline CAS Digest**: `692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2` (recorded for audit traceability; non-executable at Step 4)
 - **Request Template** (`/tmp/parent-dependency-contract-request.json`):
 
 ```json
@@ -183,7 +194,7 @@ With the children admitted, Human/Ops updates the parent dependency contract to 
   "tasks": [
     {
       "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
-      "expected_sha256": "692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2",
+      "expected_sha256": "<FRESH_PARENT_ROW_CAS_DIGEST_POST_ARTIFACT_NARROWING_AND_CHILD_ADMISSION>",
       "depends_on": [
         "BFF-TEST-ARCH-001",
         "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
@@ -213,8 +224,52 @@ With the children admitted, Human/Ops updates the parent dependency contract to 
 }
 ```
 
-Command to execute:
+Human/Ops generation and execution commands:
 ```bash
+# 1. Compute fresh CAS digest of parent task row from canonical state and write request file
+python3 -c "
+import json, os, hashlib
+status_root = os.environ.get('PANTHEON_STATUS_ROOT', '.')
+state = json.load(open(os.path.join(status_root, 'ai-status.json')))
+parent = next(t for t in state['tasks'] if t['id'] == 'BFF-TEST-FULL-MIGRATION-CORRECTIVE-001')
+fresh_sha = hashlib.sha256(json.dumps(parent, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
+req = {
+    'reason': 'Operator-authorized parent dependency update: serialize test migration parent after prerequisite planning task BFF-TEST-MIGRATION-REPARTITION-PLAN-001 and all 18 decoupled child batches (B01-B18), preserving existing dependencies (BFF-TEST-ARCH-001, JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001, BFF-AUTH-SESSION-SEAM-PREREQUISITE-001) and blocked hold semantics.',
+    'tasks': [{
+        'task_id': 'BFF-TEST-FULL-MIGRATION-CORRECTIVE-001',
+        'expected_sha256': fresh_sha,
+        'depends_on': [
+            'BFF-TEST-ARCH-001',
+            'JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001',
+            'BFF-AUTH-SESSION-SEAM-PREREQUISITE-001',
+            'BFF-TEST-MIGRATION-REPARTITION-PLAN-001',
+            'BFF-TEST-MIGRATION-B01-AGORA-CORE-001',
+            'BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001',
+            'BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001',
+            'BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001',
+            'BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001',
+            'BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001',
+            'BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001',
+            'BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001',
+            'BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001',
+            'BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001',
+            'BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001',
+            'BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001',
+            'BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001',
+            'BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001',
+            'BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001',
+            'BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001',
+            'BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001',
+            'BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001'
+        ]
+    }]
+}
+with open('/tmp/parent-dependency-contract-request.json', 'w') as f:
+    json.dump(req, f, indent=2)
+print('Generated /tmp/parent-dependency-contract-request.json with fresh parent row CAS digest:', fresh_sha)
+"
+
+# 2. Execute canonical dependency contract update
 AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" dependency-contract /tmp/parent-dependency-contract-request.json
 ```
 
@@ -237,23 +292,28 @@ Once all 18 children are merged into `dev`:
 
 ### 6.1 Acyclicity Verification
 
-A full topological sort of the proposed prospective canonical state was performed across all 66 nodes:
-- Visited nodes: 66 / 66.
+A full topological sort of the proposed prospective canonical state was performed across all 65 nodes (47 existing canonical tasks + 18 prospective children):
+- Total graph nodes: 65.
+- Visited nodes in topological order: 65 / 65.
 - Cycles detected: **0**. The prospective graph is strictly acyclic.
+- **B04 Precedence**: B04 (`BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001`, index 11) strictly precedes its consumer batches B08 (index 26), B11 (index 27), B12 (index 28), and B18 (index 29), ensuring `rebalance_authority_test_support.py` is decoupled before consumers execute.
+- **Parent Precedence**: All 18 child batches (indices 8-29) strictly precede the parent task (`BFF-TEST-FULL-MIGRATION-CORRECTIVE-001`, index 32).
 
 ### 6.2 Serialization of Overlapping BFF Writers
 
 Multiple existing canonical tasks touch `services/control-plane/bff/`. Topological sort proves every overlapping writer is serialized **strictly downstream** of `BFF-TEST-FULL-MIGRATION-CORRECTIVE-001` in the dependency graph:
 
-1. `BFF-TEST-MIGRATION-REPARTITION-PLAN-001` (Index 2 in topological sort)
-2. 18 Child Batches: B01 to B18 (Indices 14 to 31 in topological sort)
-3. `BFF-TEST-FULL-MIGRATION-CORRECTIVE-001` (Index 32 in topological sort)
-4. `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001` (Index 38 in topological sort)
-5. `DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001` (Index 40 in topological sort)
-6. `BFF-READ-OWNER-WIRING-CORRECTIVE-001` (Index 42 in topological sort)
-7. `STRUCT-RETIRE-001` (Index 46 in topological sort)
-8. `SIMPLIFY-BFF-RESIDUAL-001` (Index 47 in topological sort)
-9. `OSS-CORE-BASELINE-001` (Index 50 in topological sort)
+1. `BFF-TEST-MIGRATION-REPARTITION-PLAN-001` (Index 0 in topological sort)
+2. Foundation Child B04: `BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001` (Index 11)
+3. Independent Child Batches: B01-B03, B05-B07, B09-B10, B13-B17 (Indices 8-10, 12-21)
+4. Dependent Child Batches: B08, B11, B12, B18 (Indices 26-29, serialized after B04)
+5. Parent Task: `BFF-TEST-FULL-MIGRATION-CORRECTIVE-001` (Index 32 in topological sort, serialized after all children)
+6. `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001` (Index 37 in topological sort)
+7. `DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001` (Index 39 in topological sort)
+8. `BFF-READ-OWNER-WIRING-CORRECTIVE-001` (Index 40 in topological sort)
+9. `STRUCT-RETIRE-001` (Index 45 in topological sort)
+10. `SIMPLIFY-BFF-RESIDUAL-001` (Index 48 in topological sort)
+11. `OSS-CORE-BASELINE-001` (Index 52 in topological sort)
 
 Because the parent task depends on all 18 children, and every overlapping task is transitively dependent on the parent, no concurrent overlapping write can occur during child execution.
 
