@@ -1,0 +1,321 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity"
+  },
+  "delivery_nature": {
+    "documentation_only": true,
+    "statement": "Only the three declared documentation/evidence artifacts change. No source fixtures, child grants, parent contract, original planning evidence, child evidence, deployment or capital behavior changes. No claim of child redispatch or completion."
+  },
+  "changed_files": [
+    "docs/operations/bff-test-migration-repartition.md",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001/evidence.json"
+  ],
+  "document_proof": {
+    "docs/operations/bff-test-migration-repartition.md": {
+      "before": {
+        "sha256": "ac6d00a22c1622782a1ca9e85ca6f4f969ff5e0a1670040efdff284e5845c9fb",
+        "bytes": 25859
+      },
+      "after": {
+        "sha256": "9411fc6d5b5c777bd1b4d1bb1e1de0cb19456f6846a94591478310b0a2adb314",
+        "bytes": 26206
+      }
+    },
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json": {
+      "before": {
+        "sha256": "16e4a9347ee6f78d0fd71d17d3fa998037a20ddfc26d687a9fc1ee1ee00f24bd",
+        "bytes": 36220
+      },
+      "after": {
+        "sha256": "7d5ab6fbfd5d7ff30bf3767dd4adcf23be0f8c192d07c92b6f8832cec9ebc230",
+        "bytes": 35942
+      }
+    }
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "source_scans": [
+    {
+      "role": "reviewed_plan_document_anchor",
+      "commit": "322f43873af640d780032dab136a3cd007bdaa8d",
+      "absent_paths": [
+        "services/control-plane/bff/tests/fixtures/__init__.py",
+        "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+        "services/control-plane/bff/tests/fixtures/research_fixture.py",
+        "services/control-plane/bff/tests/fixtures/training_fixture.py"
+      ],
+      "present_paths": [
+        "services/control-plane/bff/tests/conftest.py",
+        "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+        "services/control-plane/bff/tests/management_projection_test_doubles.py",
+        "services/control-plane/bff/tests/read_store_fixtures.py"
+      ],
+      "literal_consumer_scan": {
+        "governance_fixture": {
+          "count": 0,
+          "matches": []
+        },
+        "research_fixture": {
+          "count": 0,
+          "matches": []
+        },
+        "training_fixture": {
+          "count": 0,
+          "matches": []
+        }
+      }
+    },
+    {
+      "role": "dispatch_reviewed_anchor_and_fresh_origin_dev_base",
+      "commit": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+      "absent_paths": [
+        "services/control-plane/bff/tests/fixtures/__init__.py",
+        "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+        "services/control-plane/bff/tests/fixtures/research_fixture.py",
+        "services/control-plane/bff/tests/fixtures/training_fixture.py"
+      ],
+      "present_paths": [
+        "services/control-plane/bff/tests/conftest.py",
+        "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+        "services/control-plane/bff/tests/management_projection_test_doubles.py",
+        "services/control-plane/bff/tests/read_store_fixtures.py"
+      ],
+      "literal_consumer_scan": {
+        "governance_fixture": {
+          "count": 0,
+          "matches": []
+        },
+        "research_fixture": {
+          "count": 0,
+          "matches": []
+        },
+        "training_fixture": {
+          "count": 0,
+          "matches": []
+        }
+      }
+    }
+  ],
+  "anchor_distinction": "The parent migration PR source head 1198bef2b4b514705bc1a9d19c406b4b3c2c7880 does contain the four paths (an initial absence assertion there failed). That historical parent head is not the reviewed plan anchor. Absence is verified at plan document commit 322f43873af640d780032dab136a3cd007bdaa8d and fresh dev base e093ac6ccdd3b4c785da8d17154a34449b676a10.",
+  "scan_method": "git ls-tree at immutable commits establishes absence/existence; git grep scans every tracked text file below the BFF root for each literal module name, including static imports and literal dynamic imports. Exit 1 means no matches, not a command failure. Computed dynamic module names are outside this literal scan.",
+  "contract_invariants": {
+    "partition_change_only": "shared_foundation_files.shared_test_fixtures removes exactly four absent paths",
+    "retained_shared_fixture_paths": [
+      "services/control-plane/bff/tests/conftest.py",
+      "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+      "services/control-plane/bff/tests/management_projection_test_doubles.py",
+      "services/control-plane/bff/tests/read_store_fixtures.py"
+    ],
+    "child_count": 18,
+    "source_paths_count": 184,
+    "unique_source_paths_count": 184,
+    "entire_child_rows_unchanged": true,
+    "child_dag_acyclic": true,
+    "b04_consumers_unchanged": [
+      "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+      "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+      "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+      "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+    ],
+    "parent_contract_revision_unchanged": true,
+    "parent_retained_paths_unchanged": [
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json"
+    ],
+    "partition_outside_shared_fixture_list_unchanged": true
+  },
+  "validation": {
+    "result": "passed",
+    "checks": [
+      {
+        "argv": [
+          "git",
+          "ls-tree",
+          "-r",
+          "--name-only",
+          "322f43873af640d780032dab136a3cd007bdaa8d",
+          "--",
+          "services/control-plane/bff/tests/fixtures/__init__.py",
+          "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+          "services/control-plane/bff/tests/fixtures/research_fixture.py",
+          "services/control-plane/bff/tests/fixtures/training_fixture.py",
+          "services/control-plane/bff/tests/conftest.py",
+          "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+          "services/control-plane/bff/tests/management_projection_test_doubles.py",
+          "services/control-plane/bff/tests/read_store_fixtures.py"
+        ],
+        "exit_code": 0,
+        "terminal_output": "services/control-plane/bff/tests/conftest.py\nservices/control-plane/bff/tests/knowledge_read_port_fixtures.py\nservices/control-plane/bff/tests/management_projection_test_doubles.py\nservices/control-plane/bff/tests/read_store_fixtures.py\n",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "grep",
+          "-n",
+          "-I",
+          "-F",
+          "-e",
+          "governance_fixture",
+          "322f43873af640d780032dab136a3cd007bdaa8d",
+          "--",
+          "services/control-plane/bff/"
+        ],
+        "exit_code": 1,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "grep",
+          "-n",
+          "-I",
+          "-F",
+          "-e",
+          "research_fixture",
+          "322f43873af640d780032dab136a3cd007bdaa8d",
+          "--",
+          "services/control-plane/bff/"
+        ],
+        "exit_code": 1,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "grep",
+          "-n",
+          "-I",
+          "-F",
+          "-e",
+          "training_fixture",
+          "322f43873af640d780032dab136a3cd007bdaa8d",
+          "--",
+          "services/control-plane/bff/"
+        ],
+        "exit_code": 1,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "ls-tree",
+          "-r",
+          "--name-only",
+          "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+          "--",
+          "services/control-plane/bff/tests/fixtures/__init__.py",
+          "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+          "services/control-plane/bff/tests/fixtures/research_fixture.py",
+          "services/control-plane/bff/tests/fixtures/training_fixture.py",
+          "services/control-plane/bff/tests/conftest.py",
+          "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+          "services/control-plane/bff/tests/management_projection_test_doubles.py",
+          "services/control-plane/bff/tests/read_store_fixtures.py"
+        ],
+        "exit_code": 0,
+        "terminal_output": "services/control-plane/bff/tests/conftest.py\nservices/control-plane/bff/tests/knowledge_read_port_fixtures.py\nservices/control-plane/bff/tests/management_projection_test_doubles.py\nservices/control-plane/bff/tests/read_store_fixtures.py\n",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "grep",
+          "-n",
+          "-I",
+          "-F",
+          "-e",
+          "governance_fixture",
+          "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+          "--",
+          "services/control-plane/bff/"
+        ],
+        "exit_code": 1,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "grep",
+          "-n",
+          "-I",
+          "-F",
+          "-e",
+          "research_fixture",
+          "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+          "--",
+          "services/control-plane/bff/"
+        ],
+        "exit_code": 1,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "grep",
+          "-n",
+          "-I",
+          "-F",
+          "-e",
+          "training_fixture",
+          "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+          "--",
+          "services/control-plane/bff/"
+        ],
+        "exit_code": 1,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "diff",
+          "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+          "--name-only"
+        ],
+        "exit_code": 0,
+        "terminal_output": "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json\ndocs/operations/bff-test-migration-repartition.md\n",
+        "terminal_stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "ls-files",
+          "--others",
+          "--exclude-standard"
+        ],
+        "exit_code": 0,
+        "terminal_output": "",
+        "terminal_stderr": ""
+      }
+    ],
+    "replay": {
+      "command": "python3 -c 'import json; from pathlib import Path; e=json.loads(Path(\"docs/deployment/evidence/BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001/evidence.json\").read_text()); exec(e[\"validation\"][\"replay\"][\"source\"])'",
+      "source": "import copy\nimport hashlib\nimport json\nimport subprocess\nfrom graphlib import TopologicalSorter\nfrom pathlib import Path\n\nTASK = 'BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001'\nDOC = 'docs/operations/bff-test-migration-repartition.md'\nPART = 'docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json'\nEVIDENCE = f'docs/deployment/evidence/{TASK}/evidence.json'\nBASE = 'e093ac6ccdd3b4c785da8d17154a34449b676a10'\nANCHOR = '322f43873af640d780032dab136a3cd007bdaa8d'\nREMOVED = [f'services/control-plane/bff/tests/fixtures/{name}.py' for name in\n           ['__init__', 'governance_fixture', 'research_fixture', 'training_fixture']]\nNAMES = ['governance_fixture', 'research_fixture', 'training_fixture']\nchecks = []\n\ndef run(args, allowed=(0,)):\n    p = subprocess.run(args, capture_output=True, text=True, timeout=60)\n    assert p.returncode in allowed, (args, p.returncode, p.stderr)\n    checks.append({'argv': args, 'exit_code': p.returncode,\n                   'terminal_output': p.stdout, 'terminal_stderr': p.stderr})\n    return p\n\ndef digest(data):\n    return hashlib.sha256(data).hexdigest()\n\ndef proof(data):\n    return {'sha256': digest(data), 'bytes': len(data)}\n\nold_bytes = {p: subprocess.check_output(['git', 'show', f'{BASE}:{p}']) for p in (DOC, PART)}\nbefore = json.loads(old_bytes[PART])\nafter = json.loads(Path(PART).read_bytes())\nfixtures = before['shared_foundation_files']['shared_test_fixtures']\nretained = [p for p in fixtures if p not in REMOVED]\nexpected = copy.deepcopy(before)\nexpected['shared_foundation_files']['shared_test_fixtures'] = retained\nassert len(retained) == 4 and len(fixtures) == 8\nassert after == expected, 'Partition contains changes outside the four fixture removals'\nfor p in REMOVED:\n    assert f'- `{p}`' not in Path(DOC).read_text()\nfor p in retained:\n    assert f'- `{p}`' in Path(DOC).read_text()\n\nscans = []\nfor role, sha in [('reviewed_plan_document_anchor', ANCHOR),\n                  ('dispatch_reviewed_anchor_and_fresh_origin_dev_base', BASE)]:\n    paths = run(['git', 'ls-tree', '-r', '--name-only', sha, '--', *REMOVED, *retained]).stdout.splitlines()\n    assert set(paths) == set(retained)\n    consumers = {}\n    for name in NAMES:\n        p = run(['git', 'grep', '-n', '-I', '-F', '-e', name, sha, '--', 'services/control-plane/bff/'], (1,))\n        assert not p.stdout\n        consumers[name] = {'count': 0, 'matches': []}\n    scans.append({'role': role, 'commit': sha, 'absent_paths': REMOVED,\n                  'present_paths': retained, 'literal_consumer_scan': consumers})\n\nchildren = after['candidate_children']\nfiles = [f for c in children for f in c['source_artifacts']]\nassert len(children) == 18 and len(files) == len(set(files)) == 184\ngraph = {c['task_id']: set(c['depends_on_after_plan']) for c in children}\norder = list(TopologicalSorter(graph).static_order())\nb04 = next(c['task_id'] for c in children if c['order'] == 4)\nconsumers = [c['task_id'] for c in children if b04 in c['depends_on_after_plan']]\nassert [c['order'] for c in children if c['task_id'] in consumers] == [8, 11, 12, 18]\nassert all(order.index(b04) < order.index(c) for c in consumers)\nassert len(after['shared_foundation_files']['retained_parent_paths']) == 3\nrun(['git', 'diff', '--check'])\nchanged = set(run(['git', 'diff', BASE, '--name-only']).stdout.splitlines())\nuntracked = set(run(['git', 'ls-files', '--others', '--exclude-standard']).stdout.splitlines())\nassert changed | untracked in ({DOC, PART}, {DOC, PART, EVIDENCE})\n\n\nprint(\"PASS: absent fixtures, zero literal consumers, four retained files, unchanged 184-file/18-child partition, B04 dependencies and parent contract; scoped diff clean\")\n"
+    }
+  }
+}
