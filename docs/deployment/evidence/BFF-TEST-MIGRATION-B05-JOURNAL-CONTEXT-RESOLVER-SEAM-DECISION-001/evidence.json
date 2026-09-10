@@ -20,8 +20,8 @@
   ],
   "document_proof": {
     "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md": {
-      "sha256": "239f2a139a0c50f204d71980af6815b9603f37229cb6eb4f376e02b80f16d3e9",
-      "bytes": 27939
+      "sha256": "6e7eec0e718aaaef4fe143a084cf1b273e9cabf07ec7d2f8555d9e2463c09a9e",
+      "bytes": 43156
     }
   },
   "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
@@ -82,35 +82,62 @@
       "require_read_role",
       "bff_error",
       "trade_journal_store_name",
-      "persona_directory_snapshot_fn"
+      "trade_journal_loader",
+      "trade_episode_schema_path",
+      "persona_directory_snapshot_fn",
+      "persona_record_tenant_id_fn",
+      "trade_journal_allowed_fn",
+      "filter_private_records_fn",
+      "trading_room_store_fn",
+      "utc_now"
     ],
     "composition_binding": "services/control-plane/bff/main.py delegates to resolve_agora_interaction_context_ref with composition root globals.",
-    "test_binding": "test_decision_journal_write_owner.py imports resolve_agora_interaction_context_ref directly, passing reader and identity without importing main."
+    "test_binding": "test_decision_journal_write_owner.py imports resolve_agora_interaction_context_ref directly, passing reader and identity without importing main.",
+    "focused_decision_event_rejection": "Preserves 503 DEPENDENCY_UNAVAILABLE rejection with precondition_failed='decision_event_source_route_unavailable' when focused_object.kind=='decision_event' and focused_object.id==ref_id.",
+    "schema_resolution": "Path(__file__).resolve().parents[4] / 'telemetry' / 'trade_episode_projection.schema.json' points to services/telemetry, or explicit trade_episode_schema_path parameter.",
+    "canonical_private_record_filter": "filter_agora_private_records pure function enforcing isinstance(record, dict), strict tenant isolation, and private user ownership, eliminating AgoraService._private_record_visible instance call TypeError.",
+    "audience_verification_checks": [
+      "projection_valid (Draft7Validator on trade_episode_projection.schema.json)",
+      "persona_id non-empty",
+      "episode_strategy non-empty",
+      "artifact_id non-empty",
+      "artifact_version non-empty",
+      "persona_id in referenced_personas from context_refs",
+      "isinstance(persona, dict) and record_tenant_fn(persona) == resolved.tenant_id",
+      "journal_allowed_fn(identity, persona_id)",
+      "episode_strategy == scoped_strategy and (not episode_strategy_version or episode_strategy_version == scoped_version)",
+      "canonical_persona_journal_route or canonical_workshop_route"
+    ]
   },
   "topological_ordering_proof": [
     "1. BFF-TEST-MIGRATION-REPARTITION-PLAN-001 (done)",
     "2. BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001 (done)",
     "3. BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001 (this task)",
     "4. BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001 (materialized upstream qualified ordered overlap)",
-    "5. BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 (unblocked child batch)",
+    "5. BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 (unblocked child batch; depends_on preserves 1, 2, 3 and adds 4)",
     "6. BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 (parent test migration task)",
     "7. JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (downstream journal runtime task)"
   ],
   "validation": [
     {
-      "command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3",
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
       "exit_code": 0,
-      "result": "Provisioned checkout-scoped virtual environment .venv-pantheon verified from foreign cwd with no PYTHONPATH."
+      "result": "Verified provisioned checkout-scoped virtual environment .venv-pantheon importable from foreign cwd with no PYTHONPATH."
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/governance/test_decision_journal_write_owner.py",
       "exit_code": 0,
-      "result": "8 passed in 2.04s; architectural classification and composition allowlist gates verified."
+      "result": "46 passed, 3 warnings, 9 subtests passed in 33.96s; verified architectural classification and journal parity test baseline."
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+      "command": ".venv-pantheon/bin/python3 -c \"from services.control_plane.bff.agora.service import AgoraService; AgoraService._private_record_visible({'id': '1'}, None)\"",
+      "exit_code": 1,
+      "result": "Reproduced Defect 1: TypeError: AgoraService._private_record_visible() missing 1 required positional argument: 'identity'; resolved by extracting standalone pure filter filter_agora_private_records."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -c \"from pathlib import Path; p = Path('services/control-plane/bff/agora/interaction/context_resolver.py'); print((p.resolve().parents[3] / 'telemetry').exists(), (p.resolve().parents[4] / 'telemetry').exists())\"",
       "exit_code": 0,
-      "result": "38 passed, 3 warnings in 42.10s; verified current behavior and parity test baseline."
+      "result": "Reproduced Defect 2: parents[3] returns False (services/control-plane/telemetry does not exist); parents[4] returns True (services/telemetry exists); resolved by using parents[4] and injectable schema path parameter."
     },
     {
       "command": "git status -sb",

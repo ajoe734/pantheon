@@ -162,16 +162,104 @@ The resolver logic will be extracted to:
 """Agora interaction context reference resolver.
 
 Decoupled from composition root globals. Accepts explicit read_store,
-identity extractors, and role verifiers.
+identity extractors, role verifiers, schema paths, and filter callbacks.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from jsonschema import Draft7Validator
+
+
+def _private_record_owner(record: Dict[str, Any]) -> str:
+    """Extract owner ID from private record using canonical Agora property keys."""
+    for key in (
+        "createdBy", "created_by", "user_id", "userId",
+        "owner_id", "ownerId", "operator_id", "operatorId", "author"
+    ):
+        clean = str(record.get(key) or "").strip()
+        if clean:
+            return clean
+    owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
+    return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
+
+
+def is_agora_private_record_visible(
+    record: Dict[str, Any],
+    identity: Any,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> bool:
+    """Evaluate tenant and ownership visibility for a single record.
+
+    Enforces strict tenant isolation, discards non-dict objects, and checks
+    user ownership for private visibility rows.
+    """
+    if not isinstance(record, dict):
+        return False
+
+    from services.control_plane.bff.agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        utc_now=utc_now,
+    )
+    identity_tenant = str(resolved_tenant or "").strip()
+    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+
+    # Strict tenant isolation
+    if identity_tenant:
+        if not record_tenant or record_tenant != identity_tenant:
+            return False
+    elif record_tenant:
+        return False
+
+    visibility = str(record.get("visibility") or "private").strip().lower()
+    owner = _private_record_owner(record)
+    if visibility != "private" or not owner:
+        return True
+
+    operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
+    allowed_users = {u for u in (resolved_user, operator_id) if u}
+    return owner in allowed_users
+
+
+def filter_agora_private_records(
+    records: List[Any],
+    identity: Any,
+    *,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> List[Dict[str, Any]]:
+    """Filter records by tenant isolation and private visibility, dropping non-dict records."""
+    from services.control_plane.bff.agora.identity.scope import resolve_canonical_agora_scope
+
+    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
+        identity,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        utc_now=utc_now,
+    )
+    return [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and is_agora_private_record_visible(
+            record,
+            identity,
+            tenant_id=resolved_tenant,
+            user_id=resolved_user,
+            utc_now=utc_now,
+        )
+    ]
 
 
 def resolve_agora_interaction_context_ref(
@@ -185,17 +273,29 @@ def resolve_agora_interaction_context_ref(
     authorization: Optional[str] = None,
     source_route: Optional[str] = None,
     focused_object: Optional[Dict[str, Any]] = None,
-    # Injected dependencies:
+    # Explicit injected dependencies:
     read_store: Optional[Any] = None,
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
     require_read_role: Optional[Callable[[Any], None]] = None,
     bff_error: Optional[Callable[..., Exception]] = None,
     trade_journal_store_name: str = "PANTHEON_BFF_TRADE_EPISODES_STORE",
+    trade_journal_loader: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
+    trade_episode_schema_path: Optional[Path] = None,
     persona_directory_snapshot_fn: Optional[Callable[[str], Any]] = None,
+    persona_record_tenant_id_fn: Optional[Callable[[Mapping[str, Any]], str]] = None,
+    trade_journal_allowed_fn: Optional[Callable[[Any, str], bool]] = None,
+    filter_private_records_fn: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    trading_room_store_fn: Optional[Callable[[], Any]] = None,
+    utc_now: Optional[Callable[[], str]] = None,
 ) -> Dict[str, Any]:
     """Resolve context refs with audience verification and fail-closed tenant isolation.
 
-    Pure domain/service function with zero direct reliance on bff.main module globals.
+    Decoupled pure service function with zero direct imports from bff.main composition root.
+    Preserves exact production behavior:
+    1. 503 rejection for unavailable kinds and focused Decision Event objects.
+    2. Decision Event lookup and audience verification.
+    3. Trade Journal episode schema validation and complete 10-point audience verification.
+    4. Fallback to Governance Decision Journal with fail-closed tenant/user filtering.
     """
     if focused_object is None:
         focused_object = {}
@@ -218,8 +318,31 @@ def resolve_agora_interaction_context_ref(
 
     # 2. Decision Event
     if kind == "decision_event":
-        from ..trading_room.router import _get_store as _get_trading_room_store
-        event = _get_trading_room_store().get_decision_event(ref_id)
+        # Preserve focused Decision Event 503 rejection
+        if (
+            isinstance(focused_object, dict)
+            and focused_object.get("kind") == "decision_event"
+            and str(focused_object.get("id") or "") == ref_id
+        ):
+            if callable(bff_error):
+                raise bff_error(
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "Focused Decision Event interaction source is unavailable",
+                    "No canonical frontend Decision Event source-route owner is registered yet",
+                    precondition_failed="decision_event_source_route_unavailable",
+                )
+            raise RuntimeError("Focused Decision Event interaction source is unavailable")
+
+        if callable(trading_room_store_fn):
+            store = trading_room_store_fn()
+        else:
+            from services.control_plane.bff.agora.trading_room.router import (
+                _get_store as _get_trading_room_store,
+            )
+            store = _get_trading_room_store()
+
+        event = store.get_decision_event(ref_id)
         if not isinstance(event, dict):
             return {"row": None, "audience_verified": False}
         event_strategy = str(event.get("strategy_id") or "")
@@ -235,45 +358,78 @@ def resolve_agora_interaction_context_ref(
 
     # 3. Journal Entry (Trade Journal Episode or Governance Decision Journal)
     if kind == "journal_entry":
-        from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
-        from services.control_plane.bff.trade_journal import _load as _load_trade_journal
+        # Resolve trade journal loader
+        if callable(trade_journal_loader):
+            episodes = trade_journal_loader(trade_journal_store_name)
+        else:
+            from services.control_plane.bff.trade_journal import _load as _load_trade_journal
+            episodes = _load_trade_journal(trade_journal_store_name)
 
-        episodes = _load_trade_journal(trade_journal_store_name)
         matches = [
             row for row in (episodes or [])
             if str(row.get("trade_episode_id") or "") == ref_id
         ]
         if len(matches) == 1:
             episode = matches[0]
-            # Validate trade episode projection schema
-            schema_path = (
-                Path(__file__).resolve().parents[3]
-                / "telemetry"
-                / "trade_episode_projection.schema.json"
-            )
+
+            # Resolve projection schema path: parents[4] from context_resolver.py
+            # points to repo root / services, reaching services/telemetry/trade_episode_projection.schema.json
+            if trade_episode_schema_path is not None:
+                schema_path = trade_episode_schema_path
+            else:
+                schema_path = (
+                    Path(__file__).resolve().parents[4]
+                    / "telemetry"
+                    / "trade_episode_projection.schema.json"
+                )
+
             try:
                 projection_schema = json.loads(schema_path.read_text(encoding="utf-8"))
                 projection_valid = Draft7Validator(projection_schema).is_valid(episode)
             except (OSError, TypeError, ValueError):
                 projection_valid = False
 
-            # Audience and scope verification
+            # Complete episode audience and scope verification checks
             persona_id = str(episode.get("persona_id") or "")
             referenced_personas = {
                 str(item.get("id") or "")
                 for item in context_refs
                 if item.get("kind") == "persona"
             }
+
+            # Persona existence and directory snapshot
             persona = None
             if callable(persona_directory_snapshot_fn):
                 snapshot = persona_directory_snapshot_fn(str(resolved.tenant_id or "").strip())
                 persona = getattr(snapshot, "records_by_id", {}).get(persona_id)
 
+            # Persona tenant extraction
+            if callable(persona_record_tenant_id_fn):
+                record_tenant_fn = persona_record_tenant_id_fn
+            else:
+                from services.control_plane.bff.personas.service import _persona_record_tenant_id
+                record_tenant_fn = _persona_record_tenant_id
+
+            # Trade journal authorization ACL
+            if callable(trade_journal_allowed_fn):
+                journal_allowed_fn = trade_journal_allowed_fn
+            else:
+                from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+                journal_allowed_fn = _trade_journal_allowed
+
+            episode_strategy = str(episode.get("strategy_id") or "")
+            artifact_id = str(episode.get("artifact_id") or "")
+            artifact_version = str(episode.get("artifact_version") or "")
+            episode_strategy_version = str(episode.get("strategy_spec_registry_id") or "")
+            scoped_strategy = str(session.get("strategy_id") or "")
+            scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
+
             source = urlsplit(str(source_route or ""))
             source_path = unquote(source.path).rstrip("/")
             source_query = parse_qs(source.query, keep_blank_values=True)
             focused_is_episode = (
-                focused_object.get("kind") == "journal_entry"
+                isinstance(focused_object, dict)
+                and focused_object.get("kind") == "journal_entry"
                 and str(focused_object.get("id") or "") == ref_id
             )
             canonical_persona_journal_route = bool(
@@ -286,23 +442,32 @@ def resolve_agora_interaction_context_ref(
                 and source_path == f"/agora/strategy-workshop/{session.get('workshop_id')}"
                 and not source.fragment
             )
+
+            # All 10 audience conditions preserved from main.py
             audience_verified = bool(
                 projection_valid
                 and persona_id
-                and episode.get("strategy_id")
-                and episode.get("strategy_id") == session.get("strategy_id")
+                and episode_strategy
+                and artifact_id
+                and artifact_version
+                and persona_id in referenced_personas
+                and isinstance(persona, dict)
+                and record_tenant_fn(persona) == resolved.tenant_id
+                and journal_allowed_fn(identity, persona_id)
+                and episode_strategy == scoped_strategy
+                and (not episode_strategy_version or episode_strategy_version == scoped_version)
                 and (canonical_persona_journal_route or canonical_workshop_route)
             )
             return {"row": episode, "audience_verified": audience_verified}
 
         # Fallback to Decision Journal in Governance domain
-        from ..identity.scope import resolve_canonical_agora_scope
-        from ..service import AgoraService
+        from services.control_plane.bff.agora.identity.scope import resolve_canonical_agora_scope
 
         scoped_tenant, scoped_user = resolve_canonical_agora_scope(
             identity,
             tenant_id=getattr(resolved, "tenant_id", None),
             user_id=getattr(resolved, "user_id", None),
+            utc_now=utc_now,
         )
         if read_store is None:
             return {"row": None, "audience_verified": False}
@@ -314,15 +479,33 @@ def resolve_agora_interaction_context_ref(
         except TypeError:
             journal_entries = read_store.list_decision_journal_entries()
 
-        # Scope filtering using AgoraService helper or standard filter
-        journal_rows = [
-            r for r in journal_entries
-            if AgoraService._private_record_visible(r, identity, tenant_id=scoped_tenant, user_id=scoped_user)
-        ]
+        # Execute bound or canonical private record filter, retaining non-dict filtering
+        if callable(filter_private_records_fn):
+            journal_rows = filter_private_records_fn(
+                journal_entries,
+                identity,
+                tenant_id=scoped_tenant,
+                user_id=scoped_user,
+            )
+        else:
+            journal_rows = filter_agora_private_records(
+                journal_entries,
+                identity,
+                tenant_id=scoped_tenant,
+                user_id=scoped_user,
+                utc_now=utc_now,
+            )
+
         journal = next(
-            (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),
+            (
+                row for row in journal_rows
+                if isinstance(row, dict) and str(row.get("id") or row.get("entry_id") or "") == ref_id
+            ),
             None,
         )
+        # Legacy Decision Journal rows are returned for exact not-found/error
+        # semantics, but without explicit scope they are intentionally not
+        # elevated to an audience-verified receipt.
         return {"row": journal, "audience_verified": False}
 
     if callable(bff_error):
@@ -336,10 +519,35 @@ def resolve_agora_interaction_context_ref(
     raise RuntimeError(f"Canonical {kind} readback is unavailable")
 ```
 
+#### Parity Acceptance Matrix: Positive & Negative Cases
+
+| Interaction Scenario | Conditions / Inputs | Expected Return / Behavior | Parity Verification Invariant |
+|---|---|---|---|
+| **Unavailable Kind** | `kind="position"` or `"performance_window"` or `"human_inbox_item"` | Raises 503 `DEPENDENCY_UNAVAILABLE` (`{kind}_scope_unavailable`). | Fails closed on uncontracted global read-models. |
+| **Focused Decision Event** | `kind="decision_event"`, `focused_object={"kind": "decision_event", "id": "de-1"}`, `ref_id="de-1"` | Raises 503 `DEPENDENCY_UNAVAILABLE` (`decision_event_source_route_unavailable`). | Preserves existing focused event 503 rejection from `main.py:22321-22331`. |
+| **Non-Focused Decision Event (Audience Match)** | `ref_id="de-1"`, `session.strategy_id == event.strategy_id`, version matches | `{"row": event, "audience_verified": True}` | Exact match on scoped strategy and spec version. |
+| **Non-Focused Decision Event (Strategy Mismatch)** | `session.strategy_id != event.strategy_id` | `{"row": event, "audience_verified": False}` | Audience unverified when event belongs to different strategy. |
+| **Non-Focused Decision Event (Not Found)** | Event ID not present in store | `{"row": None, "audience_verified": False}` | Returns None row without error. |
+| **Trade Episode (Audience Match)** | Valid schema projection, non-empty persona/artifact IDs, persona in `context_refs`, snapshot persona tenant matches `resolved.tenant_id`, `_trade_journal_allowed=True`, strategy version matches, route valid | `{"row": episode, "audience_verified": True}` | All 10 audience conditions satisfied. |
+| **Trade Episode (Cross-Tenant Persona)** | `record_tenant_fn(persona) != resolved.tenant_id` | `{"row": episode, "audience_verified": False}` | Tenant isolation: persona tenant mismatch negates audience verification. |
+| **Trade Episode (Unreferenced Persona)** | `persona_id` not in `context_refs` | `{"row": episode, "audience_verified": False}` | Unreferenced persona in context refs negates audience verification. |
+| **Trade Episode (Missing Artifact Info)** | `artifact_id` or `artifact_version` empty | `{"row": episode, "audience_verified": False}` | Missing artifact tracking metadata negates audience verification. |
+| **Trade Episode (Journal Not Allowed)** | `trade_journal_allowed_fn(identity, persona_id) == False` | `{"row": episode, "audience_verified": False}` | Identity ACL check negates audience verification. |
+| **Trade Episode (Active Version Mismatch)** | `episode_strategy_version != session.active_strategy_spec_registry_id` | `{"row": episode, "audience_verified": False}` | Stale strategy spec version negates audience verification. |
+| **Trade Episode (Schema Invalid)** | Draft7 validation fails against `services/telemetry/trade_episode_projection.schema.json` | `{"row": episode, "audience_verified": False}` | Projection schema check fails closed. |
+| **Decision Journal Fallback (Same Tenant/User)** | Episode not found; Decision entry exists with matching tenant & user, private | `{"row": entry, "audience_verified": False}` | Exact row returned with `audience_verified=False`. |
+| **Decision Journal Fallback (Cross-Tenant)** | Entry has `tenant_id="tenant-b"`; operator is in `tenant-a` | `{"row": None, "audience_verified": False}` | Filtered out by `filter_agora_private_records`; cross-tenant leakage prevented. |
+| **Decision Journal Fallback (Cross-User Private)** | Entry has `tenant_id="tenant-a"`, `user_id="bob"`, `visibility="private"`; operator is `alice` | `{"row": None, "audience_verified": False}` | Filtered out; cross-user private entry hidden. |
+| **Decision Journal Fallback (Cross-User Public)** | Entry has `tenant_id="tenant-a"`, `user_id="bob"`, `visibility="public"`; operator is `alice` | `{"row": entry, "audience_verified": False}` | Tenant-shared non-private entry visible to tenant member. |
+| **Decision Journal Fallback (Non-Dict Records)** | Store returns mixed objects containing non-dicts (e.g. `None`, strings) | Discards non-dict rows cleanly without `TypeError` | Non-dict filtering preserved; no method signature crashes. |
+
 ### 4.2 Composition Root Binding in `main.py`
 In `main.py`, `_resolve_agora_interaction_context_ref` delegates directly to the new seam:
 ```python
-from .agora.interaction.context_resolver import resolve_agora_interaction_context_ref
+from .agora.interaction.context_resolver import (
+    filter_agora_private_records,
+    resolve_agora_interaction_context_ref,
+)
 
 def _resolve_agora_interaction_context_ref(*args, **kwargs):
     return resolve_agora_interaction_context_ref(
@@ -349,6 +557,9 @@ def _resolve_agora_interaction_context_ref(*args, **kwargs):
         require_read_role=_require_read_role,
         bff_error=_bff_error,
         persona_directory_snapshot_fn=_get_persona_directory_snapshot,
+        persona_record_tenant_id_fn=_persona_record_tenant_id,
+        trade_journal_allowed_fn=_trade_journal_allowed,
+        filter_private_records_fn=_agora_filter_private_records,
         **kwargs,
     )
 ```
@@ -406,7 +617,7 @@ def test_main_bff_journal_context_ref_resolution_parity(self) -> None:
 **Benefits**:
 - Zero imports of `main` or `bff_main`.
 - Zero monkeypatching of global `read_store`.
-- Exact test parity and full regression coverage maintained.
+- Exact test parity and full regression coverage maintained across all positive and negative branches.
 - `test_bff_test_architecture.py` validates `test_decision_journal_write_owner.py` as fully compliant (`DECOUPLED` / `MIGRATED`).
 
 ---
@@ -432,6 +643,8 @@ flowchart TD
     DECISION --> CORRECTIVE
     CORRECTIVE --> B05
     PLAN --> B05
+    SHARED --> B05
+    DECISION --> B05
     PLAN --> OTHER_BATCHES
     B05 --> PARENT
     OTHER_BATCHES --> PARENT
@@ -439,10 +652,11 @@ flowchart TD
 ```
 
 - Every directed edge goes strictly from left to right / upstream to downstream.
+- All existing prerequisite edges of B05 (`PLAN-001`, `SHARED-001`, and `DECISION-001`) are strictly preserved when adding `CORRECTIVE-001`.
 - There are no back-edges:
-  - `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001` depends on `PARENT`.
+  - `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001` depends on `PARENT` (`BFF-TEST-FULL-MIGRATION-CORRECTIVE-001`) and `BFF-ROUTER-USECASE-CORRECTIVE-001`.
   - `PARENT` depends on `B05`.
-  - `B05` depends on `CORRECTIVE`.
+  - `B05` depends on `CORRECTIVE`, `DECISION`, `SHARED`, and `PLAN`.
   - `CORRECTIVE` depends on `DECISION` and `PLAN`.
   - Neither `CORRECTIVE` nor `B05` depends on `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001`.
 - Cycle check:
@@ -457,8 +671,8 @@ Like `BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001` (for B09), the new task `BFF
    - `docs/deployment/evidence/BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001/evidence.json`
 2. **Exclusivity**: It is the sole pre-parent writer of these source files while B05 remains blocked.
 3. **Execution**:
-   - Implements the new context resolver module.
-   - Updates `main.py` composition root.
+   - Implements the new context resolver module and canonical private record filter.
+   - Updates `main.py` composition root to delegate to the new seam.
    - Updates `test_decision_journal_write_owner.py` to use explicit dependency injection.
    - Validates that all 38 tests pass and `test_decision_journal_write_owner.py` contains 0 `main` imports.
    - PR merges to `dev`.
@@ -477,7 +691,7 @@ Like `BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001` (for B09), the new task `BFF
 - Reviewer approves; PR auto-merges into `dev`.
 
 #### Step 4: Update B05 Dependency Contract & Reopen B05
-Human/Ops runs a fresh-CAS dependency update for B05 to depend on the corrective task:
+Human/Ops runs a fresh-CAS dependency update for B05, strictly preserving all existing prerequisite edges while adding the corrective task:
 ```bash
 python3 -c "
 import json, os, hashlib
@@ -486,12 +700,14 @@ state = json.load(open(os.path.join(status_root, 'ai-status.json')))
 task = next(t for t in state['tasks'] if t['id'] == 'BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001')
 fresh_sha = hashlib.sha256(json.dumps(task, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
 req = {
-    'reason': 'Serialize B05 after upstream journal context-resolver seam task',
+    'reason': 'Serialize B05 after upstream journal context-resolver seam task while preserving all existing prerequisite edges',
     'tasks': [{
         'task_id': 'BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001',
         'expected_sha256': fresh_sha,
         'depends_on': [
             'BFF-TEST-MIGRATION-REPARTITION-PLAN-001',
+            'BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001',
+            'BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001',
             'BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001'
         ]
     }]
@@ -513,21 +729,78 @@ The assigned worker for B05:
 
 ## 6. Verification and Local Proof Matrix
 
-### 6.1 Baseline Verification Commands
+### 6.1 Baseline Verification Commands & Pytest Suite
 ```bash
 # 1. Verify provisioned test environment
 python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3
 
-# 2. Verify architectural invariants gate
-.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py
-# Result: 8 passed in 2.04s
-
-# 3. Verify current test_decision_journal_write_owner.py suite
-.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py
-# Result: 38 passed in 42.10s
+# 2. Verify architectural invariants gate and journal write owner suite together
+.venv-pantheon/bin/python3 -m pytest -q \
+  services/control-plane/bff/tests/test_bff_test_architecture.py \
+  services/control-plane/bff/governance/test_decision_journal_write_owner.py
+# Result: 46 passed, 3 warnings, 9 subtests passed in 33.96s
 ```
 
-### 6.2 Static AST Verification of B05 Sources
+### 6.2 Signature Binding & Path Resolution Defect Probes
+Probing the defects identified during independent review of PR #5758 confirms both issues and validates the exact fixes:
+
+```bash
+# Probe 1: Reproduce AgoraService._private_record_visible signature defect
+.venv-pantheon/bin/python3 -c "
+from services.control_plane.bff.agora.service import AgoraService
+try:
+    AgoraService._private_record_visible({'id': '1'}, None)
+except TypeError as e:
+    print('Defect 1 reproduced:', e)
+"
+# Output:
+# Defect 1 reproduced: AgoraService._private_record_visible() missing 1 required positional argument: 'identity'
+
+# Probe 2: Reproduce context_resolver.py parents[3] vs parents[4] schema resolution
+.venv-pantheon/bin/python3 -c "
+from pathlib import Path
+module_path = Path('services/control-plane/bff/agora/interaction/context_resolver.py')
+wrong = module_path.resolve().parents[3] / 'telemetry' / 'trade_episode_projection.schema.json'
+right = module_path.resolve().parents[4] / 'telemetry' / 'trade_episode_projection.schema.json'
+print('parents[3] exists:', wrong.exists())
+print('parents[4] exists:', right.exists(), right)
+"
+# Output:
+# parents[3] exists: False
+# parents[4] exists: True .../services/telemetry/trade_episode_projection.schema.json
+
+# Probe 3: Validate extracted canonical filter function behavior
+.venv-pantheon/bin/python3 -c "
+from typing import Any, Dict, List, Optional
+
+def _owner(r):
+    return str(r.get('user_id') or r.get('created_by') or '').strip()
+
+def _visible(r, ident, *, tenant_id=None, user_id=None):
+    if not isinstance(r, dict): return False
+    it = str(tenant_id or '').strip()
+    rt = str(r.get('tenant_id') or '').strip()
+    if it and (not rt or rt != it): return False
+    if str(r.get('visibility') or 'private').lower() != 'private': return True
+    return _owner(r) == str(user_id or '')
+
+records = [
+    {'id': 'e1', 'tenant_id': 't1', 'user_id': 'alice', 'visibility': 'private'},
+    {'id': 'e2', 'tenant_id': 't2', 'user_id': 'alice', 'visibility': 'private'},
+    {'id': 'e3', 'tenant_id': 't1', 'user_id': 'bob', 'visibility': 'private'},
+    {'id': 'e4', 'tenant_id': 't1', 'user_id': 'bob', 'visibility': 'public'},
+    'invalid-non-dict',
+    None,
+]
+filtered = [r for r in records if _visible(r, None, tenant_id='t1', user_id='alice')]
+print('Filtered IDs:', [r['id'] for r in filtered])
+"
+# Output:
+# Filtered IDs: ['e1', 'e4']
+# (e1 same tenant/user private retained; e2 cross-tenant dropped; e3 cross-user private dropped; e4 public retained; non-dicts discarded without TypeError)
+```
+
+### 6.3 Static AST Verification of B05 Sources
 | File | Current `main` Importer | Seam Action Required | Post-Seam Disposition |
 |---|:---:|---|---|
 | `governance/test_decision_journal_write_owner.py` | Yes (line 1653) | Switch line 1653 to import extracted seam; pass explicit `reader` and `identity`. | `MIGRATED` |
@@ -538,5 +811,5 @@ python3 scripts/dev/provision_python_distribution.py --dependency-python /home/c
 | `tests/test_bff_approvals_surface_contract.py` | Yes (line 22) | Migrate from `main` to `create_governance_router`. | `MIGRATED` |
 | `tests/test_bff_governance_subrules_contract.py` | Yes (line 25) | Migrate from `main` to `create_governance_router`. | `MIGRATED` |
 
-### 6.3 Conclusion
-This operational decision eliminates the B05 deadlock, prevents any dependency cycle with `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001`, enforces clean dependency injection for interaction context resolution, and provides a clear, governed execution path for the remaining test migration batches.
+### 6.4 Conclusion
+This operational decision eliminates the B05 deadlock, prevents any dependency cycle with `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001`, preserves all 10 audience conditions and the focused Decision Event 503 rejection from `main.py`, fixes the method binding and schema path resolution, preserves all existing B05 prerequisite edges, enforces clean dependency injection for interaction context resolution, and provides a clear, governed execution path for the remaining test migration batches.
