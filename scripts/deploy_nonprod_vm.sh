@@ -146,6 +146,42 @@ DEPLOY_SHA="${GITHUB_SHA:-}"
 ALLOW_DIRTY="${PANTHEON_ALLOW_DIRTY_DEPLOY:-false}"
 ALLOW_EXAMPLE_ENV="${PANTHEON_ALLOW_EXAMPLE_ENV:-false}"
 DRY_RUN=false
+ARTIFACT_RESTORE=false
+ARTIFACT_VERIFY=false
+ARTIFACT_READBACK_OUT=""
+
+validate_artifact_restore_request() {
+  [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_VERIFY:-false}" == true ]] || return 0
+  [[ "${ARTIFACT_RESTORE}" != true || "${ARTIFACT_VERIFY:-false}" != true ]] \
+    || error "artifact restore and verify modes are mutually exclusive"
+  [[ "${DEPLOY_ENV}:${COMPONENT}" == dev:bff && "${ALLOW_DIRTY}" != true ]] \
+    || error "artifact restore requires a clean explicit dev:bff target"
+  [[ "${DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}" ]] \
+    || error "artifact restore SHA must match the sealed previous backend"
+  local name
+  for name in MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID; do
+    local variable="PANTHEON_DEV_ARTIFACT_${name}"
+    [[ "${!variable:-}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
+      || error "artifact restore requires ${variable}"
+  done
+  for name in CONTROLLER_SHA CANDIDATE_BACKEND_SHA CANDIDATE_FRONTEND_SHA PREVIOUS_BACKEND_SHA PREVIOUS_FRONTEND_SHA; do
+    local variable="PANTHEON_DEV_ARTIFACT_${name}"
+    [[ "${!variable:-}" =~ ^[0-9a-f]{40}$ ]] \
+      || error "artifact restore requires ${variable}"
+  done
+  for name in MANIFEST_PATH DRIVER_PATH COMPOSE_FILE; do
+    local variable="PANTHEON_DEV_ARTIFACT_${name}"
+    [[ "${!variable:-}" == /* ]] || error "artifact restore requires absolute ${variable}"
+  done
+  [[ "${PANTHEON_DEV_ARTIFACT_RUN_ID:-}" =~ ^[0-9]{1,20}$ && "${PANTHEON_DEV_ARTIFACT_ATTEMPT:-}" =~ ^[0-9]{1,10}$ ]] \
+    || error "artifact restore requires an exact run and attempt"
+  if [[ "${ARTIFACT_RESTORE}" == true ]]; then
+    [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
+       "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
+       "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
+      || error "artifact restore requires the external candidate image receipt path and digest"
+  fi
+}
 
 verify_dev_environment_lease_contract() {
   if [[ "${DEPLOY_ENV}" != "dev" ]]; then
@@ -159,11 +195,19 @@ verify_dev_environment_lease_contract() {
   # Empty-host bootstrap deliberately deploys a read-only predecessor before
   # the candidate.  The job-owned lease remains bound to the candidate SHA;
   # only this explicitly marked bootstrap invocation may deploy a different
-  # predecessor SHA under that lease.  Ordinary deploys cannot override the
-  # lease identity.
+  # predecessor SHA under that lease. Sealed artifact compensation has its own
+  # narrow candidate-to-prior exception; it must not borrow the bootstrap flag.
+  # A fresh compensation lease bound directly to the prior SHA needs neither
+  # exception. Ordinary deploys cannot override the lease identity.
   if [[ "${lease_expected_backend_sha}" != "${DEPLOY_SHA}" ]]; then
-    [[ "${PANTHEON_DEV_BOOTSTRAP_PREDECESSOR:-false}" == "true" ]] \
-      || error "dev lease expected backend override is only permitted for an explicit bootstrap predecessor"
+    if [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_VERIFY:-false}" == true ]]; then
+      validate_artifact_restore_request
+      [[ "${lease_expected_backend_sha}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
+        || error "artifact restore lease override must match the sealed candidate backend"
+    else
+      [[ "${PANTHEON_DEV_BOOTSTRAP_PREDECESSOR:-false}" == "true" ]] \
+        || error "dev lease expected backend override is only permitted for an explicit bootstrap predecessor"
+    fi
   fi
 
   [[ -n "${guarded_lease_id}" ]] \
@@ -309,7 +353,12 @@ Options:
   --dry-run              Print the target plan without SSHing.
   --rollback-sha <commit>
                          Optional. Baseline BFF commit to restore if post-rollout
-                         gates fail.
+                         gates fail; restoration also requires sealed artifacts.
+  --artifact-restore     dev:bff only. Restore retained exact images using the
+                         sealed manifest; never rebuild or change owner services.
+  --artifact-verify      dev:bff only. Verify the unchanged retained baseline.
+  --artifact-readback-out <path>
+                         New runner-private validated artifact readback file.
   --deadline-seconds <seconds>
                          Deploy command deadline in seconds. Default: 7200.
   --deploy-timeout-seconds <seconds>
@@ -319,6 +368,17 @@ Options:
 Environment overrides:
   REMOTE_USER
   DEV_ROLLBACK_BACKEND_SHA PANTHEON_DEV_ROLLBACK_BACKEND_SHA
+  PANTHEON_DEV_ARTIFACT_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256
+  PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH
+  PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256
+  PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR
+  PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256
+  PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE
+  PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID
+  PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA
+  PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA
+  PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA
+  PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD (created by the VM transport watchdog)
   DEV_DEPLOY_DEADLINE_SECONDS DEV_DEPLOY_TIMEOUT_SECONDS
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
@@ -489,6 +549,19 @@ while [[ $# -gt 0 ]]; do
       DEV_ROLLBACK_BACKEND_SHA="${2:-}"
       shift 2
       ;;
+    --artifact-restore)
+      ARTIFACT_RESTORE=true
+      shift
+      ;;
+    --artifact-verify)
+      ARTIFACT_VERIFY=true
+      shift
+      ;;
+    --artifact-readback-out)
+      ARTIFACT_READBACK_OUT="${2:-}"
+      [[ "${ARTIFACT_READBACK_OUT}" == /* ]] || error "artifact readback output must be absolute"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -555,6 +628,11 @@ case "$DEPLOY_ENV" in
 esac
 
 validate_target_selection
+validate_artifact_restore_request
+if [[ -n "${ARTIFACT_READBACK_OUT}" ]]; then
+  [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_VERIFY}" == true ]] \
+    || error "artifact readback output requires restore or verify mode"
+fi
 
 case "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" in
   true|false) ;;
@@ -578,6 +656,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "project=${PROJECT_ID}"
   info "environment=${DEPLOY_ENV}"
   info "component=${COMPONENT}"
+  info "artifact_restore=${ARTIFACT_RESTORE}"
   info "sha=${DEPLOY_SHA}"
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
@@ -697,7 +776,56 @@ ensure_management_ai_bucket() {
   fi
 }
 
-ensure_management_ai_bucket
+if [[ "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
+  ensure_management_ai_bucket
+fi
+
+prepare_dev_candidate_receipt_context() {
+  # This runs inside the existing lease guard. It records that guard's actual
+  # UUID and the externally sealed baseline digest, not an observed replacement.
+  python3 - "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR:-}" <<'CONTEXT_PY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import uuid
+
+directory = Path(__import__("sys").argv[1])
+if not directory.is_absolute() or directory.resolve() != directory:
+    raise SystemExit("candidate evidence directory must be canonical and absolute")
+directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+info = directory.lstat()
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+    raise SystemExit("candidate evidence directory must be owner-private 0700")
+identity = {}
+for field in ("candidate_id", "run_id", "attempt", "controller_sha", "candidate_backend_sha",
+              "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha"):
+    value = os.environ.get("PANTHEON_DEV_ARTIFACT_" + field.upper(), "")
+    pattern = r"[0-9a-f]{64}" if field == "candidate_id" else r"[0-9a-f]{40}"
+    if field == "run_id": pattern = r"[1-9][0-9]{0,19}"
+    if field == "attempt": pattern = r"[1-9][0-9]{0,9}"
+    if not re.fullmatch(pattern, value) or not value.strip("0"):
+        raise SystemExit("candidate context identity is missing or invalid")
+    identity[field] = value
+digest = os.environ.get("PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256", "")
+lease = os.environ.get("PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID", "")
+if not re.fullmatch(r"[0-9a-f]{64}", digest) or digest == "0" * 64 or str(uuid.UUID(lease)) != lease:
+    raise SystemExit("candidate context external seal or guard differs")
+context = {"schema_version": "pantheon.dev-candidate-receipt-context.v1", "identity": identity,
+           "baseline_manifest_sha256": digest, "guard_lease_id": lease}
+output = directory / "candidate-receipt.json"
+if output.exists() or output.is_symlink():
+    raise SystemExit("candidate receipt output already exists")
+raw = (json.dumps(context, sort_keys=True, separators=(",", ":")) + "\n").encode()
+fd = os.open(directory / "context.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as stream:
+    stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+try: os.fsync(fd)
+finally: os.close(fd)
+CONTEXT_PY
+}
 
 ssh_bash() {
   local vm="$1"
@@ -715,6 +843,23 @@ ssh_bash() {
   command_prefix+=" PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH=$(shell_quote "${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-}")"
   command_prefix+=" PANTHEON_DEV_FRONTEND_SHA=$(shell_quote "${PANTHEON_DEV_FRONTEND_SHA:-${FRONTEND_SHA:-}}")"
   command_prefix+=" PANTHEON_DEV_ROLLBACK_BACKEND_SHA=$(shell_quote "${DEV_ROLLBACK_BACKEND_SHA:-}")"
+  command_prefix+=" PANTHEON_DEV_ARTIFACT_RESTORE=$(shell_quote "${ARTIFACT_RESTORE}")"
+  command_prefix+=" PANTHEON_DEV_ARTIFACT_VERIFY=$(shell_quote "${ARTIFACT_VERIFY}")"
+  # Explicit nonsecret contract only. The remote watchdog creates the private
+  # guard FD; a runner FD number is not a remotely inherited descriptor.
+  local artifact_variable
+  for artifact_variable in \
+    PANTHEON_DEV_ARTIFACT_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256 \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256 \
+    PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256 \
+    PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID \
+    PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
+    PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
+    PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
+  done
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -817,7 +962,71 @@ ssh_bash() {
     )
   fi
 
-  python3 -c '
+  run_remote_payload() {
+    if [[ "${DEPLOY_ENV}" == dev ]]; then
+      [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
+         "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
+         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com && \
+         "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+        || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      local -a observer_args=()
+      if [[ "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
+        prepare_dev_candidate_receipt_context || return $?
+        observer_args=(--candidate-receipt-context "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/context.json"
+          --candidate-receipt-output "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/candidate-receipt.json")
+      fi
+      # Never put the secret-bearing deployment script in evidence or stdout.
+      # Both materialized script and transient compensation log are private,
+      # and the latter is accepted only by the shared strict typed validator.
+      local private_dir remote_script transport_status=0
+      private_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/pantheon-dev-transport.XXXXXXXX")" || return $?
+      remote_script="${private_dir}/remote.sh"
+      PANTHEON_DEV_TRANSPORT_EXPORT_PREFIX="${command_prefix% bash -s}" python3 -c '
+import os, sys
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as stream:
+    stream.write(b"#!/bin/bash\nset -euo pipefail\nexport " + os.environ.pop("PANTHEON_DEV_TRANSPORT_EXPORT_PREFIX").encode() + b"\n")
+    stream.write(sys.stdin.buffer.read())
+    stream.flush(); os.fsync(stream.fileno())
+' "${remote_script}" || transport_status=$?
+      if [[ "${transport_status}" == 0 ]]; then
+        if [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_VERIFY}" == true ]]; then
+          [[ -n "${ARTIFACT_READBACK_OUT}" ]] || transport_status=75
+          if [[ "${transport_status}" == 0 ]]; then
+            (umask 077; TARGET_ENV=dev DEV_DEPLOY_SSH_HOST="${DEV_DEPLOY_SSH_HOST}" \
+              DEV_DEPLOY_SSH_USER="${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" python3 "${SCRIPT_DIR}/dev_remote_guarded_exec.py" \
+              --ssh-helper "${SCRIPT_DIR}/dev_vm_ssh.sh" --script-file "${remote_script}" \
+              --deadline-seconds "${deadline_seconds}" >"${private_dir}/transport.log") || transport_status=$?
+          fi
+          if [[ "${transport_status}" == 0 ]]; then
+            local operation=verify
+            [[ "${ARTIFACT_RESTORE}" != true ]] || operation=restore
+            python3 "${SCRIPT_DIR}/dev_artifact_compensation_evidence.py" readback \
+              --input-log "${private_dir}/transport.log" --output "${ARTIFACT_READBACK_OUT}" \
+              --operation "${operation}" --provenance "${PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE:?missing evidence provenance}" || transport_status=$?
+          fi
+        else
+          TARGET_ENV=dev DEV_DEPLOY_SSH_HOST="${DEV_DEPLOY_SSH_HOST}" \
+            DEV_DEPLOY_SSH_USER="${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" python3 "${SCRIPT_DIR}/dev_remote_guarded_exec.py" \
+            --ssh-helper "${SCRIPT_DIR}/dev_vm_ssh.sh" --script-file "${remote_script}" \
+            --deadline-seconds "${deadline_seconds}" "${observer_args[@]}" || transport_status=$?
+        fi
+      fi
+      # Only these locally-created, exact private paths are removed; never an
+      # evidence directory, receipt, retained VM artifact, or caller path.
+      python3 - "${private_dir}" <<'CLEAN_PRIVATE_PY'
+from pathlib import Path
+import sys
+directory = Path(sys.argv[1])
+for name in ("remote.sh", "transport.log"):
+    (directory / name).unlink(missing_ok=True)
+directory.rmdir()
+CLEAN_PRIVATE_PY
+      return "${transport_status}"
+    fi
+    # Staging retains its existing independent transport; no dev authority is
+    # inferred or reused there.
+    python3 -c '
 import os
 import signal
 import subprocess
@@ -880,7 +1089,9 @@ except Exception:
     raise
 
 sys.exit(exit_code)
-' "${deadline_seconds}" "${remote_command[@]}" <<'REMOTE'
+' "${deadline_seconds}" "${remote_command[@]}"
+  }
+  run_remote_payload <<'REMOTE'
 set -euo pipefail
 
 info() {
@@ -3025,112 +3236,381 @@ cleanup_stale_compose_replacement_containers() {
   fi
 }
 
+with_dev_bff_runtime_env() {
+  local target_sha="$1" proof_flag="$2"
+  shift 2
+  COMPOSE_BAKE=false \
+  COMPOSE_PROFILES="" \
+  GIT_SHA="${target_sha}" \
+  BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  PANTHEON_ENV=dev \
+  LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
+  PANTHEON_CANARY_EXECUTION_ENABLED=false \
+  PANTHEON_LIVE_BROKER_ENABLED=false \
+  BROKER_PAPER_ENABLED=true \
+  AGORA_WORKSHOP_STORE_BACKEND=postgres \
+  AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+  AGORA_WORKSHOP_STORE_SCHEMA=agora \
+  AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+  AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+  AGORA_GOVERNANCE_STORE_SCHEMA=agora \
+  AGORA_RESEARCH_STORE_BACKEND=postgres \
+  AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+  AGORA_RESEARCH_STORE_SCHEMA=agora_research \
+  AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
+  AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+  AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
+  PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
+  PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+  PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+  PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${proof_flag}" \
+  PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+  CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
+  PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+  PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+  PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+  PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+  PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+  PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+  PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
+  PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+  PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
+  PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
+  PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+  PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
+  PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
+  PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
+  PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
+  PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+  PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
+  PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
+  PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
+  PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
+  PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
+  PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}" \
+  PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+  PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
+  PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
+  PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
+  PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
+  PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
+  PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
+  PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
+  PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+  PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+  PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+  PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
+  PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
+  MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
+  MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
+  MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+  PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
+  PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
+    "$@"
+}
+
+run_dev_artifact_driver() {
+  local operation="$1"
+  case "${PANTHEON_DEPLOY_ENV}:${PANTHEON_DEPLOY_COMPONENT}" in
+    dev:root|dev:bff) ;;
+    *) error "artifact operations are restricted to dev root/bff" ;;
+  esac
+  [[ "${operation}" == restore || "${operation}" == verify || "${operation}" == seal-candidate ]] \
+    || error "unsupported sealed artifact operation"
+  [[ "${PANTHEON_DEV_BFF_AUTH_MODE:-}" == strict && "${PANTHEON_DEV_BFF_AUTH_STUB:-}" == false ]] \
+    || error "artifact operations require strict non-stub auth"
+  local variable
+  for variable in \
+    PANTHEON_DEV_ARTIFACT_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256 \
+    PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256 \
+    PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID \
+    PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
+    PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
+    PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    [[ -n "${!variable:-}" ]] || error "sealed artifact operation requires ${variable}"
+  done
+  [[ "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD:-}" =~ ^[0-9]+$ && "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}" -ge 3 ]] \
+    || error "artifact operation requires the remote watchdog's private guard FD"
+  [[ -z "${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}" || "${PANTHEON_DEV_ROLLBACK_BACKEND_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}" ]] \
+    || error "requested rollback SHA differs from the sealed previous backend"
+
+  # Authenticate the stable driver and its sibling library before executing
+  # either. Never import an unverified copy from a candidate or prior checkout.
+  python3 - "${PANTHEON_DEV_ARTIFACT_DRIVER_PATH}" \
+    "${PANTHEON_DEV_ARTIFACT_DRIVER_SHA256}" "${PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256}" \
+    "${PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA}" <<'ARTIFACT_PY'
+import hashlib
+import os
+import pathlib
+import re
+import stat
+import sys
+
+controller_root = pathlib.Path("/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/controllers")
+controller_sha = sys.argv[4]
+if not re.fullmatch(r"[0-9a-f]{40}", controller_sha):
+    raise SystemExit("invalid artifact controller identity")
+driver = pathlib.Path(sys.argv[1])
+if driver != controller_root / controller_sha / "dev_release_artifact_driver.py":
+    raise SystemExit("artifact driver path differs from the pinned controller store")
+expected_uid = os.geteuid()
+for directory in (controller_root.parent, controller_root, driver.parent):
+    info = directory.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or directory.resolve() != directory or
+            info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o700):
+        raise SystemExit("artifact controller directories must be canonical owner-private 0700")
+for path, expected in ((driver, sys.argv[2]), (driver.with_name("dev_release_artifacts.py"), sys.argv[3])):
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or expected == "0" * 64:
+        raise SystemExit("invalid stable artifact implementation digest")
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or path.resolve() != path or
+            info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o400):
+        raise SystemExit("artifact implementation must be canonical owner-private 0400")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        raise SystemExit("stable artifact implementation digest mismatch")
+ARTIFACT_PY
+  local status=$?
+  [[ "${status}" == 0 ]] || return "${status}"
+
+  local compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
+  local runtime_sha="${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}"
+  local -a candidate_args=()
+  if [[ "${operation}" == seal-candidate ]]; then
+    [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
+      || { info "candidate source differs from artifact admission" >&2; return 75; }
+    compose_file="${PWD}/docker-compose.yml"
+    runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
+  elif [[ "${operation}" == restore ]]; then
+    [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
+       "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
+       "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
+      || { info "restore requires the externally retained candidate image receipt" >&2; return 75; }
+    candidate_args=(--candidate-image-manifest "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH}"
+      --candidate-image-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}")
+  fi
+
+  # The trusted driver checks the external manifest seal, all exact identities,
+  # immutable prior Compose bytes, guard pulses, image readbacks and owner
+  # preservation. It restores only its allowlisted baseline token-file paths;
+  # no issuer, source checkout, FE switch or Caddy write belongs in this lane.
+  with_dev_bff_runtime_env "${runtime_sha}" false \
+    python3 "${PANTHEON_DEV_ARTIFACT_DRIVER_PATH}" "${operation}" \
+      --environment dev --project-id "${PANTHEON_DEPLOY_PROJECT_ID}" --vm pantheon-dev-deploy \
+      --candidate-id "${PANTHEON_DEV_ARTIFACT_CANDIDATE_ID}" \
+      --run-id "${PANTHEON_DEV_ARTIFACT_RUN_ID}" --attempt "${PANTHEON_DEV_ARTIFACT_ATTEMPT}" \
+      --controller-sha "${PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA}" \
+      --candidate-backend-sha "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" \
+      --candidate-frontend-sha "${PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA}" \
+      --previous-backend-sha "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}" \
+      --previous-frontend-sha "${PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA}" \
+      --compose-file "${compose_file}" \
+      --manifest "${PANTHEON_DEV_ARTIFACT_MANIFEST_PATH}" \
+      --manifest-sha256 "${PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256}" \
+      --bff-url "https://${PANTHEON_DEV_BFF_PUBLIC_HOST}" \
+      --fe-url "https://${PANTHEON_DEV_FE_PUBLIC_HOST}" \
+      --guard-channel-fd "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}" "${candidate_args[@]}"
+}
+
+validate_dev_candidate_override() {
+  # Validate retained bytes each time before Compose consumes them. The path
+  # cannot be selected by a caller or point into a mutable source checkout.
+  python3 - "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" \
+    "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" \
+    "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH:-}" \
+    "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_SHA256:-}" <<'CANDIDATE_PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+root = Path("/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts")
+env = os.environ
+folder = root / ("baseline-" + env["PANTHEON_DEV_ARTIFACT_RUN_ID"] + "-" +
+                 env["PANTHEON_DEV_ARTIFACT_ATTEMPT"] + "-" + env["PANTHEON_DEV_ARTIFACT_CANDIDATE_ID"])
+for directory in (root, folder):
+    info = directory.lstat()
+    if (directory.resolve() != directory or not stat.S_ISDIR(info.st_mode) or
+            info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700):
+        raise SystemExit("candidate artifact directory is not owner-private")
+documents = []
+for name, path, expected in (("candidate-images.json", sys.argv[1], sys.argv[2]),
+                             ("candidate-images.override.json", sys.argv[3], sys.argv[4])):
+    if Path(path) != folder / name or not re.fullmatch(r"[0-9a-f]{64}", expected) or expected == "0" * 64:
+        raise SystemExit("candidate artifact path or digest differs from admission")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise SystemExit("candidate artifact is not an owner-private regular file")
+        raw = stream.read(65537)
+    if len(raw) > 65536 or hashlib.sha256(raw).hexdigest() != expected:
+        raise SystemExit("candidate artifact byte seal mismatch")
+    documents.append(json.loads(raw))
+record, override = documents
+services = ("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler")
+if set(record["services"]) != set(services) or record["image_override_sha256"] != sys.argv[4]:
+    raise SystemExit("candidate service/override admission mismatch")
+expected_override = {"services": {service: {"image": record["services"][service]["image_id"],
+                                           "pull_policy": "never"} for service in services}}
+if override != expected_override or any(not re.fullmatch(r"sha256:[0-9a-f]{64}", row["image"])
+                                        for row in override["services"].values()):
+    raise SystemExit("candidate override must use only the three sealed image IDs")
+CANDIDATE_PY
+}
+
+await_dev_candidate_receipt_ack() {
+  python3 - "${PANTHEON_DEV_ARTIFACT_RECEIPT_ACK_FD:-}" \
+    "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD:-}" \
+    "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" <<'ACK_PY'
+import fcntl
+import os
+import re
+import select
+import stat
+import sys
+import time
+
+def fail():
+    raise SystemExit("candidate receipt ACK/guard failed closed")
+
+try:
+    ack_fd, guard_fd = (int(value) for value in sys.argv[1:3])
+    if ack_fd == guard_fd or min(ack_fd, guard_fd) < 3:
+        fail()
+    for fd in (ack_fd, guard_fd):
+        info = os.fstat(fd)
+        if (not stat.S_ISFIFO(info.st_mode) or
+                fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDONLY):
+            fail()
+        os.set_blocking(fd, False)
+    if not re.fullmatch(r"[0-9a-f]{64}", sys.argv[3]):
+        fail()
+    expected = sys.argv[3].encode() + b"\n"
+    started = last_pulse = time.monotonic()
+    pulse_seen = False
+    ack = b""
+    while True:
+        # Drain before success, including EOF after queued data. The watchdog
+        # alone owns both writers; inherited FD numbers are never authority.
+        for fd in (guard_fd, ack_fd):
+            count = 0
+            while True:
+                try:
+                    chunk = os.read(fd, 4096)
+                except BlockingIOError:
+                    break
+                if not chunk:
+                    fail()
+                count += len(chunk)
+                if count > 4096:
+                    fail()
+                if fd == guard_fd:
+                    pulse_seen = True
+                    last_pulse = time.monotonic()
+                else:
+                    ack += chunk
+                    if len(ack) > 65 or not expected.startswith(ack):
+                        fail()
+        now = time.monotonic()
+        if now - started >= 60 or now - last_pulse >= 10:
+            fail()
+        if ack == expected and pulse_seen:
+            break
+        select.select([guard_fd, ack_fd], [], [], min(.1, 60 - (now - started), 10 - (now - last_pulse)))
+except (ValueError, OSError):
+    fail()
+ACK_PY
+}
+
+seal_dev_candidate_images() {
+  # A source build is not rollback evidence. Publish the actual producer result,
+  # then wait until the runner has durably retained those exact bytes.
+  DEV_CANDIDATE_RECEIPT_ACKED=false
+  local result fields
+  result="$(run_dev_artifact_driver seal-candidate)" || return $?
+  fields="$(python3 - "${result}" <<'SEAL_PY'
+import json
+import re
+import sys
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise SystemExit("duplicate candidate producer field")
+        result[key] = value
+    return result
+
+if len(sys.argv[1]) > 60000 or "\n" in sys.argv[1]:
+    raise SystemExit("candidate producer output is not one bounded JSON line")
+result = json.loads(sys.argv[1], object_pairs_hook=unique)
+keys = ("candidate_image_manifest_path", "candidate_image_manifest_sha256",
+        "candidate_image_override_path", "candidate_image_override_sha256")
+if set(result) != set(keys) | {"candidate_image_manifest"}:
+    raise SystemExit("candidate producer result schema mismatch")
+for key in keys:
+    value = result[key]
+    if not isinstance(value, str) or any(c in value for c in "\r\n\t"):
+        raise SystemExit("invalid candidate producer field")
+    if key.endswith("sha256") and not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise SystemExit("invalid candidate producer digest")
+    print(value)
+SEAL_PY
+)" || return $?
+  local -a admitted
+  mapfile -t admitted <<<"${fields}"
+  export PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH="${admitted[0]}"
+  export PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256="${admitted[1]}"
+  export PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH="${admitted[2]}"
+  export PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_SHA256="${admitted[3]}"
+  validate_dev_candidate_override || return $?
+  printf 'PANTHEON_ARTIFACT_CANDIDATE_SEAL_V1 %s\n' "${result}"
+  await_dev_candidate_receipt_ack || return $?
+  DEV_CANDIDATE_RECEIPT_ACKED=true
+}
+
+run_dev_candidate_compose() {
+  [[ "${DEV_CANDIDATE_RECEIPT_ACKED:-false}" == true ]] \
+    || { info "candidate mutation requires the runner's durable receipt ACK" >&2; return 75; }
+  validate_dev_candidate_override || return $?
+  docker compose -p pantheon -f docker-compose.yml \
+    -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH}" "$@"
+}
+
 rollback_dev_bff_on_failure() {
   local failed_stage="$1"
-  local rollback_sha="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
-
   dump_dev_root_failure_diagnostics
-
-  if [[ -z "${rollback_sha}" || ! "${rollback_sha}" =~ ^[0-9a-f]{40}$ || "${rollback_sha}" == "${PANTHEON_DEPLOY_SHA}" ]]; then
-    info "automatic BFF rollback skipped: no distinct valid baseline rollback SHA available (rollback_sha=${rollback_sha:-none})"
-    exit 1
-  fi
-
-  info "post-up failure at ${failed_stage}; automatically rolling back dev operator-bff and lifecycle projector to baseline ${rollback_sha}"
-
-  if git checkout --detach "${rollback_sha}" >/dev/null 2>&1; then
-    COMPOSE_BAKE=false \
-    COMPOSE_PROFILES="" \
-    GIT_SHA="${rollback_sha}" \
-    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    PANTHEON_ENV=dev \
-    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
-    PANTHEON_CANARY_EXECUTION_ENABLED=false \
-    PANTHEON_LIVE_BROKER_ENABLED=false \
-    BROKER_PAPER_ENABLED=true \
-    AGORA_WORKSHOP_STORE_BACKEND=postgres \
-    AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_WORKSHOP_STORE_SCHEMA=agora \
-    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
-    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
-    AGORA_RESEARCH_STORE_BACKEND=postgres \
-    AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_RESEARCH_STORE_SCHEMA=agora_research \
-    AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
-    AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
-    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
-    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
-    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
-    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="false" \
-    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
-    PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-    PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
-    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
-    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
-    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
-    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
-    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
-    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
-    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
-    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
-    PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}" \
-    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
-    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
-    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
-    PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
-    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
-    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
-    PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
-    PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
-    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
-    PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
-    PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
-    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
-    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
-    PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
-    MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
-    MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
-    MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
-    PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
-    PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
-      || info "warning: docker compose up failed during rollback execution"
-
-    curl_with_retry http://127.0.0.1:18001/health 6 5 || true
-    actual_restored="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
-    if [[ "${actual_restored}" == "${rollback_sha}" ]]; then
-      info "automatic BFF rollback verified: operator-bff restored to baseline ${rollback_sha}"
-    else
-      info "warning: automatic BFF rollback unable to verify restored SHA: expected ${rollback_sha}, got ${actual_restored:-none}"
-    fi
+  info "post-up failure at ${failed_stage}; attempting sealed exact-artifact BFF restore"
+  # A rebuild may change image bytes without changing source SHA. Always let
+  # the same trusted driver verify/restore the retained images, even for a
+  # same-source candidate. Missing artifacts/guard/digests fail closed; never
+  # checkout owner-mounted source or fall back to a source rebuild.
+  if [[ "${DEV_CANDIDATE_RECEIPT_ACKED:-false}" != true ]]; then
+    # No image switch was admitted. Verify the original baseline only; a local
+    # producer file without a runner ACK is not authority to compensate.
+    run_dev_artifact_driver verify || info "unchanged baseline verification failed"
+  elif run_dev_artifact_driver restore; then
+    info "automatic BFF exact-artifact restore verified"
   else
-    info "warning: unable to checkout baseline rollback SHA ${rollback_sha}"
+    info "automatic BFF exact-artifact restore failed; no source-build fallback"
   fi
-
+  # Successful compensation does not turn the original failed rollout green.
   exit 1
 }
 
@@ -3212,6 +3692,23 @@ start_dev_paper_principal_issuer() {
   [[ "${issuer_sha}" == "${PANTHEON_DEPLOY_SHA}" ]] || { info "issuer exact source identity mismatch"; return 1; }
 }
 
+# Explicit external compensation exits before snapshots, worktree preparation,
+# principal issuance/revocation, build, cleanup, owner rollout or ingress writes.
+if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" == true ]]; then
+  [[ "${PANTHEON_DEPLOY_ENV}:${PANTHEON_DEPLOY_COMPONENT}" == dev:bff ]] \
+    || error "external artifact restore requires dev:bff"
+  [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}" ]] \
+    || error "external artifact restore target differs from sealed previous backend"
+  [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" != true ]] \
+    || error "artifact modes are mutually exclusive"
+  artifact_operation=verify
+  [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true ]] || artifact_operation=restore
+  artifact_readback="$(run_dev_artifact_driver "${artifact_operation}")" || exit $?
+  printf 'PANTHEON_ARTIFACT_READBACK_V1 %s\n' "${artifact_readback}"
+  info "component bff exact artifact ${artifact_operation} completed"
+  exit 0
+fi
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -3264,7 +3761,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    start_dev_paper_principal_issuer || exit 1
+    seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
@@ -3354,7 +3852,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
-      docker compose -p pantheon -f docker-compose.yml up -d \
+      run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
     # `up -d --build` only recreates a container Compose judges to need it.
     # The legacy lifecycle projector runs with `restart: no` (deliberate
@@ -3364,7 +3862,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # and the exact-SHA readiness gate below can never observe a fresh
     # publish. Force it every root deploy so a wedged projector cannot
     # silently survive across deploys.
-    docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler \
+    run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "projector_recreate"
     # Phase 4: Post-Deploy Bounded Verification
     verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
@@ -3423,90 +3921,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    start_dev_paper_principal_issuer || exit 1
+    seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
     cleanup_stale_compose_replacement_containers
-    COMPOSE_BAKE=false \
-    COMPOSE_PROFILES="" \
-    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
-    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    PANTHEON_ENV=dev \
-    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
-    PANTHEON_CANARY_EXECUTION_ENABLED=false \
-    PANTHEON_LIVE_BROKER_ENABLED=false \
-    BROKER_PAPER_ENABLED=true \
-    AGORA_WORKSHOP_STORE_BACKEND=postgres \
-    AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_WORKSHOP_STORE_SCHEMA=agora \
-    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
-    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
-    AGORA_RESEARCH_STORE_BACKEND=postgres \
-    AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_RESEARCH_STORE_SCHEMA=agora_research \
-    AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
-    AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
-    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
-    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
-    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
-    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
-    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
-    PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-    PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
-    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
-    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
-    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
-    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
-    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
-    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
-    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
-    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
-    PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}" \
-    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
-    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
-    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
-    PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
-    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
-    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
-    PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
-    PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
-    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
-    PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
-    PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
-    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
-    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
-    PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
-    MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
-    MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
-    MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
-    PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
-    PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
+    with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
+      run_dev_candidate_compose up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"
     # Phase 4: Post-Deploy Verification Gates
     wait_for_exact_bff_lifecycle_readiness \

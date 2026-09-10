@@ -1112,6 +1112,45 @@ class ClaudeAuthTests(unittest.TestCase):
         run_command.assert_not_called()
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-new")
 
+    def test_claude_auth_uses_supplied_identity_for_expired_env_oauth(self) -> None:
+        env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
+        status_payload = {"loggedIn": True, "organization": {"orgId": "unit-env-org"}}
+        expired_oauth = {
+            "accessToken": "sk-ant-oat01-old",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+        }
+        refreshed_oauth = {
+            "accessToken": "sk-ant-oat01-new",
+            "refreshToken": "new-refresh",
+            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+        }
+        with (
+            mock.patch.object(
+                common,
+                "load_claude_oauth_tokens",
+                return_value=({}, expired_oauth, Path("/tmp/.credentials.json")),
+            ),
+            mock.patch.object(
+                common, "refresh_claude_oauth_tokens", return_value=refreshed_oauth
+            ) as refresh,
+            mock.patch.object(common, "run_command") as run_command,
+        ):
+            self.assertTrue(
+                common.claude_auth_ready(
+                    "claude",
+                    env=env,
+                    account_lock_key="claude2",
+                    auth_status_payload=status_payload,
+                )
+            )
+
+        self.assertEqual(
+            refresh.call_args.kwargs["account_lock_key"],
+            common.claude_oauth_refresh_lock_key(status_payload, fallback="claude2"),
+        )
+        run_command.assert_not_called()
+
     def test_claude_auth_ready_prefers_fresh_credentials_over_stale_env_token(self) -> None:
         env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
         fresh_oauth = {
@@ -1310,6 +1349,147 @@ class ClaudeAuthTests(unittest.TestCase):
             ):
                 common.refresh_claude_oauth_tokens({"HOME": "/tmp/synthetic"})
             write.assert_not_called()
+
+    def test_claude_oauth_refresh_lock_key_is_opaque_and_falls_back(self) -> None:
+        shared = {"loggedIn": True, "organization": {"orgId": "unit-shared-org"}}
+        same_shared_identity = {
+            "loggedIn": True,
+            "organization": {"orgId": "UNIT-SHARED-ORG"},
+        }
+        other = {"loggedIn": True, "organization": {"orgId": "unit-other-org"}}
+        email = {"loggedIn": True, "user": {"email": "Worker@Example.test"}}
+        same_email = {"loggedIn": True, "email": "worker@example.test"}
+
+        key = common.claude_oauth_refresh_lock_key(shared, fallback="claude1")
+        email_key = common.claude_oauth_refresh_lock_key(email, fallback="claude1")
+
+        self.assertEqual(key, common.claude_oauth_refresh_lock_key(same_shared_identity, fallback="claude2"))
+        self.assertNotEqual(key, common.claude_oauth_refresh_lock_key(other, fallback="claude2"))
+        self.assertEqual(email_key, common.claude_oauth_refresh_lock_key(same_email, fallback="claude2"))
+        self.assertRegex(key or "", r"^claude-oauth-[0-9a-f]{32}$")
+        self.assertRegex(email_key or "", r"^claude-oauth-[0-9a-f]{32}$")
+        self.assertNotIn("unit-shared-org", key or "")
+        self.assertNotIn("worker@example.test", email_key or "")
+        self.assertEqual(
+            common.claude_oauth_refresh_lock_key({"loggedIn": False}, fallback="claude2"),
+            "claude2",
+        )
+
+    def test_claude_auth_serializes_shared_identity_with_separate_account_fallbacks(self) -> None:
+        intervals: list[tuple[float, float]] = []
+        intervals_lock = threading.Lock()
+        shared_org = f"unit-shared-{uuid.uuid4()}"
+        status_payloads = (
+            {"loggedIn": True, "organization": {"orgId": shared_org}},
+            {"loggedIn": True, "organization": {"orgId": shared_org}},
+        )
+        start = threading.Barrier(2)
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}
+                ).encode("utf-8")
+
+        def slow_urlopen(*_args, **_kwargs):
+            start = time.monotonic()
+            time.sleep(0.15)
+            with intervals_lock:
+                intervals.append((start, time.monotonic()))
+            return _Response()
+
+        def make_credentials(config_dir: str) -> None:
+            path = Path(config_dir) / ".credentials.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "accessToken": "old-access",
+                            "refreshToken": "old-refresh",
+                            "expiresAt": 1,
+                            "scopes": ["user:profile"],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir_a, tempfile.TemporaryDirectory() as tmpdir_b:
+            make_credentials(tmpdir_a)
+            make_credentials(tmpdir_b)
+            results: list[bool] = [False, False]
+
+            def worker(
+                index: int, config_dir: str, fallback: str, status_payload: dict[str, object]
+            ) -> None:
+                start.wait(timeout=5)
+                results[index] = common.claude_auth_ready(
+                    "claude",
+                    env={"CLAUDE_CONFIG_DIR": config_dir},
+                    account_lock_key=fallback,
+                    auth_status_payload=status_payload,
+                )
+
+            with mock.patch.object(common.urllib.request, "urlopen", side_effect=slow_urlopen):
+                threads = [
+                    threading.Thread(target=worker, args=(0, tmpdir_a, "claude1", status_payloads[0])),
+                    threading.Thread(target=worker, args=(1, tmpdir_b, "claude2", status_payloads[1])),
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(results))
+        self.assertEqual(len(intervals), 2)
+        (start_a, end_a), (start_b, end_b) = intervals
+        self.assertFalse(start_a < end_b and start_b < end_a, intervals)
+
+    def test_claude_auth_derives_identity_lock_from_live_status(self) -> None:
+        status = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"loggedIn": True, "orgId": "unit-live-org"}),
+        )
+        expired_oauth = {
+            "accessToken": "old-access",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+        }
+        refreshed_oauth = {
+            "accessToken": "new-access",
+            "refreshToken": "new-refresh",
+            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+        }
+        with (
+            mock.patch.object(common, "run_command", return_value=status),
+            mock.patch.object(
+                common,
+                "load_claude_oauth_tokens",
+                return_value=({}, expired_oauth, Path("/tmp/.credentials.json")),
+            ),
+            mock.patch.object(
+                common, "refresh_claude_oauth_tokens", return_value=refreshed_oauth
+            ) as refresh,
+        ):
+            self.assertTrue(
+                common.claude_auth_ready(
+                    "claude", env={"HOME": "/tmp/test-home"}, account_lock_key="claude2"
+                )
+            )
+
+        self.assertEqual(
+            refresh.call_args.kwargs["account_lock_key"],
+            common.claude_oauth_refresh_lock_key(
+                {"loggedIn": True, "orgId": "unit-live-org"}, fallback="claude2"
+            ),
+        )
 
     def test_refresh_claude_oauth_tokens_serializes_same_account_lock_key(self) -> None:
         # Two distinct CLI identities (separate credentials files) that share
