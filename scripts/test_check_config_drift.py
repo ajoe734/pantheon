@@ -592,4 +592,3 @@ def test_main_passes_with_valid_aligned_false_review_bridge_policy(
     report = json.loads(capsys.readouterr().out)
     assert report["review_bridge_policy_errors"] == []
     assert report["drift"] == []
-
