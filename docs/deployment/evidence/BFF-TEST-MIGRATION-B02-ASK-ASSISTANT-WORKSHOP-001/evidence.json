@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
-  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "base_sha": "c99c090b405d95bff5fa0c426d249ea75ffcc9eb",
   "batch_group": "B02_ask_assistant_workshop",
   "owner": "Antigravity2",
   "reviewer": "Codex",
@@ -32,10 +32,10 @@
     },
     "test_assistant_context_pack": {
       "file": "services/control-plane/bff/tests/test_assistant_context_pack.py",
-      "changes": "Removed sys.path mutations; eliminated test-local duplicate collector double to preserve real production behavior coverage for tenant isolation, access metadata, staleness, and docs citations; sanitized read_store and _REPO_ROOT scoping via pytest monkeypatch fixtures",
+      "changes": "Removed sys.path mutations; retained production behavior coverage for tenant isolation, access metadata, staleness, and docs citations via bff_main; read_store and _REPO_ROOT scoped via pytest monkeypatch fixtures (1 global read_store monkeypatch in test_assistant_context_pack.py:99); pending production collector extraction seam",
       "tests_passed": 5,
       "tests_total": 5,
-      "disposition": "RESIDUAL"
+      "disposition": "RESIDUAL_BLOCKED"
     },
     "test_console_data_agora_projection": {
       "file": "services/control-plane/bff/tests/test_console_data_agora_projection.py",
@@ -53,7 +53,7 @@
     }
   },
   "residual_disposition": {
-    "summary": "3 suites fully decoupled; 1 suite retained as explicit residual pending production collector extraction from main.py",
+    "summary": "3 suites fully decoupled; 1 suite retained as explicit residual blocked on unextracted production collector seam in main.py",
     "decoupled_suites": [
       "services/control-plane/bff/tests/test_assistant_agora_ask.py",
       "services/control-plane/bff/tests/test_console_data_agora_projection.py",
@@ -61,27 +61,29 @@
     ],
     "residual_suite": "services/control-plane/bff/tests/test_assistant_context_pack.py",
     "residual_analysis": {
-      "unextracted_seam": "_assistant_collect_source and _assistant_build_context_pack in services/control-plane/bff/main.py (lines 21324-21713)",
+      "unextracted_seam": "_assistant_collect_source and _assistant_build_context_pack in services/control-plane/bff/main.py (lines 21611-21713)",
       "scope_boundary_constraint": "Modifying main.py or introducing new production service modules under services/control-plane/bff/assistant/ is outside the four-file task grant for BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
       "rejection_of_test_double": "A test-local collector double duplicates policy and allows production regressions in tenant isolation, enforced access metadata, staleness, or docs citations to pass undetected (P1 review finding)",
-      "retained_production_coverage": "test_assistant_context_pack.py exercises the actual production collector via bff_main, using pytest monkeypatch fixtures to provide isolated read_store and _REPO_ROOT scoping without persistent global leakage",
-      "governed_disposition_action": "Recorded as a concrete scope discrepancy for governed contract revision in parent migration BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 or dedicated upstream seam extraction"
+      "retained_production_coverage": "test_assistant_context_pack.py exercises the actual production collector via bff_main, using pytest monkeypatch fixtures to provide isolated read_store and _REPO_ROOT scoping without persistent global leakage; retains 1 pytest-scoped global read_store monkeypatch at line 99",
+      "governed_disposition_action": "Stopped for governed contract/scope revision or dedicated production collector seam extraction prerequisite task (awaiting Human/Ops decision)"
     }
   },
   "static_checks": {
     "main_composition_root_imports": 1,
     "sys_path_mutations": 0,
-    "global_read_store_monkeypatches": 0,
+    "global_read_store_monkeypatches": 1,
+    "global_read_store_monkeypatch_details": "services/control-plane/bff/tests/test_assistant_context_pack.py:99 (pytest-scoped monkeypatch.setattr(bff_main, 'read_store', store))",
     "dynamic_imports": 0,
     "subprocess_calls": 0,
-    "verdict": "passed_with_explicit_residual"
+    "verdict": "blocked_on_production_collector_seam"
   },
   "inventory_scan_results": {
     "services/control-plane/bff/tests/test_assistant_agora_ask.py": {
       "main_imports": [],
       "dynamic_imports": [],
       "subprocess_calls": [],
-      "sys_path_mutations": []
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
     },
     "services/control-plane/bff/tests/test_assistant_context_pack.py": {
       "main_imports": [
@@ -92,19 +94,27 @@
       ],
       "dynamic_imports": [],
       "subprocess_calls": [],
-      "sys_path_mutations": []
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": [
+        {
+          "line": 99,
+          "statement": "monkeypatch.setattr(bff_main, \"read_store\", store)"
+        }
+      ]
     },
     "services/control-plane/bff/tests/test_console_data_agora_projection.py": {
       "main_imports": [],
       "dynamic_imports": [],
       "subprocess_calls": [],
-      "sys_path_mutations": []
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
     },
     "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py": {
       "main_imports": [],
       "dynamic_imports": [],
       "subprocess_calls": [],
-      "sys_path_mutations": []
+      "sys_path_mutations": [],
+      "global_read_store_monkeypatches": []
     }
   },
   "verification": [
@@ -130,12 +140,12 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
-      "result": "39 passed, 3 warnings in 26.01s",
+      "result": "39 passed, 3 warnings in 32.78s",
       "exit_code": 0
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "result": "8 passed in 2.01s",
+      "result": "8 passed in 1.54s",
       "exit_code": 0
     },
     {
@@ -152,6 +162,7 @@
   "review": {
     "owner": "Antigravity2",
     "reviewer": "Codex",
-    "decision": "pending independent exact-head review"
+    "decision": "blocked_awaiting_human_ops_seam_decision",
+    "blocker_reason": "Stopped on missing production collector seam (_assistant_collect_source in main.py) for test_assistant_context_pack.py; 3 suites decoupled; PR #5750 updated with exact blocker evidence. Awaiting Human/Ops contract revision or dedicated seam extraction prerequisite."
   }
 }
