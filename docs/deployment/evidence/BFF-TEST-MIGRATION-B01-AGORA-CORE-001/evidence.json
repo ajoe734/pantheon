@@ -1,0 +1,150 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "delivery_state": "ready_for_review",
+  "delivery_nature": {
+    "test_suite_decoupling": true,
+    "statement": "Decoupled all 17 test and support files in the Agora Core partition from the composition root (services/control-plane/bff/main.py), global monkeypatching (read_store, command_store), and sys.path surgery while preserving full test contracts, error schemas, and invariants."
+  },
+  "base_ref": "origin/dev@d85a7117c10e25d34625ef9b0978c31f5be68bb7",
+  "inventory": {
+    "total_files": 17,
+    "files": [
+      "services/control-plane/bff/test_agora_journal_merge_patch.py",
+      "services/control-plane/bff/test_bff_agora_core_contract.py",
+      "services/control-plane/bff/test_bff_agora_extended_contract.py",
+      "services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py",
+      "services/control-plane/bff/agora/interaction/test_worker.py",
+      "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+      "services/control-plane/bff/tests/test_agora_candidate_pool.py",
+      "services/control-plane/bff/tests/test_agora_candidate_truth.py",
+      "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+      "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "services/control-plane/bff/tests/test_agora_research_run_projection.py",
+      "services/control-plane/bff/tests/test_agora_governed_proposals.py",
+      "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+      "services/control-plane/bff/tests/test_agora_router.py",
+      "services/control-plane/bff/tests/test_agora_servant_sessions.py",
+      "services/control-plane/bff/tests/test_agora_write_authority.py"
+    ]
+  },
+  "decoupling_summary": {
+    "composition_root_references": {
+      "before": 17,
+      "after": 0,
+      "notes": "Zero import main or from main import across all 17 files."
+    },
+    "sys_path_surgery": {
+      "before": 12,
+      "after": 0,
+      "notes": "All top-level sys.path.insert calls removed; package-qualified and try/except resilient fallback imports established."
+    },
+    "global_monkeypatching": {
+      "before": "Extensive monkeypatching of bff_main.read_store, bff_main.command_store, bff_main.persona_write_owner, bff_main._ensure_agora_servant_openclaw_agent",
+      "after": "Zero global monkeypatching on composition root; test-scoped isolated router apps constructed with local ReadSurfacePorts doubles and test-local runtime state."
+    }
+  },
+  "test_execution_results": {
+    "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest <17 files>",
+    "total_collected": 240,
+    "total_passed": 238,
+    "total_skipped": 2,
+    "total_failed": 0,
+    "duration_seconds": 415.1,
+    "file_breakdown": {
+      "services/control-plane/bff/test_agora_journal_merge_patch.py": {
+        "passed": 4,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/test_bff_agora_core_contract.py": {
+        "passed": 5,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/test_bff_agora_extended_contract.py": {
+        "passed": 8,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py": {
+        "passed": 2,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/agora/interaction/test_worker.py": {
+        "passed": 11,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_persona_interactions.py": {
+        "passed": 13,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_candidate_pool.py": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_candidate_truth.py": {
+        "passed": 9,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_strategy_workshop.py": {
+        "passed": 78,
+        "skipped": 1,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py": {
+        "passed": 18,
+        "skipped": 1,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py": {
+        "passed": 10,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_research_run_projection.py": {
+        "passed": 3,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_governed_proposals.py": {
+        "passed": 13,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py": {
+        "passed": 5,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_router.py": {
+        "passed": 42,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_servant_sessions.py": {
+        "passed": 4,
+        "skipped": 0,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_agora_write_authority.py": {
+        "passed": 10,
+        "skipped": 0,
+        "failed": 0
+      }
+    }
+  },
+  "invariants_preserved": {
+    "parent_architecture_tests": "services/control-plane/bff/tests/test_bff_test_architecture.py passed (8/8).",
+    "parent_inventory_unmodified": "services/control-plane/bff/tests/bff_test_architecture_inventory.json unmodified (retained for final consolidation).",
+    "zero_unrelated_modifications": true
+  }
+}

@@ -9,9 +9,18 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import main as bff_main
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from services.runtime_auth_inbound import encode_jwt_hs256
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
 
 
 class _ReadStore:
@@ -36,11 +45,39 @@ class _ReadStore:
         return []
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _client(monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    monkeypatch.setattr(bff_main, "read_store", _ReadStore())
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    store = _ReadStore()
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_operator_role,
+        require_agora_bulk_feedback_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        read_surface=store,
+        persona_write_owner=store,
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def _headers(role: str, *, idempotency_key: str | None = None) -> dict[str, str]:
