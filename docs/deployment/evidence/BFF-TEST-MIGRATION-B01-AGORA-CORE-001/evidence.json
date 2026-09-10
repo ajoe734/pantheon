@@ -4,15 +4,27 @@
   "batch_id": "B01_agora_core",
   "title": "Agora core test migration",
   "owner": "Antigravity",
-  "reviewer": "Claude",
+  "reviewer": "Codex",
   "delivery_state": "ready_for_review",
   "base_ref": "origin/dev@63f85bfddc4d4100bb806ad5b8532760808dadb9",
   "base_sha": "63f85bfddc4d4100bb806ad5b8532760808dadb9",
+  "reviewed_head_sha": "92c13bc9145008674126d838d7fdf0b48630f2b6",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
   "delivery_nature": {
     "test_suite_decoupling": true,
     "statement": "Decoupled all 17 test and support files in the Agora Core partition from the composition root (services/control-plane/bff/main.py), global monkeypatching (read_store, command_store), and sys.path surgery while preserving full test contracts, error schemas, and invariants."
   },
   "review_resolution": {
+    "p2_agora_router_health_production_seam": {
+      "finding": "services/control-plane/bff/tests/test_agora_router.py:292-294 added a test-only /health handler returning constant ok, reducing test_existing_bff_health_not_broken (line 760) to checking a fake handler rather than genuine production health behavior.",
+      "resolution": "Replaced test-only fake health handler with production seam create_core_router({}) from services.control_plane.bff.core.app_factory (the exact router included by bff/main.py for /health). Enhanced test_existing_bff_health_not_broken to verify the production health envelope ('status': 'ok', 'service': 'operator-bff', 'version', 'timestamp'). Verified with test_existing_bff_health_not_broken and architecture tests passing.",
+      "status": "resolved"
+    },
+    "p2_manifest_reproducible_commands_and_subprocess_inventory": {
+      "finding": "evidence.json:195-210 contained non-executable placeholder AST/audit commands, lacked a subprocess inventory/result and validated source-head SHA, and changed_files omitted test_agora_performance_transport_and_isolated_store.py, test_agora_research_candidate_governed.py, and test_agora_research_run_projection.py despite all three changing in the PR.",
+      "resolution": "Replaced placeholder commands with exact reproducible AST static scan and dynamic audit hook commands; added subprocess_scan section inventorying both subprocess sites in test_agora_chain_001_natural_owner_and_receipt.py (lines 668 and 679) including the retained subprocess sys.path bootstrap; reconciled changed_files to the full 18-file diff; recorded reviewed_head_sha (92c13bc9145008674126d838d7fdf0b48630f2b6) and delivery binding metadata.",
+      "status": "resolved"
+    },
     "p1_chain_natural_owner_main_fallback": {
       "finding": "test_agora_chain_001_natural_owner_and_receipt.py:102 called _build_plan without workshop_store, causing _resolve_originating_correlation to fall back to dynamic import of main.py.",
       "resolution": "Injected test-local MemoryWorkshopStore() into _build_plan call at line 102 through the existing workshop_store keyword seam. Added test_build_plan_with_injected_workshop_store_makes_no_main_import_attempts verifying zero main import attempts. Verified with sys.addaudithook.",
@@ -61,7 +73,10 @@
     "services/control-plane/bff/tests/test_agora_candidate_truth.py",
     "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
     "services/control-plane/bff/tests/test_agora_governed_proposals.py",
+    "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
     "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+    "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+    "services/control-plane/bff/tests/test_agora_research_run_projection.py",
     "services/control-plane/bff/tests/test_agora_router.py",
     "services/control-plane/bff/tests/test_agora_servant_sessions.py",
     "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
@@ -194,18 +209,39 @@
   },
   "scans": {
     "ast_static_scan": {
-      "command": "python3 -c '<ast walk checking import main / from main import / sys.path mutations>'",
+      "command": "python3 -c \"import ast, json, pathlib; paths = json.loads(pathlib.Path('docs/deployment/evidence/BFF-TEST-MIGRATION-B01-AGORA-CORE-001/evidence.json').read_text())['inventory']['files']; findings = [(p, n.lineno, ast.unparse(n)) for p in paths for n in ast.walk(ast.parse(pathlib.Path(p).read_text())) if (isinstance(n, ast.Import) and any(a.name == 'main' or 'bff.main' in a.name for a in n.names)) or (isinstance(n, ast.ImportFrom) and ((n.module or '') == 'main' or 'bff.main' in (n.module or '') or ((n.module or '').endswith('bff') and any(a.name == 'main' for a in n.names)))) or (isinstance(n, ast.Call) and ast.unparse(n.func).startswith('sys.path.'))]; print(json.dumps(findings))\"",
       "result": {
         "scanned_files": 17,
         "ast_main_importers": 0,
-        "sys_path_mutations": 0
+        "sys_path_mutations": 0,
+        "findings": []
       }
     },
     "dynamic_audit_hook_scan": {
-      "command": "./.venv-pantheon/bin/python3 -c '<sys.addaudithook import tracker over pytest execution>'",
+      "command": ".venv-pantheon/bin/python3 -c \"import sys, json, pathlib, pytest; paths = json.loads(pathlib.Path('docs/deployment/evidence/BFF-TEST-MIGRATION-B01-AGORA-CORE-001/evidence.json').read_text())['inventory']['files']; attempts = []; sys.addaudithook(lambda ev, args: attempts.append((ev, str(args[0]))) if ev == 'import' and (str(args[0]) == 'main' or 'bff.main' in str(args[0])) else attempts.append((ev, getattr(args[0], 'co_filename', ''))) if ev == 'exec' and str(getattr(args[0], 'co_filename', '')).replace('\\\\\\\\', '/').endswith('/bff/main.py') else None); code = pytest.main(['-q', '--tb=no', *paths]); print(f'MAIN_ATTEMPTS={len(attempts)}'); sys.exit(code or (1 if attempts else 0))\"",
       "result": {
         "main_import_attempts_observed": 0,
         "status": "PASSED"
+      }
+    },
+    "subprocess_scan": {
+      "command": "python3 -c \"import ast, json, pathlib; paths = json.loads(pathlib.Path('docs/deployment/evidence/BFF-TEST-MIGRATION-B01-AGORA-CORE-001/evidence.json').read_text())['inventory']['files']; calls = [(p, n.lineno, ast.unparse(n)) for p in paths for n in ast.walk(ast.parse(pathlib.Path(p).read_text())) if isinstance(n, ast.Call) and any(s in ast.unparse(n.func) for s in ('import_module', '__import__', 'spec_from_file_location', 'subprocess.', 'Popen'))]; print(json.dumps(calls))\"",
+      "result": {
+        "total_subprocess_sites": 2,
+        "sites": [
+          {
+            "file": "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+            "line": 668,
+            "call": "subprocess.run([sys.executable, '-c', code], cwd=root, env=worker_env, capture_output=True, text=True, timeout=20, check=True)",
+            "purpose": "Verify agora-interaction-worker dataset store resolution in an isolated subprocess with retained sys.path bootstrap (sys.path.insert(0, 'services/control-plane/bff') within the subprocess code string)"
+          },
+          {
+            "file": "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+            "line": 679,
+            "call": "subprocess.run([sys.executable, 'scripts/run_agora_interaction_worker.py', '--healthcheck'], cwd=root, env=worker_env, capture_output=True, text=True, timeout=20, check=True)",
+            "purpose": "Verify worker healthcheck execution in an isolated subprocess"
+          }
+        ]
       }
     }
   },

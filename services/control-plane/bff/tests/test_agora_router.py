@@ -38,6 +38,7 @@ try:
         AGORA_REQUIRED_ROLES,
     )
     from agora.router import create_agora_router
+    from core.app_factory import create_core_router
     from ports import create_in_memory_read_surface_ports
 except ImportError:
     from services.control_plane.bff.agora.models import (
@@ -54,6 +55,7 @@ except ImportError:
         AGORA_REQUIRED_ROLES,
     )
     from services.control_plane.bff.agora.router import create_agora_router
+    from services.control_plane.bff.core.app_factory import create_core_router
     from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 from typing import Any
@@ -289,10 +291,7 @@ def _create_test_app() -> FastAPI:
             return JSONResponse(status_code=exc.status_code, content=exc.detail)
         return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
 
-    @app.get("/health")
-    def health():
-        return {"status": "ok"}
-
+    app.include_router(create_core_router({}))
     app.include_router(router)
     return app
 
@@ -762,6 +761,11 @@ def test_existing_bff_health_not_broken(monkeypatch):
     client = _client(monkeypatch)
     resp = client.get("/health")
     assert resp.status_code in (200, 503), f"Unexpected health status: {resp.status_code}"
+    payload = resp.json()
+    assert payload.get("status") == "ok"
+    assert payload.get("service") == "operator-bff"
+    assert "version" in payload
+    assert "timestamp" in payload
 
 
 def test_existing_agora_sessions_not_broken(monkeypatch):
