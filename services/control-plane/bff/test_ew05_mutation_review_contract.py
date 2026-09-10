@@ -72,18 +72,18 @@ def test_mutation_review_projection_contract() -> None:
             "required_approvals",
             "review_chain",
             "evidence_refs",
+            "allowedActions",
             "meta",
         ):
             assert key in payload
 
         assert payload["decision_id"] == "evo-dec-88f3a2c1"
-        if "allowedActions" in payload:
-            assert payload["allowedActions"]["canApproveMutation"] is True
-            assert payload["allowedActions"]["canRejectMutation"] is True
-            # Seed decision is already "reviewed" — review/execute are gated to
-            # "proposed"/"approved" respectively, so neither is allowed here.
-            assert payload["allowedActions"]["canReviewMutation"] is False
-            assert payload["allowedActions"]["canExecuteMutation"] is False
+        assert payload["allowedActions"]["canApproveMutation"] is True
+        assert payload["allowedActions"]["canRejectMutation"] is True
+        # Seed decision is already "reviewed" — review/execute are gated to
+        # "proposed"/"approved" respectively, so neither is allowed here.
+        assert payload["allowedActions"]["canReviewMutation"] is False
+        assert payload["allowedActions"]["canExecuteMutation"] is False
         assert payload["meta"]["surfaces"]["mutation_review"] in {"fresh", "stale"}
         assert payload["proposed_changes"]["target_stage"] == "canary"
         assert len(payload["risk_assessment"]["threshold_triggers"]) == 2
@@ -98,9 +98,8 @@ def test_mutation_review_reviewer_visibility_contract() -> None:
         assert response.status_code == 200, response.text
 
         payload = response.json()
-        if "allowedActions" in payload:
-            assert payload["allowedActions"]["canApproveMutation"] is False
-            assert payload["allowedActions"]["canRejectMutation"] is True
+        assert payload["allowedActions"]["canApproveMutation"] is False
+        assert payload["allowedActions"]["canRejectMutation"] is True
         assert payload["meta"]["surfaces"]["mutation_review"] in {"fresh", "stale"}
 
 
@@ -129,10 +128,9 @@ def test_mutation_review_review_action_allowed_when_proposed() -> None:
         assert response.status_code == 200, response.text
 
         payload = response.json()
-        if "allowedActions" in payload:
-            assert payload["allowedActions"]["canReviewMutation"] is True
-            assert payload["allowedActions"]["canApproveMutation"] is False
-            assert payload["allowedActions"]["canExecuteMutation"] is False
+        assert payload["allowedActions"]["canReviewMutation"] is True
+        assert payload["allowedActions"]["canApproveMutation"] is False
+        assert payload["allowedActions"]["canExecuteMutation"] is False
         assert payload["decision_state"] == "proposed"
 
 
@@ -171,18 +169,16 @@ def test_mutation_review_execute_action_allowed_when_approved() -> None:
         assert response.status_code == 200, response.text
 
         payload = response.json()
-        if "allowedActions" in payload:
-            assert payload["allowedActions"]["canExecuteMutation"] is True
-            assert payload["allowedActions"]["canApproveMutation"] is False
-            assert payload["allowedActions"]["canReviewMutation"] is False
+        assert payload["allowedActions"]["canExecuteMutation"] is True
+        assert payload["allowedActions"]["canApproveMutation"] is False
+        assert payload["allowedActions"]["canReviewMutation"] is False
         assert payload["decision_state"] == "approved"
 
 
 def test_mutation_review_returns_503_when_required_evidence_is_unavailable() -> None:
-    evos = copy.deepcopy(_SEED_EVOLUTION_DECISIONS)
-    evos["evo-dec-88f3a2c1"]["target_id"] = None
-    evos["evo-dec-88f3a2c1"]["artifact_id"] = None
-    with _seeded_client(evolution_decisions=evos) as client:
+    apprs = dict(_SEED_APPROVAL_DECISIONS)
+    apprs.pop("appr-dec-c5a9f11e", None)
+    with _seeded_client(approval_decisions=apprs) as client:
         response = client.get(
             "/api/v1/operator/mutation-review/evo-dec-88f3a2c1",
             headers={"Authorization": APPROVER_AUTH},
@@ -190,6 +186,5 @@ def test_mutation_review_returns_503_when_required_evidence_is_unavailable() -> 
         assert response.status_code == 503, response.text
 
         payload = response.json()
-        error = payload.get("error") or (payload.get("detail", {}).get("error") if isinstance(payload.get("detail"), dict) else {})
-        assert error.get("code") == "DEPENDENCY_UNAVAILABLE"
-        assert "Mutation review evidence is incomplete" in (error.get("message") or "")
+        assert payload["error"]["message"] == "Mutation review evidence is unavailable"
+        assert payload["surfaces"]["mutation_review"] == "unavailable"

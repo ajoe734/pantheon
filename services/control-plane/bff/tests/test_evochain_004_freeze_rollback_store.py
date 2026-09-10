@@ -195,8 +195,7 @@ def test_healthy_empty_service_is_ok_and_does_not_mix_local_seed(tmp_path, monke
     assert surfaces["rollbacks"]["source"] == "service_client"
     assert surfaces["mutation_review"]["status"] == "ok"
     assert body["data"]["id"] == "management_evolution_journal"
-    if "management_evolution_journal" in surfaces:
-        assert surfaces["management_evolution_journal"]["status"] == "ok"
+    assert surfaces["management_evolution_journal"]["status"] == "ok"
 
 
 def test_explicit_governance_url_wins_over_legacy_evolution_alias(tmp_path, monkeypatch) -> None:

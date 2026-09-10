@@ -437,8 +437,7 @@ def test_evolution_journal_composes_required_sources() -> None:
             assert "byStatus" not in summary
             assert "byRiskLevel" not in summary
             assert body["data"]["id"] == "management_evolution_journal"
-            if "management_evolution_journal" in body["meta"]["surfaces"]:
-                assert body["meta"]["surfaces"]["management_evolution_journal"]["source"] == "bff_composed"
+            assert body["meta"]["surfaces"]["management_evolution_journal"]["source"] == "bff_composed"
             for surface in [
                 "evolution_decisions",
                 "postmortems",
@@ -488,8 +487,7 @@ def test_evolution_journal_supports_filters_and_pagination() -> None:
             assert item["entry_type"] == "mutation_review"
             assert item["source_id"] == "evo-dec-88f3a2c1"
             assert item["mutation_review"]["decision_id"] == "evo-dec-88f3a2c1"
-            if "allowedActions" in item["mutation_review"]:
-                assert item["mutation_review"]["allowedActions"]["canApproveMutation"] is True
+            assert item["mutation_review"]["allowedActions"]["canApproveMutation"] is True
             assert summary["pending_review_count"] == 1
         finally:
             pass
