@@ -134,17 +134,25 @@ evaluates dispatch on a subsequent pass.
    - Applies only to tasks in `todo` or `in_progress` without an active worker
      lease, active worker-recovery receipt, or existing explicit hold
      (`waiting_for` must be empty).
-   - Tracks recent worker failures within `window_seconds`. When a task reaches
-     or exceeds `max_failures_in_window` failures under its current owner:
+   - Tracks recent worker failures as a task-wide rolling count of `worker_failed`
+     activity-log events within `window_seconds` (`recent_task_failure_counts`).
+     Events are counted strictly by task ID, without owner filtering and with no
+     reset when the task owner changes. When a task reaches or exceeds
+     `max_failures_in_window` failures within the rolling window:
      - Bounded reassignment tier: if the task has been auto-reassigned fewer
-       than `max_auto_reassignments` times, it is reassigned to the next
-       configured fallback candidate in `worker_reassignment.owner_fallbacks`
-       via governed `persist_task_reassignment`.
-     - Explicit escalation tier: if repeated failures persist even after
-       reaching `max_auto_reassignments`, automatic reassignment ceases. The
-       supervisor places the task on an explicit `Human/Ops` hold
-       (`record_failure_loop_blocker`), setting status to `blocked` waiting
-       for `Human/Ops` investigation rather than cycling indefinitely between
+       than `max_auto_reassignments` times (tracked in supervisor
+       `failure_loop_watch` state), it is reassigned to the next configured
+       fallback candidate in `worker_reassignment.owner_fallbacks` via governed
+       `persist_task_reassignment`. Because the failure count is task-wide and
+       does not reset on owner change, all failures within `window_seconds`
+       continue to count toward the task.
+     - Explicit escalation tier: once the auto-reassignment budget
+       (`max_auto_reassignments`) is exhausted, automatic reassignment ceases.
+       The supervisor can escalate on the same retained task count—without
+       requiring fresh failures after reassignment—or after further failures,
+       placing the task on an explicit `Human/Ops` hold
+       (`record_failure_loop_blocker`), setting status to `blocked` waiting for
+       `Human/Ops` investigation rather than cycling indefinitely between
        agents.
 
 ### Authority boundary
