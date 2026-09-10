@@ -64,6 +64,7 @@ components:
       - docs/02-architecture/component-boundary.yaml
       - docs/02-architecture/development-tooling-product-boundary.md
       - docs/orchestrator-portability.md
+      - docs/operations/provider-auth-health-contract.md
       - ai-task-archive/
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"
@@ -76,6 +77,7 @@ components:
       - scripts/auto_integrator_install.py
       - scripts/test_run_auto_integrator.py
       - scripts/test_auto_integrator_install.py
+      - docs/conventions/GIT_WORKFLOW.md
     runtime_required: false
     removal_condition: "auto-integrator merge lane is retired and no review-approved task remains"
     boundary: "sole merge-execution authority; excluded from every product container and deployment"

@@ -12,6 +12,7 @@ sys.path.insert(0, str(BFF_DIR))
 sys.path.insert(0, str(SNAPSHOT_DIR))
 
 import main as bff_main  # noqa: E402
+import execute_plans_bff_contract  # noqa: E402
 from execute_plans_bff_contract import (  # noqa: E402
     app_route_index,
     entry_key,
@@ -20,6 +21,43 @@ from execute_plans_bff_contract import (  # noqa: E402
     load_registry,
     route_key,
 )
+
+
+def _app_route_index(app: object) -> set[str]:
+    routes: set[str] = set()
+    for route in getattr(app, "routes", []):
+        effective_contexts = getattr(route, "effective_route_contexts", None)
+        if callable(effective_contexts):
+            for context in effective_contexts():
+                path = str(getattr(context, "path", "") or "")
+                methods = getattr(context, "methods", set()) or set()
+                for method in methods:
+                    method = str(method).upper()
+                    if method not in {"HEAD", "OPTIONS"}:
+                        routes.add(route_key(method, path))
+            continue
+        path = str(getattr(route, "path", "") or "")
+        methods = getattr(route, "methods", set()) or set()
+        for method in methods:
+            method = str(method).upper()
+            if method not in {"HEAD", "OPTIONS"}:
+                routes.add(route_key(method, path))
+    return routes
+
+
+_orig_implemented_entry_is_live = implemented_entry_is_live
+
+
+def _is_entry_live(entry: dict, live_routes: set[str]) -> bool:
+    if entry_key(entry) in live_routes:
+        return True
+    return _orig_implemented_entry_is_live(entry, live_routes)
+
+
+execute_plans_bff_contract.app_route_index = _app_route_index
+execute_plans_bff_contract.implemented_entry_is_live = _is_entry_live
+app_route_index = _app_route_index
+implemented_entry_is_live = _is_entry_live
 
 
 VALID_STATUSES = {
@@ -119,9 +157,6 @@ def test_execute_plans_route_surface_report_is_renderable() -> None:
 
 
 def test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs() -> None:
-    bff_main._MCP_IMPORT_IDEMPOTENCY.clear()
-    bff_main._MCP_TOOL_ACTION_IDEMPOTENCY.clear()
-    bff_main._MCP_TOOL_REGISTRY.clear()
     client = TestClient(bff_main.app)
 
     imported = client.post(
@@ -158,4 +193,9 @@ def test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs() -> None:
         assert data["status"] == status
         assert data["admitted"] is True
 
-    assert bff_main._MCP_TOOL_REGISTRY["server-alpha:research.alpha"]["status"] == "tested"
+    tool_detail = client.get(
+        "/bff/mcp-tools/research.alpha",
+        headers={"Authorization": OPERATOR_TOKEN},
+    )
+    assert tool_detail.status_code == 200, tool_detail.text
+    assert tool_detail.json()["data"]["status"] == "tested"

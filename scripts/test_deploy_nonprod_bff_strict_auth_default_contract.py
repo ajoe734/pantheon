@@ -432,6 +432,10 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         workflow.index("- name: Dev canonical paper lifecycle hosted probe") :
         workflow.index("- name: Upload canonical paper lifecycle hosted evidence")
     ]
+    artifact_capture = workflow[
+        workflow.index("- name: Capture actual prior artifacts under pinned dev lease") :
+        workflow.index("- name: Upload sealed prior artifact metadata before candidate mutation")
+    ]
 
     for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
         client_id = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_ID"
@@ -454,8 +458,15 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
             # operator credential, in addition to the regular deploy and
             # hosted probe wiring.
             assert workflow.count(secret_ref) == 6
+        elif identity == "VIEWER":
+            # Exact artifact readback uses only the dedicated viewer login to
+            # prove strict authenticated tenant/session behavior after restore;
+            # it must not receive any write-capable identity.
+            assert artifact_capture.count(secret_ref) == 1
+            assert workflow.count(secret_ref) == 6
         else:
             assert secret_ref not in hosted_probe
+            assert secret_ref not in artifact_capture
             # Bootstrap runs the same strict identity gate before the
             # candidate switch, so each non-operator secret is wired once
             # there as well.
