@@ -113,6 +113,91 @@ def test_collision_fence_survives_headless_journal_replay(tmp_path):
     assert store.load_snapshot(path)["state"] == recovered
 
 
+def activation_board():
+    before = state("todo")
+    parent = before["tasks"][0]
+    parent.update(generation=9, depends_on=["QUALIFIED", "WITHHELD"])
+    archive = {"task_id": "T1", "generation": 1, "snapshot_sha256": "a" * 64,
+               "archive_file_sha256": "b" * 64, "scope_sha256": "c" * 64}
+    activation = {"actor": "Human/Ops", "activated_at": "2026-09-10T00:00:00Z",
+                  "archive": archive, "request": {
+                      "schema": "pantheon.archive-collision-fence.v1", "reason": "collision",
+                      "parent": {**archive, "active_generation": 9,
+                                 "active_sha256": store.sha256_json(parent),
+                                 "active_scope_sha256": "d" * 64}}}
+    fenced = copy.deepcopy(before)
+    row = fenced["tasks"][0]
+    row.update(status="blocked", waiting_for="Human/Ops", next="collision",
+               last_update=activation["activated_at"])
+    row[store.ARCHIVE_COLLISION_KEY] = {
+        "disposition": "retain_blocked", "actor": "Human/Ops", "phase": "activation",
+        "parent_sha256": store.collision_parent_digest(row), "activation": activation,
+        "qualified_facts": {}, "withheld_task_ids": ["QUALIFIED", "WITHHELD"],
+    }
+    return before, fenced
+
+
+def test_activation_upgrade_is_atomic_and_replays_after_restart(tmp_path):
+    before, fenced = activation_board()
+    upgraded = copy.deepcopy(fenced)
+    marker = upgraded["tasks"][0][store.ARCHIVE_COLLISION_KEY]
+    marker.pop("phase")
+    marker.update(evidence_sha256="e" * 64, parent_archive=marker["activation"]["archive"])
+    fact = {"status": "done", "generation": 1, "terminal_outcome": "completed"}
+    marker.update(qualified_facts={"QUALIFIED": fact}, withheld_task_ids=["WITHHELD"])
+    premature = copy.deepcopy(upgraded)
+    premature["terminal_facts"] = {"QUALIFIED": fact}
+    with pytest.raises(store.TaskStateStoreError, match="previously committed disposition"):
+        store.validate_state_transition(premature, fenced)
+    path = tmp_path / "events.jsonl"
+    for value in [before, fenced, upgraded, premature]:
+        store.append_state_commit(path, value, source="activation-upgrade")
+    path.with_name(path.name + store.HEAD_SUFFIX).unlink()
+    assert store.load_snapshot(path)["state"] == premature
+
+
+@pytest.mark.parametrize("mutation", ["status", "drop", "remove", "scope", "reason", "actor", "cas", "archive", "fact", "outbox"])
+def test_activation_fence_rejects_mutation(mutation):
+    _, fenced = activation_board()
+    bad = copy.deepcopy(fenced)
+    row = bad["tasks"][0]
+    marker = row[store.ARCHIVE_COLLISION_KEY]
+    if mutation == "status":
+        row["status"] = "todo"
+    elif mutation == "drop":
+        bad["tasks"] = []
+        bad[store.DRAIN_MARKER_KEY] = drain_marker("T1")
+    elif mutation == "remove":
+        row.pop(store.ARCHIVE_COLLISION_KEY)
+    elif mutation == "scope":
+        row["artifacts"] = ["changed.py"]
+    elif mutation == "reason":
+        marker["activation"]["request"]["reason"] = "new"
+    elif mutation == "actor":
+        marker["activation"]["actor"] = "Codex"
+    elif mutation == "cas":
+        marker["activation"]["request"]["parent"]["active_sha256"] = "0" * 64
+    elif mutation == "archive":
+        marker["activation"]["archive"]["archive_file_sha256"] = "0" * 64
+    elif mutation == "outbox":
+        bad["status_archive_outbox"] = {"snapshots": [{"task_id": "QUALIFIED"}]}
+    else:
+        bad["terminal_facts"] = {"QUALIFIED": {"status": "done"}}
+    with pytest.raises(store.TaskStateStoreError, match="archive collision"):
+        store.validate_state_transition(bad, fenced)
+
+
+def test_activation_preserves_existing_facts_and_requires_exact_todo():
+    before, fenced = activation_board()
+    before["terminal_facts"] = fenced["terminal_facts"] = {"QUALIFIED": {"status": "done"}}
+    store.validate_state_transition(fenced, before)
+    for field, value in [("status", "blocked"), ("owner", "Claude"), ("generation", 10)]:
+        changed = copy.deepcopy(before)
+        changed["tasks"][0][field] = value
+        with pytest.raises(store.TaskStateStoreError, match="exact todo CAS"):
+            store.validate_state_transition(fenced, changed)
+
+
 def test_append_writes_delta_journal_and_atomic_current_head(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     first = state("todo", note="first")
@@ -485,4 +570,3 @@ def test_find_exact_prior_task_state_from_journal_ambiguous_fails_closed(
     # find_exact_prior_task_state_from_journal must detect ambiguity and return None.
     monkeypatch.setattr(store, "review_decision_task_digest", lambda task: "colliding-digest")
     assert store.find_exact_prior_task_state_from_journal(path, "T1", "colliding-digest") is None
-
