@@ -271,6 +271,13 @@ def match_negative_memory(
     """
 
     records_to_evaluate = list(negative_memory_records)
+    if backend is None and not negative_memory_records:
+        try:
+            from services.memory.search_retrieval import get_search_retrieval_backend
+            backend = get_search_retrieval_backend()
+        except Exception:
+            backend = None
+
     if backend is not None:
         if embedding_engine is None and hasattr(backend, "embedding_engine"):
             embedding_engine = backend.embedding_engine

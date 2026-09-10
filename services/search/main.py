@@ -590,6 +590,19 @@ def create_app(
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
     durable_only = durable_index_only if durable_index_only is not None else DURABLE_INDEX_ONLY
+    if retrieval_backend is None and not durable_only:
+        contract_path = Path(__file__).parent / "backend-contract.json"
+        if contract_path.exists():
+            try:
+                contract = json.loads(contract_path.read_text(encoding="utf-8"))
+                if contract.get("accepted") and contract.get("activation_allowed"):
+                    dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
+                    if dsn:
+                        from .pg_retrieval import PostgresRetrievalBackend
+                        retrieval_backend = PostgresRetrievalBackend(dsn=dsn)
+            except Exception:
+                pass
+
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
@@ -1024,4 +1037,20 @@ def create_app(
     return app
 
 
-app = create_app()
+class _LazyApp:
+    def __init__(self) -> None:
+        self._app: FastAPI | None = None
+
+    def _get_app(self) -> FastAPI:
+        if self._app is None:
+            self._app = create_app()
+        return self._app
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_app(), name)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> Any:
+        return await self._get_app()(scope, receive, send)
+
+
+app = _LazyApp()

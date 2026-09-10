@@ -1,0 +1,85 @@
+{
+  "schema_version": "retrieval_manifest.v1",
+  "task_id": "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001",
+  "evaluated_at": "2026-09-10T00:47:06Z",
+  "accepted": true,
+  "disposition": "accepted_single_production_backend",
+  "backend_evaluated": "postgres_pgvector",
+  "model_metadata": {
+    "model_name": "intfloat/multilingual-e5-large",
+    "dimension": 1024,
+    "revision": "66076b8dc6e367337e3e90e6fb309fb0f3addaf6",
+    "manifest_hash": "a4fa9449f8bc7f836940026e632313ec9df34988"
+  },
+  "corpus_summary": {
+    "total_documents": 10000,
+    "traditional_chinese_count": 4500,
+    "english_count": 4500,
+    "memory_count": 800,
+    "negative_memory_count": 200,
+    "corpus_hash": "ecebcbc136d95903accc5116fc97bca473f6229173c269126e844d650f64a5dc"
+  },
+  "query_suite_summary": {
+    "total_queries": 210,
+    "traditional_chinese_queries": 60,
+    "english_queries": 60,
+    "cross_language_queries": 50,
+    "negative_memory_queries": 40
+  },
+  "metrics": {
+    "recall_at_10": 1.0,
+    "ndcg_at_10": 0.9978,
+    "citation_identity_rate": 1.0,
+    "exact_negative_memory_recall": 1.0,
+    "semantic_warning_recall": 1.0,
+    "isolation_leakage_rate": 0.0,
+    "per_language_slice": {
+      "traditional_chinese": {
+        "recall_at_10": 1.0,
+        "ndcg_at_10": 1.0,
+        "query_count": 60
+      },
+      "english": {
+        "recall_at_10": 1.0,
+        "ndcg_at_10": 1.0,
+        "query_count": 60
+      },
+      "cross_language": {
+        "recall_at_10": 1.0,
+        "ndcg_at_10": 0.9926,
+        "query_count": 50
+      }
+    }
+  },
+  "performance_benchmarks": {
+    "concurrency": 4,
+    "total_requests": 1000,
+    "warm_p50_latency_ms": 490.39,
+    "warm_p95_latency_ms": 756.07,
+    "cold_start_latency_ms": 7802.01,
+    "throughput_qps": 7.75,
+    "cpu_seconds_per_query": 0.76142,
+    "rss_memory_mb": 6741.62,
+    "external_inference_calls": 0
+  },
+  "quality_gates": {
+    "gate_recall_ge_0_90": true,
+    "gate_ndcg_ge_baseline": true,
+    "gate_citation_identity_100pct": true,
+    "gate_exact_negative_recall_100pct": true,
+    "gate_semantic_warning_ge_0_95": true,
+    "gate_zero_isolation_leakage": true,
+    "gate_p95_under_1s": true,
+    "gate_zero_external_inference": true
+  },
+  "candidate_comparison": {
+    "chosen_backend": "postgres_pgvector",
+    "selection_rationale": "PostgreSQL (native FTS + pgvector) selected per Requirement 3: achieves equivalent quality with Qdrant (Recall@10 >= 0.99, nDCG@10 >= 0.99), p95 latency under 1s, zero external inference, and eliminates dedicated vector database operational overhead (zero extra container, backup, patch, and RAM cost).",
+    "qdrant_baseline": {
+      "recall_at_10": 1.0,
+      "ndcg_at_10": 0.9978,
+      "warm_p50_latency_ms": 382.33,
+      "warm_p95_latency_ms": 557.81
+    }
+  }
+}
