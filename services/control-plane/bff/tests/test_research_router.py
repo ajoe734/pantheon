@@ -1,17 +1,17 @@
 """Standalone contract tests for the prepared typed Research router."""
 from __future__ import annotations
 
-import os
-import sys
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
+
+import pytest
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from research.router import RESEARCH_ROUTE_INVENTORY, create_research_router  # noqa: E402
+from services.control_plane.bff.research.router import RESEARCH_ROUTE_INVENTORY, create_research_router
 
 
 # Copied from the audited migration assignment, not derived from router.py.
@@ -464,8 +464,8 @@ def _bff_error(status_code, code, message, reason, **extra):
     )
 
 
-def _router(port: _Port, *, capabilities: Optional[List[str]] = None):
-    return create_research_router(
+def _router(port: _Port, *, capabilities: Optional[List[str]] = None, **overrides: Any):
+    dependencies = dict(
         get_read_store=lambda: port,
         extract_identity=lambda _authorization: SimpleNamespace(operator_id="op-test"),
         require_read_role=lambda _identity: None,
@@ -476,11 +476,13 @@ def _router(port: _Port, *, capabilities: Optional[List[str]] = None):
         get_capabilities=lambda _identity: capabilities,
         include_prepared_subrouters=False,
     )
+    dependencies.update(overrides)
+    return create_research_router(**dependencies)
 
 
-def _client(port: _Port, *, capabilities: Optional[List[str]] = None) -> TestClient:
+def _client(port: _Port, *, capabilities: Optional[List[str]] = None, **overrides: Any) -> TestClient:
     app = FastAPI()
-    app.include_router(_router(port, capabilities=capabilities))
+    app.include_router(_router(port, capabilities=capabilities, **overrides))
     return TestClient(app)
 
 

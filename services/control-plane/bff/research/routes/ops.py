@@ -22,36 +22,83 @@ except (ImportError, ValueError):
     from ..models import ErrorCode
 
 
+def _build_research_oss_activation_ready_response(
+    ctx: ResearchRouteContext,
+    *,
+    activity_limit: int,
+    surface_key: str,
+) -> Dict[str, Any]:
+    snapshot_at = ctx.utc_now()
+    data = ctx.call_port(
+        ctx.get_read_store(), "get_research_oss_preactivation_snapshot",
+        activity_limit=activity_limit,
+    )
+    service_surfaces = {
+        service: {
+            key: value
+            for key, value in status.items()
+            if key in {"status", "source", "reason", "activity_status", "upstream_status", "upstream_reachable"}
+        }
+        for service, status in data.get("service_status", {}).items()
+        if isinstance(status, dict)
+    }
+    composite_status = "ok"
+    if any(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
+        composite_status = "degraded"
+    if service_surfaces and all(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
+        composite_status = "unavailable"
+
+    composite_surface = {
+        "status": composite_status,
+        "source": "service_client",
+    }
+    alias_key = (
+        "research_oss_preactivation"
+        if surface_key == "research_oss_activation_ready"
+        else "research_oss_activation_ready"
+    )
+    meta = dict(ctx.snapshot_meta(snapshot_at))
+    meta["surfaces"] = {
+        surface_key: composite_surface,
+        alias_key: composite_surface,
+        **service_surfaces,
+    }
+    return {
+        "data": data,
+        "meta": meta,
+    }
+
+
 def build_ops_router(ctx: ResearchRouteContext) -> APIRouter:
     router = APIRouter()
 
     async def endpoint_oss_activation_ready(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=False)
-        snapshot_at = ctx.utc_now()
         if ctx.build_research_oss_readiness is not None:
             result = ctx.build_research_oss_readiness(
                 activation_ready=True,
                 activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
             )
             return await result if inspect.isawaitable(result) else result
-        return {
-            "data": {"activation_ready": False, "reason": "research OSS readiness projection is not wired"},
-            "meta": ctx.meta(snapshot_at, "research_oss", "research_experiments", False),
-        }
+        return _build_research_oss_activation_ready_response(
+            ctx,
+            activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
+            surface_key="research_oss_activation_ready",
+        )
 
     async def endpoint_oss_preactivation(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=False)
-        snapshot_at = ctx.utc_now()
         if ctx.build_research_oss_readiness is not None:
             result = ctx.build_research_oss_readiness(
                 activation_ready=False,
                 activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
             )
             return await result if inspect.isawaitable(result) else result
-        return {
-            "data": {"activation_ready": False, "reason": "research OSS readiness projection is not wired"},
-            "meta": ctx.meta(snapshot_at, "research_oss", "research_experiments", False),
-        }
+        return _build_research_oss_activation_ready_response(
+            ctx,
+            activity_limit=int(ctx.query(request, "activity_limit", "20") or 20),
+            surface_key="research_oss_preactivation",
+        )
 
     async def endpoint_source_ops(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request, operator=False)
