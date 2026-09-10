@@ -1,0 +1,118 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "batch_group": "B15_deployment_hosted",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "delivery_state": "blocked_contract_discrepancy",
+  "implementation_complete": false,
+  "mid_task_anchor_commit": "17cd2ebb5c35e2e6ff01054d07fb1727a14bdd53",
+  "depends_on": [
+    "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+  ],
+  "pairwise_disjoint_scope": {
+    "target_files_count": 6,
+    "target_files": [
+      "services/control-plane/bff/test_execute_plans_contract_registry.py",
+      "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+      "services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
+      "services/control-plane/bff/test_ptj_004_trade_journal.py",
+      "services/control-plane/bff/test_srclive_overlay_contract.py",
+      "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py"
+    ],
+    "retained_parent_foundation_untouched": [
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "decoupled_results": {
+    "test_srclive_overlay_contract": {
+      "file": "services/control-plane/bff/test_srclive_overlay_contract.py",
+      "changes": "Decoupled from main.py and removed sys.path surgery by directly importing _overlay_source_health_truth and _source_ingest_truth_by_connector from services.control_plane.bff.personas.service",
+      "tests_passed": 5,
+      "tests_total": 5,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "global_read_store_monkeypatches": 0
+    },
+    "test_ptj_004_trade_journal": {
+      "file": "services/control-plane/bff/test_ptj_004_trade_journal.py",
+      "changes": "Decoupled from main.py by building an isolated FastAPI app mounting create_trade_journal_router with identity and role helpers from services.control_plane.bff.personas.service",
+      "tests_passed": 9,
+      "tests_total": 9,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "global_read_store_monkeypatches": 0
+    },
+    "test_pkt007_deployment_diff_contract": {
+      "file": "services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
+      "changes": "Decoupled from main.py and eliminated global read_store monkeypatching by creating an isolated FastAPI app per fixture with create_deployment_router(queries=DeploymentReadSurfaceAdapter(store), ...) and stub auth from services.control_plane.bff.auth.policy",
+      "tests_passed": 3,
+      "tests_total": 3,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "global_read_store_monkeypatches": 0
+    },
+    "test_tj_e2e_005_trade_journeys_read_api": {
+      "file": "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "changes": "Decoupled from main.py and eliminated global read_store monkeypatching; routed _client_with through isolated _direct_client; cleaned imports to standard package imports without sys.path surgery",
+      "tests_passed": 35,
+      "tests_total": 35,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "global_read_store_monkeypatches": 0
+    }
+  },
+  "decoupled_summary": {
+    "files_decoupled": 4,
+    "files_total": 6,
+    "tests_passed": 52,
+    "tests_failed": 0,
+    "tests_total": 52,
+    "architecture_tests_passed": 8
+  },
+  "blocker": {
+    "kind": "external",
+    "waiting_for": "Human/Ops",
+    "declared_dependency_satisfied": {
+      "BFF-TEST-MIGRATION-REPARTITION-PLAN-001": true
+    },
+    "summary": "Reviewed test-only partition includes 2 whole-app execute-plans integration suites that cannot be decoupled from main.py without duplicating the entire composition root or violating architectural boundaries.",
+    "proof": [
+      "test_execute_plans_final_live_wiring_contract.py (classified as layer: hosted in bff_test_architecture_inventory.json) is an end-to-end integration suite testing that the fully assembled BFF application mounts 174 endpoints across all domains and does not 404 or 500 on 74 live probe endpoints. It cannot decouple from main.py because main.py is the composition root that mounts all of those subdomains. Constructing a mock composite application inside the test would violate acceptance criterion 2 ('do not add a second router, scheduler, queue, or compatibility mechanism'). Like test_route_resolution_no_shadowing.py and test_normalized_route_uniqueness.py, whole-app route registry suites inherently belong to the composition_allowlist.",
+      "test_execute_plans_contract_registry.py tests whole-app route registration via app_route_index(bff_main.app) for 140+ execute-plans routes. Furthermore, test 4 (test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs) fails with AttributeError: module 'main' has no attribute '_MCP_IMPORT_IDEMPOTENCY', because that symbol was pruned from main.py in commit c1894c3b0 (OPGAP-BFF-MAIN-ASSEMBLY-V3-20260901).",
+      "Parent foundation paths services/control-plane/bff/tests/test_bff_test_architecture.py and bff_test_architecture_inventory.json are retained parent artifacts that acceptance criterion 4 forbids child batches from touching. Only Human/Ops governed contract revision can update the composition_allowlist or adjust child batch scope."
+    ],
+    "required_correction": "Human/Ops governed contract revision must either: (1) Add test_execute_plans_final_live_wiring_contract.py and test_execute_plans_contract_registry.py to composition_allowlist in bff_test_architecture_inventory.json (matching other whole-app route audit suites), OR (2) Reassign these suites to a dedicated whole-app composition/hosted batch and adjust B15 acceptance to the 4 domain-owned decoupled suites. Additionally, resolve the _MCP_IMPORT_IDEMPOTENCY reference pruned in c1894c3b0.",
+    "scope_rule": "Acceptance criterion 4 requires stopping and recording shared dependency and partition discrepancies for governed contract revision instead of silently widening scope."
+  },
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/test_srclive_overlay_contract.py services/control-plane/bff/test_ptj_004_trade_journal.py services/control-plane/bff/test_pkt007_deployment_diff_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "52 passed, 1 warning in 19.26s",
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "8 passed in 1.51s",
+      "exit_code": 0
+    },
+    {
+      "command": "AST static analysis checking 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatches",
+      "result": "All 4 decoupled suites passed AST checks cleanly with zero violations",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "Clean (no whitespace or syntax errors)",
+      "exit_code": 0
+    }
+  ],
+  "review": {
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "status": "blocked_contract_discrepancy"
+  }
+}
