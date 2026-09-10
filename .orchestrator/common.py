@@ -626,8 +626,7 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     config = load_json(config_file, default={})
     if LOCAL_CONFIG_PATH.exists():
         config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
-    if isinstance(config, Mapping) and ("review_gate" in config or "branch_workflow" in config):
-        validate_review_bridge_policy(config)
+    validate_review_bridge_policy(config)
     return config
 
 

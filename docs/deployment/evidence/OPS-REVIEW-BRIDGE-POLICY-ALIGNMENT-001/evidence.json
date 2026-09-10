@@ -1,10 +1,10 @@
 {
   "task_id": "OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001",
   "title": "Align declared review-bridge policy with enforced task PR checks",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Codex",
   "phase": "development-tooling-review-bridge-policy-alignment-20260910",
-  "generated_at": "2026-09-10T02:16:00Z",
+  "generated_at": "2026-09-10T03:00:00Z",
   "identities": {
     "source_base": "pantheon-origin-dev@9efcb763c44fdaf3f9f73dcafe4d9d3bf5e0fd91",
     "command_runtime_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
@@ -76,8 +76,8 @@
       "merge_authority": "TaskStore exact-head reviewer approval remains mandatory.",
       "behavior": {
         "valid_false_mode": "External canonical-gate failure is diagnostic only and does not block merge; recorded in ignored_diagnostic and auditable in candidate logs.",
-        "declared_checks": "Failure or pending status on any declared check (Commit trailers, Runtime mirror guard, Smoke acceptance) blocks merge without REST merge or integration receipt.",
-        "contradictory_config": "Contradictory or malformed review bridge policy fails closed immediately at candidate evaluation and final pre-merge revalidation.",
+        "declared_checks": "Presence and successful terminal results are strictly enforced for every declared context before diagnostic filtering. Failure blocks and pending waits without REST merge or integration receipt.",
+        "contradictory_config": "Contradictory or malformed review bridge policy fails closed immediately at candidate evaluation, execute authority resolution, and final pre-merge revalidation (raising governed reason final-review-contract-changed).",
         "valid_true_mode": "Canonical review gate failure blocks merge unless verified proof tags exist."
       }
     }
@@ -92,27 +92,27 @@
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
         "exit_code": 0,
-        "summary": "88 passed, 66 subtests passed"
+        "summary": "130 passed, 66 subtests passed in 29.31s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_provision_live_supervisor_config.py",
         "exit_code": 0,
-        "summary": "97 passed"
+        "summary": "58 passed in 36.40s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_check_config_drift.py",
         "exit_code": 0,
-        "summary": "48 passed"
+        "summary": "48 passed in 5.55s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
         "exit_code": 0,
-        "summary": "139 passed, 17 subtests passed"
+        "summary": "149 passed, 22 subtests passed in 19.65s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/git/test_auto_integrator.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/git/test_auto_integrator.py .orchestrator/test_supervisor.py -k \"not test_supervisor or test_consumer_allowlist_covers_literal_auto_integrator_reason_producers\"",
         "exit_code": 0,
-        "summary": "372 passed, 83 subtests passed in 131.96s"
+        "summary": "386 passed in 96.79s"
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --repo-config .orchestrator/config.json --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",

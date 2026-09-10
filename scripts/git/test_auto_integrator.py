@@ -336,6 +336,7 @@ def green_pr(number: int = 44, *, task_id: str = "ABC-001") -> dict[str, Any]:
         "commits": [{"oid": APPROVED_HEAD, "committedDate": "2026-06-12T00:30:00Z"}],
         "statusCheckRollup": [
             {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
             {"name": "Smoke acceptance", "state": "SUCCESS"},
         ],
     }
@@ -915,6 +916,7 @@ class IntegrationPlanTests(unittest.TestCase):
             live_config.parent.mkdir()
             payload = {
                 "paths": {"status_file": str(status_file)},
+                "review_gate": {"github_review_bridge_required": False},
                 "watchdog": {
                     "supervisor_command": [
                         sys.executable,
@@ -924,9 +926,16 @@ class IntegrationPlanTests(unittest.TestCase):
                     ]
                 },
                 "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Runtime mirror guard",
+                            "Smoke acceptance",
+                        ]
+                    },
                     "auto_integrator": {
                         "lock_file": ".orchestrator/auto-integrator.lock"
-                    }
+                    },
                 },
             }
             live_config.write_text(json.dumps(payload), encoding="utf-8")
@@ -949,6 +958,87 @@ class IntegrationPlanTests(unittest.TestCase):
             live_config.write_text(json.dumps(forged), encoding="utf-8")
             with self.assertRaisesRegex(
                 auto_integrator.ExecuteAuthorityError, "lock must be canonical"
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+    def test_execute_authority_rejects_empty_absent_and_malformed_review_bridge_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            head = "b" * 40
+            command_root = root / "command-runtimes" / head
+            command_root.mkdir(parents=True)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            live_config = root / "runtime" / "live.json"
+            live_config.parent.mkdir()
+            runner = FakeRunner(git_head=head)
+
+            # Completely empty payload
+            live_config.write_text(json.dumps({}), encoding="utf-8")
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError, "live config watchdog.supervisor_command is missing"
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+            valid_base = {
+                "paths": {"status_file": str(status_file)},
+                "watchdog": {
+                    "supervisor_command": [
+                        sys.executable,
+                        str(command_root / ".orchestrator" / "supervisor.py"),
+                        "--config",
+                        str(live_config),
+                    ]
+                },
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Runtime mirror guard",
+                            "Smoke acceptance",
+                        ]
+                    },
+                    "auto_integrator": {
+                        "lock_file": ".orchestrator/auto-integrator.lock"
+                    },
+                },
+            }
+
+            # Missing review_gate section
+            live_config.write_text(json.dumps(valid_base), encoding="utf-8")
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError, "invalid review bridge policy: review_gate configuration is required"
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+            # Malformed review_gate section
+            malformed_gate = json.loads(json.dumps(valid_base))
+            malformed_gate["review_gate"] = "invalid"
+            live_config.write_text(json.dumps(malformed_gate), encoding="utf-8")
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError, "invalid review bridge policy: review_gate configuration is required and must be a mapping"
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+            # Missing branch_workflow section
+            missing_bw = {
+                "paths": {"status_file": str(status_file)},
+                "watchdog": valid_base["watchdog"],
+                "review_gate": {"github_review_bridge_required": False},
+            }
+            live_config.write_text(json.dumps(missing_bw), encoding="utf-8")
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError, "invalid review bridge policy: branch_workflow configuration is required"
             ):
                 auto_integrator.resolve_execute_authority(
                     live_config, runner, command_root=command_root
@@ -1111,6 +1201,7 @@ class IntegrationPlanTests(unittest.TestCase):
                 json.dumps(
                     {
                         "paths": {"status_file": str(status_file)},
+                        "review_gate": {"github_review_bridge_required": False},
                         "coordination": {
                             "repositories": {
                                 "pantheon": {
@@ -1120,10 +1211,17 @@ class IntegrationPlanTests(unittest.TestCase):
                             }
                         },
                         "branch_workflow": {
+                            "task_pr": {
+                                "required_status_checks": [
+                                    "Commit trailers",
+                                    "Runtime mirror guard",
+                                    "Smoke acceptance",
+                                ]
+                            },
                             "auto_integrator": {
                                 "lock_file": str(lock_path),
                                 "max_tasks_per_run": 1,
-                            }
+                            },
                         },
                     }
                 )
@@ -2359,6 +2457,7 @@ class CheckClassifierTests(unittest.TestCase):
                 "mergeStateStatus": "UNSTABLE",
                 "statusCheckRollup": [
                     {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+                    {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
                     {"name": "Smoke acceptance", "state": "SUCCESS", "isRequired": True},
                     {
                         "name": "Audit signed canonical review (not required issuer) (4741)",
@@ -2459,9 +2558,22 @@ class CheckClassifierTests(unittest.TestCase):
             branch="task/ABC-001",
         )
         pr = green_pr()
-        pr["statusCheckRollup"] = [
+        pr["statusCheckRollup"].append(
             {"name": "Pantheon canonical review gate", "state": "FAILURE", "isRequired": True}
-        ]
+        )
+        required_bridge_config = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
         runner = FakeRunner(pr=pr)
         result = auto_integrator.integrate_candidate(
             candidate,
@@ -2469,6 +2581,7 @@ class CheckClassifierTests(unittest.TestCase):
             runner,
             execute=True,
             gate=approved_gate(),
+            config=required_bridge_config,
         )
         self.assertEqual(result.action, "blocked")
 
@@ -2725,7 +2838,359 @@ class CheckClassifierTests(unittest.TestCase):
                 prior_pr_number=44,
                 config=contradictory_config,
             )
-        self.assertEqual(ctx.exception.reason, "contradictory-review-bridge-policy")
+        self.assertEqual(ctx.exception.reason, "final-review-contract-changed")
+
+    def test_integrate_candidate_empty_config_returns_blocked(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr())
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+            config={},
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("contradictory or invalid review bridge policy", result.detail)
+
+    def test_integrate_candidate_missing_or_malformed_sections_returns_blocked(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr())
+
+        # Missing review_gate
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+            config={"branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}}},
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("contradictory or invalid review bridge policy", result.detail)
+
+        # Missing branch_workflow
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+            config={"review_gate": {"github_review_bridge_required": False}},
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("contradictory or invalid review bridge policy", result.detail)
+
+        # Malformed whole section
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+            config={"review_gate": "invalid", "branch_workflow": 123},
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("contradictory or invalid review bridge policy", result.detail)
+
+    def test_integration_status_rollup_with_only_disabled_canonical_failure_returns_pending(self) -> None:
+        declared_checks = ("Commit trailers", "Runtime mirror guard", "Smoke acceptance")
+        rollup = [
+            {
+                "name": "Audit signed canonical review (not required issuer) (4741)",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+                "workflowName": "Canonical Review Attestation Audit",
+                "isRequired": False,
+            }
+        ]
+        summary = auto_integrator.integration_status_rollup(
+            rollup,
+            review_bridge_is_required=False,
+            required_contexts=declared_checks,
+        )
+        self.assertEqual(summary.state, "pending")
+        self.assertEqual(summary.failing, ())
+        self.assertEqual(summary.pending, declared_checks)
+        self.assertEqual(
+            summary.ignored_diagnostic,
+            ("Audit signed canonical review (not required issuer) (4741)",),
+        )
+
+    def test_taskstore_approved_candidate_waits_when_declared_checks_absent(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        # All three declared checks are absent from rollup: only disabled canonical failure is present
+        pr["statusCheckRollup"] = [
+            {
+                "name": "Audit signed canonical review (not required issuer) (4741)",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+                "workflowName": "Canonical Review Attestation Audit",
+                "isRequired": False,
+            }
+        ]
+        valid_false_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+            config=valid_false_config,
+        )
+        self.assertEqual(result.action, "waiting")
+        self.assertIn("checks are pending; not merging", result.detail)
+        self.assertNotIn("would_merge", result.action)
+
+    def test_declared_smoke_acceptance_failure_with_diagnostic_workflow_blocks(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {
+                "name": "Smoke acceptance",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+                "workflowName": "Canonical Review Attestation Audit",
+                "isRequired": False,
+            },
+        ]
+        valid_false_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+            config=valid_false_config,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("failing checks: Smoke acceptance", result.detail)
+
+    def test_revalidate_before_merge_rejects_empty_absent_and_malformed_policy(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        gate = approved_gate()
+        settings = auto_integrator.Settings()
+        decision = gate.decide(candidate, green_pr(), settings)
+        runner = FakeRunner(pr=green_pr())
+
+        for invalid_cfg in (
+            {},
+            {"review_gate": {}},
+            {"review_gate": {"github_review_bridge_required": False}},
+            {"branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}}},
+            {"review_gate": "not a dict", "branch_workflow": None},
+        ):
+            with self.subTest(invalid_cfg=invalid_cfg):
+                with self.assertRaises(auto_integrator.FinalMergeRevalidationError) as ctx:
+                    auto_integrator.revalidate_before_merge(
+                        candidate,
+                        settings,
+                        runner,
+                        root=Path("/tmp"),
+                        status_root=Path("/tmp"),
+                        canonical_state_file=None,
+                        prior_gate=gate,
+                        prior_decision=decision,
+                        prior_pr_number=44,
+                        config=invalid_cfg,
+                    )
+                self.assertEqual(ctx.exception.reason, "final-review-contract-changed")
+
+    def test_execute_path_never_merges_or_records_receipt_on_missing_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            # Declared checks completely absent
+            pr["statusCheckRollup"] = []
+            runner = FakeRunner(pr=pr)
+            valid_false_config = {
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Runtime mirror guard",
+                            "Smoke acceptance",
+                        ]
+                    }
+                },
+            }
+            with mock.patch.object(auto_integrator, "_record_merge_integration_receipt") as mock_record:
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64,
+                        command_runtime_sha="b" * 40,
+                    ),
+                    runner,
+                    status_root=status_root,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=valid_false_config,
+                )
+            self.assertEqual(result.action, "waiting")
+            self.assertFalse(any("repos/ajoe734/pantheon/pulls/44/merge" in " ".join(cmd) for cmd in runner.commands))
+            mock_record.assert_not_called()
+
+    def test_execute_path_never_merges_or_records_receipt_on_failing_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                {"name": "Smoke acceptance", "conclusion": "FAILURE", "status": "COMPLETED"},
+            ]
+            runner = FakeRunner(pr=pr)
+            valid_false_config = {
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Runtime mirror guard",
+                            "Smoke acceptance",
+                        ]
+                    }
+                },
+            }
+            with mock.patch.object(auto_integrator, "_record_merge_integration_receipt") as mock_record:
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64,
+                        command_runtime_sha="b" * 40,
+                    ),
+                    runner,
+                    status_root=status_root,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=valid_false_config,
+                )
+            self.assertEqual(result.action, "blocked")
+            self.assertFalse(any("repos/ajoe734/pantheon/pulls/44/merge" in " ".join(cmd) for cmd in runner.commands))
+            mock_record.assert_not_called()
+
+    def test_execute_path_never_merges_or_records_receipt_on_pending_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"] = [
+                {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                {"name": "Smoke acceptance", "status": "IN_PROGRESS"},
+            ]
+            runner = FakeRunner(pr=pr)
+            valid_false_config = {
+                "review_gate": {"github_review_bridge_required": False},
+                "branch_workflow": {
+                    "task_pr": {
+                        "required_status_checks": [
+                            "Commit trailers",
+                            "Runtime mirror guard",
+                            "Smoke acceptance",
+                        ]
+                    }
+                },
+            }
+            with mock.patch.object(auto_integrator, "_record_merge_integration_receipt") as mock_record:
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64,
+                        command_runtime_sha="b" * 40,
+                    ),
+                    runner,
+                    status_root=status_root,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=valid_false_config,
+                )
+            self.assertEqual(result.action, "waiting")
+            self.assertFalse(any("repos/ajoe734/pantheon/pulls/44/merge" in " ".join(cmd) for cmd in runner.commands))
+            mock_record.assert_not_called()
 
 
 def green_ep_pr(number: int = 99, *, task_id: str = "FE-001") -> dict[str, Any]:
@@ -3745,6 +4210,32 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
     outcome into a failure.
     """
 
+    VALID_FALSE_REVIEW_POLICY = {
+        "review_gate": {"github_review_bridge_required": False},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                ]
+            }
+        },
+    }
+    REQUIRED_TRUE_REVIEW_POLICY = {
+        "review_gate": {"github_review_bridge_required": True},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                    "Pantheon canonical review gate",
+                ]
+            }
+        },
+    }
+
     def _receipted_task(self, **overrides) -> dict[str, Any]:
         task = {
             "id": "ABC-001",
@@ -3941,6 +4432,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             config = {
                 "paths": {"status_file": str(status_file)},
                 "task_state_store": {"mode": "authoritative", "event_log": str(event_path)},
+                **self.VALID_FALSE_REVIEW_POLICY,
             }
             with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
                 auto_integrator.integration_receipt,
@@ -4069,6 +4561,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             lock_path = Path(tmp_dir) / "auto-integrator.lock"
             config = {
                 "paths": {"status_file": str(status_file)},
+                **self.VALID_FALSE_REVIEW_POLICY,
             }
             with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
                 auto_integrator.integration_receipt,
@@ -4160,6 +4653,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             lock_path = Path(tmp_dir) / "auto-integrator.lock"
             config = {
                 "paths": {"status_file": str(status_file)},
+                **self.VALID_FALSE_REVIEW_POLICY,
             }
             with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
                 auto_integrator.integration_receipt,
@@ -4214,7 +4708,10 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             status_file = self._fresh_state_file(tmp_dir)
-            config = {"paths": {"status_file": str(status_file)}}
+            config = {
+                "paths": {"status_file": str(status_file)},
+                **self.VALID_FALSE_REVIEW_POLICY,
+            }
             with mock.patch.object(
                 auto_integrator.integration_receipt, "record_integration_receipt"
             ) as stub:
@@ -4251,7 +4748,10 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
         reconciled_pr = merged_pr(number=55)
         reconciled_pr["mergeCommit"] = {"oid": "d" * 40}
         runner = FakeRunner(pr=None, merged_pr=reconciled_pr)
-        config = {"paths": {"status_file": "/tmp/does-not-matter/ai-status.json"}}
+        config = {
+            "paths": {"status_file": "/tmp/does-not-matter/ai-status.json"},
+            **self.VALID_FALSE_REVIEW_POLICY,
+        }
 
         with mock.patch.object(
             auto_integrator.integration_receipt, "record_integration_receipt"
@@ -4283,7 +4783,10 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             branch="task/ABC-001",
         )
         runner = FakeRunner(pr=green_pr(number=44))
-        config = {"paths": {"status_file": "/tmp/does-not-matter/ai-status.json"}}
+        config = {
+            "paths": {"status_file": "/tmp/does-not-matter/ai-status.json"},
+            **self.VALID_FALSE_REVIEW_POLICY,
+        }
 
         with mock.patch.object(
             auto_integrator.integration_receipt, "record_integration_receipt"
@@ -4339,7 +4842,10 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             status_file = self._fresh_state_file(tmp_dir)
-            config = {"paths": {"status_file": str(status_file)}}
+            config = {
+                "paths": {"status_file": str(status_file)},
+                **self.VALID_FALSE_REVIEW_POLICY,
+            }
             with mock.patch.object(
                 auto_integrator.integration_receipt,
                 "record_integration_receipt",
@@ -4474,9 +4980,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             branch="task/ABC-001",
         )
         pr = green_pr(number=44)
-        pr["statusCheckRollup"] = [
+        pr["statusCheckRollup"].append(
             {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
-        ]
+        )
         runner = FakeRunner(pr=pr)
         tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
         runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
@@ -4487,6 +4993,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             runner,
             execute=True,
             gate=approved_gate(),
+            config=self.REQUIRED_TRUE_REVIEW_POLICY,
         )
 
         self.assertEqual(result.action, "waiting")
@@ -4505,7 +5012,6 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             branch="task/ABC-001",
         )
         pr = green_pr(number=44)
-        pr["statusCheckRollup"] = [{"name": "tests", "conclusion": "SUCCESS"}]
         runner = FakeRunner(pr=pr)
         tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
         runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
@@ -4516,6 +5022,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             runner,
             execute=True,
             gate=approved_gate(),
+            config=self.REQUIRED_TRUE_REVIEW_POLICY,
         )
 
         self.assertEqual(result.action, "waiting")
@@ -4535,10 +5042,10 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
             )
             pr = green_pr(number=44)
-            pr["statusCheckRollup"] = [
+            pr["statusCheckRollup"].extend([
                 {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"},
                 {"name": "test-suite", "conclusion": "FAILURE"},
-            ]
+            ])
             runner = FakeRunner(pr=pr)
             tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
             runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
@@ -4553,6 +5060,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 status_root=status_root,
                 execute=True,
                 gate=approved_gate(),
+                config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
 
             self.assertEqual(result.action, "blocked")
@@ -4571,9 +5079,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
             )
             pr = green_pr(number=44)
-            pr["statusCheckRollup"] = [
+            pr["statusCheckRollup"].append(
                 {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
-            ]
+            )
             runner = FakeRunner(pr=pr)
 
             result = auto_integrator.integrate_candidate(
@@ -4586,6 +5094,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 status_root=status_root,
                 execute=True,
                 gate=approved_gate(),
+                config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
 
             self.assertEqual(result.action, "blocked")
@@ -4604,9 +5113,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
             )
             pr = green_pr(number=44)
-            pr["statusCheckRollup"] = [
+            pr["statusCheckRollup"].append(
                 {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
-            ]
+            )
             runner = FakeRunner(pr=pr)
             approve_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
             reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
@@ -4623,6 +5132,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 status_root=status_root,
                 execute=True,
                 gate=approved_gate(),
+                config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
 
             self.assertEqual(result.action, "blocked")
@@ -4638,9 +5148,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             branch="task/ABC-001",
         )
         pr = green_pr(number=44)
-        pr["statusCheckRollup"] = [
+        pr["statusCheckRollup"].append(
             {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
-        ]
+        )
         runner = FakeRunner(pr=pr)
         tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
         runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
@@ -4656,6 +5166,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 runner,
                 execute=True,
                 gate=approved_gate(),
+                config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
 
         self.assertEqual(result.action, "waiting")
@@ -4675,9 +5186,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
             )
             pr = green_pr(number=44)
-            pr["statusCheckRollup"] = [
+            pr["statusCheckRollup"].append(
                 {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
-            ]
+            )
             runner = FakeRunner(pr=pr)
             approve_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
             reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
@@ -4695,6 +5206,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 status_root=status_root,
                 execute=True,
                 gate=approved_gate(),
+                config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
 
             self.assertEqual(result.action, "blocked")
@@ -4713,9 +5225,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
             )
             pr = green_pr(number=44)
-            pr["statusCheckRollup"] = [
+            pr["statusCheckRollup"].append(
                 {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
-            ]
+            )
             runner = FakeRunner(pr=pr)
             approve_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
             reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
@@ -4739,6 +5251,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 status_root=status_root,
                 execute=True,
                 gate=approved_gate(),
+                config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
 
             self.assertEqual(result.action, "blocked")

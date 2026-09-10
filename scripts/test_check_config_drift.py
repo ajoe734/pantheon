@@ -303,11 +303,25 @@ def test_git_commits_behind_none_on_failure() -> None:
     assert git_commits_behind(Path("/x"), "origin/dev", runner=runner) is None
 
 
+BASE_REVIEW_POLICY = {
+    "review_gate": {"github_review_bridge_required": False},
+    "branch_workflow": {
+        "task_pr": {
+            "required_status_checks": [
+                "Commit trailers",
+                "Runtime mirror guard",
+                "Smoke acceptance",
+            ]
+        }
+    },
+}
+
+
 def test_main_fix_aligns_drift(tmp_path: Path) -> None:
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
-    repo.write_text(json.dumps({"ready_dispatcher": {"enabled": True, "max_concurrent_workers": 13}}))
-    live.write_text(json.dumps({"ready_dispatcher": {"enabled": False, "max_concurrent_workers": 13}}))
+    repo.write_text(json.dumps({"ready_dispatcher": {"enabled": True, "max_concurrent_workers": 13}, **BASE_REVIEW_POLICY}))
+    live.write_text(json.dumps({"ready_dispatcher": {"enabled": False, "max_concurrent_workers": 13}, **BASE_REVIEW_POLICY}))
     # without --fix: exit 1 (actionable drift)
     rc = main(["--repo-config", str(repo), "--live-config", str(live)])
     assert rc == 1
@@ -321,9 +335,12 @@ def test_main_fix_adds_repo_owned_flag_missing_from_live(tmp_path: Path) -> None
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
     repo.write_text(
-        json.dumps({"ready_dispatcher": {"max_concurrent_workers": 13, "max_concurrent_per_account": {"codex1": 4}}})
+        json.dumps({
+            "ready_dispatcher": {"max_concurrent_workers": 13, "max_concurrent_per_account": {"codex1": 4}},
+            **BASE_REVIEW_POLICY,
+        })
     )
-    live.write_text(json.dumps({"ready_dispatcher": {"max_concurrent_workers": 13}}))
+    live.write_text(json.dumps({"ready_dispatcher": {"max_concurrent_workers": 13}, **BASE_REVIEW_POLICY}))
 
     rc = main(
         [
@@ -344,7 +361,7 @@ def test_main_fix_adds_repo_owned_flag_missing_from_live(tmp_path: Path) -> None
 def test_main_behind_fails_only_when_threshold_exceeded(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
-    config = {"chair_review": {"enabled": True}, "ready_dispatcher": {"max_concurrent_workers": 13}}
+    config = {"chair_review": {"enabled": True}, "ready_dispatcher": {"max_concurrent_workers": 13}, **BASE_REVIEW_POLICY}
     repo.write_text(json.dumps(config))
     live.write_text(json.dumps(config))
     import check_config_drift
@@ -385,9 +402,9 @@ def test_invalid_fleet_contract_fails_even_when_equal_and_fix_requested(tmp_path
 def test_fleet_contract_drift_is_actionable_and_valid_shape_passes(tmp_path, capsys):
     repo = tmp_path / "repo.json"
     live = tmp_path / "live.json"
-    valid = {"ready_dispatcher": {"max_concurrent_workers": 13}}
+    valid = {"ready_dispatcher": {"max_concurrent_workers": 13}, **BASE_REVIEW_POLICY}
     repo.write_text(json.dumps(valid))
-    live.write_text(json.dumps({"ready_dispatcher": {"max_concurrent_workers": 14}}))
+    live.write_text(json.dumps({"ready_dispatcher": {"max_concurrent_workers": 14}, **BASE_REVIEW_POLICY}))
     assert main(["--repo-config", str(repo), "--live-config", str(live), "--json"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["fleet_capacity_errors"] == []
@@ -457,6 +474,30 @@ def test_review_bridge_policy_errors_flags_invalid_or_contradictory_shapes() -> 
     errors = review_bridge_policy_errors(contradictory_false, contradictory_false)
     assert len(errors) == 2
     assert {e["source"] for e in errors} == {"repo", "live"}
+
+    # Both empty dictionaries fail closed on missing whole sections
+    errors = review_bridge_policy_errors({}, {})
+    assert len(errors) == 2
+    assert {e["source"] for e in errors} == {"repo", "live"}
+    for err in errors:
+        assert "review_gate configuration is required" in err["error"]
+
+    # One empty, one valid
+    errors = review_bridge_policy_errors({}, valid_false)
+    assert len(errors) == 1
+    assert errors[0]["source"] == "repo"
+    assert "review_gate configuration is required" in errors[0]["error"]
+
+    # Absent and malformed whole sections fail closed
+    malformed_repo = {"review_gate": "invalid", "branch_workflow": {"task_pr": {"required_status_checks": []}}}
+    malformed_live = {"review_gate": {"github_review_bridge_required": False}, "branch_workflow": 12345}
+    errors = review_bridge_policy_errors(malformed_repo, malformed_live)
+    assert len(errors) == 2
+    assert {e["source"] for e in errors} == {"repo", "live"}
+    repo_err = next(e for e in errors if e["source"] == "repo")
+    live_err = next(e for e in errors if e["source"] == "live")
+    assert "review_gate configuration is required and must be a mapping" in repo_err["error"]
+    assert "branch_workflow configuration is required and must be a mapping" in live_err["error"]
 
 
 def test_find_drift_flags_review_bridge_policy_drift() -> None:

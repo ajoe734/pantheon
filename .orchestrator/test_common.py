@@ -4053,6 +4053,62 @@ class ReviewBridgePolicyValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "contradictory review bridge policy"):
                 common.load_config(cfg_path)
 
+    def test_validate_review_bridge_policy_rejects_empty_and_non_dict(self) -> None:
+        with self.assertRaisesRegex(ValueError, "config must be a mapping"):
+            common.validate_review_bridge_policy(None)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "config must be a mapping"):
+            common.validate_review_bridge_policy("not a mapping")  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+            common.validate_review_bridge_policy({})
+
+    def test_load_config_rejects_empty_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            cfg_path.write_text(json.dumps({}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+    def test_load_config_rejects_missing_or_malformed_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            # Missing review_gate
+            cfg_path.write_text(
+                json.dumps({"branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required"):
+                common.load_config(cfg_path)
+
+            # Missing branch_workflow
+            cfg_path.write_text(
+                json.dumps({"review_gate": {"github_review_bridge_required": False}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required"):
+                common.load_config(cfg_path)
+
+            # Malformed review_gate section (not a mapping)
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": "invalid",
+                    "branch_workflow": {"task_pr": {"required_status_checks": ["Commit trailers"]}},
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "review_gate configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
+            # Malformed branch_workflow section (not a mapping)
+            cfg_path.write_text(
+                json.dumps({
+                    "review_gate": {"github_review_bridge_required": False},
+                    "branch_workflow": 12345,
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required and must be a mapping"):
+                common.load_config(cfg_path)
+
 
 if __name__ == "__main__":
     unittest.main()

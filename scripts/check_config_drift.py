@@ -93,13 +93,6 @@ def review_bridge_policy_errors(
         sys.path.insert(0, orchestrator_dir)
     from common import validate_review_bridge_policy
 
-    configs = [c for c in (repo_cfg, live_cfg) if isinstance(c, dict)]
-    has_review_policy = any(
-        "review_gate" in c or "branch_workflow" in c for c in configs
-    )
-    if not has_review_policy:
-        return []
-
     errors = []
     for source, config in (("repo", repo_cfg), ("live", live_cfg)):
         try:
