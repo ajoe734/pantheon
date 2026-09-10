@@ -76,18 +76,23 @@ only worker-launch call.
 
 ### Automatic recovery lanes and safeguards
 
-The supervisor provides bounded automatic reassignment across three distinct
-recovery lanes. None of these lanes launches workers directly; each operates by
-committing a CAS task update through canonical `persist_task_reassignment`
+The supervisor provides bounded automatic recovery across three distinct
+lanes. None of these lanes launches workers directly. Automatic reassignment
+actions across all three lanes commit through canonical `persist_task_reassignment`
 (respecting generation fences and lease locks), after which the normal planner
-evaluates dispatch on a subsequent pass.
+evaluates dispatch on a subsequent pass. If repeated failures exhaust the
+auto-reassignment budget, the escalation hold tier uses `record_failure_loop_blocker`,
+which commits via its own locked `BLOCK` transition, outbox, and status-pipeline
+sync path rather than `persist_task_reassignment`.
 
 1. **Durable unavailability recovery (`reconcile_unavailable_assignments`)**:
    - Master switch: `worker_reassignment.enabled` (default `false`), bounded
      per cycle by `worker_reassignment.max_reassignments_per_cycle`.
    - Triggers when an assigned actor is durably unavailable due to terminal auth,
-     terminal quota, unknown agent identity, or configured zero capacity
-     (`agents.<id>.max_parallel == 0`).
+     terminal quota, unknown agent identity, configured zero capacity
+     (`agents.<id>.max_parallel == 0`), or configured no delivery endpoint
+     (`configured_no_delivery_endpoint`, where the agent's delivery lane has no
+     enabled auto-deliver endpoints configured).
    - Applies to reviewers on tasks in `ready_dispatch.review_statuses` (e.g.
      `review`, provided the reviewer is not an explicit human gate), and owners
      on `todo`, `in_progress`, `review_approved`, or `blocked` tasks (provided
@@ -107,24 +112,38 @@ evaluates dispatch on a subsequent pass.
      explicit recovery hold (`blocked`), and never touches tasks with an active
      worker lease or active worker-recovery receipt.
    - Evaluates two distinct non-durable conditions:
-     - Saturated lane (`assignment_saturated_recoverable`): the incumbent
-       owner is healthy but fully saturated (occupancy >= `agents.<id>.max_parallel`),
-       while a configured candidate in `worker_reassignment.owner_fallbacks` has
-       spare capacity.
+     - Saturated lane (`assignment_saturated_recoverable`): evaluates current
+       occupancy counts against configured capacity (`agent_dispatch_capacity`).
+       It triggers when the incumbent owner's current load meets or exceeds
+       configured capacity (`len(agent_loads.get(owner, [])) >= capacity > 0`)
+       and at least one configured candidate in `worker_reassignment.owner_fallbacks`
+       has current load below configured capacity
+       (`len(agent_loads.get(candidate, [])) < candidate_capacity`). It evaluates
+       occupancy counts only and never inspects provider health, auth, or quota
+       (it does not verify that the incumbent is healthy).
      - Transiently blocked lane (`assignment_transiently_blocked_recoverable`):
-       the incumbent owner cannot take the task right now for a transient
-       reason (such as an expired/stale health cache, probe timeout, short
-       provider retry-after window, or temporary zero capacity), while a
-       configured fallback candidate currently can.
+       evaluates dispatch admission readiness via `agent_can_take_task`. It
+       triggers when the incumbent owner cannot take the task (due to a transient
+       reason such as a stale/missing health probe, provider retry-after window,
+       unready endpoint/account in the delivery health state, or temporary zero
+       capacity) while at least one configured fallback candidate satisfies
+       `agent_can_take_task`. It evaluates dispatch readiness/health gates, not
+       current load or spare capacity.
    - Safeguards and hold duration: neither condition triggers immediate
      reassignment. Instead, the task enters a supervisor tracking state
-     (`load_balance_watch`). The condition must persist continuously for at
-     least `worker_reassignment.load_balance.min_saturated_seconds`. If the
-     incumbent clears the condition or recovers before the duration expires,
-     the watch entry is dropped.
-   - Once the continuous configured hold is satisfied and a qualified fallback
-     has spare capacity, the owner is reassigned via governed CAS and the watch
-     is cleared; the ordinary planner then handles subsequent dispatch.
+     (`load_balance_watch`). The qualifying condition must persist continuously
+     for at least `worker_reassignment.load_balance.min_saturated_seconds`. If
+     the condition clears before the duration expires, the watch entry is dropped.
+   - Reassignment execution: once the continuous configured hold is satisfied,
+     candidate fallbacks are sorted by capacity headroom
+     (`agent_dispatch_capacity - len(agent_loads)`) descending, and the
+     supervisor selects the first candidate satisfying `agent_can_take_task`
+     via `plan_task_assignment_pair`. Note that while sorting prioritizes
+     candidates with higher headroom, `plan_task_assignment_pair` enforces agent
+     validity and health-gate readiness (`agent_can_take_task`), not a guarantee
+     of spare capacity at assignment time. Upon successful CAS commit via
+     `persist_task_reassignment`, the watch entry is cleared and ordinary
+     planner dispatch handles subsequent execution.
 
 3. **Repeated-failure-loop recovery (`reconcile_failure_loops`)**:
    - Governed by `worker_reassignment.failure_loop` keys: `enabled` (off by
@@ -150,18 +169,23 @@ evaluates dispatch on a subsequent pass.
        (`max_auto_reassignments`) is exhausted, automatic reassignment ceases.
        The supervisor can escalate on the same retained task count—without
        requiring fresh failures after reassignment—or after further failures,
-       placing the task on an explicit `Human/Ops` hold
-       (`record_failure_loop_blocker`), setting status to `blocked` waiting for
-       `Human/Ops` investigation rather than cycling indefinitely between
-       agents.
+       placing the task on an explicit `Human/Ops` hold via
+       `record_failure_loop_blocker`. Rather than using `persist_task_reassignment`,
+       this path acquires the canonical task state lock, executes an explicit
+       task state machine `BLOCK` transition, records `waiting_for = "Human/Ops"`,
+       appends an open blocker with `blocker_kind = "failure_loop"`, enqueues a
+       `task_failure_loop_blocked` activity event in the status outbox, writes
+       the status file, and synchronizes the status pipeline and activity log.
+       This halts silent recycling between agents until Human/Ops investigates.
 
 ### Authority boundary
 
-These automated lanes reuse existing TaskStore CAS mutations and generation
-fencing; they do not introduce a second authority or bypass active leases.
-Human/Ops retains supreme authority and may always correct a current owner or
-reviewer through canonical `ai-status assign`; repository branch, PR, or check
-governance does not grant or revoke that runtime authority.
+These automated recovery lanes reuse existing TaskStore mutations (canonical CAS
+reassignment and locked task-machine `BLOCK` transitions); they do not introduce
+a second authority or bypass active leases. Human/Ops retains supreme authority
+and may always correct a current owner or reviewer through canonical
+`ai-status assign`; repository branch, PR, or check governance does not grant
+or revoke that runtime authority.
 
 ## Atomic dependency contract maintenance
 
