@@ -507,6 +507,151 @@ def test_research_router_declares_all_47_assigned_decorators() -> None:
     assert ("POST", "/bff/artifacts") in actual
 
 
+def test_knowledge_workbench_preserves_overview_and_injected_metadata() -> None:
+    snapshot_at = "2026-09-10T07:00:00Z"
+    # The overview describes route contracts, independently of note data.
+    port = _Port(source="missing")
+    response = _client(
+        port,
+        utc_now=lambda: snapshot_at,
+        snapshot_meta=lambda stamp: {"snapshot_at": stamp, "trace": "injected"},
+    ).get("/api/v1/workbench/knowledge")
+    assert response.status_code == 200
+    example = Path(__file__).resolve().parents[4] / "docs/examples/PKT-knowledge-workbench.json"
+    expected = json.loads(example.read_text())
+    expected["meta"].update(snapshot_at=snapshot_at, trace="injected")
+    assert response.json() == expected
+
+
+@pytest.mark.parametrize("activation_ready", [True, False])
+@pytest.mark.parametrize(
+    "statuses, expected_status",
+    [( ["ok", "ok"], "ok"), (["ok", "unavailable"], "degraded"),
+     (["unavailable", "unavailable"], "unavailable")],
+)
+def test_oss_fallback_uses_typed_snapshot_and_service_metadata(
+    activation_ready: bool, statuses: List[str], expected_status: str,
+) -> None:
+    class ReadinessPort(_Port):
+        def get_research_oss_preactivation_snapshot(self, *, activity_limit: int):
+            self.activity_limit = activity_limit
+            return data
+
+    surface_key = "research_oss_activation_ready" if activation_ready else "research_oss_preactivation"
+    path = "oss-activation-ready" if activation_ready else "oss-preactivation"
+    data = {
+        "surface": "research_oss_activation_ready",
+        "surface_aliases": ["research_oss_preactivation"],
+        "production_activation": "disabled",
+        "activated": False,
+        "activation_state": "offline_activation_ready" if activation_ready else "preactivation_only",
+        "offline_gate": "enabled" if activation_ready else "disabled",
+        "allowed_scope": "offline_training_preactivation" if activation_ready else "capability_metadata_read_only",
+        "write_paths": {"registry_writes": "disabled", "governance_writes": "disabled"},
+        "backend_inventory": [{"backend": "qlib", "activated": False}],
+        "activity": [{"object_id": "job-1", "status": "completed"}],
+        "run_history": [{"object_id": "job-1", "logs": ["done"], "artifact_refs": ["artifact-1"]}],
+        "error_summary": {"failed_count": 0},
+        "service_status": {
+            "worker": {"status": statuses[0], "source": "service_client", "activity_status": "ok", "internal": "omit"},
+            "adapter": {"status": statuses[1], "source": "service_client", "reason": "probe", "upstream_status": "offline", "upstream_reachable": False},
+            "invalid": None,
+        },
+    }
+    port = ReadinessPort()
+    response = _client(
+        port, utc_now=lambda: "2026-09-10T07:00:00Z",
+        snapshot_meta=lambda stamp: {"snapshot_at": stamp, "trace": "injected"},
+    ).get(f"/api/v1/operator/research/{path}?activity_limit=7")
+    assert response.status_code == 200
+    assert port.activity_limit == 7
+    payload = response.json()
+    assert payload["data"] == data
+    composite = {"status": expected_status, "source": "service_client"}
+    assert payload["meta"] == {
+        "snapshot_at": "2026-09-10T07:00:00Z", "trace": "injected",
+        "surfaces": {
+            "research_oss_activation_ready": composite,
+            "research_oss_preactivation": composite,
+            "worker": {"status": statuses[0], "source": "service_client", "activity_status": "ok"},
+            "adapter": data["service_status"]["adapter"],
+        },
+    }
+    assert next(iter(payload["meta"]["surfaces"])) == surface_key
+
+
+@pytest.mark.parametrize("path", ["oss-activation-ready", "oss-preactivation"])
+@pytest.mark.parametrize("failure", ["missing_method", "reader_error"])
+def test_oss_fallback_fails_closed_on_port_errors(path: str, failure: str) -> None:
+    class BrokenPort(_Port):
+        def get_research_oss_preactivation_snapshot(self, *, activity_limit: int):
+            raise RuntimeError("snapshot reader unavailable")
+
+    port = _Port() if failure == "missing_method" else BrokenPort()
+    response = _client(port).get(f"/api/v1/operator/research/{path}")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("path", ["oss-activation-ready", "oss-preactivation"])
+@pytest.mark.parametrize("limit", ["0", "201", "invalid"])
+def test_oss_fallback_validates_activity_limit(path: str, limit: str) -> None:
+    response = _client(_Port()).get(f"/api/v1/operator/research/{path}?activity_limit={limit}")
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("path, callback_name, arguments", [
+    ("/api/v1/workbench/knowledge", "build_knowledge_workbench", {}),
+    ("/api/v1/operator/research/oss-activation-ready", "build_research_oss_readiness", {"activation_ready": True, "activity_limit": 20}),
+    ("/api/v1/operator/research/oss-preactivation", "build_research_oss_readiness", {"activation_ready": False, "activity_limit": 20}),
+])
+def test_research_composition_callbacks_override_fallbacks(
+    asynchronous: bool, path: str, callback_name: str, arguments: Dict[str, Any],
+) -> None:
+    calls = []
+    expected = {"data": {"override": path}, "meta": {"source": "callback"}}
+
+    def callback(**kwargs):
+        calls.append(kwargs)
+        return expected
+
+    async def async_callback(**kwargs):
+        return callback(**kwargs)
+
+    def unexpected_fallback():
+        pytest.fail("Callback override must not access fallback dependencies")
+
+    response = _client(
+        _Port(), **{callback_name: async_callback if asynchronous else callback},
+        get_read_store=unexpected_fallback, utc_now=unexpected_fallback,
+    ).get(path)
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert calls == [arguments]
+
+
+@pytest.mark.parametrize("path", [
+    "/api/v1/workbench/knowledge",
+    "/api/v1/operator/research/oss-activation-ready",
+    "/api/v1/operator/research/oss-preactivation",
+])
+def test_research_composition_checks_read_role_before_projection(path: str) -> None:
+    def forbidden(_identity):
+        raise HTTPException(status_code=403, detail="read role required")
+
+    def unexpected_projection(*args, **kwargs):
+        pytest.fail("Denied request reached projection")
+
+    response = _client(
+        _Port(), require_read_role=forbidden,
+        get_read_store=unexpected_projection,
+        build_knowledge_workbench=unexpected_projection,
+        build_research_oss_readiness=unexpected_projection,
+    ).get(path)
+    assert response.status_code == 403
+
+
 def test_research_inventory_ticket_and_source_routes_use_injected_port() -> None:
     client = _client(_Port())
 
