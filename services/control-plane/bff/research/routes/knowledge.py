@@ -52,6 +52,135 @@ _KW02_MEMORY_ANCHOR_PATTERN = re.compile(
 )
 
 
+def _build_knowledge_workbench_overview(ctx: ResearchRouteContext, snapshot_at: str) -> Dict[str, Any]:
+    modules = [
+        {
+            "module_id": "KW-01",
+            "label": "Institutional Memory",
+            "status": "ready",
+            "wave_order": 1,
+            "summary": "List and detail routes are live. Browse projection, lifecycle state machine, and identity contract published via KW-01-FOUNDATION-001.",
+            "missing_contracts": [],
+            "next_gate": "BFF routes are implemented; Lovable may proceed with production UI using example payloads.",
+            "upstream_dependencies": [],
+        },
+        {
+            "module_id": "KW-02",
+            "label": "Research Notes",
+            "status": "ready",
+            "wave_order": 2,
+            "summary": "Research Notes create/list/detail routes are live. Ownership, attachment taxonomy, and referential integrity rules are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-02 routes.",
+            "upstream_dependencies": ["KW-01"],
+        },
+        {
+            "module_id": "KW-03",
+            "label": "Evidence Refs",
+            "status": "ready",
+            "wave_order": 3,
+            "summary": "Evidence Refs list/detail routes are live. Link taxonomy, credibility metadata, and resolved-link projection are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-03 routes and preserve backend-owned resolved-link semantics.",
+            "upstream_dependencies": ["KW-01", "KW-02"],
+        },
+        {
+            "module_id": "KW-04",
+            "label": "Insight Cards",
+            "status": "ready",
+            "wave_order": 4,
+            "summary": "Insight Cards list/detail routes are live. Aggregation/detail projection and backend-owned filter taxonomy are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-04 routes without client-side filter synthesis; the frontend handoff bundle is published.",
+            "upstream_dependencies": ["KW-01", "KW-03"],
+        },
+        {
+            "module_id": "KW-05",
+            "label": "Strategy Spec",
+            "status": "ready",
+            "wave_order": 5,
+            "summary": "Strategy Spec browse/detail/version-history/compare routes are live. Version identity, ancestry, lifecycle, and compare semantics are implemented per the ratified contract.",
+            "missing_contracts": [],
+            "live_routes": [
+                "GET /api/v1/knowledge/strategy-specs",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare",
+            ],
+            "next_gate": "Activate the Lovable UI task against the live KW-05 routes using backend-owned version identity, ancestry, and compare semantics.",
+            "upstream_dependencies": ["KW-01", "KW-03"],
+        },
+    ]
+    return {
+        "workbench_id": "knowledge-workbench",
+        "label": "Knowledge Workbench",
+        "route_href": "/knowledge",
+        "overall_status": "overview_ready",
+        "headline": "KW-01 to KW-05 are route-live",
+        "summary": (
+            "This overview is a truthful landing surface for the Knowledge Workbench. "
+            "All five Knowledge Workbench modules are route-live in the current BFF."
+        ),
+        "packet_family": {
+            "family_id": "KW-006",
+            "path": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+            "lovable_readiness": "overview_ready",
+            "note": "KW-01 to KW-05 are route-live in the current BFF. KW-02 to KW-05 now carry published frontend handoff packets; remaining work is front-owned UI activation plus KW-01 hardening follow-up.",
+        },
+        "module_counts": {
+            "total": len(modules),
+            "ready": sum(1 for m in modules if m.get("status") == "ready"),
+            "not_ready": sum(1 for m in modules if m.get("status") != "ready"),
+        },
+        "modules": modules,
+        "support_refs": [
+            {
+                "ref_id": "memory-design-note",
+                "label": "Memory Layer Design Note",
+                "ref_type": "document",
+                "value": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md",
+                "note": "Canonical Memory Plane split and retrieval-facade rules.",
+            },
+            {
+                "ref_id": "institutional-memory-schema",
+                "label": "InstitutionalMemoryEntry schema",
+                "ref_type": "document",
+                "value": "services/memory/institutional_memory_entry.schema.json",
+                "note": "Canonical shared-memory object shape; not a workbench browse contract.",
+            },
+            {
+                "ref_id": "strategy-spec-schema",
+                "label": "StrategySpec schema",
+                "ref_type": "document",
+                "value": "services/control-plane/specs/strategy_spec.schema.json",
+                "note": "Canonical StrategySpec object schema; version browsing, ancestry, lifecycle, and compare semantics are now ratified in docs/bff/KW-05-strategy-spec.md.",
+            },
+            {
+                "ref_id": "memory-retrieval-facade",
+                "label": "Memory retrieval facade",
+                "ref_type": "endpoint",
+                "value": "/memory/retrieve",
+                "note": "Session-facing retrieval API; not a substitute for workbench list/detail surfaces.",
+            },
+        ],
+        "next_steps": [
+            "Activate the Lovable UI task against the live KW-02 Research Notes routes.",
+            "Activate the Lovable UI task against the live KW-03 Evidence Refs routes.",
+            "Activate the Lovable UI task against the live KW-04 Insight Cards routes; the frontend handoff bundle is already published.",
+            "Activate the Lovable UI task against the live KW-05 Strategy Spec routes using backend-owned version identity, ancestry, and compare semantics.",
+            "Keep the Knowledge Workbench payload-owned; do not synthesize registry joins from raw schemas in the browser.",
+            "Use this overview to track the remaining workbench order without downgrading live routes back to pending-BFF text.",
+        ],
+        "meta": {
+            **ctx.snapshot_meta(snapshot_at),
+            "surfaces": {
+                "overview": {"status": "ok", "source": "bff_static"},
+                "packet_family": {"status": "ok", "source": "canonical"},
+            },
+        },
+    }
+
+
 def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
     router = APIRouter()
 
@@ -835,13 +964,10 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
     # Endpoints
     async def endpoint_knowledge_workbench(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
-        port = ctx.get_read_store()
-        snapshot_at = ctx.utc_now()
         if ctx.build_knowledge_workbench is not None:
             result = ctx.build_knowledge_workbench()
             return await result if inspect.isawaitable(result) else result
-        records = list(ctx.call_port(port, "list_research_notes") or [])
-        return {"data": records, "meta": ctx.meta(snapshot_at, "knowledge_workbench", "research_notes", bool(records))}
+        return _build_knowledge_workbench_overview(ctx, ctx.utc_now())
 
     async def endpoint_create_note(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         body = await ctx.body(request)
