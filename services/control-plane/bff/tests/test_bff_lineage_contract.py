@@ -173,4 +173,3 @@ def test_bff_lineage_requires_read_auth() -> None:
     client = _seeded_client()
     response = client.get("/bff/lineage")
     assert response.status_code == 401
-

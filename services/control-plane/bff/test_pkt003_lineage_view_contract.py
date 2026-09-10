@@ -2,8 +2,6 @@
 """HTTP contract tests for PKT-003 Lineage View BFF surfaces."""
 from __future__ import annotations
 
-import os
-import sys
 from contextlib import contextmanager
 
 from fastapi import FastAPI

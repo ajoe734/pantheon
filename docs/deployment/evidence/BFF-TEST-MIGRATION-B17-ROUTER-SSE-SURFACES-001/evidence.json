@@ -7,7 +7,7 @@
   "reviewer": "Codex",
   "target_repo": "pantheon",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "c99c090b405d95bff5fa0c426d249ea75ffcc9eb",
+  "base_sha": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
   "scope": {
     "batch_source_files": [
       "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
@@ -32,54 +32,54 @@
   },
   "source_files_proof": {
     "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": {
-      "bytes": 21520,
-      "sha256": "4be124e93a649ea315d33c8adad00877dc0329f3bfa1348c3706fa46943e7ff5",
-      "lines": 554
+      "bytes": 22479,
+      "sha256": "cac6a7e194b698598cff851adfe7d9a1fdcbd219b6926ddaffde329ec8ec74cb",
+      "lines": 599
     },
     "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py": {
-      "bytes": 10535,
-      "sha256": "d96d71e0a7a672d7a8d186cb0c676fd262ef813d084ab15dca0be82e173729c3",
-      "lines": 250
+      "bytes": 10524,
+      "sha256": "803a5c15147ea6c790b1dd0af61f5bc7468045c7d0e43555ad75ac69743ae5b9",
+      "lines": 249
     },
     "services/control-plane/bff/test_pkt003_lineage_view_contract.py": {
-      "bytes": 7551,
-      "sha256": "9bbb0afee6d3ecb95cb201ad734635a22e1a66961a0d67a12f2004f4a152bf21",
-      "lines": 232
+      "bytes": 7530,
+      "sha256": "6df25badd1ad062c7fe701a1ffb15a7feccc0a9a6a76a63e307ed80d67dcf706",
+      "lines": 230
     },
     "services/control-plane/bff/test_pkt005_sse_substrate_contract.py": {
-      "bytes": 19686,
-      "sha256": "e578b59184638b3d6061302ceb8a81d151a4de99658c83e0c0b0bf66ab998007",
-      "lines": 536
+      "bytes": 20503,
+      "sha256": "3399e1a24011d0bf5dfaf02ea9a8efa83e2a3afc5defcd6e19018de91ceaa818",
+      "lines": 544
     },
     "services/control-plane/bff/test_pkt012_alerts_rail_contract.py": {
-      "bytes": 22413,
-      "sha256": "e223c10ccdcd3f7ea9c23a0976840b873ac8402585276a0613a939938a1cb098",
-      "lines": 531
+      "bytes": 9173,
+      "sha256": "d1504cae55ae996b49b405a34be65c3f6d32a1e9db1837f30db996310e47ffbe",
+      "lines": 239
     },
     "services/control-plane/bff/test_pkt013_operator_home_contract.py": {
-      "bytes": 14797,
-      "sha256": "b29b2d18b06ee3fcdb7efe11e32fd4fced7508dd6496411109a6527f1598a618",
-      "lines": 389
+      "bytes": 5791,
+      "sha256": "0e6c089b787ccdf24ddf454d4039f968d3628d95844db1c76ac4b55f162cf704",
+      "lines": 168
     },
     "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py": {
-      "bytes": 10822,
-      "sha256": "a271178e3395731d798f93bf93d54390775ab036f5bf7a978184021100360dac",
-      "lines": 259
+      "bytes": 10821,
+      "sha256": "b8e454d98506fcb9655477e8f060fedcbd03b2b67894623d6eb6a3d794f38f0c",
+      "lines": 258
     },
     "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py": {
-      "bytes": 2907,
-      "sha256": "3d5f636dc3aefafde9da3a363ed5a7bf5a6af678a006c73b1b19a62c4b217d1b",
-      "lines": 77
+      "bytes": 9217,
+      "sha256": "9c7fb1b5fa6893284ae6b15062bc226e487b8b9b7726e055a5dedabb9391d82f",
+      "lines": 198
     },
     "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py": {
-      "bytes": 56253,
-      "sha256": "e7b1dfbff20a9f88f00ee38a21c7fcf7482e6a8c00ad56bb29f32ffc6e12e24e",
-      "lines": 1425
+      "bytes": 54531,
+      "sha256": "f66846717d20349dc4f9599808427b9109f6db4a94619b4c2d839939b0d492d0",
+      "lines": 1387
     },
     "services/control-plane/bff/tests/test_bff_lineage_contract.py": {
-      "bytes": 5847,
-      "sha256": "ad9606225ff524812fadeccc7a5658220646038eb384362c6b95193b6b953de4",
-      "lines": 176
+      "bytes": 5846,
+      "sha256": "1e18e64ba9d3bec3b35ff466e61350f8b19d04d19f07a273341c827a4da25e67",
+      "lines": 175
     },
     "services/control-plane/bff/tests/test_sse_backpressure.py": {
       "bytes": 9169,
@@ -98,43 +98,43 @@
       },
       "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py": {
         "tests_passed": 2,
-        "decoupling_approach": "Mounted isolated router and read cutoff policy validation without bff main or sys.path mutation."
+        "decoupling_approach": "Mounted isolated create_deployment_router with DeploymentReadSurfaceAdapter and read cutoff policy validation without bff main or sys.path mutation."
       },
       "services/control-plane/bff/test_pkt003_lineage_view_contract.py": {
         "tests_passed": 5,
-        "decoupling_approach": "Mounted create_lineage_router on clean FastAPI instance with isolated LineageService."
+        "decoupling_approach": "Mounted create_evolution_router on clean FastAPI instance with isolated in-memory read surface ports."
       },
       "services/control-plane/bff/test_pkt005_sse_substrate_contract.py": {
         "tests_passed": 14,
-        "decoupling_approach": "Decoupled via EventStreamService, create_events_router, and auth_policy.bff_error without importing bff main."
+        "decoupling_approach": "Mounted create_events_router and retained Agora router (create_agora_router) with handle_sse_stream, and AST-inspected _CORS_ALLOW_HEADERS from main.py without importing bff main."
       },
       "services/control-plane/bff/test_pkt012_alerts_rail_contract.py": {
         "tests_passed": 3,
-        "decoupling_approach": "Direct router and service mounting for alerts rail endpoints with package-qualified imports."
+        "decoupling_approach": "Direct router and service mounting for alerts rail endpoints with package-qualified imports and isolated in-memory read store."
       },
       "services/control-plane/bff/test_pkt013_operator_home_contract.py": {
         "tests_passed": 2,
-        "decoupling_approach": "Isolated operator home projection test mounting without global read_store monkeypatching."
+        "decoupling_approach": "Isolated operator home projection test mounting with InMemoryReadSurfacePorts without global read_store monkeypatching."
       },
       "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py": {
         "tests_passed": 2,
-        "decoupling_approach": "Direct domain service projection testing without bff main import."
+        "decoupling_approach": "Direct domain service projection testing using PaperLiveDriftService and DriftReadPorts without bff main import."
       },
       "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py": {
         "tests_passed": 2,
-        "decoupling_approach": "Clean route mounting of consultation workbench endpoints on isolated FastAPI instance."
+        "decoupling_approach": "Mounted consultation workbench endpoints via ConsultationWorkbenchService and InMemoryReadPorts on isolated FastAPI instance."
       },
       "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py": {
         "tests_passed": 40,
-        "decoupling_approach": "Decoupled list-detail facade via isolated FastAPI test harness with _ListDetailFacadeTestStore, JSONResponse exception handler, and package-qualified ports."
+        "decoupling_approach": "Mounted retained production routers (create_strategies_router, create_personas_router, create_capital_router, create_deployment_router) with dynamic store proxy and _FacadeDeploymentQueries without hand-rolled fake endpoints or bff main import."
       },
       "services/control-plane/bff/tests/test_bff_lineage_contract.py": {
         "tests_passed": 5,
-        "decoupling_approach": "Mounted create_lineage_router on clean FastAPI instance with LineageService."
+        "decoupling_approach": "Mounted create_evolution_router with LineageService and LineageReadSurfaceAdapter on clean FastAPI instance without bff main import."
       },
       "services/control-plane/bff/tests/test_sse_backpressure.py": {
         "tests_passed": 4,
-        "decoupling_approach": "Mounted isolated FastAPI app using EventStreamService and asyncio SSE streaming without bff main."
+        "decoupling_approach": "Direct service-level validation using EventStreamService and asyncio SSE streaming without bff main import."
       }
     }
   },

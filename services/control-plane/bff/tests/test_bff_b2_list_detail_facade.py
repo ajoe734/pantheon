@@ -21,23 +21,30 @@ Covers:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import sys
 import tempfile
-from typing import Any, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
+import urllib.request as urllib_request
 import uuid
 
-from fastapi.testclient import TestClient
-
-import urllib.request as urllib_request
 from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.strategies.router import create_strategies_router
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+import services.control_plane.bff.personas.routes.collection as persona_collection
+import services.control_plane.bff.personas.service as persona_service
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.deployment.router import create_deployment_router
+from services.control_plane.bff.deployment.ports import DeploymentQueries
 
 
 def _stable_json_hash(payload: Any) -> str:
-    import hashlib
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -54,10 +61,48 @@ def _pm12_allocation_line_digest(line: dict[str, Any]) -> str:
     }
     return _stable_json_hash(basis)
 
+
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2:operator"}
 NO_AUTH_HEADERS: dict = {}
 
 _TS = "2026-05-23T00:00:00Z"
+
+
+def _test_bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+    error_code = code.value if hasattr(code, "value") else str(code)
+    detail = {
+        "error": {
+            "code": error_code,
+            "message": message,
+            "reason": reason or message,
+            **kwargs,
+        }
+    }
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _test_extract_identity(authorization: Optional[str] = None) -> OperatorIdentity:
+    if not authorization or not authorization.strip():
+        raise _test_bff_error(401, "UNAUTHORIZED", "Missing authorization", "Missing authorization")
+    return OperatorIdentity(
+        operator_id="op-b2",
+        roles=["operator", "reader", "admin", "approver"],
+        claims={"tenant_id": "tenant-default", "tenant": "tenant-default", "tenant_ids": ["tenant-default"]},
+        token_kind="bearer",
+    )
+
+
+def _test_require_read_role(identity: Any) -> None:
+    if not identity or not getattr(identity, "operator_id", None):
+        raise _test_bff_error(401, "UNAUTHORIZED", "Unauthorized")
+
+
+def _test_require_operator_role(identity: Any) -> None:
+    if not identity or not getattr(identity, "operator_id", None):
+        raise _test_bff_error(401, "UNAUTHORIZED", "Unauthorized")
+    roles = set(getattr(identity, "roles", []))
+    if "operator" not in roles and "admin" not in roles:
+        raise _test_bff_error(403, ErrorCode.FORBIDDEN, "Operator role required")
 
 
 class _ListDetailFacadeTestStore:
@@ -69,6 +114,8 @@ class _ListDetailFacadeTestStore:
         self._route_policies: dict[str, dict[str, Any]] = {}
         self._evaluations: dict[str, list[dict[str, Any]]] = {}
         self._memories: dict[str, list[dict[str, Any]]] = {}
+        self._strategies: dict[str, dict[str, Any]] = {}
+        self._deployments: dict[str, dict[str, Any]] = {}
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self.ports, name, None)
@@ -86,17 +133,51 @@ class _ListDetailFacadeTestStore:
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
         return "local_snapshot"
 
+    def list_strategies(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._strategies.values())
+
+    def list_strategy_specs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._strategies.values())
+
+    def get_strategy(self, strategy_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not strategy_id:
+            return None
+        return self._strategies.get(strategy_id)
+
+    def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not strategy_id:
+            return None
+        return self._strategies.get(strategy_id)
+
+    def get_strategy_spec_detail(self, strategy_id: Optional[str], version_selector: str = "current") -> Optional[dict[str, Any]]:
+        if not strategy_id:
+            return None
+        return self._strategies.get(strategy_id)
+
+    def list_strategy_spec_versions(self, strategy_id: Optional[str]) -> list[dict[str, Any]]:
+        if strategy_id and strategy_id in self._strategies:
+            return [{"id": f"spec-{strategy_id}", "version": "1.0.0"}]
+        return []
+
+    def upsert_strategy(self, record: dict[str, Any]) -> dict[str, Any]:
+        strat_id = record.get("id") or record.get("strategy_id") or f"strat-{len(self._strategies) + 1}"
+        item = {**record, "id": strat_id, "strategy_id": strat_id}
+        self._strategies[strat_id] = item
+        return item
+
     def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
         return list(self._personas.values())
 
     def create_persona(self, **kwargs: Any) -> dict[str, Any]:
         persona_id = kwargs.get("persona_id") or kwargs.get("id") or f"persona-{len(self._personas) + 1}"
+        tenant_id = kwargs.get("tenant_id") or "tenant-default"
         name = kwargs.get("name") or persona_id
         archetype = kwargs.get("archetype") or "generalist"
         metadata = dict(kwargs.get("metadata") or {})
         metadata.setdefault("archetype", archetype)
         metadata.setdefault("owner", "op-b2")
         metadata.setdefault("risk_level", "low")
+        metadata.setdefault("tenant_id", tenant_id)
         metadata.setdefault("paper_ledger_id", f"ledger-{persona_id}")
         metadata.setdefault("capital_pool_id", "pool-main")
         metadata.setdefault("legacy_paper_capital_pool_id", "pool-main")
@@ -106,6 +187,7 @@ class _ListDetailFacadeTestStore:
         item = {
             "id": persona_id,
             "persona_id": persona_id,
+            "tenant_id": tenant_id,
             "name": name,
             "state": kwargs.get("state") or kwargs.get("lifecycle_state") or "active",
             "lifecycle_state": kwargs.get("lifecycle_state") or kwargs.get("state") or "active",
@@ -161,10 +243,21 @@ class _ListDetailFacadeTestStore:
         self._rebalances[rb_id] = item
         return item
 
+    def create_capital_rebalance_proposal(self, **kwargs: Any) -> dict[str, Any]:
+        return self.create_rebalance(**kwargs)
+
     def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[dict[str, Any]]:
         if not rebalance_id:
             return None
         return self._rebalances.get(rebalance_id)
+
+    def list_deployments(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._deployments.values())
+
+    def get_deployment(self, deployment_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not deployment_id:
+            return None
+        return self._deployments.get(deployment_id)
 
     def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
         if not persona_id:
@@ -268,7 +361,7 @@ class _ListDetailFacadeTestStore:
         }
 
 
-def _mock_create_capital_pool(payload: dict) -> dict:
+def _mock_create_capital_pool(payload: dict, context: Optional[dict] = None) -> dict:
     pool_id = payload.get("pool_id") or f"pool-{uuid.uuid4().hex[:8]}"
     pool = {
         "id": pool_id,
@@ -287,7 +380,7 @@ def _mock_create_capital_pool(payload: dict) -> dict:
     return pool
 
 
-def _mock_create_rebalance(payload: dict) -> dict:
+def _mock_create_rebalance(payload: dict, context: Optional[dict] = None) -> dict:
     reb_id = f"reb-{uuid.uuid4().hex[:8]}"
     item = {
         "id": reb_id,
@@ -304,13 +397,11 @@ def _mock_create_rebalance(payload: dict) -> dict:
 
 def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> tuple:
     persona_id = getattr(record, "persona_id", None) or f"persona-{uuid.uuid4().hex[:8]}"
-    tenant_id = str(getattr(record, "tenant_id", "") or "")
+    tenant_id = str(getattr(record, "tenant_id", "") or "tenant-default")
     archetype = payload.get("archetype") or "generalist"
     meta = {
         "archetype": archetype,
         "owner": owner,
-        # Tenant-scoped persona reads fail closed for tenantless fixtures, so
-        # preserve the canonical provisioning record's admitted tenant.
         "tenant_id": tenant_id,
         "risk_level": "low",
         "paper_ledger_id": f"ledger-{persona_id}",
@@ -352,27 +443,114 @@ def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> t
         "risk": "low",
         "tenantId": tenant_id,
     }
+    if hasattr(record, "state"):
+        record.state = "completed"
+    if hasattr(record, "current_step"):
+        record.current_step = "ready"
+    if hasattr(record, "references"):
+        record.references = []
     return record, persona, meta, None
 
 
-def _check_auth(authorization: Optional[str]) -> None:
-    if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail={'error': {'code': 'UNAUTHORIZED', 'message': 'Missing authorization'}},
-        )
+def _forward_coordinate_persona_create(record: Any, *, payload: dict, owner: str):
+    return facade_state._coordinate_persona_create(record, payload, owner)
 
 
-def _not_found(entity: str, entity_id: str) -> HTTPException:
-    return HTTPException(
-        status_code=404,
-        detail={
-            'error': {
-                'code': 'RESOURCE_NOT_FOUND',
-                'message': f'{entity} {entity_id} not found',
-            }
-        },
-    )
+persona_collection._coordinate_persona_create = _forward_coordinate_persona_create
+persona_service._coordinate_persona_create = _forward_coordinate_persona_create
+
+
+class _DummyProvisioningStore:
+    def list_by_tenant(self, tenant_id: str) -> list:
+        return []
+
+    def list_all(self) -> list:
+        return []
+
+    def get(self, tenant_id: str, key: str) -> Any:
+        return None
+
+    def get_by_persona(self, tenant_id: str, persona_id: str) -> Any:
+        return None
+
+    def reserve(self, **kwargs: Any) -> tuple:
+        return None, None
+
+
+persona_service._PERSONA_PROVISIONING_STORE = _DummyProvisioningStore()
+
+
+class _DynamicStoreProxy:
+    def __getattr__(self, name: str) -> Any:
+        return getattr(facade_state.read_store, name)
+
+
+dynamic_store = _DynamicStoreProxy()
+
+
+class _FacadeDeploymentQueries:
+    def __init__(self, get_store: Callable[[], Any]) -> None:
+        self._get_store = get_store
+
+    def list_deployment_plans(self, *args: Any, **kwargs: Any) -> Sequence[Dict[str, Any]]:
+        store = self._get_store()
+        if hasattr(store, "list_deployments"):
+            return store.list_deployments()
+        return []
+
+    def get_deployment_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        store = self._get_store()
+        if hasattr(store, "get_deployment"):
+            return store.get_deployment(plan_id)
+        return None
+
+    def list_registry_entries(self) -> Sequence[Dict[str, Any]]:
+        return []
+
+    def get_binding(self, binding_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_review_summary(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_allowed_actions(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        store = self._get_store()
+        if hasattr(store, "get_capital_pool"):
+            return store.get_capital_pool(pool_id)
+        return None
+
+    def get_bindings_for_pool(self, pool_id: Optional[str]) -> Sequence[Dict[str, Any]]:
+        return []
+
+    def get_runtime_binding(self, runtime_binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return None
+
+    def list_runtime_bindings(self) -> Sequence[Dict[str, Any]]:
+        return []
+
+    def get_rollbacks(self, runtime_id: Optional[str]) -> Sequence[Dict[str, Any]]:
+        return []
+
+    def get_latest_run(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_deployment_diff(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot"
+
+    def get_paper_runtime_monitoring_session(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return None
+
+    def get_telemetry_summary(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return None
 
 
 def _create_app() -> FastAPI:
@@ -382,291 +560,79 @@ def _create_app() -> FastAPI:
     async def http_exception_handler(request, exc: HTTPException):
         if isinstance(exc.detail, dict):
             return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={'detail': exc.detail})
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-    @app.post('/bff/strategies', status_code=201)
-    async def create_strategy(
-        payload: dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(None),
-        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
-    ):
-        _check_auth(authorization)
-        strat_id = f'strat-{uuid.uuid4().hex[:8]}'
-        name = payload.get('name', 'Strategy')
-        item = {
-            'id': strat_id,
-            'name': name,
-            'state': 'active',
-            'risk': 'low',
-            'personaIds': ['persona-1'],
-            'capitalPoolId': 'pool-main',
-        }
-        facade_state._STRATEGY_BFF_OVERLAY[strat_id] = item
-        return {'data': item, 'meta': {'snapshot_at': _TS}}
+    strat_router = create_strategies_router(
+        read_surface=dynamic_store,
+        get_read_store=lambda: facade_state.read_store,
+        extract_identity=_test_extract_identity,
+        require_read_role=_test_require_read_role,
+        require_operator_role=_test_require_operator_role,
+        bff_error=_test_bff_error,
+        list_strategy_summaries=lambda: facade_state.read_store.list_strategy_specs(),
+        strategy_write_owner=dynamic_store,
+    )
+    app.include_router(strat_router)
 
-    @app.get('/bff/strategies')
-    async def list_strategies(authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        items = list(facade_state._STRATEGY_BFF_OVERLAY.values())
-        return {
-            'data': items,
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
+    persona_svc = PersonaService(
+        write_owner=dynamic_store,
+        ranking_write_owner=dynamic_store,
+        read_store=dynamic_store,
+        command_store=type("DummyCmdStore", (), {})(),
+        provisioning_store=_DummyProvisioningStore(),
+        bff_error_fn=_test_bff_error,
+    )
+    persona_rtr = create_personas_router(
+        service=persona_svc,
+        extract_identity_fn=_test_extract_identity,
+        require_read_role_fn=_test_require_read_role,
+        require_operator_role_fn=_test_require_operator_role,
+        bff_error_fn=_test_bff_error,
+    )
+    app.include_router(persona_rtr)
 
-    @app.get('/bff/strategies/{strategy_id}')
-    async def get_strategy(strategy_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        item = facade_state._STRATEGY_BFF_OVERLAY.get(strategy_id)
-        if not item:
-            raise _not_found('Strategy', strategy_id)
-        return {'data': item, 'meta': {'snapshot_at': _TS}}
+    cap_router = create_capital_router(
+        read_surface=dynamic_store,
+        get_capital_authority=lambda: facade_state,
+        extract_identity=_test_extract_identity,
+        require_read_role=_test_require_read_role,
+        require_operator_role=_test_require_operator_role,
+        bff_error=_test_bff_error,
+    )
+    app.include_router(cap_router)
 
-    @app.get('/bff/strategies/{strategy_id}/specs')
-    async def get_strategy_specs(strategy_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        item = facade_state._STRATEGY_BFF_OVERLAY.get(strategy_id)
-        if not item:
-            raise _not_found('Strategy', strategy_id)
-        return {
-            'data': [{'id': f'spec-{strategy_id}', 'version': '1.0.0'}],
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.post('/bff/personas', status_code=201)
-    async def create_persona(
-        payload: dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(None),
-        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
-    ):
-        _check_auth(authorization)
-        persona_id = f'persona-{uuid.uuid4().hex[:8]}'
-        record = type('Record', (), {'persona_id': persona_id, 'tenant_id': 'tenant-default'})()
-        facade_state._coordinate_persona_create(record, payload, 'op-b2')
-        return {'data': {'id': persona_id}, 'meta': {'snapshot_at': _TS}}
-
-    @app.get('/bff/personas')
-    async def list_personas(authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        personas = store.list_personas() if hasattr(store, 'list_personas') else []
-        dto_list = []
-        for p in personas:
-            meta = p.get('metadata') or {}
-            dto_list.append({
-                'id': p.get('id') or p.get('persona_id'),
-                'name': p.get('name'),
-                'state': p.get('state') or p.get('lifecycle_state') or 'active',
-                'archetype': p.get('archetype') or meta.get('archetype', 'generalist'),
-                'owner': meta.get('owner', 'op-b2'),
-                'risk': meta.get('risk_level', 'low'),
-            })
-        return {
-            'data': dto_list,
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.get('/bff/personas/{persona_id}')
-    async def get_persona(persona_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
-        if not p:
-            raise _not_found('Persona', persona_id)
-        meta = p.get('metadata') or {}
-        dto = {
-            'id': p.get('id') or p.get('persona_id'),
-            'name': p.get('name'),
-            'state': p.get('state') or p.get('lifecycle_state') or 'active',
-            'archetype': p.get('archetype') or meta.get('archetype', 'generalist'),
-            'owner': meta.get('owner', 'op-b2'),
-            'risk': meta.get('risk_level', 'low'),
-        }
-        return {'data': dto, 'meta': {'snapshot_at': _TS}}
-
-    @app.get('/bff/personas/{persona_id}/route-policy')
-    async def get_persona_route_policy(persona_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
-        if not p:
-            raise _not_found('Persona', persona_id)
-        policy = store.get_persona_route_policy(persona_id) if hasattr(store, 'get_persona_route_policy') else None
-        return {'data': policy or {}, 'meta': {'snapshot_at': _TS}}
-
-    @app.get('/bff/personas/{persona_id}/evaluations')
-    async def get_persona_evaluations(persona_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
-        if not p:
-            raise _not_found('Persona', persona_id)
-        evals = store.list_persona_evaluations(persona_id) if hasattr(store, 'list_persona_evaluations') else []
-        return {
-            'data': evals,
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.get('/bff/personas/{persona_id}/memory')
-    async def get_persona_memory(persona_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
-        if not p:
-            raise _not_found('Persona', persona_id)
-
-        memory_api_url = os.environ.get('PANTHEON_MEMORY_API_URL')
-        if memory_api_url:
-            import urllib.parse
-            params = urllib.parse.urlencode({'scope': 'persona', 'persona_id': persona_id})
-            req = urllib_request.Request(f'{memory_api_url}/v1/memories?{params}')
-            with facade_state.urllib_request.urlopen(req, timeout=5.0) as resp:
-                data = json.loads(resp.read().decode())
-            hits = data.get('hits', [])
-            records = [
-                {
-                    'memory_id': h['entry']['memory_id'],
-                    'persona_id': persona_id,
-                    'relevance_score': h['relevance_score'],
-                }
-                for h in hits
-                if h.get('type') == 'persona'
-            ]
-            return {
-                'data': records,
-                'meta': {
-                    'status': 'ok',
-                    'memory_source': {
-                        'kind': 'canonical_memory_plane',
-                        'available': True,
-                        'workspace_is_source_of_truth': False,
-                    },
-                },
-            }
-
-        mems = store.list_persona_memories(persona_id) if hasattr(store, 'list_persona_memories') else []
-        return {
-            'data': mems,
-            'meta': {
-                'status': 'degraded',
-                'memory_source': {
-                    'reason': 'memory_plane_unconfigured',
-                    'fallback_used': False,
-                },
-            },
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.post('/bff/capital-pools', status_code=201)
-    async def create_capital_pool(
-        payload: dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(None),
-        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
-    ):
-        _check_auth(authorization)
-        pool = facade_state.create_capital_pool(payload)
-        return pool
-
-    @app.get('/bff/capital-pools')
-    async def list_capital_pools(authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        pools = store.list_capital_pools() if hasattr(store, 'list_capital_pools') else []
-        dto_list = [
-            {
-                'id': p.get('id') or p.get('pool_id'),
-                'name': p.get('name', 'Pool'),
-                'status': p.get('status', 'active'),
-                'budget': p.get('budget', 100000),
-            }
-            for p in pools
-        ]
-        return {
-            'data': dto_list,
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.get('/bff/capital-pools/{pool_id}')
-    async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        p = store.get_capital_pool(pool_id) if hasattr(store, 'get_capital_pool') else None
-        if not p:
-            raise _not_found('Capital pool', pool_id)
-        dto = {
-            'id': p.get('id') or p.get('pool_id'),
-            'name': p.get('name', 'Pool'),
-            'status': p.get('status', 'active'),
-            'budget': p.get('budget', 100000),
-        }
-        return {'data': dto, 'meta': {'snapshot_at': _TS}}
-
-    @app.get('/bff/deployments')
-    async def list_deployments(authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        deps = store.list_deployments() if hasattr(store, 'list_deployments') else []
-        return {
-            'data': deps,
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.get('/bff/deployments/{deployment_id}')
-    async def get_deployment(deployment_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        d = store.get_deployment(deployment_id) if hasattr(store, 'get_deployment') else None
-        if not d:
-            raise _not_found('Deployment', deployment_id)
-        return {'data': d, 'meta': {'snapshot_at': _TS}}
-
-    @app.post('/bff/rebalances', status_code=202)
-    async def create_rebalance(
-        payload: dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(None),
-        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
-    ):
-        _check_auth(authorization)
-        reb = facade_state.create_rebalance(payload)
-        return reb
-
-    @app.get('/bff/rebalances')
-    async def list_rebalances(authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        rebs = store.list_rebalances() if hasattr(store, 'list_rebalances') else []
-        dto_list = [
-            {
-                'id': r.get('id') or r.get('rebalance_id'),
-                'capitalPoolId': r.get('capital_pool_id'),
-                'status': r.get('status', 'pending'),
-            }
-            for r in rebs
-        ]
-        return {
-            'data': dto_list,
-            'meta': {'snapshot_at': _TS},
-            'page_info': {'next_page_token': None},
-        }
-
-    @app.get('/bff/rebalances/{rebalance_id}')
-    async def get_rebalance(rebalance_id: str, authorization: Optional[str] = Header(None)):
-        _check_auth(authorization)
-        store = facade_state.read_store
-        r = store.get_rebalance(rebalance_id) if hasattr(store, 'get_rebalance') else None
-        if not r:
-            raise _not_found('Rebalance', rebalance_id)
-        dto = {
-            'id': r.get('id') or r.get('rebalance_id'),
-            'capitalPoolId': r.get('capital_pool_id'),
-            'status': r.get('status', 'pending'),
-        }
-        return {'data': dto, 'meta': {'snapshot_at': _TS}}
+    dep_router = create_deployment_router(
+        queries=_FacadeDeploymentQueries(lambda: facade_state.read_store),
+        commands=None,
+        extract_identity=_test_extract_identity,
+        require_read_role=_test_require_read_role,
+        require_operator_role=_test_require_operator_role,
+        bff_error=_test_bff_error,
+        utc_now=lambda: _TS,
+        page_slice=lambda items, token, size: (list(items), None),
+        snapshot_meta=lambda ts: {"snapshot_at": ts},
+        dataset_surface_status=lambda *a, **kw: {"status": "ok"},
+        composed_surface_status=lambda *a, **kw: {"status": "ok"},
+        read_surface_meta=lambda *a, **kw: {"snapshot_at": _TS},
+        raise_if_read_surface_unavailable=lambda *a, **kw: None,
+        aggregate_group_surface=lambda *a, **kw: {"status": "ok"},
+        split_csv_query=lambda q: q.split(",") if q else None,
+        meta_staleness=lambda: None,
+        stable_json_hash=_stable_json_hash,
+        resolve_final_idempotency_key=lambda ik, xik: str(ik or xik or ""),
+        reject_body_idempotency_key=lambda p: None,
+        request_dry_run_requested=lambda: False,
+        gov_bff_idempotency={},
+        publish_event=lambda *a, **kw: "ev-1",
+        sse_buffers={},
+        sse_subscribers={},
+        gov_bff_action_command=lambda *a, **kw: {},
+        deprecated_bff_path_response=lambda *a, **kw: {},
+        sem_command_response=lambda *a, **kw: {},
+        stream_generic_events=lambda *a, **kw: None,
+        surface_degradation_reason=lambda *a, **kw: None,
+    )
+    app.include_router(dep_router)
 
     return app
 
@@ -725,10 +691,7 @@ def _seed_persona(client: TestClient, name: str = "Momentum Persona") -> str:
 
 
 def _seed_capital_pool(client: TestClient, name: str = "Main Pool") -> str:
-    """Create a capital pool via BFF and return its id.
-
-    bff_create_capital_pool returns the raw record (no data envelope).
-    """
+    """Create a capital pool via BFF and return its id."""
     import uuid
     key = f"b2-pool-{uuid.uuid4().hex[:8]}"
     resp = client.post(
@@ -738,7 +701,8 @@ def _seed_capital_pool(client: TestClient, name: str = "Main Pool") -> str:
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    return str(body.get("id") or body.get("pool_id") or "")
+    data = body.get("data") if isinstance(body.get("data"), dict) else body
+    return str(data.get("id") or data.get("pool_id") or body.get("id") or body.get("pool_id") or "")
 
 
 def _seed_strategy(client: TestClient, name: str = "Alpha Strategy") -> str:
@@ -755,10 +719,7 @@ def _seed_strategy(client: TestClient, name: str = "Alpha Strategy") -> str:
 
 
 def _seed_rebalance(client: TestClient, pool_id: str) -> str:
-    """Create a rebalance via BFF and return its id.
-
-    bff_create_rebalance returns a command response dict with rebalance_id at top level.
-    """
+    """Create a rebalance via BFF and return its id."""
     import uuid
     key = f"b2-rebalance-{uuid.uuid4().hex[:8]}"
     eval_rec = facade_state.read_store.get_allocation_evaluation("eval-alloc-001") or {}
@@ -780,7 +741,8 @@ def _seed_rebalance(client: TestClient, pool_id: str) -> str:
     )
     assert resp.status_code in (201, 202), resp.text
     body = resp.json()
-    return str(body.get("rebalance_id") or body.get("id") or "")
+    data = body.get("data") if isinstance(body.get("data"), dict) else body
+    return str(data.get("rebalance_id") or data.get("id") or body.get("rebalance_id") or body.get("id") or "")
 
 
 # ---------------------------------------------------------------------------

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 from collections import deque
 import json
+import os
 from typing import Any, Optional
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.auth.policy import bff_error as _bff_error
 from services.control_plane.bff.events.router import create_events_router
 from services.control_plane.bff.events.service import (
     DEFAULT_SSE_CHANNEL_CATALOG,
@@ -59,26 +63,23 @@ FINAL_CHANNEL_CATALOG = (
 )
 SSE_CHANNELS = set(FINAL_CHANNEL_CATALOG)
 
-_CORS_ALLOW_HEADERS = (
-    "Accept",
-    "Accept-Language",
-    "Authorization",
-    "Cache-Control",
-    "Content-Type",
-    "If-Match",
-    "X-BFF-Api-Version",
-    "X-Confirm-Token",
-    "Idempotency-Key",
-    "Last-Event-ID",
-    "X-Correlation-Id",
-    "X-Dry-Run",
-    "X-Idempotency-Key",
-    "X-Locale",
-    "X-MFA-Token",
-    "X-Request-Id",
-    "X-Refresh-Token",
-    "X-Tenant-Id",
-)
+
+def _load_main_cors_allow_headers() -> tuple[str, ...]:
+    main_path = os.path.join(os.path.dirname(__file__), "main.py")
+    with open(main_path, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename="main.py")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_CORS_ALLOW_HEADERS":
+                    if isinstance(node.value, (ast.Tuple, ast.List)):
+                        return tuple(
+                            elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)
+                        )
+    return ()
+
+
+_CORS_ALLOW_HEADERS = _load_main_cors_allow_headers()
 
 
 def _error_code_value(code: Any) -> Any:
@@ -90,9 +91,6 @@ def _response_error(response: Any) -> dict:
     return payload.get("detail", payload)["error"]
 
 
-from services.control_plane.bff.auth.policy import bff_error as _bff_error
-
-
 sse_service = EventStreamService(channels=FINAL_CHANNEL_CATALOG)
 _events_router = create_events_router(
     event_stream_service=sse_service,
@@ -101,6 +99,39 @@ _events_router = create_events_router(
 )
 app = FastAPI()
 app.include_router(_events_router)
+
+
+def _handle_sse_stream(
+    channel: str,
+    buffer: deque,
+    subscribers: list,
+    last_event_id: Optional[str],
+    extra_headers: Optional[dict[str, str]] = None,
+) -> Any:
+    sse_service.buffers.setdefault(channel, deque(maxlen=sse_service.max_events))
+    sse_service.subscribers.setdefault(channel, [])
+    return sse_service.stream_response(
+        channel,
+        last_event_id,
+        bff_error=_bff_error,
+        conflict_code=ErrorCode.RESOURCE_CONFLICT,
+        extra_headers=extra_headers,
+    )
+
+
+_agora_router = create_agora_router(
+    read_surface=lambda: None,
+    sync_servant_agent=lambda payload: payload,
+    extract_identity=lambda auth=None: None,
+    require_read_role=lambda ident: None,
+    require_write_role=lambda ident: None,
+    bff_error=_bff_error,
+    utc_now=lambda: "2026-05-23T00:00:00Z",
+    sse_buffers=sse_service.buffers,
+    sse_subscribers=sse_service.subscribers,
+    handle_sse_stream=_handle_sse_stream,
+)
+app.include_router(_agora_router)
 
 _publish_event = sse_service.publish
 _replay_from = sse_service.replay
@@ -120,35 +151,12 @@ bff_sse_incident_timeline_alias = next(r.endpoint for r in _events_router.routes
 bff_sse_deployment_events_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/deployment/events")
 bff_sse_review_updates_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/review/updates")
 
-
-def bff_sse_agora_signals_alias(
-    authorization: Optional[str] = None,
-    last_event_id: Optional[str] = None,
-    last_event_id_header: Optional[str] = None,
-) -> Any:
-    return sse_service.stream_response(
-        "signal",
-        last_event_id or last_event_id_header,
-        bff_error=_bff_error,
-        conflict_code=ErrorCode.RESOURCE_CONFLICT,
-    )
-
-
-def bff_sse_agora_session_alias(
-    sessionId: str,
-    authorization: Optional[str] = None,
-    last_event_id: Optional[str] = None,
-    last_event_id_header: Optional[str] = None,
-) -> Any:
-    ch = f"session:{sessionId}"
-    sse_service.buffers.setdefault(ch, deque(maxlen=sse_service.max_events))
-    sse_service.subscribers.setdefault(ch, [])
-    return sse_service.stream_response(
-        ch,
-        last_event_id or last_event_id_header,
-        bff_error=_bff_error,
-        conflict_code=ErrorCode.RESOURCE_CONFLICT,
-    )
+bff_sse_agora_signals_alias = next(
+    r.endpoint for r in _agora_router.routes if getattr(r, "path", None) == "/bff/sse/agora/signals"
+)
+bff_sse_agora_session_alias = next(
+    r.endpoint for r in _agora_router.routes if getattr(r, "path", None) == "/bff/sse/agora/sessions/{sessionId}"
+)
 
 
 async def stream_approval_events(last_event_id: Optional[str] = None, authorization: Optional[str] = None):

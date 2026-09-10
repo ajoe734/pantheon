@@ -256,4 +256,3 @@ def test_pkt014_paper_live_drift_returns_unavailable_payload_when_report_missing
     }
     assert payload["meta"]["surfaces"]["paper_live_drift"]["status"] == "unavailable"
     assert payload["meta"]["surfaces"]["drift_report"]["status"] == "unavailable"
-

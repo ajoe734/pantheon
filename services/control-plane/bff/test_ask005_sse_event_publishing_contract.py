@@ -20,15 +20,16 @@ import json
 import os
 import tempfile
 import time
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Set
 import uuid
 
 import pytest
-from fastapi import Body, FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.agora.identity.router import create_identity_router
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import (
     CommandStatus,
     CommandType,
@@ -47,7 +48,7 @@ def _idem() -> str:
 
 
 class _CommandStoreHolder:
-    def __init__(self):
+    def __init__(self) -> None:
         self.command_store: Optional[CommandStore] = None
 
 
@@ -62,6 +63,7 @@ _sse_subscribers: dict[str, list] = {
 }
 _AGORA_CORE_BFF_IDEMPOTENCY: dict[str, Any] = {}
 _FINAL_CONTRACT_IDEMPOTENCY: dict[str, Any] = {}
+_last_replayed = [False]
 
 
 def _publish_event(buffer: deque, subscribers: list, event_type: str, data: dict[str, Any]) -> str:
@@ -76,55 +78,72 @@ def _publish_event(buffer: deque, subscribers: list, event_type: str, data: dict
     return event_id
 
 
-app = FastAPI()
+class _Identity:
+    def __init__(self, operator_id: str, roles: Set[str]) -> None:
+        self.operator_id = operator_id
+        self.roles = roles
+        self.claims: Dict[str, Any] = {}
+        self.is_authenticated = bool(operator_id != "anonymous")
 
 
-@app.post("/bff/agora/ask/sessions", status_code=201)
-async def create_ask_session(
-    payload: dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(None),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization")
-
-    if idempotency_key and idempotency_key in _AGORA_CORE_BFF_IDEMPOTENCY:
-        return _AGORA_CORE_BFF_IDEMPOTENCY[idempotency_key]
-
-    session_id = f"ask-{uuid.uuid4().hex[:8]}"
-    _publish_event(
-        _sse_buffers["ask"],
-        _sse_subscribers["ask"],
-        "ask.session.started",
-        {"session_id": session_id, "mode": "quick_ask"},
-    )
-    result = {"data": {"id": session_id, "title": payload.get("title", "")}}
-    if idempotency_key:
-        _AGORA_CORE_BFF_IDEMPOTENCY[idempotency_key] = result
-    return result
-
-
-@app.post("/bff/approvals/{approval_id}/decide", status_code=202)
-async def decide_approval(
-    approval_id: str,
-    payload: dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(None),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization")
-
-    auth_token = authorization.removeprefix("Bearer ").strip()
-    actor_id = auth_token.split(":")[0] if ":" in auth_token else "anonymous"
-    roles_str = auth_token.split(":")[1] if ":" in auth_token else ""
+def _extract_identity(auth_header: Optional[str]) -> _Identity:
+    if not auth_header:
+        return _Identity("anonymous", set())
+    token = auth_header.removeprefix("Bearer ").strip()
+    actor_id = token.split(":")[0] if ":" in token else "anonymous"
+    roles_str = token.split(":")[1] if ":" in token else ""
     roles = {r.strip() for r in roles_str.split(",")} if roles_str else set()
+    return _Identity(actor_id, roles)
 
-    if "approver" not in roles:
-        raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": "FORBIDDEN", "message": "Approver role required"}},
-        )
 
+def _require_read(ident: Any) -> None:
+    if not getattr(ident, "is_authenticated", False):
+        raise HTTPException(status_code=401, detail="Missing authorization")
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: Optional[str] = None,
+    precondition_failed: Optional[str] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    code_val = getattr(code, "value", str(code))
+    detail: Dict[str, Any] = {
+        "error": {
+            "code": code_val,
+            "message": message,
+            "reason": reason or message,
+            "status_code": status_code,
+        }
+    }
+    if precondition_failed:
+        detail["error"]["details"] = {"precondition_failed": precondition_failed}
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class _GovernanceStore:
+    def dataset_source(self, ds: str) -> str:
+        return "missing"
+
+    def get_approval_detail(self, aid: str) -> Optional[Dict[str, Any]]:
+        return {"id": aid, "decision_state": "pending"}
+
+
+async def _submit_action(
+    *,
+    action_kind: str,
+    target_id: str,
+    action_id: str,
+    payload: Dict[str, Any],
+    identity: Any,
+    idempotency_key: str,
+) -> Any:
     if "idempotencyKey" in payload:
         raise HTTPException(
             status_code=400,
@@ -136,8 +155,8 @@ async def decide_approval(
                 }
             },
         )
-
     payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    actor_id = getattr(identity, "operator_id", "anonymous")
 
     if idempotency_key:
         if idempotency_key in _FINAL_CONTRACT_IDEMPOTENCY:
@@ -152,9 +171,10 @@ async def decide_approval(
                         }
                     },
                 )
+            _last_replayed[0] = True
             replay = copy.deepcopy(cached["result"])
             replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-            return JSONResponse(status_code=202, content=replay)
+            return replay
 
         if _holder.command_store is not None:
             existing = _holder.command_store.get_command_by_idempotency_key(
@@ -174,39 +194,19 @@ async def decide_approval(
                         },
                     )
                 cached_res = existing.get("result") or (existing.get("foundation") or {}).get("idempotency_record", {}).get("result")
+                _last_replayed[0] = True
                 replay = copy.deepcopy(cached_res or {})
                 replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-                return JSONResponse(status_code=202, content=replay)
+                return replay
 
-    decision = payload.get("decision", "")
-    if decision == "approve":
-        _publish_event(
-            _sse_buffers["approval"],
-            _sse_subscribers["approval"],
-            "approval.decided",
-            {"approval_id": approval_id, "outcome": "approved", "decided_by": actor_id},
-        )
-    elif decision == "reject":
-        _publish_event(
-            _sse_buffers["approval"],
-            _sse_subscribers["approval"],
-            "approval.decided",
-            {"approval_id": approval_id, "outcome": "rejected"},
-        )
-    elif decision in ("request_revision", "escalate", "freeze"):
-        _publish_event(
-            _sse_buffers["approval"],
-            _sse_subscribers["approval"],
-            "approval.stage.changed",
-            {"approval_id": approval_id, "current_stage": decision, "actor_id": actor_id},
-        )
-
+    _last_replayed[0] = False
     cmd_id = f"cmd-{uuid.uuid4().hex[:16]}"
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    decision = action_id
     result = {
         "command_id": cmd_id,
         "data": {
-            "approval_id": approval_id,
+            "approval_id": target_id,
             "decision": decision,
             "status": "accepted",
         },
@@ -222,7 +222,7 @@ async def decide_approval(
         _holder.command_store.submit_command(
             command_id=cmd_id,
             command_type=CommandType.DECIDE_APPROVAL if hasattr(CommandType, "DECIDE_APPROVAL") else list(CommandType)[0],
-            target=TargetObject(type=ObjectType.APPROVAL_DECISION, id=approval_id),
+            target=TargetObject(type=ObjectType.APPROVAL_DECISION, id=target_id),
             submitted_at=now,
             params=payload,
             audit_context={"actor_id": actor_id},
@@ -242,7 +242,52 @@ async def decide_approval(
             "result": result,
         }
 
-    return JSONResponse(status_code=202, content=result)
+    return result
+
+
+def _governance_publish_event(event_name: str, event_data: Dict[str, Any]) -> None:
+    if _last_replayed[0]:
+        return
+    data = {"approval_id": event_data.get("approval_id")}
+    dec = event_data.get("decision")
+    actor = event_data.get("actor_id")
+    if event_name == "approval.decided":
+        if dec == "approve":
+            data["outcome"] = "approved"
+            data["decided_by"] = actor
+        elif dec == "reject":
+            data["outcome"] = "rejected"
+    elif event_name == "approval.stage.changed":
+        data["current_stage"] = dec
+        data["actor_id"] = actor
+
+    _publish_event(_sse_buffers["approval"], _sse_subscribers["approval"], event_name, data)
+
+
+app = FastAPI()
+app.include_router(
+    create_identity_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        idempotency_store=_AGORA_CORE_BFF_IDEMPOTENCY,
+        sse_buffers=_sse_buffers,
+        sse_subscribers=_sse_subscribers,
+    )
+)
+app.include_router(
+    create_governance_router(
+        read_surface=_GovernanceStore(),
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        require_operator_role=_require_read,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        submit_action=_submit_action,
+        publish_event=_governance_publish_event,
+    )
+)
 
 
 @pytest.fixture(autouse=True)
