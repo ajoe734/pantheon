@@ -171,14 +171,11 @@ def _scan_ast_main_importers(paths: Sequence[Path]) -> List[str]:
         except Exception:
             continue
         for node in ast.walk(tree):
+            found = False
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name == "main" or alias.name.endswith(".main"):
-                        try:
-                            rel = str(file_path.relative_to(BFF_DIR))
-                        except ValueError:
-                            rel = str(file_path)
-                        importers.append(rel)
+                        found = True
                         break
             elif isinstance(node, ast.ImportFrom):
                 if node.module and (
@@ -186,13 +183,42 @@ def _scan_ast_main_importers(paths: Sequence[Path]) -> List[str]:
                     or node.module.endswith(".main")
                     or (node.module.startswith("services.control_plane.bff") and any(a.name == "main" for a in node.names))
                 ):
-                    try:
-                        rel = str(file_path.relative_to(BFF_DIR))
-                    except ValueError:
-                        rel = str(file_path)
-                    importers.append(rel)
-                    break
+                    found = True
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "__import__":
+                    if node.args and isinstance(node.args[0], ast.Constant) and "main" in str(node.args[0].value):
+                        found = True
+                elif isinstance(func, ast.Attribute) and func.attr == "import_module":
+                    if node.args and isinstance(node.args[0], ast.Constant) and "main" in str(node.args[0].value):
+                        found = True
+                elif isinstance(func, ast.Attribute) and func.attr in ("run", "Popen", "check_output", "check_call"):
+                    for arg in node.args:
+                        if isinstance(arg, ast.List):
+                            for elt in arg.elts:
+                                if isinstance(elt, ast.Constant) and "main.py" in str(elt.value):
+                                    found = True
+            if found:
+                try:
+                    rel = str(file_path.relative_to(BFF_DIR))
+                except ValueError:
+                    rel = str(file_path)
+                importers.append(rel)
+                break
     return sorted(set(importers))
+
+
+def test_inventory_declarations_match_live_ast_scan() -> None:
+    """Ensure every catalog entry's imports_main declaration matches live AST reality."""
+    data = _load_inventory()
+    mismatches: List[str] = []
+    for entry in data["tests"]:
+        file_path = BFF_DIR / entry["file"]
+        actual_importer = bool(_scan_ast_main_importers([file_path]))
+        declared = entry["imports_main"]
+        if actual_importer != declared:
+            mismatches.append(f"{entry['file']}: declared imports_main={declared}, actual={actual_importer}")
+    assert not mismatches, f"Inventory declared imports_main mismatches on disk:\n" + "\n".join(mismatches)
 
 
 def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
@@ -200,21 +226,16 @@ def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
     baseline = data["audited_baseline_main_importers"]
     current = data["current_main_importers"]
 
-    # 1. Check inventory metadata bounds
-    assert current <= 201, f"Expected current main importers <= 201, got {current}"
-    assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
-
-    # 2. Live AST scan across cataloged suites
+    # 1. Exact count reconciliation: no arbitrary ceiling; current must match live catalog scan exactly
     catalog_paths = [BFF_DIR / entry["file"] for entry in data["tests"]]
     catalog_importers = _scan_ast_main_importers(catalog_paths)
     assert len(catalog_importers) == current, (
         f"Inventory current_main_importers ({current}) does not match live AST count ({len(catalog_importers)})"
     )
-    assert len(catalog_importers) <= 201, (
-        f"Live AST scan found {len(catalog_importers)} cataloged main importers, expected <= 201"
-    )
+    assert current <= 184, f"Expected current main importers <= 184, got {current}"
+    assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
 
-    # 3. Live AST scan across all test files, helpers, fixtures, conftest, and smoke suites
+    # 2. Live scan across all test files, helpers, fixtures, conftest, and smoke suites
     all_test_files: List[Path] = []
     for p in BFF_DIR.glob("**/*.py"):
         if ".venv" in p.parts or "__pycache__" in p.parts:
@@ -229,20 +250,25 @@ def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
         ):
             all_test_files.append(p)
 
-    ast_importers = _scan_ast_main_importers(all_test_files)
-    # Migrated suites must NEVER be in AST importers
+    ast_importers = set(_scan_ast_main_importers(all_test_files))
+    # Migrated suites must NEVER appear in live importer scan (direct, dynamic, or subprocess)
     for migrated in data["migrated_suites"]:
         assert migrated not in ast_importers, (
-            f"Migrated suite {migrated} was detected importing main via live AST scan!"
+            f"Migrated suite {migrated} was detected importing main via live scan!"
         )
 
 
 def test_conftest_and_fixtures_do_not_mutate_sys_path() -> None:
-    """Ensure conftest.py and shared fixtures do not mutate sys.path."""
+    """Ensure conftest.py, knowledge fixtures, and all shared fixtures do not mutate sys.path."""
     target_files = [
         BFF_DIR / "tests" / "conftest.py",
         BFF_DIR / "tests" / "knowledge_read_port_fixtures.py",
     ]
+    fixtures_dir = BFF_DIR / "tests" / "fixtures"
+    if fixtures_dir.is_dir():
+        for p in fixtures_dir.glob("*.py"):
+            target_files.append(p)
+
     offenders: List[str] = []
     for file_path in target_files:
         if not file_path.is_file():
