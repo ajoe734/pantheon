@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
-  "base_sha": "b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "base_sha": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
   "branch": "task/BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
