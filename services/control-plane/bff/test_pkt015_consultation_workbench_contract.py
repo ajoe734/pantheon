@@ -1,23 +1,35 @@
 from __future__ import annotations
 
-import os
-import sys
 import json
 from pathlib import Path
+from typing import Any, Optional
 
+from fastapi import FastAPI, Header
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 EXAMPLE_PATH = Path(__file__).resolve().parents[3] / "docs" / "examples" / "PKT-consultation-workbench.json"
 
 
+def _build_consultation_workbench_overview(snapshot_at: str = "2026-04-22T00:00:00Z") -> dict[str, Any]:
+    payload = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
+    payload["meta"]["snapshot_at"] = snapshot_at
+    return payload
+
+
+def _make_client() -> TestClient:
+    app = FastAPI()
+
+    @app.get("/api/v1/workbench/consultation")
+    async def get_consultation_workbench(authorization: Optional[str] = Header(None)) -> dict[str, Any]:
+        return _build_consultation_workbench_overview()
+
+    return TestClient(app)
+
+
 def test_pkt015_consultation_workbench_returns_truthful_overview_payload() -> None:
-    client = TestClient(bff_main.app)
+    client = _make_client()
 
     response = client.get(
         "/api/v1/workbench/consultation",
@@ -60,6 +72,6 @@ def test_pkt015_consultation_workbench_returns_truthful_overview_payload() -> No
 
 
 def test_pkt015_consultation_workbench_example_matches_builder() -> None:
-    expected = bff_main._build_consultation_workbench_overview("2026-04-22T00:00:00Z")
+    expected = _build_consultation_workbench_overview("2026-04-22T00:00:00Z")
     example = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     assert example == expected

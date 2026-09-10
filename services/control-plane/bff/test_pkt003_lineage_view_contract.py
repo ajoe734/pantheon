@@ -6,20 +6,18 @@ import os
 import sys
 from contextlib import contextmanager
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.evolution.router import create_evolution_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 AUTH = "Bearer test-operator:operator,admin"
 
 
 @contextmanager
 def _seeded_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "lineage_edges": [
                 {
@@ -56,17 +54,14 @@ def _seeded_client():
             ],
         }
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+    app.include_router(create_evolution_router(read_surface=store))
+    yield TestClient(app)
 
 
 @contextmanager
 def _registry_backed_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "lineage_edges": [
                 {
@@ -106,11 +101,9 @@ def _registry_backed_client():
             ],
         }
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+    app.include_router(create_evolution_router(read_surface=store))
+    yield TestClient(app)
 
 
 def test_lineage_list_contract():
