@@ -16,12 +16,44 @@ from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.personas.service import (
     _extract_identity,
     _require_read_role,
     _require_operator_role,
     _bff_error,
 )
+try:
+    from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
+except ImportError:
+    from services.control_plane.bff.agora.service import (
+        _AGORA_SIGNAL_WRITE_ROLES,
+        _AGORA_BULK_FEEDBACK_ROLES,
+    )
+
+
+def _require_agora_signal_write_role(identity: Any) -> None:
+    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora signal creation requires analyst-level role",
+            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst-level Agora write access",
+        )
+
+
+def _require_agora_bulk_feedback_role(identity: Any) -> None:
+    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora feedback access requires analyst role",
+            "Operator does not hold the required Agora feedback role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
+        )
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
 from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
@@ -119,8 +151,8 @@ router = create_agora_router(
     require_write_role=_require_operator_role,
     require_operator_role=_require_operator_role,
     require_journal_write_role=_require_operator_role,
-    require_agora_signal_write_role=_require_operator_role,
-    require_agora_bulk_feedback_role=_require_operator_role,
+    require_agora_signal_write_role=_require_agora_signal_write_role,
+    require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
     bff_error=_bff_error,
     utc_now=_utc_now_rfc3339,
     get_read_store=lambda: read_store,

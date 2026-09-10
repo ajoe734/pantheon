@@ -39,6 +39,10 @@ from agora.research.routes.common import (
     _build_run_projection,
 )
 from agora.research.store import MemoryResearchPlanStore
+try:
+    from agora.strategy_workshop import MemoryWorkshopStore
+except ImportError:
+    from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
 
@@ -105,6 +109,7 @@ def test_public_plan_reaches_execution_owner(supply_correlation: bool) -> None:
         "review-plan",
         "2026-09-08T00:00:00Z",
         SimpleNamespace(tenant_id="review-tenant", user_id="review-user"),
+        workshop_store=MemoryWorkshopStore(),
     )
     if supply_correlation:
         plan["correlation_id"] = "review-correlation"
@@ -134,6 +139,43 @@ def test_public_plan_reaches_execution_owner(supply_correlation: bool) -> None:
         downstream_key="review-key",
     )
     assert responses and responses[0].status_code == 200, responses[0].text
+
+
+def test_build_plan_with_injected_workshop_store_makes_no_main_import_attempts() -> None:
+    """Verify _build_plan with injected workshop_store makes no BFF main import or execution attempts."""
+    import sys
+    attempts: list[str] = []
+
+    def audit_hook(event: str, args: tuple[Any, ...]) -> None:
+        if event == "import":
+            mod_name = args[0]
+            if mod_name == "main" or "bff.main" in mod_name:
+                attempts.append(mod_name)
+
+    sys.addaudithook(audit_hook)
+    body = ResearchPlanCreateRequest.model_validate({
+        "spec_version": "1.0",
+        "strategy_id": "audit-strategy",
+        "strategy_spec_registry_id": "audit-spec",
+        "stages": [
+            {
+                "stage_id": "audit-stage",
+                "stage_type": "prototype_backtest",
+                "input_refs": ["dataset:audit-ref"],
+                "status": "ready",
+            }
+        ],
+    })
+    plan = _build_plan(
+        body,
+        "audit-workshop",
+        "audit-plan",
+        "2026-09-08T00:00:00Z",
+        SimpleNamespace(tenant_id="audit-tenant", user_id="audit-user"),
+        workshop_store=MemoryWorkshopStore(),
+    )
+    assert plan["correlation_id"] == "workshop:audit-workshop"
+    assert not attempts, f"Unexpected main import attempts: {attempts}"
 
 
 def test_backend_without_provenance_or_receipt_does_not_mint_real() -> None:
