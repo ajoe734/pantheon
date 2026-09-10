@@ -38,7 +38,7 @@ The scan evaluates all 369 test and support files under `services/control-plane/
 - **AST Imports**: `import main`, `import ...main`, `from main import ...`, `from services.control_plane.bff import main`, `from services.control_plane.bff.main import ...`.
 - **Dynamic Imports**: `importlib.import_module(...)` or `__import__(...)` referencing `main`.
 - **Subprocess Invocations**: `subprocess.run`, `Popen`, `check_output` passing `main.py` in command arguments.
-- **Fixture and Conftest Support**: Shared fixtures and doubles in `services/control-plane/bff/tests/fixtures/` and `services/control-plane/bff/tests/`.
+- **Fixture and Conftest Support**: Existing shared fixtures and doubles in `services/control-plane/bff/tests/`, listed in §3.2.
 
 ### 2.2 Reconciliation of the 192 / 184 / 172 Count Discrepancy
 
@@ -71,15 +71,13 @@ The parent task (`BFF-TEST-FULL-MIGRATION-CORRECTIVE-001`) retains authority ove
 
 ### 3.2 Shared Test Fixtures (Read-Only / Inherited)
 
-The following fixtures are already decoupled from `main` globals and are inherited read-only by child tasks:
+The following four existing fixture/support files are already decoupled from `main` globals and are inherited read-only by child tasks:
 - `services/control-plane/bff/tests/conftest.py`
-- `services/control-plane/bff/tests/fixtures/__init__.py`
-- `services/control-plane/bff/tests/fixtures/governance_fixture.py`
-- `services/control-plane/bff/tests/fixtures/research_fixture.py`
-- `services/control-plane/bff/tests/fixtures/training_fixture.py`
 - `services/control-plane/bff/tests/knowledge_read_port_fixtures.py`
 - `services/control-plane/bff/tests/management_projection_test_doubles.py`
 - `services/control-plane/bff/tests/read_store_fixtures.py`
+
+The earlier four entries under `tests/fixtures/` were absent at the reviewed plan anchor and the freshly fetched `origin/dev` base; the BFF scan found zero literal references to the three named fixture modules. They are removed from the inherited contract, with no fixture creation or child source-grant changes. The task-scoped [correction evidence](../deployment/evidence/BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001/evidence.json) records exact commits, paths, scans, and document hashes. The original planning evidence remains a historical record of the pre-correction documents.
 
 ### 3.3 Shared Support Module: `rebalance_authority_test_support.py`
 
