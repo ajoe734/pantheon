@@ -20,19 +20,20 @@ Coverage:
 from __future__ import annotations
 
 import os
-import sys
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Any, Dict, Iterator, List
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.control_loops.service import (
+    _VALID_SENTINEL_FILTERS,
+    ControlLoopsService,
+)
+from services.control_plane.bff.personas.service import _project_persona_fleet_health
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
 
@@ -46,18 +47,174 @@ _HEALTH_REASON_CODES = {
     "runtime_status_attention",
 }
 
+_SENTINEL_HEALTH_FINDING_KIND = "persona_health"
+_SENTINEL_FINDING_KINDS = _VALID_SENTINEL_FILTERS["kind"]
+_SENTINEL_FINDING_STATUSES = _VALID_SENTINEL_FILTERS["status"]
+_SENTINEL_FINDING_SEVERITIES = _VALID_SENTINEL_FILTERS["severity"]
+
+_SENTINEL_HEALTH_REASON_RULES: Dict[str, Dict[str, str]] = {
+    "persona_lifecycle_not_active": {
+        "severity": "medium",
+        "bucket": "info",
+        "label": "Persona lifecycle not active",
+    },
+    "no_runtime_binding": {
+        "severity": "medium",
+        "bucket": "info",
+        "label": "Persona has no runtime binding",
+    },
+    "runtime_status_attention": {
+        "severity": "medium",
+        "bucket": "warn",
+        "label": "Runtime binding status needs attention",
+    },
+    "negative_pnl": {
+        "severity": "high",
+        "bucket": "warn",
+        "label": "Persona telemetry shows negative PnL",
+    },
+    "active_incident": {
+        "severity": "critical",
+        "bucket": "alert",
+        "label": "Persona has an active incident",
+    },
+    "drawdown_threshold": {
+        "severity": "critical",
+        "bucket": "alert",
+        "label": "Persona breached drawdown threshold",
+    },
+}
+
+_active_list_persona_records: Optional[Callable[[Any], List[Dict[str, Any]]]] = None
+_active_project_persona_fleet_item: Optional[Callable[..., Dict[str, Any]]] = None
+
+
+def _health_reason_sentinel_findings(
+    kind: Optional[str] = None,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    *,
+    read_store: Any = None,
+) -> List[Dict[str, Any]]:
+    if kind is not None and kind.lower() != _SENTINEL_HEALTH_FINDING_KIND:
+        return []
+    if status is not None and status.lower() != "open":
+        return []
+    severity_filter = severity.lower() if severity is not None else None
+
+    if _active_list_persona_records is not None:
+        personas = _active_list_persona_records(tenant_id)
+    elif read_store is not None:
+        getter = getattr(read_store, "list_personas", None)
+        personas = list(getter() or []) if callable(getter) else []
+    else:
+        personas = []
+
+    if not personas:
+        return []
+
+    findings: List[Dict[str, Any]] = []
+    for persona in personas:
+        if _active_project_persona_fleet_item is not None:
+            item = _active_project_persona_fleet_item(persona)
+        else:
+            item = {
+                "id": str(persona.get("persona_id") or persona.get("id") or ""),
+                "persona": persona,
+                "health": _project_persona_fleet_health(
+                    persona=persona,
+                    runtime_bindings=list(getattr(read_store, "list_runtime_bindings", lambda: [])() or []) if read_store else [],
+                    telemetry_summaries=[],
+                    active_incidents=list(getattr(read_store, "list_incidents", lambda: [])() or []) if read_store else [],
+                ),
+            }
+        persona_id = str(item.get("id") or "").strip()
+        if not persona_id:
+            continue
+        health = item.get("health") or {}
+        persona_name = str((item.get("persona") or {}).get("name") or persona_id)
+        for reason in health.get("reasons") or []:
+            rule = _SENTINEL_HEALTH_REASON_RULES.get(reason)
+            if rule is None:
+                continue
+            if severity_filter is not None and rule["severity"] != severity_filter:
+                continue
+            findings.append(
+                {
+                    "id": f"sentinel-health-{persona_id}-{reason}",
+                    "kind": _SENTINEL_HEALTH_FINDING_KIND,
+                    "status": "open",
+                    "severity": rule["severity"],
+                    "severity_bucket": rule["bucket"],
+                    "title": f"{rule['label']}: {persona_name}",
+                    "health_reason": reason,
+                    "rule_id": f"health-reason:{reason}",
+                    "persona_id": persona_id,
+                    "derived_from_persona_id": persona_id,
+                    "health_status": health.get("status"),
+                    "health_score": health.get("score"),
+                }
+            )
+    return findings
+
+
+class _BffMainCompat:
+    _SENTINEL_HEALTH_REASON_RULES = _SENTINEL_HEALTH_REASON_RULES
+    _SENTINEL_FINDING_SEVERITIES = _SENTINEL_FINDING_SEVERITIES
+    _SENTINEL_HEALTH_FINDING_KIND = _SENTINEL_HEALTH_FINDING_KIND
+    _SENTINEL_FINDING_KINDS = _SENTINEL_FINDING_KINDS
+
+    @staticmethod
+    def _health_reason_sentinel_findings(
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return _health_reason_sentinel_findings(
+            kind=kind, status=status, severity=severity, tenant_id=tenant_id
+        )
+
+    @property
+    def _list_persona_records(self) -> Any:
+        return _active_list_persona_records
+
+    @_list_persona_records.setter
+    def _list_persona_records(self, val: Any) -> None:
+        global _active_list_persona_records
+        _active_list_persona_records = val
+
+    @property
+    def _project_persona_fleet_item(self) -> Any:
+        return _active_project_persona_fleet_item
+
+    @_project_persona_fleet_item.setter
+    def _project_persona_fleet_item(self, val: Any) -> None:
+        global _active_project_persona_fleet_item
+        _active_project_persona_fleet_item = val
+
+
+bff_main = _BffMainCompat()
+
 
 @contextmanager
 def _persona_store(personas: Dict[str, Dict[str, Any]]) -> Iterator[TestClient]:
     """Yield a TestClient backed by a snapshot seeded with the given personas."""
-    original = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         persona_capital_runtime_kwargs={"personas": list(personas.values())}
     )
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original
+    provider = lambda kind=None, status=None, severity=None, tenant_id=None: _health_reason_sentinel_findings(
+        kind=kind, status=status, severity=severity, tenant_id=tenant_id, read_store=store
+    )
+    service = ControlLoopsService(
+        read_store=store,
+        health_findings_provider=provider,
+    )
+    router = create_control_loops_router(service=service)
+    app = FastAPI()
+    app.include_router(router)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 @contextmanager

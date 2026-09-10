@@ -658,10 +658,6 @@
     ],
     "shared_test_fixtures": [
       "services/control-plane/bff/tests/conftest.py",
-      "services/control-plane/bff/tests/fixtures/__init__.py",
-      "services/control-plane/bff/tests/fixtures/governance_fixture.py",
-      "services/control-plane/bff/tests/fixtures/research_fixture.py",
-      "services/control-plane/bff/tests/fixtures/training_fixture.py",
       "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
       "services/control-plane/bff/tests/management_projection_test_doubles.py",
       "services/control-plane/bff/tests/read_store_fixtures.py"

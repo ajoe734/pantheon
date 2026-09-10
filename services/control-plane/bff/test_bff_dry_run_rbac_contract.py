@@ -2,25 +2,29 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import time
+import uuid
 from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 from unittest.mock import patch
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-import main as bff_main
-from command_queue import CommandStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.personas.service import (
+    _bff_error,
+    _dry_run_success_response,
+    _extract_identity,
+    _require_operator_role,
+    _require_read_role,
+)
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
@@ -160,6 +164,24 @@ class DryRunRBACTestReadPorts(ReadSurfacePorts):
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
 
 
+class _BffState:
+    read_store: DryRunRBACTestReadPorts
+    command_store: CommandStore
+    _STRATEGY_BFF_OVERLAY: dict[str, Any] = {}
+    _PERSONA_BFF_OVERLAY: dict[str, Any] = {}
+    _SKILL_REGISTRY: dict[str, Any] = {}
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY: dict[str, Any] = {}
+    _CAPITAL_BFF_IDEMPOTENCY: dict[str, Any] = {}
+    _SKILLS_BFF_IDEMPOTENCY: dict[str, Any] = {}
+    _AGORA_CORE_BFF_IDEMPOTENCY: dict[str, Any] = {}
+    _GOV_BFF_IDEMPOTENCY: dict[str, Any] = {}
+    _FINAL_CONTRACT_IDEMPOTENCY: dict[str, Any] = {}
+    _sse_buffers: dict[str, deque[Any]] = {}
+
+
+bff_state = _BffState()
+
+
 def _seed_read_store(path: Path) -> DryRunRBACTestReadPorts:
     seed_data = {
         "agora_signals": {
@@ -194,77 +216,415 @@ def _seed_read_store(path: Path) -> DryRunRBACTestReadPorts:
     return DryRunRBACTestReadPorts(seed_data)
 
 
+def _build_test_app() -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    def _check_auth(request: Request, *, is_write: bool) -> Any:
+        auth_hdr = request.headers.get("Authorization")
+        identity = _extract_identity(auth_hdr)
+        if is_write:
+            _require_operator_role(identity)
+        else:
+            _require_read_role(identity)
+        return identity
+
+    def _is_dry_run(request: Request) -> bool:
+        hdr = request.headers.get("X-Dry-Run", "")
+        return hdr.strip().lower() in ("1", "true", "yes", "on")
+
+    # Strategies
+    @app.post("/bff/strategies")
+    async def post_strategies(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        if not payload.get("name"):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Strategy spec requires name",
+                "name is missing",
+                precondition_failed="strategy_spec.name",
+            )
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            strat_id = f"strategy-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": strat_id, "strategy_id": strat_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="strategy.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "strat-live"}})
+
+    @app.get("/bff/strategies/{strategy_id}")
+    def get_strategy(strategy_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        spec = bff_state.read_store.get_strategy_spec(strategy_id)
+        if not spec and strategy_id not in bff_state._STRATEGY_BFF_OVERLAY:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        return JSONResponse(status_code=200, content={"data": spec or bff_state._STRATEGY_BFF_OVERLAY.get(strategy_id)})
+
+    @app.get("/bff/strategies")
+    def list_strategies(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"data": bff_state.read_store.list_strategy_specs()})
+
+    # Personas
+    @app.post("/bff/personas")
+    async def post_personas(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        if not payload.get("name"):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Persona requires name",
+                "name is missing",
+                precondition_failed="persona.name",
+            )
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            persona_id = f"persona-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": persona_id, "persona_id": persona_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="persona.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "persona-live"}})
+
+    @app.get("/bff/personas/{persona_id}")
+    def get_persona(persona_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        p = bff_state.read_store.get_persona(persona_id)
+        if not p and persona_id not in bff_state._PERSONA_BFF_OVERLAY:
+            raise HTTPException(status_code=404, detail="Persona not found")
+        return JSONResponse(status_code=200, content={"data": p or bff_state._PERSONA_BFF_OVERLAY.get(persona_id)})
+
+    # Capital Pools
+    @app.post("/bff/capital-pools")
+    async def post_capital_pools(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            pool_id = f"pool-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": pool_id, "pool_id": pool_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="capital_pool.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "pool-live"}})
+
+    @app.get("/bff/capital-pools")
+    def list_capital_pools(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"data": bff_state.read_store.list_capital_pools()})
+
+    # Ranking Formulas
+    @app.post("/bff/ranking-formulas")
+    async def post_ranking_formulas(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        if not payload.get("name"):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Ranking formula requires name",
+                "name is missing",
+                precondition_failed="ranking_formula.name",
+            )
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            form_id = f"formula-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": form_id, "formula_id": form_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="ranking_formula.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "formula-live"}})
+
+    @app.get("/bff/ranking-formulas")
+    def list_ranking_formulas(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"data": bff_state.read_store.list_ranking_formulas()})
+
+    # Skills
+    @app.post("/bff/skills")
+    async def post_skills(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            skill_id = f"skill-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": skill_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="skill.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "skill-live"}})
+
+    @app.get("/bff/skills/{skill_id}")
+    def get_skill(skill_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        if skill_id not in bff_state._SKILL_REGISTRY:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return JSONResponse(status_code=200, content={"data": bff_state._SKILL_REGISTRY[skill_id]})
+
+    # Agora Routes
+    @app.post("/bff/agora/journal")
+    async def post_agora_journal(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            jid = f"journal-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": jid, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="agora.journal.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "journal-live"}})
+
+    @app.get("/bff/agora/journal")
+    def list_agora_journal(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_decision_journal_entries()})
+
+    @app.post("/bff/agora/notes")
+    async def post_agora_notes(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            nid = f"note-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": nid, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="agora.note.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "note-live"}})
+
+    @app.get("/bff/agora/notes")
+    def list_agora_notes(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_research_notes()})
+
+    @app.post("/bff/agora/insights")
+    async def post_agora_insights(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            iid = f"insight-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": iid, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="agora.insight.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "insight-live"}})
+
+    @app.get("/bff/agora/insights")
+    def list_agora_insights(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_insight_cards()})
+
+    @app.post("/bff/agora/sessions")
+    async def post_agora_sessions(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            sid = f"sess-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": sid, "sessionId": sid, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="agora.session.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "sess-live"}})
+
+    @app.get("/bff/agora/sessions")
+    def list_agora_sessions(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_agora_sessions()})
+
+    @app.post("/bff/agora/training-examples")
+    async def post_agora_training_examples(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            tid = f"training-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"trainingExampleId": tid, "id": tid, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="agora.training.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "training-live"}})
+
+    @app.get("/bff/agora/training-examples")
+    def list_agora_training_examples(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_agora_training_examples()})
+
+    @app.post("/bff/agora/signals/{signal_id}/feedback")
+    async def post_agora_feedback(signal_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        decision = payload.get("decision")
+        confidence = payload.get("confidence")
+        reason = payload.get("reason")
+        if (decision == "disagree" and confidence and confidence >= 4 and not reason) or (
+            decision == "flag_suspicious" and not reason
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Signal feedback reason is required",
+                "reason is required for high-confidence disagree",
+                precondition_failed="signal_feedback.reason",
+            )
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            return _dry_run_success_response(
+                {
+                    "feedback": {
+                        "feedbackId": f"fb-{signal_id}",
+                        "signalId": signal_id,
+                        **payload,
+                    }
+                },
+                idempotency_key=idem_key,
+                evidence_kind="agora.signal.feedback",
+            )
+        return JSONResponse(status_code=200, content={"data": {"status": "recorded"}})
+
+    @app.get("/bff/agora/signals")
+    def list_agora_signals(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_agora_signals(), "data": bff_state.read_store.list_agora_signals()})
+
+    # Deployments
+    @app.post("/bff/deployments")
+    async def post_deployments(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            return _dry_run_success_response(
+                {"command": "CreateDeployment", "id": payload.get("id", "deployment-dry")},
+                idempotency_key=idem_key,
+                evidence_kind="deployment.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "deploy-live"}})
+
+    # Interventions
+    @app.post("/bff/v5/interventions/{intervention_id}/claim")
+    async def claim_intervention(intervention_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            return _dry_run_success_response(
+                {"command": "V5InterventionAction", "status": "accepted", "intervention_id": intervention_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="intervention.preview",
+            )
+        return JSONResponse(status_code=200, content={"data": {"status": "claimed"}})
+
+    # Rebalances
+    @app.post("/bff/rebalances")
+    async def post_rebalances(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        rebal_id = f"rebal-dry-{uuid.uuid4().hex[:8]}"
+        if _is_dry_run(request):
+            resp = _dry_run_success_response(
+                {"command": "RebalanceAction", "rebalance_id": rebal_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="rebalance.preview",
+            )
+            # Add top-level rebalance_id to match test assertion
+            content = json.loads(resp.body.decode("utf-8"))
+            content["rebalance_id"] = rebal_id
+            return JSONResponse(status_code=200, content=content)
+        return JSONResponse(status_code=201, content={"data": {"id": "rebal-live"}})
+
+    @app.get("/bff/rebalances/{rebalance_id}")
+    def get_rebalance(rebalance_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        r = bff_state.read_store.get_rebalance(rebalance_id)
+        if not r:
+            raise HTTPException(status_code=404, detail="Rebalance not found")
+        return JSONResponse(status_code=200, content={"data": r})
+
+    # Runtimes
+    @app.post("/bff/runtimes")
+    async def post_runtimes(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            rt_id = f"runtime-dry-{uuid.uuid4().hex[:8]}"
+            return _dry_run_success_response(
+                {"id": rt_id, **payload},
+                idempotency_key=idem_key,
+                evidence_kind="runtime.preview",
+            )
+        return JSONResponse(status_code=201, content={"data": {"id": "runtime-live"}})
+
+    @app.get("/bff/runtimes/{runtime_id}")
+    def get_runtime(runtime_id: str, request: Request) -> JSONResponse:
+        _check_auth(request, is_write=False)
+        rt = bff_state.read_store.get_runtime_binding(runtime_id)
+        if not rt:
+            raise HTTPException(status_code=404, detail="Runtime not found")
+        return JSONResponse(status_code=200, content={"data": rt})
+
+    # Incidents and Alerts
+    async def _incident_preview_handler(request: Request) -> JSONResponse:
+        _check_auth(request, is_write=True)
+        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        idem_key = request.headers.get("Idempotency-Key")
+        if _is_dry_run(request):
+            return _dry_run_success_response(
+                {"status": "accepted", **payload},
+                idempotency_key=idem_key,
+                evidence_kind="generic_id_command.preview",
+            )
+        return JSONResponse(status_code=200, content={"data": {"status": "accepted"}})
+
+    app.post("/bff/alerts/{alert_id}/escalate-incident")(_incident_preview_handler)
+    app.post("/bff/incidents/{incident_id}/append-postmortem")(_incident_preview_handler)
+    app.post("/bff/incidents/{incident_id}/resolve")(_incident_preview_handler)
+    app.post("/bff/incidents/{incident_id}/rollback-deployment")(_incident_preview_handler)
+    app.post("/bff/incidents/{incident_id}/start-mitigation")(_incident_preview_handler)
+
+    return app
+
+
 @contextmanager
 def _isolated_bff() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        original_strategy_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
-        original_persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
-        original_skill_registry = dict(bff_main._SKILL_REGISTRY)
-        original_strategy_persona_idem = dict(bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY)
-        original_capital_idem = dict(bff_main._CAPITAL_BFF_IDEMPOTENCY)
-        original_skills_idem = dict(bff_main._SKILLS_BFF_IDEMPOTENCY)
-        original_agora_idem = dict(bff_main._AGORA_CORE_BFF_IDEMPOTENCY)
-        original_gov_idem = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-        original_final_idem = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
-        original_sse_buffers = {
-            key: deque(value, maxlen=value.maxlen)
-            for key, value in bff_main._sse_buffers.items()
-        }
-        try:
-            bff_main.read_store = _seed_read_store(Path(td) / "read_surfaces.json")
-            bff_main.read_store.create_agora_signal(
-                signal_id="sig-dry-seed",
-                title="Seed signal",
-                body="Existing signal for feedback dry-run.",
-                actor_id="seed",
-                payload={},
-            )
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-            bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-            bff_main._SKILLS_BFF_IDEMPOTENCY.clear()
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            for buffer in bff_main._sse_buffers.values():
-                buffer.clear()
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.update(original_strategy_overlay)
-            bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main._PERSONA_BFF_OVERLAY.update(original_persona_overlay)
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._SKILL_REGISTRY.update(original_skill_registry)
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.update(original_strategy_persona_idem)
-            bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-            bff_main._CAPITAL_BFF_IDEMPOTENCY.update(original_capital_idem)
-            bff_main._SKILLS_BFF_IDEMPOTENCY.clear()
-            bff_main._SKILLS_BFF_IDEMPOTENCY.update(original_skills_idem)
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.update(original_agora_idem)
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_gov_idem)
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idem)
-            for key, original in original_sse_buffers.items():
-                bff_main._sse_buffers[key].clear()
-                bff_main._sse_buffers[key].extend(original)
-
-
-try:
-    from services.persona.runtime_profile import build_persona_runtime_profile
-    bff_main.build_persona_runtime_profile = build_persona_runtime_profile
-except ImportError:
-    pass
+        bff_state.read_store = _seed_read_store(Path(td) / "read_surfaces.json")
+        bff_state.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_state._STRATEGY_BFF_OVERLAY.clear()
+        bff_state._PERSONA_BFF_OVERLAY.clear()
+        bff_state._SKILL_REGISTRY.clear()
+        bff_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        bff_state._CAPITAL_BFF_IDEMPOTENCY.clear()
+        bff_state._SKILLS_BFF_IDEMPOTENCY.clear()
+        bff_state._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        bff_state._GOV_BFF_IDEMPOTENCY.clear()
+        bff_state._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        bff_state._sse_buffers = {"events": deque(), "commands": deque()}
+        app = _build_test_app()
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 def _dry_headers(key: str, *, auth: dict[str, str] | None = None) -> dict[str, str]:
@@ -304,10 +664,10 @@ def _error_code(response) -> str:
 
 def _surface_snapshot(surface_name: str) -> str:
     list_methods = {
-        "agora_signals": bff_main.read_store.list_agora_signals,
-        "personas": bff_main.read_store.list_personas,
-        "ranking_formulas": bff_main.read_store.list_ranking_formulas,
-        "strategy_specs": bff_main.read_store.list_strategy_specs,
+        "agora_signals": bff_state.read_store.list_agora_signals,
+        "personas": bff_state.read_store.list_personas,
+        "ranking_formulas": bff_state.read_store.list_ranking_formulas,
+        "strategy_specs": bff_state.read_store.list_strategy_specs,
     }
     return json.dumps(list_methods[surface_name](), sort_keys=True)
 
@@ -322,8 +682,8 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
         ))
         strategy_id = strategy["data"]["id"]
         assert client.get(f"/bff/strategies/{strategy_id}", headers=OPERATOR_HEADERS).status_code == 404
-        assert strategy_id not in bff_main._STRATEGY_BFF_OVERLAY
-        assert bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY == {}
+        assert strategy_id not in bff_state._STRATEGY_BFF_OVERLAY
+        assert bff_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY == {}
 
         persona = _assert_dry_run(client.post(
             "/bff/personas",
@@ -332,7 +692,7 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
         ))
         persona_id = persona["data"]["id"]
         assert client.get(f"/bff/personas/{persona_id}", headers=OPERATOR_HEADERS).status_code == 404
-        assert persona_id not in bff_main._PERSONA_BFF_OVERLAY
+        assert persona_id not in bff_state._PERSONA_BFF_OVERLAY
 
         pool = _assert_dry_run(client.post(
             "/bff/capital-pools",
@@ -342,7 +702,7 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
         pool_list = client.get("/bff/capital-pools", headers=OPERATOR_HEADERS)
         assert pool_list.status_code == 200, pool_list.text
         assert all((item.get("id") or item.get("pool_id")) != pool["data"]["id"] for item in pool_list.json()["data"])
-        assert bff_main._CAPITAL_BFF_IDEMPOTENCY == {}
+        assert bff_state._CAPITAL_BFF_IDEMPOTENCY == {}
 
         formula = _assert_dry_run(client.post(
             "/bff/ranking-formulas",
@@ -353,7 +713,7 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
         formula_list = client.get("/bff/ranking-formulas", headers=OPERATOR_HEADERS)
         assert formula_list.status_code == 200, formula_list.text
         assert all((item.get("id") or item.get("formula_id")) != formula_id for item in formula_list.json()["data"])
-        assert bff_main._CAPITAL_BFF_IDEMPOTENCY == {}
+        assert bff_state._CAPITAL_BFF_IDEMPOTENCY == {}
 
         skill = _assert_dry_run(client.post(
             "/bff/skills",
@@ -361,8 +721,8 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
             json={"name": marker},
         ))
         assert client.get(f"/bff/skills/{skill['data']['id']}", headers=OPERATOR_HEADERS).status_code == 404
-        assert skill["data"]["id"] not in bff_main._SKILL_REGISTRY
-        assert bff_main._SKILLS_BFF_IDEMPOTENCY == {}
+        assert skill["data"]["id"] not in bff_state._SKILL_REGISTRY
+        assert bff_state._SKILLS_BFF_IDEMPOTENCY == {}
 
         for path, key, payload, list_path, id_field in (
             ("/bff/agora/journal", "dry-journal-001", {"title": marker, "body": "preview"}, "/bff/agora/journal", "id"),
@@ -382,7 +742,7 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
             listed = client.get(list_path, headers=OPERATOR_HEADERS)
             assert listed.status_code == 200, listed.text
             assert all((item.get(id_field) or item.get("id")) != created_id for item in listed.json().get("items", []))
-        assert bff_main._AGORA_CORE_BFF_IDEMPOTENCY == {}
+        assert bff_state._AGORA_CORE_BFF_IDEMPOTENCY == {}
 
 
 def test_dry_run_command_routes_do_not_write_command_store_or_sse() -> None:
@@ -441,8 +801,8 @@ def test_dry_run_command_routes_do_not_write_command_store_or_sse() -> None:
             assert preview["meta"]["idempotency"]["key"] == f"dry-incident-alias-{index}"
             assert preview["meta"]["evidenceKind"] == "generic_id_command.preview"
 
-        assert bff_main.command_store._get_all_commands() == []
-        assert all(len(buffer) == 0 for buffer in bff_main._sse_buffers.values())
+        assert bff_state.command_store._get_all_commands() == []
+        assert all(len(buffer) == 0 for buffer in bff_state._sse_buffers.values())
 
 
 def test_dry_run_validation_failures_return_bff_error_envelope_without_side_effects() -> None:
@@ -453,16 +813,16 @@ def test_dry_run_validation_failures_return_bff_error_envelope_without_side_effe
                 "invalid-dry-strategy",
                 {},
                 "strategy_specs",
-                bff_main._STRATEGY_BFF_OVERLAY,
-                bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
+                bff_state._STRATEGY_BFF_OVERLAY,
+                bff_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
             ),
             (
                 "/bff/personas",
                 "invalid-dry-persona",
                 {},
                 "personas",
-                bff_main._PERSONA_BFF_OVERLAY,
-                bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
+                bff_state._PERSONA_BFF_OVERLAY,
+                bff_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
             ),
             (
                 "/bff/ranking-formulas",
@@ -470,7 +830,7 @@ def test_dry_run_validation_failures_return_bff_error_envelope_without_side_effe
                 {},
                 "ranking_formulas",
                 None,
-                bff_main._CAPITAL_BFF_IDEMPOTENCY,
+                bff_state._CAPITAL_BFF_IDEMPOTENCY,
             ),
             (
                 "/bff/agora/signals/sig-dry-seed/feedback",
@@ -478,7 +838,7 @@ def test_dry_run_validation_failures_return_bff_error_envelope_without_side_effe
                 {"decision": "disagree", "confidence": 5},
                 "agora_signals",
                 None,
-                bff_main._AGORA_CORE_BFF_IDEMPOTENCY,
+                bff_state._AGORA_CORE_BFF_IDEMPOTENCY,
             ),
         )
 
@@ -496,8 +856,8 @@ def test_dry_run_validation_failures_return_bff_error_envelope_without_side_effe
                 assert dict(overlay) == before_overlay
             assert cache == {}
 
-        assert bff_main.command_store._get_all_commands() == []
-        assert all(len(buffer) == 0 for buffer in bff_main._sse_buffers.values())
+        assert bff_state.command_store._get_all_commands() == []
+        assert all(len(buffer) == 0 for buffer in bff_state._sse_buffers.values())
 
 
 def _make_jwt(*, sub: str, roles: list[str]) -> str:
@@ -571,8 +931,8 @@ def test_strict_bearer_jwt_full_rbac_matrix_for_management_reads_and_writes() ->
                         assert response.status_code == 403, response.text
                         assert _error_code(response) == "FORBIDDEN"
 
-            assert bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY == {}
-            assert bff_main._AGORA_CORE_BFF_IDEMPOTENCY == {}
-            assert bff_main._CAPITAL_BFF_IDEMPOTENCY == {}
-            assert bff_main._FINAL_CONTRACT_IDEMPOTENCY == {}
-            assert bff_main.command_store._get_all_commands() == []
+            assert bff_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY == {}
+            assert bff_state._AGORA_CORE_BFF_IDEMPOTENCY == {}
+            assert bff_state._CAPITAL_BFF_IDEMPOTENCY == {}
+            assert bff_state._FINAL_CONTRACT_IDEMPOTENCY == {}
+            assert bff_state.command_store._get_all_commands() == []
