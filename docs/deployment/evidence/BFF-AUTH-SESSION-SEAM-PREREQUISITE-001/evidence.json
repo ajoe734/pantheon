@@ -1,0 +1,126 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+  "base_ref": "dev@17bc3c5588da9613586ddd83b5893ee8278f9756",
+  "anchor_commit": "78aba767f043ac88764286a5c1b320c89db5679f",
+  "rebaseline": {
+    "anchored_by": "fd36f0112f4bc0088374c0166047be66253a0f09",
+    "verified_source_hashes": {
+      "services/control-plane/bff/main.py": "138b3edfafa5167fb97705284c31e084e6d912ac501a00f83de6d158f00b3aa1",
+      "services/control-plane/bff/auth/handlers.py": "df7634713450f6dd320832c4b43c4185eb465abc16b87f1e143a7d282754e5f8",
+      "services/control-plane/bff/auth/router.py": "2de4c441e7ce0368ce26d84245c2725843e5f50c23d9affef7839dc3d7298346",
+      "services/control-plane/bff/auth/service.py": "6556882bba72b2ef6091ba4cb606128731bc80ce5f9c981ca1489fd0769631d8",
+      "services/control-plane/bff/session_lifecycle_store.py": "ca15d892a544d50b25b5b26d6a89191bafdcfc5fda81caffa057ce104480d921"
+    }
+  },
+  "counterexample_reproduction": {
+    "command": "timeout 90s env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python3 -B /tmp/bff_recovery_auth_probe.py",
+    "before_fix": {
+      "composition_store": {
+        "before": 200,
+        "logout": 200,
+        "after": 401
+      },
+      "isolated_store": {
+        "before": 200,
+        "logout": 200,
+        "after": 200,
+        "failure_diagnosis": "seam failure: logout guard read composition-global store instead of injected store"
+      }
+    },
+    "after_fix": {
+      "composition_store": {
+        "before": 200,
+        "logout": 200,
+        "after": 401,
+        "guard_module": "services.control_plane.bff.auth.policy",
+        "store_matches_guard_global": true
+      },
+      "isolated_store": {
+        "before": 200,
+        "logout": 200,
+        "after": 401,
+        "guard_module": "services.control_plane.bff.auth.policy",
+        "store_matches_guard_global": false
+      },
+      "exit_code": 0
+    }
+  },
+  "results": {
+    "auth_policy_extracted_standalone": {
+      "file": "services/control-plane/bff/auth/policy.py",
+      "detail": "Relocated identity extraction, dev-login policy, tenant payload, error mapping/envelopes, session ID/key derivation, SessionLogoutGuard, and typed AuthDependencies factory; standalone import assertion proves zero imports of main.py"
+    },
+    "auth_handlers_store_rebinding": {
+      "file": "services/control-plane/bff/auth/handlers.py",
+      "detail": "Rebound get_session_id, get_session_key, get_session_state, ensure bff_auth_refresh resolves idempotency replay/conflict before session state mutation and persists to get_session_key(identity), populate last_refreshed_at and last_refresh_credential_source in bff_me, and ensure create_auth_handlers binds deps.raise_if_session_logged_out to the injected deps.session_lifecycle_store"
+    },
+    "main_delegation": {
+      "file": "services/control-plane/bff/main.py",
+      "detail": "Replaced duplicate auth constants, dev login helpers, error code maps, metadata helpers, identity extraction, tenant scoping, session key/state functions, and source commit with delegates to auth.policy; restored _pack_d_direct_error_response; auth_deps instantiated with create_auth_dependencies"
+    },
+    "focused_regressions": {
+      "file": "services/control-plane/bff/auth/test_policy.py",
+      "detail": "16 tests covering standalone imports, two isolated stores with independent logout, concurrent/idempotent logout, nested two-instance lifecycle proving outer idempotency survives inner teardown, session key variants and legacy fallback, cookie/bearer/refresh flows, configured session key refresh/readback/idempotency with advanceable clock, negative JWT/role cases, real signed-token tenant rejection through the router, dev-login production block, and composition smoke"
+    },
+    "live_credentials_changed": false,
+    "production_grants_changed": false,
+    "permission_policy_changed": false,
+    "hosted_deployment_performed": false
+  },
+  "verification": [
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/auth/test_policy.py -vv",
+      "exit_code": 0,
+      "result": "16 passed",
+      "executed": 16,
+      "collected": 16
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_auth_facade.py",
+      "exit_code": 0,
+      "result": "85 passed",
+      "executed": 85,
+      "collected": 85
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_bff_auth_refresh.py",
+      "exit_code": 0,
+      "result": "3 passed",
+      "executed": 3,
+      "collected": 3
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+      "exit_code": 0,
+      "result": "13 passed",
+      "executed": 13,
+      "collected": 13
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_error_envelope_shape.py",
+      "exit_code": 0,
+      "result": "8 passed",
+      "executed": 8,
+      "collected": 8
+    },
+    {
+      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "exit_code": 1,
+      "result": "40 passed, 4 failed (pre-existing baseline failures in unmigrated test suite caused by module-global session_lifecycle_store fixture swapping instead of instance injection; to be migrated in BFF-TEST-FULL-MIGRATION-CORRECTIVE-001)",
+      "executed": 44,
+      "collected": 44
+    },
+    {
+      "command": "timeout 90s env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python3 -B /tmp/bff_recovery_auth_probe.py",
+      "exit_code": 0,
+      "result": "pass (both composition_store and isolated_store return 200 -> logout 200 -> 401)"
+    }
+  ],
+  "coordination_note": "This functional source prerequisite fixes the injected auth/session seam, resolves refresh replay and conflict checks before session state mutation, and validates standalone auth policy, canonical configured-session key refresh and readback with an advanceable clock, nested two-instance outer idempotency, real signed-token tenant router rejection, and Pack-D direct error response envelope. Pre-existing test-migration failures in test_bff_session_auth_me_contract.py are preserved honestly and handed off to BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 to complete the 211-importer test fixture migration.",
+  "review": {
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}
