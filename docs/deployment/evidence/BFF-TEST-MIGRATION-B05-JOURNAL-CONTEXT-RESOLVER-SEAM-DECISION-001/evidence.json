@@ -4,7 +4,7 @@
   "owner": "Antigravity2",
   "reviewer": "Codex",
   "target_repo": "ajoe734/pantheon",
-  "base_sha": "d85a7117c10e25d34625ef9b0978c31f5be68bb7",
+  "base_sha": "c99c090b405d95bff5fa0c426d249ea75ffcc9eb",
   "delivery_state": "ready_for_independent_review",
   "review_decision": {
     "status": "pending",
@@ -20,7 +20,7 @@
   ],
   "document_proof": {
     "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md": {
-      "sha256": "6e7eec0e718aaaef4fe143a084cf1b273e9cabf07ec7d2f8555d9e2463c09a9e",
+      "sha256": "166a7f6170f44b15f6e2901669a03dc7654a6d837e40563c6f827eefdd8ed148",
       "bytes": 43156
     }
   },

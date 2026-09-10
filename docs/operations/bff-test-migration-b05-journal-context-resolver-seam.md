@@ -4,7 +4,7 @@ Status: canonical architectural decision for batch B05 and journal context resol
 Task ID: `BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001`  
 Owner: Antigravity2  
 Reviewer: Codex  
-Base Commit: `d85a7117c10e25d34625ef9b0978c31f5be68bb7` (origin/dev)  
+Base Commit: `c99c090b405d95bff5fa0c426d249ea75ffcc9eb` (origin/dev)  
 Related Tasks:
 - `BFF-TEST-MIGRATION-REPARTITION-PLAN-001` (predecessor plan, done)
 - `BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001` (predecessor fixture correction, done)
