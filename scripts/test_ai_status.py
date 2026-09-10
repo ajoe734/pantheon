@@ -9209,6 +9209,295 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         )
         mock_bridge.validate_review_admission.assert_called_once()
 
+    def test_handoff_rejects_pr_diff_exceeding_artifact_contract_regression_5736(self) -> None:
+        # PR #5736 regression: 10 artifacts declared, 11 files in PR diff
+        declared_artifacts = [
+            ".orchestrator/rewrite/auto_integrator.py",
+            ".orchestrator/rewrite/task_machine.py",
+            "scripts/git/auto_integrator.py",
+            "scripts/git/github_review_bridge.py",
+            "scripts/git/task_review_merge_gate.py",
+            "scripts/git/test_auto_integrator.py",
+            "scripts/git/test_github_review_bridge.py",
+            "scripts/git/test_task_review_merge_gate.py",
+            "scripts/test_ai_status.py",
+            "docs/deployment/evidence/OPS-REVIEW-PIPELINE-INTEGRITY-001/evidence.json",
+        ]
+        task = {
+            "id": "REG-5736",
+            "artifacts": list(declared_artifacts),
+        }
+        pr_files = [
+            {"filename": path, "sha": "a" * 40, "status": "modified"}
+            for path in declared_artifacts
+        ] + [
+            # 11th undeclared file:
+            {
+                "filename": ".orchestrator/rewrite/worker_recovery.py",
+                "sha": "b" * 40,
+                "status": "added",
+            }
+        ]
+        mock_bridge = mock.MagicMock()
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 5736, "head_sha": "a" * 40, "head_branch": "task/REG-5736", "base": "dev"},
+            "docs/deployment/evidence/OPS-REVIEW-PIPELINE-INTEGRITY-001/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.return_value = pr_files
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            with self.assertRaisesRegex(SystemExit, "outside the task artifact contract"):
+                ai_status.validate_handoff_pr_delivery_binding(
+                    task,
+                    {},
+                    {"pr": 5736, "head_sha": "a" * 40},
+                    review_file="docs/deployment/evidence/OPS-REVIEW-PIPELINE-INTEGRITY-001/evidence.json",
+                )
+
+    def test_handoff_rejects_undeclared_file_on_later_page(self) -> None:
+        task = {
+            "id": "LATER-PAGE-TASK",
+            "artifacts": ["docs/evidence/LATER-PAGE/evidence.json", "scripts/foo.py"],
+        }
+        # Page 1 has valid files, but page 2 has undeclared file
+        pr_files = [
+            {"filename": "docs/evidence/LATER-PAGE/evidence.json", "sha": "a" * 40, "status": "added"},
+            {"filename": "scripts/foo.py", "sha": "a" * 40, "status": "modified"},
+            {"filename": "services/undeclared.py", "sha": "b" * 40, "status": "modified"},
+        ]
+        mock_bridge = mock.MagicMock()
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 1234, "head_sha": "a" * 40, "head_branch": "task/LATER-PAGE-TASK", "base": "dev"},
+            "docs/evidence/LATER-PAGE/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.return_value = pr_files
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            with self.assertRaisesRegex(SystemExit, "outside the task artifact contract"):
+                ai_status.validate_handoff_pr_delivery_binding(
+                    task,
+                    {},
+                    {"pr": 1234, "head_sha": "a" * 40},
+                    review_file="docs/evidence/LATER-PAGE/evidence.json",
+                )
+
+    def test_handoff_rejects_unauthorized_rename_source_path_and_accepts_authorized(self) -> None:
+        task = {
+            "id": "RENAME-TASK",
+            "artifacts": [
+                "docs/evidence/RENAME/evidence.json",
+                "scripts/new_name.py",
+                "scripts/authorized_old.py",
+            ],
+        }
+        mock_bridge = mock.MagicMock()
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 1234, "head_sha": "a" * 40, "head_branch": "task/RENAME-TASK", "base": "dev"},
+            "docs/evidence/RENAME/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        # Unauthorized source rename
+        mock_bridge.list_pull_request_files.return_value = [
+            {"filename": "docs/evidence/RENAME/evidence.json", "sha": "a" * 40, "status": "added"},
+            {
+                "filename": "scripts/new_name.py",
+                "previous_filename": "secret/unauthorized_old.py",
+                "sha": "a" * 40,
+                "status": "renamed",
+            },
+        ]
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            with self.assertRaisesRegex(SystemExit, "renamed file source 'secret/unauthorized_old.py' is outside"):
+                ai_status.validate_handoff_pr_delivery_binding(
+                    task,
+                    {},
+                    {"pr": 1234, "head_sha": "a" * 40},
+                    review_file="docs/evidence/RENAME/evidence.json",
+                )
+
+            # Authorized source rename: both source and target in contract
+            mock_bridge.list_pull_request_files.return_value = [
+                {"filename": "docs/evidence/RENAME/evidence.json", "sha": "a" * 40, "status": "added"},
+                {
+                    "filename": "scripts/new_name.py",
+                    "previous_filename": "scripts/authorized_old.py",
+                    "sha": "a" * 40,
+                    "status": "renamed",
+                },
+            ]
+            accepted = ai_status.validate_handoff_pr_delivery_binding(
+                task,
+                {},
+                {"pr": 1234, "head_sha": "a" * 40},
+                review_file="docs/evidence/RENAME/evidence.json",
+            )
+            self.assertEqual(accepted["pr"], 1234)
+
+    def test_handoff_accepts_directory_prefix_and_wildcard_grants(self) -> None:
+        task = {
+            "id": "DIR-WILD-TASK",
+            "artifacts": [
+                "docs/evidence/DIR-WILD-TASK/",
+                "services/telemetry/*.py",
+                "scripts/**/*.sh",
+            ],
+        }
+        mock_bridge = mock.MagicMock()
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 1234, "head_sha": "a" * 40, "head_branch": "task/DIR-WILD-TASK", "base": "dev"},
+            "docs/evidence/DIR-WILD-TASK/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.return_value = [
+            {"filename": "docs/evidence/DIR-WILD-TASK/evidence.json", "sha": "a" * 40, "status": "added"},
+            {"filename": "docs/evidence/DIR-WILD-TASK/sub/run.log", "sha": "b" * 40, "status": "added"},
+            {"filename": "services/telemetry/events.py", "sha": "c" * 40, "status": "modified"},
+            {"filename": "scripts/ci/run_check.sh", "sha": "d" * 40, "status": "modified"},
+        ]
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            accepted = ai_status.validate_handoff_pr_delivery_binding(
+                task,
+                {},
+                {"pr": 1234, "head_sha": "a" * 40},
+                review_file="docs/evidence/DIR-WILD-TASK/evidence.json",
+            )
+            self.assertEqual(accepted["pr"], 1234)
+
+    def test_handoff_accepts_cross_repository_normalized_artifacts(self) -> None:
+        task = {
+            "id": "MULTI-REPO-FE",
+            "target_repo": "execute_plans",
+            "artifacts": [
+                "execute-plans/src/App.tsx",
+                "frontend-checkout/src/components/Header.tsx",
+                "execute_plans:src/utils/math.ts",
+                "support/sidecars/evidence.json",
+            ],
+        }
+        mock_bridge = mock.MagicMock()
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 999, "head_sha": "a" * 40, "head_branch": "task/MULTI-REPO-FE", "base": "dev"},
+            "support/sidecars/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.return_value = [
+            {"filename": "src/App.tsx", "sha": "a" * 40, "status": "modified"},
+            {"filename": "src/components/Header.tsx", "sha": "b" * 40, "status": "added"},
+            {"filename": "src/utils/math.ts", "sha": "c" * 40, "status": "modified"},
+            {"filename": "support/sidecars/evidence.json", "sha": "d" * 40, "status": "added"},
+        ]
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            accepted = ai_status.validate_handoff_pr_delivery_binding(
+                task,
+                {},
+                {"pr": 999, "head_sha": "a" * 40},
+                review_file="support/sidecars/evidence.json",
+            )
+            self.assertEqual(accepted["pr"], 999)
+
+    def test_handoff_rejects_on_github_api_or_malformed_response(self) -> None:
+        task = {
+            "id": "API-ERR-TASK",
+            "artifacts": ["docs/evidence/evidence.json"],
+        }
+        mock_bridge = mock.MagicMock()
+        from scripts.git import github_review_bridge
+        mock_bridge.GitHubReviewBridgeError = github_review_bridge.GitHubReviewBridgeError
+        mock_bridge.ReviewBindingMismatch = github_review_bridge.ReviewBindingMismatch
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 1234, "head_sha": "a" * 40, "head_branch": "task/API-ERR-TASK", "base": "dev"},
+            "docs/evidence/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.side_effect = github_review_bridge.GitHubReviewBridgeError("API timed out")
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            with self.assertRaisesRegex(SystemExit, "GitHub rejected the proposed delivery binding"):
+                ai_status.validate_handoff_pr_delivery_binding(
+                    task,
+                    {},
+                    {"pr": 1234, "head_sha": "a" * 40},
+                    review_file="docs/evidence/evidence.json",
+                )
+
+    def test_handoff_rejects_on_concurrent_pr_snapshot_drift(self) -> None:
+        task = {
+            "id": "DRIFT-TASK",
+            "artifacts": ["docs/evidence/evidence.json"],
+        }
+        mock_bridge = mock.MagicMock()
+        from scripts.git import github_review_bridge
+        mock_bridge.GitHubReviewBridgeError = github_review_bridge.GitHubReviewBridgeError
+        mock_bridge.ReviewBindingMismatch = github_review_bridge.ReviewBindingMismatch
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 1234, "head_sha": "a" * 40, "head_branch": "task/DRIFT-TASK", "base": "dev"},
+            "docs/evidence/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.return_value = [
+            {"filename": "docs/evidence/evidence.json", "sha": "a" * 40, "status": "added"}
+        ]
+        mock_bridge.revalidate_pull_request_snapshot.side_effect = github_review_bridge.ReviewBindingMismatch("head drifted concurrently")
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            with self.assertRaisesRegex(SystemExit, "GitHub rejected the proposed delivery binding"):
+                ai_status.validate_handoff_pr_delivery_binding(
+                    task,
+                    {},
+                    {"pr": 1234, "head_sha": "a" * 40},
+                    review_file="docs/evidence/evidence.json",
+                )
+
+    def test_handoff_scope_failure_leaves_canonical_state_unmutated(self) -> None:
+        self.state["tasks"][0]["status"] = "in_progress"
+        self.state["tasks"][0]["owner"] = "Codex"
+        self.state["tasks"][0]["reviewer"] = "Claude"
+        self.state["tasks"][0]["artifacts"] = ["docs/evidence/REG-002/evidence.json"]
+        self.state["tasks"][0].pop(ai_status.DELIVERY_BINDING_KEY, None)
+        task_id = self.state["tasks"][0]["id"]
+        initial_state = json.loads(json.dumps(self.state))
+
+        mock_bridge = mock.MagicMock()
+        from scripts.git import github_review_bridge
+        mock_bridge.GitHubReviewBridgeError = github_review_bridge.GitHubReviewBridgeError
+        mock_bridge.ReviewBindingMismatch = github_review_bridge.ReviewBindingMismatch
+        admitted = mock.MagicMock()
+        admitted.as_dict.return_value = self._review_admission_binding(
+            {"pr": 9999, "head_sha": "a" * 40, "head_branch": f"task/{task_id}", "base": "dev"},
+            "docs/evidence/REG-002/evidence.json",
+        )
+        mock_bridge.validate_review_admission.return_value = admitted
+        mock_bridge.list_pull_request_files.return_value = [
+            {"filename": "docs/evidence/REG-002/evidence.json", "sha": "a" * 40, "status": "added"},
+            {"filename": "unexpected/leak.py", "sha": "b" * 40, "status": "added"},
+        ]
+
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Codex",
+                    "REVIEW_PR": "9999",
+                    "REVIEW_HEAD_SHA": "a" * 40,
+                    "REVIEW_FILE": "docs/evidence/REG-002/evidence.json",
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "outside the task artifact contract"),
+        ):
+            _command_handoff(self.state, [task_id, "Claude", "Please review"])
+
+        # State must remain exactly unchanged
+        self.assertEqual(self.state["tasks"][0]["status"], "in_progress")
+        self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, self.state["tasks"][0])
+        self.assertEqual(self.state, initial_state)
+
     def test_resolve_handoff_delivery_binding_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
         conflicting_task = {
             "id": "CONFLICT-TASK",
