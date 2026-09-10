@@ -282,6 +282,25 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "claude_cli")
 
+    def test_claude_temporary_auth_result_reaches_launcher_without_spawn(self) -> None:
+        from common import ClaudeAuthRetry
+        adapter = ClaudeCLIAdapter(config={"agents": {"claude": {"id": "claude", "provider": "claude"}}}, provider_capabilities={})
+        request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
+        retry = ClaudeAuthRetry("Claude OAuth refresh temporarily unavailable (HTTP 429).", retry_after="120")
+        with (
+            mock.patch("adapters.claude_cli._configured_claude_cli", return_value="synthetic-cli"),
+            mock.patch("adapters.claude_cli._claude_auth_ready", side_effect=retry),
+            mock.patch("adapters.claude_cli.spawn_background_process") as spawn,
+        ):
+            capability = adapter.capability("claude")
+            result = adapter.deliver(request)
+        self.assertFalse(capability.can_auto_deliver)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.manual_confirmation_required)
+        self.assertEqual(result.metadata["auth_probe"]["status"], "auth_retry_after")
+        self.assertEqual(result.metadata["auth_probe"]["retry_at"], retry.retry_at)
+        spawn.assert_not_called()
+
     def test_repository_claude_providers_disable_background_tasks_in_child_env(self) -> None:
         config = json.loads((THIS_DIR / "config.json").read_text(encoding="utf-8"))
 

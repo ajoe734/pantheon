@@ -1488,6 +1488,19 @@ EOF
         claude_auth_ready.assert_called_once()
         self.assertTrue(claude_auth_ready.call_args.kwargs["refresh_if_needed"])
 
+    def test_claude_probe_preserves_shared_temporary_auth_result(self) -> None:
+        retry = provider_permissions.ClaudeAuthRetry("Claude OAuth refresh temporarily unavailable (HTTP 429).", retry_after="120")
+        with (
+            mock.patch.object(provider_permissions, "_claude_auth_status_payload", return_value={}),
+            mock.patch.object(provider_permissions, "claude_auth_ready", side_effect=retry),
+        ):
+            probe = provider_permissions._claude_auth_probe({}, "claude", "synthetic-cli", {})
+        self.assertIs(probe["ready"], False)
+        self.assertEqual(probe["status"], "auth_retry_after")
+        self.assertEqual(probe["retry_at"], retry.retry_at)
+        self.assertEqual(probe["source"], "live")
+        self.assertEqual(probe["provider"], "claude")
+
     def test_targeted_pre_dispatch_probe_forces_selected_provider(self) -> None:
         config = {
             "providers": {
