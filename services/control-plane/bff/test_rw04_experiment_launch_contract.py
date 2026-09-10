@@ -5,12 +5,8 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.tests.fixtures.research_fixture import create_research_test_client
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -98,29 +94,17 @@ LAUNCH_PAYLOAD = {
 
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort(
-            research_experiments_store=_SEEDED_EXPERIMENTS,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = DefaultResearchKnowledgeSourcePort(
+        research_experiments_store=_SEEDED_EXPERIMENTS,
+    )
+    yield create_research_test_client(port)
 
 
 @contextmanager
 def _no_fallback_client():
     """Client with allow_local_snapshot_fallback=False — the production path."""
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = DefaultResearchKnowledgeSourcePort()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = DefaultResearchKnowledgeSourcePort()
+    yield create_research_test_client(port)
 
 
 # ---------------------------------------------------------------------------

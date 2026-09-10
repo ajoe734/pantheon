@@ -5,12 +5,8 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.tests.fixtures.research_fixture import create_research_test_client
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -36,6 +32,7 @@ def _artifact(
         "artifact_type": "strategy_model",
         "produced_by_experiment_id": experiment_id,
         "linked_ticket_id": "tkt_5432",
+        "ticket_id": "tkt_5432",
         "created_at": created_at,
         "metrics": {
             "sharpe_ratio": sharpe_ratio,
@@ -107,6 +104,7 @@ _ARTIFACTS = {
         ),
         "lineage_id": "lin_pending",
         "linked_ticket_id": "tkt_pending",
+        "ticket_id": "tkt_pending",
     },
 }
 
@@ -136,7 +134,14 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
         if status:
             records = [record for record in records if record.get("status") == status]
         records.sort(key=lambda record: str(record.get("created_at") or ""), reverse=True)
-        return [self._project_research_artifact_summary(record) for record in records]
+        return [
+            {
+                **self._project_research_artifact_summary(record),
+                "ticket_id": record.get("ticket_id") or record.get("linked_ticket_id"),
+                "linked_ticket_id": record.get("linked_ticket_id"),
+            }
+            for record in records
+        ]
 
     def get_research_artifact(self, artifact_id: str | None) -> dict | None:
         detail = super().get_research_artifact(artifact_id)
@@ -176,14 +181,10 @@ class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
 
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _ArtifactPortDouble()
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _ArtifactPortDouble()
+    client = create_research_test_client(port)
+    client.port = port
+    yield client
 
 
 def test_rw05_list_contract_returns_artifact_registry_projection() -> None:
@@ -244,7 +245,7 @@ def test_rw05_detail_contract_returns_version_chain_and_allowed_actions() -> Non
 
 def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> None:
     with _seeded_client() as client:
-        bff_main.read_store.set_experiment_refs(
+        client.port.set_experiment_refs(
             "art_2024_abc123",
             [
                 {
@@ -294,7 +295,8 @@ def test_rw05_compare_contract_returns_backend_composed_diff() -> None:
         assert sharpe_pair["delta_direction"] == "up"
         assert payload["change_summary"]["total_fields_compared"] >= 10
         assert payload["provenance_pairs"][1]["linked_experiment"]["experiment_id"] == "exp_9876"
-        assert payload["meta"]["surfaces"]["artifact_compare"] in {"ok", "degraded"}
+        compare_surface = payload["meta"]["surfaces"]["artifact_compare"]
+        assert (compare_surface if isinstance(compare_surface, str) else compare_surface.get("status")) in {"ok", "degraded"}
 
 
 def test_rw05_compare_rejects_non_comparable_artifacts() -> None:

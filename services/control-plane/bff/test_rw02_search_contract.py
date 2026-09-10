@@ -5,12 +5,8 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.tests.fixtures.research_fixture import create_research_test_client
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -79,9 +75,8 @@ _SEARCH_DOCUMENTS = [
 ]
 
 _SEARCH_INDEX = {
-    "adapter_id": "rw02-search-index",
     "snapshot_at": "2026-04-19T20:14:30Z",
-    "adapter_state": "fresh",
+    "adapter_state": "degraded",
     "indexed_match_types": ["ticket", "experiment", "artifact"],
     "source_watermarks": {
         "tickets": "2026-04-19T20:14:10Z",
@@ -99,7 +94,7 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
         self._available = available
 
     def dataset_source(self, dataset: str, **_: object) -> str:
-        if dataset in {"research_search_documents", "research_search_index"}:
+        if dataset in {"research_search", "research_search_documents", "research_search_index"}:
             return "local_snapshot" if self._available else "missing"
         return super().dataset_source(dataset)
 
@@ -164,16 +159,10 @@ class _SearchPortDouble(DefaultResearchKnowledgeSourcePort):
 
 @contextmanager
 def _seeded_client(*, allow_local_snapshot_fallback: bool):
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _SearchPortDouble(
-            available=allow_local_snapshot_fallback,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    port = _SearchPortDouble(
+        available=allow_local_snapshot_fallback,
+    )
+    yield create_research_test_client(port)
 
 
 def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta() -> None:
