@@ -27,62 +27,125 @@
       "file": "services/control-plane/bff/tests/test_assistant_agora_ask.py",
       "changes": "Removed import main as bff_main and sys.path mutations; mounted create_identity_router on isolated FastAPI app with injected AgoraService instance; updated mock targets to patch.object(ops_module, 'OpenClawOpsClient', ...)",
       "tests_passed": 8,
-      "tests_total": 8
+      "tests_total": 8,
+      "disposition": "DECOUPLED"
     },
     "test_assistant_context_pack": {
       "file": "services/control-plane/bff/tests/test_assistant_context_pack.py",
-      "changes": "Removed import main as bff_main and sys.path mutations; mounted create_assistant_router with _make_collect_source helper invoking compose_context_pack; registered HTTP exception handler to format detail error envelopes",
+      "changes": "Removed sys.path mutations; eliminated test-local duplicate collector double to preserve real production behavior coverage for tenant isolation, access metadata, staleness, and docs citations; sanitized read_store and _REPO_ROOT scoping via pytest monkeypatch fixtures",
       "tests_passed": 5,
-      "tests_total": 5
+      "tests_total": 5,
+      "disposition": "RESIDUAL"
     },
     "test_console_data_agora_projection": {
       "file": "services/control-plane/bff/tests/test_console_data_agora_projection.py",
       "changes": "Removed import main as bff_main, global read_store monkeypatching, and sys.path mutations; mounted create_agora_router with read_surface=ports; bound in-memory journal with tenant-isolated projections",
       "tests_passed": 1,
-      "tests_total": 1
+      "tests_total": 1,
+      "disposition": "DECOUPLED"
     },
     "test_workshop_stream_ag_be_sw_004": {
       "file": "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
       "changes": "Removed sys.path.insert(0, BFF_DIR) and unused _workshop_client importing main; qualified agora imports to services.control_plane.bff.agora; mounted create_strategy_workshop_router on isolated FastAPI instance for fail-closed route validation",
       "tests_passed": 25,
-      "tests_total": 25
+      "tests_total": 25,
+      "disposition": "DECOUPLED"
+    }
+  },
+  "residual_disposition": {
+    "summary": "3 suites fully decoupled; 1 suite retained as explicit residual pending production collector extraction from main.py",
+    "decoupled_suites": [
+      "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+      "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py"
+    ],
+    "residual_suite": "services/control-plane/bff/tests/test_assistant_context_pack.py",
+    "residual_analysis": {
+      "unextracted_seam": "_assistant_collect_source and _assistant_build_context_pack in services/control-plane/bff/main.py (lines 21324-21713)",
+      "scope_boundary_constraint": "Modifying main.py or introducing new production service modules under services/control-plane/bff/assistant/ is outside the four-file task grant for BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+      "rejection_of_test_double": "A test-local collector double duplicates policy and allows production regressions in tenant isolation, enforced access metadata, staleness, or docs citations to pass undetected (P1 review finding)",
+      "retained_production_coverage": "test_assistant_context_pack.py exercises the actual production collector via bff_main, using pytest monkeypatch fixtures to provide isolated read_store and _REPO_ROOT scoping without persistent global leakage",
+      "governed_disposition_action": "Recorded as a concrete scope discrepancy for governed contract revision in parent migration BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 or dedicated upstream seam extraction"
     }
   },
   "static_checks": {
-    "main_composition_root_imports": 0,
+    "main_composition_root_imports": 1,
     "sys_path_mutations": 0,
     "global_read_store_monkeypatches": 0,
-    "verdict": "passed"
+    "dynamic_imports": 0,
+    "subprocess_calls": 0,
+    "verdict": "passed_with_explicit_residual"
+  },
+  "inventory_scan_results": {
+    "services/control-plane/bff/tests/test_assistant_agora_ask.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    "services/control-plane/bff/tests/test_assistant_context_pack.py": {
+      "main_imports": [
+        {
+          "line": 9,
+          "statement": "from services.control_plane.bff import main as bff_main"
+        }
+      ],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    "services/control-plane/bff/tests/test_console_data_agora_projection.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py": {
+      "main_imports": [],
+      "dynamic_imports": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    }
   },
   "verification": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py",
-      "result": "8 passed in 5.12s",
+      "result": "8 passed, 1 warning in 4.66s",
       "exit_code": 0
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_context_pack.py",
-      "result": "5 passed in 4.44s",
+      "result": "5 passed, 3 warnings in 8.68s",
       "exit_code": 0
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_console_data_agora_projection.py",
-      "result": "1 passed in 7.84s",
+      "result": "1 passed, 1 warning in 4.18s",
       "exit_code": 0
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
-      "result": "25 passed, 1 warning in 11.50s",
+      "result": "25 passed, 1 warning in 10.36s",
       "exit_code": 0
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
-      "result": "39 passed, 1 warning in 23.83s",
+      "result": "39 passed, 3 warnings in 26.01s",
       "exit_code": 0
     },
     {
-      "command": "AST static analysis checking 0 main imports, 0 sys.path mutations, 0 global read_store monkeypatches",
-      "result": "All 4 files passed AST checks cleanly with zero violations",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "8 passed in 2.01s",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -c \"import ast, json, sys; from pathlib import Path; files = sys.argv[1:]; res = {}; [res.setdefault(f, {'main_imports': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if (isinstance(n, ast.Import) and any(a.name in ('main','bff_main') or a.name.endswith('.main') for a in n.names)) or (isinstance(n, ast.ImportFrom) and (n.module in ('main','bff_main') or (n.module and (n.module.endswith('.main') or any(a.name=='main' for a in n.names)))))], 'dynamic_imports': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if (isinstance(n, ast.Call) and ((isinstance(n.func, ast.Name) and n.func.id == '__import__') or (isinstance(n.func, ast.Attribute) and n.func.attr == 'import_module'))) or (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Attribute) and n.value.attr == 'modules' and isinstance(n.slice, ast.Constant) and n.slice.value in ('main','bff_main'))], 'subprocess_calls': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('run','Popen','check_output','check_call') and isinstance(n.func.value, ast.Name) and n.func.value.id == 'subprocess'], 'sys_path_mutations': [n.lineno for n in ast.walk(ast.parse(Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('insert','append') and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == 'path' and isinstance(n.func.value.value, ast.Name) and n.func.value.value.id == 'sys']}) for f in files]; print(json.dumps(res, indent=2))\" services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "result": "services/control-plane/bff/tests/test_assistant_agora_ask.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path; services/control-plane/bff/tests/test_assistant_context_pack.py: 1 main (line 9), 0 dynamic, 0 subprocess, 0 sys.path; services/control-plane/bff/tests/test_console_data_agora_projection.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path; services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py: 0 main, 0 dynamic, 0 subprocess, 0 sys.path",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "clean, 0 whitespace errors or conflict markers",
       "exit_code": 0
     }
   ],
