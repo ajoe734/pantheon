@@ -4,7 +4,7 @@
   "owner": "Antigravity2",
   "reviewer": "Codex",
   "target_repo": "ajoe734/pantheon",
-  "base_sha": "e6d480211ad34698d4ee97ec408d17cc019d0f08",
+  "base_sha": "fd828d17511580a97634008d6086cf4a8d9433f6",
   "delivery_state": "ready_for_independent_review",
   "review_decision": {
     "status": "pending",
@@ -20,7 +20,7 @@
   ],
   "document_proof": {
     "docs/operations/bff-test-migration-b06-audit-admission-projection-seam.md": {
-      "sha256": "c987352e23f7bee6df923eda8c01f9aa0d982afdc6152b610bc891ac7cccde1a",
+      "sha256": "b938d6c9d00c15120a9d9470a2aa80446751882b8f42e9e4065cc7d716a608ba",
       "bytes": 52535
     }
   },
