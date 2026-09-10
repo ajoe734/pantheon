@@ -6,10 +6,81 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import ast
+import re
+from services.control_plane.bff.management_read_models.service import ManagementService
+from services.control_plane.bff.personas.service import (
+    _normalize_lifecycle_state,
+    _normalize_risk_level,
+    _PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+)
 
-import main as bff_main
-from management_read_models.service import ManagementService
+_FLEET_FUNCS = None
+
+
+def _get_fleet_collector(store, personas, service=None, utc_now=None):
+    global _FLEET_FUNCS
+    if _FLEET_FUNCS is None:
+        tree = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
+        target_names = {
+            "_mgmt_nl_collect_context",
+            "_mgmt_nl_filter_tenant_records",
+            "_mgmt_nl_record_matches_tenant",
+            "_mgmt_nl_record_tenant_ids",
+            "_mgmt_nl_scope_values",
+            "_mgmt_nl_merge_owner_observations",
+            "_mgmt_nl_add_record_entities",
+            "_mgmt_nl_add_entity",
+            "_project_persona_fleet_item",
+            "_project_persona_dto",
+            "_project_persona_fleet_health",
+            "_is_persona_lifecycle_operational",
+            "_persona_fleet_runtime_matches",
+            "_sort_records_latest_first",
+        }
+        _FLEET_FUNCS = [
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name in target_names
+        ]
+
+    clock = utc_now or (lambda: NOW)
+    context_service = service or ManagementService(read_store=store, utc_now=clock)
+    persona_supplier = (lambda *a: personas(*a)) if callable(personas) else (lambda *a: personas if personas is not None else (store.list_personas() if hasattr(store, "list_personas") else []))
+
+    ns = dict(__import__("typing").__dict__)
+    ns.update({
+        "re": re,
+        "json": json,
+        "read_store": store,
+        "_management_ai_context_service": context_service,
+        "_list_persona_records": persona_supplier,
+        "utc_now": clock,
+        "_normalize_lifecycle_state": _normalize_lifecycle_state,
+        "_normalize_risk_level": _normalize_risk_level,
+        "_PERSONA_OPERATIONAL_LIFECYCLE_STATES": _PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+    })
+    mod = ast.Module(body=_FLEET_FUNCS, type_ignores=[])
+    exec(compile(mod, "main_fleet.py", "exec"), ns)
+    return ns
+
+
+class _MockBffMain:
+    def __init__(self):
+        self.read_store = None
+        self._management_ai_context_service = None
+        self._list_persona_records = None
+
+    def _mgmt_nl_collect_context(self, focus, snapshot_at, tenant_id=None):
+        ns = _get_fleet_collector(
+            store=self.read_store,
+            personas=self._list_persona_records,
+            service=self._management_ai_context_service,
+            utc_now=lambda: snapshot_at,
+        )
+        return ns["_mgmt_nl_collect_context"](focus, snapshot_at, tenant_id)
+
+
+bff_main = _MockBffMain()
 
 NOW = "2026-09-08T18:00:00Z"
 

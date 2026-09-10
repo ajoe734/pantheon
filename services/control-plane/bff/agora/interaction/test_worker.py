@@ -10,14 +10,58 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-import main as bff_main
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-from agora.interaction.store import InteractionLifecycleStore
-from agora.interaction.worker import AgoraInteractionWorker
-from agora.strategy_workshop.store import MemoryWorkshopStore
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+try:
+    from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
+except ImportError:
+    from services.control_plane.bff.agora.service import (
+        _AGORA_SIGNAL_WRITE_ROLES,
+        _AGORA_BULK_FEEDBACK_ROLES,
+    )
+
+
+def _require_agora_signal_write_role(identity: Any) -> None:
+    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora signal creation requires analyst-level role",
+            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst-level Agora write access",
+        )
+
+
+def _require_agora_bulk_feedback_role(identity: Any) -> None:
+    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora feedback access requires analyst role",
+            "Operator does not hold the required Agora feedback role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
+        )
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
+
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class FakePersonaReadStore:
@@ -100,34 +144,64 @@ def _make_mock_client(
     return lambda: MockClient(), call_log
 
 
+read_store = FakePersonaReadStore()
+router = create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    require_operator_role=_require_operator_role,
+    require_journal_write_role=_require_operator_role,
+    require_agora_signal_write_role=_require_agora_signal_write_role,
+    require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
+    bff_error=_bff_error,
+    utc_now=_utc_now_rfc3339,
+    get_read_store=lambda: read_store,
+    read_surface=lambda: read_store,
+    sync_servant_agent=lambda p: {},
+)
+interaction_lifecycle = router.interaction_lifecycle
+workshop_store = router.workshop_store
+
+app = FastAPI()
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+app.include_router(router)
+
+
 @pytest.fixture(autouse=True)
 def clean_stores(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    global read_store
     read_store = FakePersonaReadStore()
-    monkeypatch.setattr(bff_main, "read_store", read_store)
 
-    if bff_main.interaction_lifecycle.backend == "memory":
-        with bff_main.interaction_lifecycle._lock:
-            bff_main.interaction_lifecycle._requests.clear()
-            bff_main.interaction_lifecycle._idempotency.clear()
-            bff_main.interaction_lifecycle._invocations.clear()
-            bff_main.interaction_lifecycle._syntheses.clear()
-            bff_main.interaction_lifecycle._outbox.clear()
-            bff_main.interaction_lifecycle._candidate_links.clear()
-            bff_main.interaction_lifecycle._audits.clear()
-            bff_main.interaction_lifecycle._retry_commands.clear()
-            bff_main.interaction_lifecycle._context_bindings.clear()
-            bff_main.interaction_lifecycle._context_binding_latest.clear()
-    if hasattr(bff_main.workshop_store, "_sessions"):
-        bff_main.workshop_store._sessions.clear()
-        bff_main.workshop_store._events.clear()
-        bff_main.workshop_store._cards.clear()
+    if interaction_lifecycle.backend == "memory":
+        with interaction_lifecycle._lock:
+            interaction_lifecycle._requests.clear()
+            interaction_lifecycle._idempotency.clear()
+            interaction_lifecycle._invocations.clear()
+            interaction_lifecycle._syntheses.clear()
+            interaction_lifecycle._outbox.clear()
+            interaction_lifecycle._candidate_links.clear()
+            interaction_lifecycle._audits.clear()
+            interaction_lifecycle._retry_commands.clear()
+            interaction_lifecycle._context_bindings.clear()
+            interaction_lifecycle._context_binding_latest.clear()
+    if hasattr(workshop_store, "_sessions"):
+        workshop_store._sessions.clear()
+        workshop_store._events.clear()
+        workshop_store._cards.clear()
 
 
 @pytest.fixture
 def bff_client():
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def _submit_interaction(client, *, tenant_id="pantheon-dev", user_id="interaction-user", personas=("risk-analyst",), key=None):
@@ -180,9 +254,9 @@ def test_admission_returns_before_provider_completion(bff_client, monkeypatch):
 
     # Worker now processes the queued interaction
     worker = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory,
         worker_id="test-worker-1",
     )
@@ -216,9 +290,9 @@ def test_durable_lease_recovery_prevents_duplicate_invocation(bff_client):
     interaction_id = submit_resp.json()["data"]["interaction_id"]
 
     worker_1 = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory_crashed,
         worker_id="crashed-worker-1",
         lease_duration_seconds=1,
@@ -227,7 +301,7 @@ def test_durable_lease_recovery_prevents_duplicate_invocation(bff_client):
         worker_1.run_once(limit=1)
 
     # Expire worker 1 lease
-    store = bff_main.interaction_lifecycle
+    store = interaction_lifecycle
     if store.backend == "memory":
         with store._lock:
             store._requests[interaction_id]["lease_until"] = "2020-01-01T00:00:00Z"
@@ -242,8 +316,8 @@ def test_durable_lease_recovery_prevents_duplicate_invocation(bff_client):
 
     recovery_worker = AgoraInteractionWorker(
         lifecycle_store=store,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory_recovery,
         worker_id="recovery-worker-2",
     )
@@ -255,7 +329,7 @@ def test_durable_lease_recovery_prevents_duplicate_invocation(bff_client):
     assert "macro-quant" in called_personas
     assert "risk-analyst" not in called_personas
 
-    detail = bff_main.interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail["status"] == "completed"
     assert len(detail["opinions"]) == 2
 
@@ -290,9 +364,9 @@ def test_tenant_isolation_covers_every_interaction_route(bff_client, monkeypatch
 
     # Scoped worker for foreign tenant does not claim Tenant A interaction
     foreign_worker = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory,
         worker_id="foreign-worker",
     )
@@ -478,16 +552,16 @@ def test_concurrent_pre_expiry_workers_execute_provider_only_once(bff_client):
     interaction_id = submit_resp.json()["data"]["interaction_id"]
 
     worker_1 = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory,
         worker_id="concurrent-worker-1",
     )
     worker_2 = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory,
         worker_id="concurrent-worker-2",
     )
@@ -500,7 +574,7 @@ def test_concurrent_pre_expiry_workers_execute_provider_only_once(bff_client):
     # Exactly ONE provider invocation should have occurred
     assert len(call_log) == 1
 
-    detail = bff_main.interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail["status"] == "completed"
     assert len(detail["opinions"]) == 1
     assert len(detail["provider_invocations"]) == 1
@@ -517,13 +591,13 @@ def test_retry_and_recover_routes_do_not_execute_inline(bff_client):
     interaction_id = submit_resp.json()["data"]["interaction_id"]
 
     worker_fail = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory_fail,
     )
     worker_fail.run_once()
-    detail_fail = bff_main.interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    detail_fail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail_fail["status"] == "failed"
 
     # Retry route
@@ -547,15 +621,15 @@ def test_retry_and_recover_routes_do_not_execute_inline(bff_client):
 
     # Worker now executes retry
     worker_retry = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory_success,
     )
     processed = worker_retry.run_once()
     assert processed >= 1
     assert len(calls) >= 1
-    detail_retry = bff_main.interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    detail_retry = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail_retry["status"] == "completed"
 
 
@@ -571,14 +645,14 @@ def test_degraded_status_on_partial_failure(bff_client):
     interaction_id = submit_resp.json()["data"]["interaction_id"]
 
     worker = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory,
     )
     worker.run_once()
 
-    detail = bff_main.interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail["status"] == "degraded"
     assert "macro-quant" in detail["missing_participant_ids"]
     assert len(detail["opinions"]) == 1
@@ -820,17 +894,17 @@ def test_stale_worker_after_reclaim_preserves_new_owner_work(bff_client):
     interaction_id = submit_resp.json()["data"]["interaction_id"]
 
     worker_A = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory_A,
         worker_id="worker-A-stale",
         lease_duration_seconds=1,
     )
     worker_B = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
         client_factory=client_factory_B,
         worker_id="worker-B-reclaim",
         lease_duration_seconds=300,
@@ -850,7 +924,7 @@ def test_stale_worker_after_reclaim_preserves_new_owner_work(bff_client):
     assert barrier_A_started.wait(timeout=3.0)
 
     # Force Worker A lease to expire in the store
-    store = bff_main.interaction_lifecycle
+    store = interaction_lifecycle
     with store._lock:
         store._requests[interaction_id]["lease_until"] = "2020-01-01T00:00:00Z"
         for inv_row in store._invocations.get(interaction_id, {}).values():

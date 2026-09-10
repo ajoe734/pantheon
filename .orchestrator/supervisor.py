@@ -10435,9 +10435,10 @@ def reconcile_unavailable_assignments(
     )
     agent_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
     load_balance_watch = state.setdefault("load_balance_watch", {})
+    changed = False
     for stale_task_id in [tid for tid in load_balance_watch if tid not in task_map]:
         load_balance_watch.pop(stale_task_id, None)
-    changed = False
+        changed = True
     actions: list[dict[str, Any]] = []
 
     for task in tasks:
@@ -10500,7 +10501,9 @@ def reconcile_unavailable_assignments(
                     fallback_candidates=fallback_candidates,
                 )
                 if saturation_reason is None:
-                    load_balance_watch.pop(task_id, None)
+                    if task_id in load_balance_watch:
+                        load_balance_watch.pop(task_id, None)
+                        changed = True
                 else:
                     watch_entry = load_balance_watch.get(task_id) or {}
                     first_seen_at = _parse_iso_utc(str(watch_entry.get("first_seen_at") or ""))
@@ -10510,6 +10513,7 @@ def reconcile_unavailable_assignments(
                             "first_seen_at": utc_now(),
                             "owner": owner,
                         }
+                        changed = True
                     elif (
                         now_at is not None
                         and (now_at - first_seen_at).total_seconds()
@@ -14203,10 +14207,15 @@ def task_execution_dispatch_candidate(
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
-        and not task_has_current_canonical_integration_receipt(config, task)
+        and is_non_default_repository_finalization_pending(config, task)
     ):
         # Approval and cron integration are separate transactions. Closeout
         # starts only after the canonical integrator records this exact landing.
+        # Consume the same predicate evaluate_task_delivery_admission uses so
+        # planning, runtime reservation, and this freshness/candidate path
+        # cannot disagree about whether a receipt is required (any repository,
+        # Pantheon included, with a live review_binding stays gated until its
+        # exact receipt lands; a row with no PR delivery in flight is unaffected).
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.REVIEW_READY

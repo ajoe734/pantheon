@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.personas import service as personas_service
 
 
 def _frontend_data_source_tone(state: str) -> str:
@@ -56,7 +51,7 @@ def test_all_green_live_overlay_promotes_summary_badge_state(monkeypatch):
         {"provider_key": "finmind", "status": "read_unavailable"},
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "tw-twse-tpex-official-market": _truth("tw-twse-tpex-official-market", rows=1000),
@@ -65,7 +60,7 @@ def test_all_green_live_overlay_promotes_summary_badge_state(monkeypatch):
         },
     )
 
-    out_dss, _, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, _, _ = personas_service._overlay_source_health_truth(dss, sources)
 
     assert out_dss["provider_statuses"] == {
         "shioaji": "read_ok",
@@ -95,7 +90,7 @@ def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
         {"provider_key": "mops", "status": "read_unavailable"},
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "tw-twse-tpex-official-market": _truth("tw-twse-tpex-official-market", rows=1000),
@@ -103,7 +98,7 @@ def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
         },
     )
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = personas_service._overlay_source_health_truth(dss, sources)
 
     assert out_dss["source_health_source"] == "source_ingest"
     assert out_dss["provider_statuses"]["twse"] == "read_ok"
@@ -133,9 +128,9 @@ def test_missing_source_ingest_health_does_not_fake_green(monkeypatch):
             "secret_ref": "env://POLYGON_API_KEY",
         },
     ]
-    monkeypatch.setattr(bff_main, "_source_ingest_truth_by_connector", lambda: {})
+    monkeypatch.setattr(personas_service, "_source_ingest_truth_by_connector", lambda: {})
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = personas_service._overlay_source_health_truth(dss, sources)
 
     by_provider = {source["provider_key"]: source for source in out_sources}
     assert out_dss["source_health_source"] == "static_metadata"
@@ -176,7 +171,7 @@ def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavaila
         },
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "us-stooq-daily-ohlcv": _truth("us-stooq-daily-ohlcv", rows=2),
@@ -188,7 +183,7 @@ def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavaila
         },
     )
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = personas_service._overlay_source_health_truth(dss, sources)
 
     assert out_dss["provider_statuses"]["stooq"] == "read_ok"
     assert out_dss["provider_statuses"]["sec_edgar"] == "read_ok"
@@ -206,12 +201,12 @@ def test_crypto_coingecko_flips_from_source_ingest_health(monkeypatch):
     dss = {"state": "datasource_smoke_ok", "provider_statuses": {"coingecko": "read_unavailable"}}
     sources = [{"provider_key": "coingecko", "status": "read_unavailable"}]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {"crypto-coingecko-spot": _truth("crypto-coingecko-spot", rows=100)},
     )
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = personas_service._overlay_source_health_truth(dss, sources)
 
     assert out_dss["source_health_source"] == "source_ingest"
     assert out_dss["provider_statuses"]["coingecko"] == "read_ok"

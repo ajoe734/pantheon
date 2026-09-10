@@ -4468,6 +4468,77 @@ def _catalog_assignment_revision_allows_guard_change(
     return True
 
 
+def validate_reassignment_runtime_admission(task_id: str) -> None:
+    """Require settled dispatch authority in the caller's admission transaction.
+
+    Governed callers hold runtime(shared) -> task(exclusive) through commit.
+    Read the raw source: projections can prune workers or normalize malformed
+    launch records away. Never acquire a runtime lock under the task lock.
+    """
+    def reject(reason: str) -> None:
+        raise SystemExit(
+            f"Cannot reassign task {task_id}: {reason}; "
+            "wait for normal supervisor settlement"
+        )
+
+    try:
+        runtime = json.loads(read_regular_file_bytes(
+            _resolve_runtime_source_leaf(load_config(), "state_file"),
+            source="reassignment runtime admission",
+        ))
+    except (OSError, ValueError) as exc:
+        reject(f"runtime admission snapshot unavailable: {exc}")
+    if not isinstance(runtime, Mapping) or runtime.get("version") != 2:
+        reject("runtime admission snapshot is not V2")
+
+    def records(value: Any, label: str):
+        if not isinstance(value, Mapping):
+            reject(f"runtime {label} is malformed")
+        for record in value.values():
+            if not isinstance(record, Mapping):
+                reject(f"runtime {label} record is malformed")
+            yield record
+
+    def affects_task(record: Mapping[str, Any]) -> bool:
+        # Unattributable records cannot prove that this task is unleased.
+        return not record.get("task_id") or record.get("task_id") == task_id
+
+    # Expired timestamps or missing PIDs do not settle a lease; recovery owns
+    # that decision. Retained older generations must settle normally as well.
+    for worker in records(runtime.get("workers"), "workers"):
+        if worker.get("status") not in {"completed", "failed", "superseded"} and affects_task(worker):
+            reject("active worker lease")
+    queue = runtime.get("queue")
+    if not isinstance(queue, Mapping):
+        reject("runtime queue is malformed")
+    for event in records(queue.get("events"), "queue.events"):
+        if event.get("status") in {"completed", "failed"}:
+            continue
+        intent = event.get("intent")
+        if not isinstance(intent, Mapping):
+            reject("runtime queue intent is malformed")
+        if affects_task(intent) or event.get("task_id") == task_id:
+            reject("queued or launching dispatch intent")
+    supervisor = runtime.get("supervisor", {})
+    if not isinstance(supervisor, Mapping):
+        reject("runtime supervisor is malformed")
+    for reservation in records(supervisor.get("runtime_phase_reservations", {}), "phase reservations"):
+        for key in ("launch_intent", "launch_receipt"):
+            if key not in reservation:
+                continue
+            launch = reservation[key]
+            if not isinstance(launch, Mapping):
+                reject(f"runtime {key} is malformed")
+            if key == "launch_receipt":
+                launch = launch.get("worker")
+                if not isinstance(launch, Mapping):
+                    reject("runtime launch_receipt worker is malformed")
+            # Even a terminal detached worker has not settled until its
+            # reservation receipt is committed by the supervisor.
+            if affects_task(launch):
+                reject(f"unsettled {key}")
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
@@ -4777,6 +4848,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             raise SystemExit(
                 f"Task {task_id} assignment transition rejected: {exc}"
             ) from exc
+        validate_reassignment_runtime_admission(task_id)
         old_generation = task_assignment_generation(task)
         task["owner"] = assignment.new_owner
         task["reviewer"] = assignment.new_reviewer

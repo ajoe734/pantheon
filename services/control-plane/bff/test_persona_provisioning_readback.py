@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.personas import service as personas_service
 from services.control_plane.bff.personas.reconciliation import (
     PersonaProvisioningReconciliationMutationPort,
 )
@@ -295,19 +295,21 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     projection = _deployment_projection()
     runtime_client = _RuntimeClient()
 
-    monkeypatch.setattr(bff_main, "read_store", read_store)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda *_: read_store)
+    monkeypatch.setattr(personas_service, "persona_write_owner", mutation_port, raising=False)
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "persona_reconciliation_mutation_port",
         PersonaProvisioningReconciliationMutationPort(
             persona_mutation_port=mutation_port,
         ),
+        raising=False,
     )
-    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", provisioning_store)
-    monkeypatch.setattr(bff_main, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
-    monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: runtime_client)
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", provisioning_store)
+    monkeypatch.setattr(personas_service, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
+    monkeypatch.setattr(personas_service, "_runtime_manager_client", lambda: runtime_client)
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_register_persona_cron_required",
         lambda persona_id, capital_pool_id, persona_capital_binding_id, **kwargs: {
             "authoritative_readback": _schedule_readback(
@@ -320,12 +322,12 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
         },
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_remove_persona_cron_required",
         lambda persona_id: {"persona_id": persona_id, "registered": False, "removed_ids": []},
     )
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_reconcile_persona_provisioning_compensation",
         lambda _metadata: {"status": "completed"},
     )
@@ -410,9 +412,9 @@ def test_required_cron_registration_polls_until_authoritative_readback(
         "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_POLL_SECONDS",
         "0.1",
     )
-    monkeypatch.setattr(bff_main.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(personas_service.time, "sleep", lambda seconds: sleeps.append(seconds))
 
-    receipt = bff_main._register_persona_cron_required(
+    receipt = personas_service._register_persona_cron_required(
         PERSONA_ID,
         "pool-dynamic-alpha",
         PERSONA_CAPITAL_BINDING_ID,
@@ -456,7 +458,7 @@ def test_required_cron_registration_remains_fail_closed_after_bounded_readback(
     )
 
     with pytest.raises(RuntimeError, match="after 1 attempts"):
-        bff_main._register_persona_cron_required(
+        personas_service._register_persona_cron_required(
             PERSONA_ID,
             "pool-dynamic-alpha",
             PERSONA_CAPITAL_BINDING_ID,
@@ -472,7 +474,7 @@ def _evaluate(
     cron_registrations: set[tuple[str, str]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     persona = raw if raw is not None else _raw_persona()
-    state = bff_main._evaluate_persona_provisioning_status(
+    state = personas_service._evaluate_persona_provisioning_status(
         PERSONA_ID,
         persona,
         all_bindings=bindings,
@@ -766,7 +768,7 @@ def test_deployment_degraded_cannot_reuse_local_ids_as_success(
     def unavailable(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("deployment unavailable")
 
-    monkeypatch.setattr(bff_main, "_get_json", unavailable)
+    monkeypatch.setattr(personas_service, "_get_json", unavailable)
 
     state, _ = _evaluate(
         bindings={RUNTIME_BINDING_ID: _runtime_binding()},
@@ -783,7 +785,7 @@ def test_runtime_manager_degraded_does_not_raise_or_fake_success(
 ) -> None:
     harness.projection.pop("runtime_binding", None)
     degraded_client = _RuntimeClient(error=RuntimeError("runtime manager unavailable"))
-    monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: degraded_client)
+    monkeypatch.setattr(personas_service, "_runtime_manager_client", lambda: degraded_client)
 
     state, _ = _evaluate(
         bindings=None,
@@ -800,7 +802,7 @@ def test_cron_degraded_does_not_raise_or_fake_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_register_persona_cron_required",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("cron authority unavailable")
@@ -852,7 +854,7 @@ def test_runtime_identity_is_forwarded_to_exact_schedule_reconciliation(
             }
         }
 
-    monkeypatch.setattr(bff_main, "_register_persona_cron_required", reconcile)
+    monkeypatch.setattr(personas_service, "_register_persona_cron_required", reconcile)
 
     state, _ = _evaluate(
         bindings={RUNTIME_BINDING_ID: _runtime_binding()},
@@ -1133,7 +1135,7 @@ def test_terminal_failure_ledger_materializes_before_owner_readback(
         "terminal_reason": "dispatch_owner_failed"
     }
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_get_json",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("terminal replay must precede Deployment readback")
@@ -1152,14 +1154,14 @@ def test_cleanup_outage_does_not_erase_new_terminal_failure(
 ) -> None:
     harness.projection["deployment_saga_status"] = "failed"
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_remove_persona_cron_required",
         lambda _persona_id: (_ for _ in ()).throw(RuntimeError("cron unavailable")),
     )
     diagnostics: list[str] = []
     raw = _raw_persona()
 
-    state = bff_main._evaluate_persona_provisioning_status(
+    state = personas_service._evaluate_persona_provisioning_status(
         PERSONA_ID,
         raw,
         all_bindings={RUNTIME_BINDING_ID: _runtime_binding()},

@@ -22,6 +22,7 @@ Test Scenarios (SD D3):
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import hashlib
 import http.server
 import json
@@ -57,11 +58,13 @@ PINNED_LEASE_CONTROLLER_SHA = "9e564718da8c39199a4c311f1a667b74226e3428"
 FAKE_ADJACENT_CLI = r"""#!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -90,21 +93,64 @@ def record_audit(lease_id: str, action: str, status: str, details: dict | None =
     if not audit_file:
         return
     p = Path(audit_file)
-    data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"events": [], "leases": {}}
-    event = {
-        "timestamp": time.time(),
-        "lease_id": lease_id,
-        "action": action,
-        "status": status,
-        "details": details or {},
-    }
-    data["events"].append(event)
-    lease_info = data["leases"].setdefault(lease_id, {})
-    lease_info["status"] = status
-    lease_info["last_action"] = action
-    if details:
-        lease_info.update(details)
-    p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    lock_path = p.with_name(p.name + ".lock")
+    barrier_dir_str = os.environ.get("FAKE_AUDIT_BARRIER_DIR")
+    barrier_dir = Path(barrier_dir_str) if barrier_dir_str else None
+    role = os.environ.get("FAKE_AUDIT_ROLE", "primary")
+
+    if barrier_dir and role:
+        (barrier_dir / f"{role}_entered").write_text("1\n", encoding="utf-8")
+
+    with open(lock_path, "a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if barrier_dir and role:
+                (barrier_dir / f"{role}_locked").write_text("1\n", encoding="utf-8")
+                wait_file = barrier_dir / f"{role}_wait_for"
+                if wait_file.exists():
+                    expected_signal = wait_file.read_text(encoding="utf-8").strip()
+                    deadline = time.monotonic() + 5.0
+                    while not (barrier_dir / expected_signal).exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+
+            if p.exists() and p.stat().st_size > 0:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            else:
+                data = {"events": [], "leases": {}}
+            event = {
+                "timestamp": time.time(),
+                "lease_id": lease_id,
+                "action": action,
+                "status": status,
+                "details": details or {},
+            }
+            data["events"].append(event)
+            lease_info = data["leases"].setdefault(lease_id, {})
+            lease_info["status"] = status
+            lease_info["last_action"] = action
+            if details:
+                lease_info.update(details)
+
+            tmp = tempfile.NamedTemporaryFile("w", dir=p.parent, prefix=f"{p.name}.", suffix=".tmp", delete=False, encoding="utf-8")
+            try:
+                tmp.write(json.dumps(data, indent=2) + "\n")
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp.close()
+                os.replace(tmp.name, p)
+            except Exception:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                raise
+
+            if barrier_dir and role:
+                (barrier_dir / f"{role}_written").write_text("1\n", encoding="utf-8")
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if barrier_dir and role:
+                (barrier_dir / f"{role}_released").write_text("1\n", encoding="utf-8")
 
 
 command = sys.argv[1]
@@ -258,6 +304,14 @@ if command == "release":
     print('{"status":"released"}')
     raise SystemExit(0)
 
+if command == "audit-transition":
+    lease_id = option("--lease-id")
+    action = option("--action")
+    status = option("--status")
+    record_audit(lease_id, action, status)
+    print('{"status":"recorded"}')
+    raise SystemExit(0)
+
 raise SystemExit(f"unsupported fake CLI command: {command}")
 """
 
@@ -403,9 +457,32 @@ def assert_processes_terminated(pids: list[int], timeout: float = 4.0) -> None:
     assert False, f"processes still have live members: {states}"
 
 
+def write_audit_atomic(p: Path, data: dict) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = p.with_name(p.name + ".lock")
+    with open(lock_path, "a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            tmp = tempfile.NamedTemporaryFile("w", dir=p.parent, prefix=f"{p.name}.", suffix=".tmp", delete=False, encoding="utf-8")
+            try:
+                tmp.write(json.dumps(data, indent=2) + "\n")
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp.close()
+                os.replace(tmp.name, p)
+            except Exception:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def prepare_guard_fixture(root: Path, *, lease_id: str = TEST_LEASE_ID, expired: bool = False) -> dict[str, Path]:
     guard_dir = root / "guard"
-    guard_dir.mkdir(exist_ok=True)
+    guard_dir.mkdir(parents=True, exist_ok=True)
     guard = guard_dir / GUARD_SCRIPT.name
     shutil.copy2(GUARD_SCRIPT, guard)
     guard.chmod(0o755)
@@ -415,7 +492,7 @@ def prepare_guard_fixture(root: Path, *, lease_id: str = TEST_LEASE_ID, expired:
     adjacent_cli.chmod(0o755)
 
     audit_file = root / "lease_authority_audit.json"
-    audit_file.write_text(json.dumps({"events": [], "leases": {}}) + "\n", encoding="utf-8")
+    write_audit_atomic(audit_file, {"events": [], "leases": {}})
 
     paths = {
         "guard": guard,
@@ -767,6 +844,25 @@ class MockRollbackHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
 
+FIXTURE_GIT_CONFIG = (
+    "maintenance.auto=false",
+    "maintenance.autoDetach=false",
+    "gc.auto=0",
+)
+FIXTURE_GIT = ["git", *(arg for setting in FIXTURE_GIT_CONFIG for arg in ("-c", setting))]
+
+
+def configure_fixture_git(repository: Path) -> None:
+    # Later compensator subprocesses invoke Git directly. Keep their automatic
+    # maintenance disabled too, so no detached writer outlives fixture teardown.
+    for setting in FIXTURE_GIT_CONFIG:
+        key, value = setting.split("=", 1)
+        subprocess.run(
+            [*FIXTURE_GIT, "-C", str(repository), "config", "--local", key, value],
+            check=True,
+        )
+
+
 def setup_compensation_fixture(
     tmp: Path,
     *,
@@ -781,16 +877,18 @@ def setup_compensation_fixture(
     tmp.mkdir(parents=True, mode=0o700, exist_ok=True)
     tmp.chmod(0o700)
     lease_ctrl = tmp / "lease-controller"
-    subprocess.run(["git", "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
+    # Command-scoped settings protect clone/init before local config exists.
+    subprocess.run([*FIXTURE_GIT, "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
+    configure_fixture_git(lease_ctrl)
     # A shallow source checkout may contain the pinned commit only in
     # FETCH_HEAD. Local clone does not necessarily carry that unadvertised
     # object; explicitly fetch from the local source, never from the network.
-    present = subprocess.run(["git", "-C", str(lease_ctrl), "cat-file", "-e", f"{PINNED_LEASE_CONTROLLER_SHA}^{{commit}}"], capture_output=True)
+    present = subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "cat-file", "-e", f"{PINNED_LEASE_CONTROLLER_SHA}^{{commit}}"], capture_output=True)
     if present.returncode:
-        subprocess.run(["git", "-C", str(lease_ctrl), "fetch", "--no-tags", "--depth=1", str(REPO_ROOT), PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "init"], check=True)
-    subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
-    subprocess.run(["git", "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "fetch", "--no-tags", "--depth=1", str(REPO_ROOT), PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "sparse-checkout", "init"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # This is an offline test fixture, not hosted rollback evidence.  The
     # production compensator now consumes only an exact sealed baseline plus a
@@ -809,11 +907,12 @@ def setup_compensation_fixture(
         target = release_root / "scripts" / name
         shutil.copyfile(REPO_ROOT / "scripts" / name, target)
         target.chmod(0o644)
-    subprocess.run(["git", "init", "--quiet", str(release_root)], check=True)
-    subprocess.run(["git", "-C", str(release_root), "config", "user.name", "Pantheon fixture"], check=True)
-    subprocess.run(["git", "-C", str(release_root), "config", "user.email", "fixture@example.invalid"], check=True)
-    subprocess.run(["git", "-C", str(release_root), "add", "scripts"], check=True)
-    subprocess.run(["git", "-C", str(release_root), "commit", "--quiet", "-m", "fixture controller"], check=True)
+    subprocess.run([*FIXTURE_GIT, "init", "--quiet", str(release_root)], check=True)
+    configure_fixture_git(release_root)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "config", "user.name", "Pantheon fixture"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "config", "user.email", "fixture@example.invalid"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "add", "scripts"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "commit", "--quiet", "-m", "fixture controller"], check=True)
 
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -822,24 +921,67 @@ def setup_compensation_fixture(
     audit_path_str = str(audit_file) if audit_file else ""
 
     shim_code = f"""#!/usr/bin/python3
-import sys, os, json, signal, time, pathlib
+import sys, os, json, signal, time, pathlib, fcntl, tempfile
 
 is_lease = any("dev_environment_lease.py" in arg for arg in sys.argv)
 if is_lease:
     cmd = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1].endswith(".py") else (sys.argv[1] if len(sys.argv) > 1 else "")
-    audit_file_path = "{audit_path_str}" or os.environ.get("FAKE_LEASE_AUDIT_FILE")
+    audit_file_path = os.environ.get("FAKE_LEASE_AUDIT_FILE") or "{audit_path_str}"
 
     def log_audit(lid, act, stat, extra=None):
         if not audit_file_path: return
         p = pathlib.Path(audit_file_path)
-        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {{"events": [], "leases": {{}}}}
-        ev = {{"timestamp": time.time(), "lease_id": lid, "action": act, "status": stat, "details": extra or {{}}}}
-        d["events"].append(ev)
-        li = d["leases"].setdefault(lid, {{}})
-        li["status"] = stat
-        li["last_action"] = act
-        if extra: li.update(extra)
-        p.write_text(json.dumps(d, indent=2) + "\\n", encoding="utf-8")
+        lock_path = p.with_name(p.name + ".lock")
+        barrier_dir_str = os.environ.get("FAKE_AUDIT_BARRIER_DIR")
+        barrier_dir = pathlib.Path(barrier_dir_str) if barrier_dir_str else None
+        role = os.environ.get("FAKE_AUDIT_ROLE", "compensation")
+
+        if barrier_dir and role:
+            (barrier_dir / f"{{role}}_entered").write_text("1\\n", encoding="utf-8")
+
+        with open(lock_path, "a", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                if barrier_dir and role:
+                    (barrier_dir / f"{{role}}_locked").write_text("1\\n", encoding="utf-8")
+                    wait_file = barrier_dir / f"{{role}}_wait_for"
+                    if wait_file.exists():
+                        expected_signal = wait_file.read_text(encoding="utf-8").strip()
+                        deadline = time.monotonic() + 5.0
+                        while not (barrier_dir / expected_signal).exists() and time.monotonic() < deadline:
+                            time.sleep(0.01)
+
+                if p.exists() and p.stat().st_size > 0:
+                    d = json.loads(p.read_text(encoding="utf-8"))
+                else:
+                    d = {{"events": [], "leases": {{}}}}
+                ev = {{"timestamp": time.time(), "lease_id": lid, "action": act, "status": stat, "details": extra or {{}}}}
+                d["events"].append(ev)
+                li = d["leases"].setdefault(lid, {{}})
+                li["status"] = stat
+                li["last_action"] = act
+                if extra: li.update(extra)
+
+                tmp = tempfile.NamedTemporaryFile("w", dir=p.parent, prefix=f"{{p.name}}.", suffix=".tmp", delete=False, encoding="utf-8")
+                try:
+                    tmp.write(json.dumps(d, indent=2) + "\\n")
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+                    tmp.close()
+                    os.replace(tmp.name, p)
+                except Exception:
+                    try:
+                        os.unlink(tmp.name)
+                    except OSError:
+                        pass
+                    raise
+
+                if barrier_dir and role:
+                    (barrier_dir / f"{{role}}_written").write_text("1\\n", encoding="utf-8")
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                if barrier_dir and role:
+                    (barrier_dir / f"{{role}}_released").write_text("1\\n", encoding="utf-8")
 
     if cmd == "acquire":
         state_idx = sys.argv.index("--state-file")
@@ -916,6 +1058,13 @@ if is_lease:
         log_audit(lid, "release", "released")
         print('{{"status":"released"}}')
         sys.exit(0)
+    elif cmd == "audit-transition":
+        lid = sys.argv[sys.argv.index("--lease-id") + 1]
+        act = sys.argv[sys.argv.index("--action") + 1]
+        stat = sys.argv[sys.argv.index("--status") + 1]
+        log_audit(lid, act, stat)
+        print('{{"status":"recorded"}}')
+        sys.exit(0)
 
 # Forward non-lease invocations to real system python3
 os.execv("/usr/bin/python3", ["python3"] + sys.argv[1:])
@@ -944,7 +1093,7 @@ def install_compensation_artifact_fixture(
     is treated as a substitute for an image/FE artifact here.
     """
     controller_sha = subprocess.run(
-        ["git", "-C", str(release_root), "rev-parse", "HEAD"],
+        [*FIXTURE_GIT, "-C", str(release_root), "rev-parse", "HEAD"],
         check=True,
         capture_output=True,
         text=True,
@@ -2949,6 +3098,290 @@ exit 0
             if heartbeat.poll() is None:
                 heartbeat.kill()
                 heartbeat.wait()
+
+
+def test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression():
+    """SD D3.6 regression: prove atomic lease audit journal under controlled barrier interleaving.
+
+    Exercises the historical overlapping write window between primary lease quarantine
+    and compensation release. Proves that every observed audit file state parses
+    without JSONDecodeError (no zero-byte windows), and both primary quarantined and
+    compensation released records are durably retained in the shared authority audit.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        paths = prepare_guard_fixture(root)
+        primary_lease_id = TEST_LEASE_ID
+        comp_lease_id = "22222222-2222-4222-8222-666666666666"
+
+        _lease_ctrl, _release_root, bin_dir = setup_compensation_fixture(
+            root / "compensation",
+            rollback_bff=TEST_BFF_SHA,
+            rollback_fe=TEST_FE_SHA,
+            audit_file=paths["audit"],
+            compensation_lease_id=comp_lease_id,
+        )
+        shim_py = bin_dir / "python3"
+        cli_py = paths["cli"]
+
+        # -------------------------------------------------------------
+        # Part 1: Controlled barrier interleaving: Primary holds lock,
+        #         Compensation blocks on lock, concurrent reader parses every state.
+        # -------------------------------------------------------------
+        barrier_1 = root / "barrier_1"
+        barrier_1.mkdir()
+        (barrier_1 / "primary_wait_for").write_text("compensation_entered\n", encoding="utf-8")
+
+        observed_states_1: list[dict] = []
+        parse_errors_1: list[Exception] = []
+        stop_reader_1 = threading.Event()
+
+        def continuous_reader_1():
+            while not stop_reader_1.is_set():
+                try:
+                    if paths["audit"].exists():
+                        raw = paths["audit"].read_text(encoding="utf-8")
+                        if raw.strip():
+                            parsed = json.loads(raw)
+                            observed_states_1.append(parsed)
+                except Exception as exc:
+                    parse_errors_1.append(exc)
+                time.sleep(0.001)
+
+        reader_t1 = threading.Thread(target=continuous_reader_1, daemon=True)
+        reader_t1.start()
+
+        env_primary = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_1),
+            "FAKE_AUDIT_ROLE": "primary",
+        }
+        proc_primary = subprocess.Popen(
+            [
+                sys.executable,
+                str(cli_py),
+                "audit-transition",
+                "--lease-id",
+                primary_lease_id,
+                "--action",
+                "heartbeat_term",
+                "--status",
+                "quarantined",
+            ],
+            env=env_primary,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        # Wait until Primary holds lock
+        deadline = time.monotonic() + 5.0
+        while not (barrier_1 / "primary_locked").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (barrier_1 / "primary_locked").exists(), "primary failed to acquire lock"
+
+        # Now start Compensation writer (which will enter and block on lock)
+        env_comp = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_1),
+            "FAKE_AUDIT_ROLE": "compensation",
+        }
+        proc_comp = subprocess.Popen(
+            [
+                str(shim_py),
+                "dev_environment_lease.py",
+                "audit-transition",
+                "--lease-id",
+                comp_lease_id,
+                "--action",
+                "release",
+                "--status",
+                "released",
+            ],
+            env=env_comp,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        out_primary, err_primary = proc_primary.communicate(timeout=10)
+        assert proc_primary.returncode == 0, f"primary audit-transition failed: {err_primary}"
+
+        out_comp, err_comp = proc_comp.communicate(timeout=10)
+        assert proc_comp.returncode == 0, f"compensation audit-transition failed: {err_comp}"
+
+        stop_reader_1.set()
+        reader_t1.join(timeout=2.0)
+
+        assert not parse_errors_1, f"parse errors during overlapping writes: {parse_errors_1}"
+        assert len(observed_states_1) > 0, "reader observed no states"
+
+        final_audit_1 = json.loads(paths["audit"].read_text(encoding="utf-8"))
+        assert final_audit_1["leases"][primary_lease_id]["status"] == "quarantined"
+        assert final_audit_1["leases"][comp_lease_id]["status"] == "released"
+
+        # -------------------------------------------------------------
+        # Part 2: Controlled barrier interleaving: Compensation holds lock,
+        #         Primary blocks on lock, concurrent reader parses every state.
+        # -------------------------------------------------------------
+        barrier_2 = root / "barrier_2"
+        barrier_2.mkdir()
+        (barrier_2 / "compensation_wait_for").write_text("primary_entered\n", encoding="utf-8")
+
+        observed_states_2: list[dict] = []
+        parse_errors_2: list[Exception] = []
+        stop_reader_2 = threading.Event()
+
+        def continuous_reader_2():
+            while not stop_reader_2.is_set():
+                try:
+                    if paths["audit"].exists():
+                        raw = paths["audit"].read_text(encoding="utf-8")
+                        if raw.strip():
+                            parsed = json.loads(raw)
+                            observed_states_2.append(parsed)
+                except Exception as exc:
+                    parse_errors_2.append(exc)
+                time.sleep(0.001)
+
+        reader_t2 = threading.Thread(target=continuous_reader_2, daemon=True)
+        reader_t2.start()
+
+        env_comp_2 = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_2),
+            "FAKE_AUDIT_ROLE": "compensation",
+        }
+        proc_comp_2 = subprocess.Popen(
+            [
+                str(shim_py),
+                "dev_environment_lease.py",
+                "audit-transition",
+                "--lease-id",
+                comp_lease_id,
+                "--action",
+                "release",
+                "--status",
+                "released",
+            ],
+            env=env_comp_2,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        deadline = time.monotonic() + 5.0
+        while not (barrier_2 / "compensation_locked").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (barrier_2 / "compensation_locked").exists(), "compensation failed to acquire lock"
+
+        env_primary_2 = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_2),
+            "FAKE_AUDIT_ROLE": "primary",
+        }
+        proc_primary_2 = subprocess.Popen(
+            [
+                sys.executable,
+                str(cli_py),
+                "audit-transition",
+                "--lease-id",
+                primary_lease_id,
+                "--action",
+                "heartbeat_term",
+                "--status",
+                "quarantined",
+            ],
+            env=env_primary_2,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        out_comp_2, err_comp_2 = proc_comp_2.communicate(timeout=10)
+        assert proc_comp_2.returncode == 0, f"compensation audit-transition failed: {err_comp_2}"
+
+        out_primary_2, err_primary_2 = proc_primary_2.communicate(timeout=10)
+        assert proc_primary_2.returncode == 0, f"primary audit-transition failed: {err_primary_2}"
+
+        stop_reader_2.set()
+        reader_t2.join(timeout=2.0)
+
+        assert not parse_errors_2, f"parse errors during overlapping writes: {parse_errors_2}"
+        assert len(observed_states_2) > 0, "reader observed no states"
+
+        final_audit_2 = json.loads(paths["audit"].read_text(encoding="utf-8"))
+        assert final_audit_2["leases"][primary_lease_id]["status"] == "quarantined"
+        assert final_audit_2["leases"][comp_lease_id]["status"] == "released"
+
+        # -------------------------------------------------------------
+        # Part 3: Real heartbeat SIGTERM quarantine concurrently with compensation release
+        # -------------------------------------------------------------
+        hb_paths = prepare_guard_fixture(root / "hb_fixture")
+        hb_heartbeat = start_fake_heartbeat(hb_paths)
+        hb_comp_lease = "33333333-3333-4333-8333-333333333333"
+
+        parse_errors_3: list[Exception] = []
+        stop_reader_3 = threading.Event()
+
+        def continuous_reader_3():
+            while not stop_reader_3.is_set():
+                try:
+                    if hb_paths["audit"].exists():
+                        raw = hb_paths["audit"].read_text(encoding="utf-8")
+                        if raw.strip():
+                            json.loads(raw)
+                except Exception as exc:
+                    parse_errors_3.append(exc)
+                time.sleep(0.001)
+
+        reader_t3 = threading.Thread(target=continuous_reader_3, daemon=True)
+        reader_t3.start()
+
+        try:
+            # Concurrently signal SIGTERM to heartbeat and run compensation release
+            env_hb_comp = {
+                **os.environ,
+                "FAKE_LEASE_AUDIT_FILE": str(hb_paths["audit"]),
+            }
+            comp_subproc = subprocess.Popen(
+                [
+                    str(shim_py),
+                    "dev_environment_lease.py",
+                    "audit-transition",
+                    "--lease-id",
+                    hb_comp_lease,
+                    "--action",
+                    "release",
+                    "--status",
+                    "released",
+                ],
+                env=env_hb_comp,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            os.kill(hb_heartbeat.pid, signal.SIGTERM)
+            hb_heartbeat.wait(timeout=5)
+
+            comp_out, comp_err = comp_subproc.communicate(timeout=5)
+            assert comp_subproc.returncode == 0, f"comp failed: {comp_err}"
+        finally:
+            stop_reader_3.set()
+            reader_t3.join(timeout=2.0)
+            if hb_heartbeat.poll() is None:
+                hb_heartbeat.kill()
+                hb_heartbeat.wait()
+
+        assert not parse_errors_3, f"parse errors during heartbeat term race: {parse_errors_3}"
+        hb_audit = json.loads(hb_paths["audit"].read_text(encoding="utf-8"))
+        assert hb_audit["leases"][TEST_LEASE_ID]["status"] == "quarantined"
+        assert hb_audit["leases"][hb_comp_lease]["status"] == "released"
 
 
 # ==============================================================================

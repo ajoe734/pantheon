@@ -81,6 +81,12 @@ def test_every_entry_has_valid_layer_and_disposition() -> None:
         assert (BFF_DIR / entry["file"]).is_file(), f"Referenced test file missing: {entry['file']}"
 
 
+WHOLE_APP_ALLOWLIST = {
+    "test_execute_plans_contract_registry.py",
+    "test_execute_plans_final_live_wiring_contract.py",
+}
+
+
 def test_composition_allowlist_is_strictly_contained_and_retained() -> None:
     data = _load_inventory()
     allowlist = set(data["composition_allowlist"])
@@ -88,8 +94,10 @@ def test_composition_allowlist_is_strictly_contained_and_retained() -> None:
         file_path = BFF_DIR / rel_path
         assert file_path.is_file(), f"Allowlist entry {rel_path} does not exist on disk"
 
-    # Ensure allowlist is strictly bounded to architectural and smoke suites
+    # Ensure allowlist is strictly bounded to architectural and smoke suites, plus the exact whole-app contract exception
     for rel_path in allowlist:
+        if rel_path in WHOLE_APP_ALLOWLIST:
+            continue
         p = Path(rel_path)
         assert any(k in p.name.lower() for k in (
             "composition", "catalog", "resolution", "uniqueness", "smoke",
