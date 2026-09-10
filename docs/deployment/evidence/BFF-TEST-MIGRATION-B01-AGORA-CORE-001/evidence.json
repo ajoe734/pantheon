@@ -6,8 +6,8 @@
   "owner": "Antigravity",
   "reviewer": "Codex",
   "delivery_state": "ready_for_review",
-  "base_ref": "origin/dev@63f85bfddc4d4100bb806ad5b8532760808dadb9",
-  "base_sha": "63f85bfddc4d4100bb806ad5b8532760808dadb9",
+  "base_ref": "origin/dev@9ae18779902ae940e335fe80c7017889799db155",
+  "base_sha": "9ae18779902ae940e335fe80c7017889799db155",
   "reviewed_head_sha": "92c13bc9145008674126d838d7fdf0b48630f2b6",
   "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
   "delivery_nature": {
