@@ -3703,6 +3703,10 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertIsNone(ai_status.get_task(state, "BATCH-CONFLICT-ALIASES"))
 
     def test_human_ops_reassignment_is_not_blocked_by_retired_wave_state(self) -> None:
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
         state = {
             "agents": [
                 {"name": "Codex", "current_task_ids": ["WAVE-RETIRED-ONE"]},
