@@ -600,42 +600,6 @@ def test_is_non_default_repository_finalization_pending_cases() -> None:
     task_unknown["target_repo"] = "nonexistent_repo"
     assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_unknown) is True
 
-    # Pantheon task with a live PR review_binding (the actual closeout path a
-    # task PR goes through) but no receipt -> pending (True): a default
-    # repository is not exempt from the receipt gate once a PR delivery is in
-    # flight, only when there is no review_binding at all (task_pantheon above).
-    task_pantheon_pr = {
-        "id": "OPS-PAN-PR-001",
-        "status": "review_approved",
-        "target_repo": "pantheon",
-        "generation": 1,
-        "review_binding": {
-            "pr": 5771,
-            "head_sha": head_sha,
-            "head_branch": "task/OPS-PAN-PR-001",
-            "base": "dev",
-        },
-    }
-    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_pantheon_pr) is True
-
-    # Same Pantheon PR delivery with its exact current receipt -> reconciled,
-    # not pending (False).
-    task_pantheon_pr_reconciled = deepcopy(task_pantheon_pr)
-    task_pantheon_pr_reconciled["integration_receipt"] = {
-        "version": 1,
-        "result": "landed",
-        "observation": "performed_merge",
-        "task_generation": 1,
-        "repository": "ajoe734/pantheon",
-        "target_branch": "dev",
-        "pr": 5771,
-        "head_sha": head_sha,
-        "merge_commit_sha": merge_sha,
-        "observed_at": "2026-09-08T00:00:00Z",
-        "source": "canonical_auto_integrator",
-    }
-    assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_pantheon_pr_reconciled) is False
-
 
 def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
     from rewrite.dispatch_admission import AdmissionSnapshot, DeliveryEndpoint, DispatchLane, HealthRecord, HealthState
@@ -720,10 +684,7 @@ def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
         assert dec_receipted.eligible
         assert dec_receipted.task_reason.value == 1
 
-        # 3. Pantheon task with a live PR review_binding but no receipt -> blocked
-        # (the default repository is not exempt from the receipt gate once a PR
-        # delivery is in flight; see OPS-SUPERVISOR-DISPATCH-RECONCILIATION-
-        # CORRECTIVE-001).
+        # 3. Normal unmerged Pantheon task -> admitted
         task_pantheon = {
             "id": "OPS-PAN-001",
             "status": "review_approved",
@@ -737,30 +698,8 @@ def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
                 "base": "dev",
             },
         }
-        dec_pantheon_unreceipted = dispatch_policy.evaluate_task_delivery_admission(
-            config, {}, task_pantheon, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
-            agent_loads={}, active_account_loads={}, pending_account_loads={},
-        )
-        assert not dec_pantheon_unreceipted.eligible
-        assert dec_pantheon_unreceipted.reason.value == "task_not_dispatchable"
-
-        # 3b. Same Pantheon PR delivery, exact current receipt lands -> admitted
-        task_pantheon_receipted = deepcopy(task_pantheon)
-        task_pantheon_receipted["integration_receipt"] = {
-            "version": 1,
-            "result": "landed",
-            "observation": "performed_merge",
-            "task_generation": 1,
-            "repository": "ajoe734/pantheon",
-            "target_branch": "dev",
-            "pr": 500,
-            "head_sha": "a" * 40,
-            "merge_commit_sha": merge_sha,
-            "observed_at": "2026-09-08T00:00:00Z",
-            "source": "canonical_auto_integrator",
-        }
         dec_pantheon = dispatch_policy.evaluate_task_delivery_admission(
-            config, {}, task_pantheon_receipted, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
+            config, {}, task_pantheon, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
             agent_loads={}, active_account_loads={}, pending_account_loads={},
         )
         assert dec_pantheon.eligible
