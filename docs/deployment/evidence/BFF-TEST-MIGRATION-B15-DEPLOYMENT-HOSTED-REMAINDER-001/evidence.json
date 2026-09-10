@@ -2,10 +2,12 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
   "base_sha": "6f00d0eb38e57946fe784de493df4606a55169b3",
-  "head_sha": "PENDING_COMMIT",
+  "tested_source_head_sha": "d9ab71c01b910a591db6ac0cf7f30f2c18b550ea",
+  "head_sha": "PENDING_HANDOFF_BINDING",
+  "head_sha_note": "tested_source_head_sha names the exact commit this evidence's verification and scans were executed against (d9ab71c01b910a591db6ac0cf7f30f2c18b550ea, current branch tip at evidence-correction time). head_sha remains a placeholder pending the fresh canonical owner handoff, which binds the final delivery PR/head after this evidence-correction commit lands; it must be set to that fresh exact head at handoff time and must never be set to this manifest's own commit (a self-referential SHA cannot be captured inside the commit it describes).",
   "branch": "task/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
-  "owner": "Claude2",
-  "reviewer": "Codex",
+  "owner": "Claude",
+  "reviewer": "Claude2",
   "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
   "delivery_state": "ready_for_review",
   "depends_on": [
@@ -52,22 +54,22 @@
     {
       "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python python3 scripts/dev/provision_python_distribution.py",
       "exit_code": 0,
-      "result": "provisioned .venv-pantheon interpreter"
+      "result": "provisioned .venv-pantheon interpreter at $TASK_WORKTREE/.venv-pantheon"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_pkt007_deployment_diff_contract.py services/control-plane/bff/test_ptj_004_trade_journal.py services/control-plane/bff/test_srclive_overlay_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_pkt007_deployment_diff_contract.py services/control-plane/bff/test_ptj_004_trade_journal.py services/control-plane/bff/test_srclive_overlay_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "52 passed, 1 warning in 17.66s"
+      "result": "60 passed, 1 warning in 18.04s (re-run at tested_source_head_sha d9ab71c01b910a591db6ac0cf7f30f2c18b550ea; combines the four migrated suites plus the retained architecture gate suite in one bounded invocation)"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "command": "python3 <<'PY'\nimport ast,json\nF=[\"services/control-plane/bff/test_pkt007_deployment_diff_contract.py\",\"services/control-plane/bff/test_ptj_004_trade_journal.py\",\"services/control-plane/bff/test_srclive_overlay_contract.py\",\"services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py\"]\nr={}\nfor p in F:\n    t=ast.parse(open(p).read(),filename=p)\n    mi=[];sp=[];dyn=[];sub=[]\n    for n in ast.walk(t):\n        if isinstance(n,ast.Import):\n            for a in n.names:\n                if a.name.split(\".\")[0]==\"main\": mi.append(n.lineno)\n                if a.name.split(\".\")[0] in(\"importlib\",): dyn.append(n.lineno)\n                if a.name.split(\".\")[0] in(\"subprocess\",): sub.append(n.lineno)\n        if isinstance(n,ast.ImportFrom):\n            m=(n.module or \"\").split(\".\")[0]\n            if m==\"main\": mi.append(n.lineno)\n            if m==\"importlib\": dyn.append(n.lineno)\n        if isinstance(n,ast.Call):\n            fn=n.func.id if isinstance(n.func,ast.Name) else(n.func.attr if isinstance(n.func,ast.Attribute) else None)\n            if fn==\"__import__\": dyn.append(n.lineno)\n            if fn in(\"run\",\"call\",\"Popen\",\"check_call\",\"check_output\",\"system\",\"popen\") and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id==\"subprocess\": sub.append(n.lineno)\n        if isinstance(n,ast.Attribute) and n.attr in(\"insert\",\"append\",\"remove\") and isinstance(n.value,ast.Attribute) and isinstance(n.value.value,ast.Name) and n.value.value.id==\"sys\" and n.value.attr==\"path\":\n            sp.append(n.lineno)\n    r[p]={\"main_imports\":mi,\"sys_path_mutations\":sp,\"dynamic_imports\":dyn,\"subprocess_calls\":sub}\nprint(json.dumps(r))\nimport sys\nsys.exit(0 if all(not(v[\"main_imports\"] or v[\"sys_path_mutations\"]) for v in r.values()) else 1)\nPY",
       "exit_code": 0,
-      "result": "8 passed in 1.52s"
+      "result": "AST scan of the four changed files for `import main`/`from main import ...`, sys.path.insert/append/remove mutations, dynamic imports (importlib, __import__()), and subprocess module calls (subprocess.run/call/Popen/check_call/check_output/system/popen). Per-file JSON printed by the script (all four files): {\"main_imports\": [], \"sys_path_mutations\": [], \"dynamic_imports\": [], \"subprocess_calls\": []}. Script exits 1 if any file has non-empty main_imports or sys_path_mutations; observed exit 0."
     },
     {
-      "command": "AST static scan of the four changed files for `import main`/`from ... import main`, sys.path.insert mutations, and main.read_store/command_store monkeypatches",
+      "command": ".venv-pantheon/bin/python3 <<'PY'\nimport importlib.util\nimport sys\nimport json\n\nFILES = [\n    (\"test_pkt007_deployment_diff_contract\", \"services/control-plane/bff/test_pkt007_deployment_diff_contract.py\"),\n    (\"test_ptj_004_trade_journal\", \"services/control-plane/bff/test_ptj_004_trade_journal.py\"),\n    (\"test_srclive_overlay_contract\", \"services/control-plane/bff/test_srclive_overlay_contract.py\"),\n    (\"test_tj_e2e_005_trade_journeys_read_api\", \"services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py\"),\n]\n\nresults = {}\noverall_ok = True\nfor modname, path in FILES:\n    before = set(sys.modules.keys())\n    spec = importlib.util.spec_from_file_location(modname, path)\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[modname] = module\n    try:\n        spec.loader.exec_module(module)\n        loaded_ok = True\n        error = None\n    except Exception as exc:\n        loaded_ok = False\n        error = repr(exc)\n    after = set(sys.modules.keys())\n    newly_loaded = after - before\n    main_loaded = \"main\" in newly_loaded or \"main\" in sys.modules and modname not in (\"main\",)\n    # more precise: did this module's load pull in top-level \"main\"\n    main_pulled_in = \"main\" in (after - before)\n    results[path] = {\n        \"loaded_ok\": loaded_ok,\n        \"error\": error,\n        \"main_module_pulled_in\": main_pulled_in,\n    }\n    if not loaded_ok or main_pulled_in:\n        overall_ok = False\n    del sys.modules[modname]\n\nprint(json.dumps(results, indent=2))\nsys.exit(0 if overall_ok else 1)\nPY",
       "exit_code": 0,
-      "result": "0 main imports, 0 sys.path mutations across all four files"
+      "result": "Dynamic-import inventory: loads each of the four changed files as an isolated module via importlib.util.spec_from_file_location/module_from_spec/exec_module, snapshots sys.modules before/after each load, and fails if `main` newly appears in sys.modules or the exec raises. Per-file result (all four files): {\"loaded_ok\": true, \"error\": null, \"main_module_pulled_in\": false}. Script exits 1 if any file fails to load or pulls in top-level `main`; observed exit 0."
     },
     {
       "command": "git diff --check",
@@ -80,8 +82,15 @@
     "reused_commit": "17cd2ebb5c35e2e6ff01054d07fb1727a14bdd53"
   },
   "review": {
-    "owner": "Claude2",
-    "reviewer": "Codex",
+    "owner": "Claude",
+    "reviewer": "Claude2",
     "status": "ready_for_review"
+  },
+  "prior_review_rejection": {
+    "pr": 5772,
+    "rejected_head_sha": "d9ab71c01b910a591db6ac0cf7f30f2c18b550ea",
+    "reason": "evidence.json head_sha recorded PENDING_COMMIT and the AST-scan verification entry was a prose description with no reproducible command or dynamic-import/subprocess inventory results.",
+    "independent_review_findings_preserved": "All 233 assertions preserved; only five allowed files changed; no main.py or foundation/allowlist changes; bounded pytest of four suites plus architecture gate passed 60 tests in 21.33s, exit 0; independent AST scan and dynamic suite loading with main imports forbidden passed, exit 0; three required PR checks passed.",
+    "resolution": "This evidence-correction commit adds tested_source_head_sha with explicit semantics distinct from the fresh canonical delivery head_sha, and replaces the prose AST-scan entry with the exact executable AST scan and dynamic-import/subprocess inventory commands, their terminal exit codes, and per-file results."
   }
 }
