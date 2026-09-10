@@ -1,0 +1,145 @@
+{
+  "task_id": "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+  "recorded_at": "2026-09-10T05:53:56.187507+00:00",
+  "status": "blocked_contract_discrepancy",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "source_head_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "evidence_head_binding": "Evidence-only commit follows source_head_sha; no delivery review binding is claimed.",
+  "branch": "task/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001/evidence.json"
+  ],
+  "source_scope": [
+    {
+      "path": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "bff_main_imports": [
+        {
+          "line": 13,
+          "import": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": []
+    },
+    {
+      "path": "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "bff_main_imports": [
+        {
+          "line": 15,
+          "import": "from services.control_plane.bff import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": []
+    },
+    {
+      "path": "services/control-plane/bff/test_cw03_committee_board_contract.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "bff_main_imports": [
+        {
+          "line": 16,
+          "import": "from services.control_plane.bff import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": []
+    },
+    {
+      "path": "services/control-plane/bff/test_pkt009_governance_audit_contract.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "bff_main_imports": [
+        {
+          "line": 11,
+          "import": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": []
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_evochain_005_governance_writes.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "bff_main_imports": [
+        {
+          "line": 184,
+          "import": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": []
+    }
+  ],
+  "blocker": {
+    "type": "external",
+    "declared_dependency": "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+    "declared_dependency_satisfied": true,
+    "source": "docs/operations/bff-test-migration-repartition.md section 3.2",
+    "discrepancy": "Reviewed plan declares four existing shared fixtures inherited read-only, but all four are absent from the current origin/dev Git tree and task worktree.",
+    "missing_shared_files": [
+      {
+        "path": "services/control-plane/bff/tests/fixtures/__init__.py",
+        "worktree_exists": false,
+        "command": "git cat-file -e e093ac6ccdd3b4c785da8d17154a34449b676a10:services/control-plane/bff/tests/fixtures/__init__.py",
+        "exit_status": 128,
+        "stderr": "fatal: path 'services/control-plane/bff/tests/fixtures/__init__.py' does not exist in 'e093ac6ccdd3b4c785da8d17154a34449b676a10'"
+      },
+      {
+        "path": "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+        "worktree_exists": false,
+        "command": "git cat-file -e e093ac6ccdd3b4c785da8d17154a34449b676a10:services/control-plane/bff/tests/fixtures/governance_fixture.py",
+        "exit_status": 128,
+        "stderr": "fatal: path 'services/control-plane/bff/tests/fixtures/governance_fixture.py' does not exist in 'e093ac6ccdd3b4c785da8d17154a34449b676a10'"
+      },
+      {
+        "path": "services/control-plane/bff/tests/fixtures/research_fixture.py",
+        "worktree_exists": false,
+        "command": "git cat-file -e e093ac6ccdd3b4c785da8d17154a34449b676a10:services/control-plane/bff/tests/fixtures/research_fixture.py",
+        "exit_status": 128,
+        "stderr": "fatal: path 'services/control-plane/bff/tests/fixtures/research_fixture.py' does not exist in 'e093ac6ccdd3b4c785da8d17154a34449b676a10'"
+      },
+      {
+        "path": "services/control-plane/bff/tests/fixtures/training_fixture.py",
+        "worktree_exists": false,
+        "command": "git cat-file -e e093ac6ccdd3b4c785da8d17154a34449b676a10:services/control-plane/bff/tests/fixtures/training_fixture.py",
+        "exit_status": 128,
+        "stderr": "fatal: path 'services/control-plane/bff/tests/fixtures/training_fixture.py' does not exist in 'e093ac6ccdd3b4c785da8d17154a34449b676a10'"
+      }
+    ],
+    "required_action": "Governed partition/contract revision must identify the actual supported fixture seam or deliver missing shared foundation through its authorized owner before redispatch. Child cannot silently create shared files or expand exact-file scope.",
+    "implementation_stopped": true
+  },
+  "verification": {
+    "git_fetch_origin_dev": {
+      "exit_status": 0
+    },
+    "git_rebase_origin_dev": {
+      "exit_status": 0,
+      "result": "Already up to date"
+    },
+    "exact_scope_ast_scan": {
+      "exit_status": 0,
+      "source_file_count": 5,
+      "bff_main_importer_count": 5,
+      "dynamic_import_call_count": 0,
+      "subprocess_call_count": 0,
+      "method": "Python ast.parse / ast.walk on the five exact source paths; inspect Import, ImportFrom and Call nodes. Governance-service main imports are distinct from BFF main."
+    },
+    "focused_tests": {
+      "status": "not_run",
+      "reason": "Stopped at mandatory shared-foundation discrepancy gate before implementation."
+    },
+    "existing_architecture_tests": {
+      "status": "not_run",
+      "reason": "No migration performed; no passing migration claim."
+    }
+  },
+  "delivery": {
+    "review": "not_requested_incomplete_scope",
+    "merge_commit": null,
+    "complete": false
+  }
+}
