@@ -36,6 +36,7 @@ review_approved exact-head task OR active permitted merge_then_review task
      - Failures or pending states on any declared check (`Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`) continue to block merge fail-closed without a REST merge or integration receipt.
      - When `review_gate.github_review_bridge_required` is `true`, `Pantheon canonical review gate` must be declared, and its failure blocks merge unless verified proof tags exist.
      - Contradictory, missing, or malformed review bridge configuration fails closed immediately during discovery, evaluation, and final pre-merge revalidation.
+       Final revalidation reports `contradictory-review-bridge-policy`, a shared repair-producing reason: execute mode publishes a durable unblock request for supervisor materialization after releasing the authority locks. This configuration repair does not use the authority-only `final-review-contract-changed` reason, which intentionally suppresses recursive review repair tasks.
 
 3. **Owner-Finalize Handoff (No Unauthorized `done` Mutation)**:
    - The auto-integrator merges the PR into `dev` without changing canonical

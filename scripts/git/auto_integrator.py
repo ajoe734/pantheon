@@ -1807,7 +1807,7 @@ def revalidate_before_merge(
         )
     except (ValueError, TypeError) as exc:
         raise FinalMergeRevalidationError(
-            "final-review-contract-changed",
+            "contradictory-review-bridge-policy",
             f"PR #{fresh_number} has contradictory or invalid review bridge policy: {exc}",
         )
 

@@ -2801,6 +2801,114 @@ class CheckClassifierTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
 
+    def test_execute_final_invalid_policy_publishes_repair_without_merge(self) -> None:
+        import supervisor
+
+        # Start with valid policy; model invalid policy appearing during smoke,
+        # so the real final revalidation and exception handler must run.
+        for invalid_config in (
+            {},
+            {"review_gate": "malformed"},
+            {"review_gate": {"github_review_bridge_required": False},
+             "branch_workflow": {"task_pr": {"required_status_checks": [
+                 "Commit trailers", "Runtime mirror guard", "Smoke acceptance",
+                 "Pantheon canonical review gate",
+             ]}}},
+        ):
+            with self.subTest(config=invalid_config), tempfile.TemporaryDirectory() as tmp_dir:
+                status_root = Path(tmp_dir) / "status"
+                status_root.mkdir()
+                candidate = auto_integrator.TaskCandidate(
+                    task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                    branch="task/ABC-001",
+                    raw_task={"generation": 7, "delivery_binding": {
+                        "pr": 44, "head_sha": APPROVED_HEAD,
+                    }},
+                )
+                consumer_config = {"paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "activity_log": str(status_root / "ai-activity-log.jsonl"),
+                }}
+                consumer_config["task_state_store"] = {
+                    "mode": "authoritative", "event_log": str(Path(tmp_dir) / "tasks.jsonl"),
+                }
+                source = dict(candidate.raw_task) | {
+                    "id": candidate.task_id, "status": "review_approved",
+                    "owner": "Codex", "reviewer": "Claude", "target_repo": "pantheon",
+                }
+                task_state_store.append_state_commit(
+                    consumer_config["task_state_store"]["event_log"],
+                    {"tasks": [source], "blockers": [], "handoffs": []}, source="test-seed",
+                )
+                config = {
+                    "review_gate": {"github_review_bridge_required": False},
+                    "branch_workflow": {"task_pr": {"required_status_checks": [
+                        "Commit trailers", "Runtime mirror guard", "Smoke acceptance",
+                    ]}},
+                }
+                runner = FakeRunner(pr=green_pr())
+
+                run_smoke = auto_integrator.run_rebase_smoke
+
+                def change_policy(*args, **kwargs):
+                    outcome = run_smoke(*args, **kwargs)
+                    config.clear()
+                    config.update(invalid_config)
+                    return outcome
+
+                with mock.patch.object(
+                    auto_integrator, "run_rebase_smoke", side_effect=change_policy,
+                ) as smoke, mock.patch.object(
+                    auto_integrator, "_record_merge_integration_receipt",
+                ) as receipt:
+                    result = auto_integrator.integrate_candidate(
+                        candidate,
+                        auto_integrator.Settings(
+                            status_identity_sha256=supervisor.canonical_task_state_identity(
+                                consumer_config
+                            )["identity_sha256"],
+                            command_runtime_sha="b" * 40,
+                        ),
+                        runner, status_root=status_root, execute=True,
+                        gate=approved_gate(), config=config,
+                    )
+                smoke.assert_called_once()
+                receipt.assert_not_called()
+                reason = "contradictory-review-bridge-policy"
+                self.assertEqual(result.action, "blocked")
+                self.assertIn("failed final merge revalidation", result.detail)
+                self.assertEqual(result.unblock_task_id,
+                                 auto_integrator.unblock_task_id(candidate, reason))
+                requests = list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+                self.assertEqual(len(requests), 1)
+                request = json.loads(requests[0].read_text())
+                self.assertEqual(request["reason"], reason)
+                self.assertEqual(request["unblock_task_id"], result.unblock_task_id)
+                self.assertEqual(request["source_task_generation"], 7)
+                self.assertEqual(request["head_sha"], APPROVED_HEAD)
+                self.assertEqual(request["pr"], 44)
+                self.assertFalse(any(
+                    command[:4] == ["gh", "api", "--method", "PUT"]
+                    or command[:3] == ["gh", "pr", "merge"]
+                    for command in runner.commands
+                ))
+
+                with mock.patch.object(
+                    supervisor, "status_command_runtime_env", return_value={
+                        "PANTHEON_COMMAND_ROOT": "/runtime/" + "b" * 40,
+                        "PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40,
+                    },
+                ), mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+                    self.assertTrue(supervisor.materialize_auto_integrator_unblock_requests(consumer_config))
+                    self.assertFalse(supervisor.materialize_auto_integrator_unblock_requests(consumer_config))
+                snapshot = task_state_store.load_snapshot(consumer_config["task_state_store"]["event_log"])
+                tasks = {task["id"]: task for task in snapshot["state"]["tasks"]}
+                self.assertEqual(tasks[candidate.task_id], source)
+                repair = tasks[result.unblock_task_id]
+                self.assertEqual(repair["status"], "todo")
+                self.assertEqual(repair["auto_created_by"], "supervisor:auto_integrator_unblock_request")
+                self.assertEqual(repair["unblock_request"]["head_sha"], APPROVED_HEAD)
+
     def test_revalidate_before_merge_rejects_contradictory_policy(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -2838,7 +2946,7 @@ class CheckClassifierTests(unittest.TestCase):
                 prior_pr_number=44,
                 config=contradictory_config,
             )
-        self.assertEqual(ctx.exception.reason, "final-review-contract-changed")
+        self.assertEqual(ctx.exception.reason, "contradictory-review-bridge-policy")
 
     def test_integrate_candidate_empty_config_returns_blocked(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -3052,7 +3160,7 @@ class CheckClassifierTests(unittest.TestCase):
                         prior_pr_number=44,
                         config=invalid_cfg,
                     )
-                self.assertEqual(ctx.exception.reason, "final-review-contract-changed")
+                self.assertEqual(ctx.exception.reason, "contradictory-review-bridge-policy")
 
     def test_execute_path_never_merges_or_records_receipt_on_missing_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
