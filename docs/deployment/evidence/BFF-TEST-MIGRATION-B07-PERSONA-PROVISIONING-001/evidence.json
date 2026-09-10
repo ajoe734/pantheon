@@ -3,11 +3,11 @@
   "task_id": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
   "batch_id": "B07_persona_provisioning",
   "title": "Persona provisioning",
-  "owner": "Antigravity2",
-  "reviewer": "Codex",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
   "target_repo": "pantheon",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "e6d480211ad34698d4ee97ec408d17cc019d0f08",
+  "base_sha": "fd828d17511580a97634008d6086cf4a8d9433f6",
   "scope": {
     "batch_source_files": [
       "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
@@ -43,9 +43,9 @@
       "lines": 236
     },
     "services/control-plane/bff/test_bff_strategy_persona_contract.py": {
-      "bytes": 47699,
-      "sha256": "6f4a470d19ed163c151e7aa2bb8c593b20725284501ced4563e7e72b04591844",
-      "lines": 1112
+      "bytes": 47640,
+      "sha256": "97dd596bf04141e74bd1158c01d190ae994ae678ac07102647fca370fb2c490f",
+      "lines": 1111
     },
     "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py": {
       "bytes": 13221,
@@ -53,9 +53,9 @@
       "lines": 360
     },
     "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py": {
-      "bytes": 82626,
-      "sha256": "d1a66e65baba6f9569a0fd624f10e38609752b9484290139dea530ce8cd92e35",
-      "lines": 2007
+      "bytes": 82771,
+      "sha256": "1877525dfb1fba5bcdef9620ead163256e6d05ab80f5bacbc240a77676755d9f",
+      "lines": 2010
     },
     "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py": {
       "bytes": 11878,
@@ -134,7 +134,7 @@
       },
       "services/control-plane/bff/test_bff_strategy_persona_contract.py": {
         "tests_passed": 19,
-        "decoupling_approach": "Mounted create_strategy_personas_router on isolated FastAPI application with in-memory store and explicit error/exception handlers, decoupling from composition main."
+        "decoupling_approach": "Mounted create_strategy_personas_router on isolated FastAPI application with in-memory store and explicit error/exception handlers, decoupling from composition main and avoiding leaked ContextVar state."
       },
       "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py": {
         "tests_passed": 3,
@@ -142,7 +142,7 @@
       },
       "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py": {
         "tests_passed": 16,
-        "decoupling_approach": "Mounted isolated FastAPI test app with direct routing and _project_market_persona_item projection helpers, removing global main import and sys.path manipulation."
+        "decoupling_approach": "Mounted isolated FastAPI test app with direct routing and _project_market_persona_item projection helpers, removing global main import and sys.path manipulation; wrapped ContextVar token set with try/finally to prevent service leakage into downstream test suites."
       },
       "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py": {
         "tests_passed": 18,
