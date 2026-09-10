@@ -1,0 +1,1120 @@
+{
+  "decision": {
+    "cache_owner": "one cache per explicit PersonaService instance; same instance shared by app persona and runtime consumers",
+    "canonical_module": "services/control-plane/bff/personas/service.py",
+    "delta_owner": "personas.service._trading_performance_delta",
+    "dependency_direction": [
+      "main -> personas.service -> supplied read ports",
+      "main -> runtime.router via the same PersonaService bound method"
+    ],
+    "health_builder_owner": "PersonaService.build_persona_health_items (future method)",
+    "instance_owner": "PersonaService",
+    "overlay_owner": "PersonaService.overlay_source_health_truth (future method)",
+    "rejected": [
+      "runtime-only extraction",
+      "third wrapper or projection module",
+      "duplicate cache mechanism",
+      "reverse import of main",
+      "fake projection callback as migration proof"
+    ]
+  },
+  "decision_status": "proposed_for_independent_exact_head_review",
+  "future_packet": {
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/personas/test_health_projection.py",
+      "services/control-plane/bff/personas/test_health_projection_wiring.py",
+      "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001/evidence.json"
+    ],
+    "consumer_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+    "id": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+    "materialized": false,
+    "merge_target": "dev",
+    "owner": "Codex",
+    "prerequisites": [
+      "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001",
+      "accepted B03 CORS/JWKS/MFA source-seam task; resolve canonical ID at admission"
+    ],
+    "reviewer": "Antigravity",
+    "specification": "docs/operations/bff-test-migration-b14-loops-paper-v5-projection-ownership.md",
+    "target_repo": "pantheon"
+  },
+  "limits": [
+    "Static AST audit and documentary validation only; no product pytest or hosted tests executed.",
+    "Future packet is proposed, not an admitted source grant.",
+    "Legacy tests that patch main require migration in their owning batches.",
+    "Independent review, required checks, merge and canonical done are pending; their authority is the frozen canonical binding and GitHub readback, not this pre-review record."
+  ],
+  "owner": "Codex",
+  "recorded_at": "2026-09-10T08:04:14Z",
+  "reviewer": "Antigravity",
+  "schema_version": "pantheon.bff.projection-ownership-decision.v1",
+  "scope": {
+    "b14_migration_delivered": false,
+    "changed_files": [
+      "docs/operations/bff-test-migration-b14-loops-paper-v5-projection-ownership.md",
+      "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001/evidence.json"
+    ],
+    "deployed": false,
+    "production_changed": false
+  },
+  "source_audit": {
+    "builder_free_names": [
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "Any"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "Dict"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "List"
+      },
+      {
+        "main_line": 19877,
+        "persona_line": 13676,
+        "port_normalized_equal": true,
+        "symbol": "_as_float"
+      },
+      {
+        "main_line": 19884,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "_first_binding_for_persona"
+      },
+      {
+        "main_line": 6167,
+        "persona_line": 10517,
+        "port_normalized_equal": true,
+        "symbol": "_management_avg"
+      },
+      {
+        "main_line": 9797,
+        "persona_line": 11078,
+        "port_normalized_equal": true,
+        "symbol": "_management_first_float"
+      },
+      {
+        "main_line": 19945,
+        "persona_line": 13698,
+        "port_normalized_equal": true,
+        "symbol": "_management_fleet_autonomy"
+      },
+      {
+        "main_line": 19934,
+        "persona_line": 13684,
+        "port_normalized_equal": true,
+        "symbol": "_management_fleet_ooda_label"
+      },
+      {
+        "main_line": 9812,
+        "persona_line": 11088,
+        "port_normalized_equal": true,
+        "symbol": "_management_telemetry_rollup"
+      },
+      {
+        "main_line": 20186,
+        "persona_line": 13973,
+        "port_normalized_equal": true,
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "main_line": 20863,
+        "persona_line": 7015,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_active_incidents_for_row"
+      },
+      {
+        "main_line": 20902,
+        "persona_line": 7175,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_capital_mode"
+      },
+      {
+        "main_line": 20322,
+        "persona_line": 6800,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_context_defaults_by_market"
+      },
+      {
+        "main_line": 20349,
+        "persona_line": 6830,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_context_overlay"
+      },
+      {
+        "main_line": 20923,
+        "persona_line": 7199,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_live_capital_pool_id"
+      },
+      {
+        "main_line": 20384,
+        "persona_line": 6877,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_mutation_projection"
+      },
+      {
+        "main_line": 21007,
+        "persona_line": 7292,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_paper_ledger"
+      },
+      {
+        "main_line": 20951,
+        "persona_line": 7230,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_paper_ledger_id"
+      },
+      {
+        "main_line": 19918,
+        "persona_line": 6731,
+        "port_normalized_equal": true,
+        "symbol": "_persona_health_status"
+      },
+      {
+        "main_line": 19882,
+        "persona_line": 6726,
+        "port_normalized_equal": true,
+        "symbol": "_persona_id"
+      },
+      {
+        "main_line": 9626,
+        "persona_line": 2141,
+        "port_normalized_equal": true,
+        "symbol": "_routed_strategies_for_persona"
+      },
+      {
+        "main_line": 19905,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "_runtime_for_pool"
+      },
+      {
+        "main_line": 19957,
+        "persona_line": 13713,
+        "port_normalized_equal": true,
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "json"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "read_store"
+      }
+    ],
+    "duplicate_constants": [
+      {
+        "equal": true,
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE",
+        "value": {
+          "at": 0.0,
+          "by_connector": null
+        }
+      },
+      {
+        "equal": true,
+        "symbol": "_SOURCE_HEALTH_OVERLAY_TTL",
+        "value": 60.0
+      },
+      {
+        "equal": true,
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES",
+        "value": {
+          "alphavantage": [
+            "us-alpha-vantage-daily-ohlcv"
+          ],
+          "coingecko": [
+            "crypto-coingecko-spot"
+          ],
+          "finmind": [
+            "tw-finmind-datasets",
+            "tw-finmind-broker-daily-report",
+            "tw-finmind-broker-bulk-parquet"
+          ],
+          "finra": [
+            "us-finra-short-sale"
+          ],
+          "fred": [
+            "us-fred-macro"
+          ],
+          "mops": [
+            "tw-mops-official-disclosures"
+          ],
+          "polygon": [
+            "us-polygon-daily-ohlcv"
+          ],
+          "sec_edgar": [
+            "us-sec-edgar-filings"
+          ],
+          "stooq": [
+            "us-stooq-daily-ohlcv"
+          ],
+          "tpex": [
+            "tw-twse-tpex-official-market"
+          ],
+          "twse": [
+            "tw-twse-tpex-official-market"
+          ]
+        }
+      }
+    ],
+    "duplicate_functions": [
+      {
+        "body_sha256": [
+          "ad9abf714bb266d9648c6a313a3c8f4beb09b984caa28f4db38c4ccd7101087d",
+          "ad9abf714bb266d9648c6a313a3c8f4beb09b984caa28f4db38c4ccd7101087d"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          19957,
+          19960
+        ],
+        "persona_lines": [
+          13713,
+          13716
+        ],
+        "port_normalized_body_sha256": "ad9abf714bb266d9648c6a313a3c8f4beb09b984caa28f4db38c4ccd7101087d",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "body_sha256": [
+          "b268b4927a5f1bd7bb7ed0950efbcebabc7579792033cdd17969b6d9d06517fd",
+          "e9442adb0c4ceaa946e9dd84a9eeb4599e155fe5a63133270d3788b1ff6f3327"
+        ],
+        "exact_body_equal": false,
+        "main_lines": [
+          19983,
+          20025
+        ],
+        "persona_lines": [
+          13744,
+          13786
+        ],
+        "port_normalized_body_sha256": "b268b4927a5f1bd7bb7ed0950efbcebabc7579792033cdd17969b6d9d06517fd",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "body_sha256": [
+          "7c8c170430de4db172bdb0daff32e90b588901f4cc2f435824360fb6c1621da8",
+          "7c8c170430de4db172bdb0daff32e90b588901f4cc2f435824360fb6c1621da8"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20026,
+          20034
+        ],
+        "persona_lines": [
+          13797,
+          13805
+        ],
+        "port_normalized_body_sha256": "7c8c170430de4db172bdb0daff32e90b588901f4cc2f435824360fb6c1621da8",
+        "symbol": "_connector_candidates_for_provider"
+      },
+      {
+        "body_sha256": [
+          "05f4562ddf8bf4d9a67d969a4aa5987b5e6273c51669934e99fb346bf6a7ec33",
+          "05f4562ddf8bf4d9a67d969a4aa5987b5e6273c51669934e99fb346bf6a7ec33"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20035,
+          20048
+        ],
+        "persona_lines": [
+          13808,
+          13821
+        ],
+        "port_normalized_body_sha256": "05f4562ddf8bf4d9a67d969a4aa5987b5e6273c51669934e99fb346bf6a7ec33",
+        "symbol": "_source_failure_reason"
+      },
+      {
+        "body_sha256": [
+          "c1efa030385f420f6d534308b9dba8143fd1fced7fd1adef3bb84a8e13181111",
+          "c1efa030385f420f6d534308b9dba8143fd1fced7fd1adef3bb84a8e13181111"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20049,
+          20057
+        ],
+        "persona_lines": [
+          13824,
+          13832
+        ],
+        "port_normalized_body_sha256": "c1efa030385f420f6d534308b9dba8143fd1fced7fd1adef3bb84a8e13181111",
+        "symbol": "_provider_status_from_truth"
+      },
+      {
+        "body_sha256": [
+          "a4c1733bc57db34cbdbcc1d4f767949eb30a558590b94d299baae66aebb9db9e",
+          "a4c1733bc57db34cbdbcc1d4f767949eb30a558590b94d299baae66aebb9db9e"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20058,
+          20122
+        ],
+        "persona_lines": [
+          13835,
+          13899
+        ],
+        "port_normalized_body_sha256": "a4c1733bc57db34cbdbcc1d4f767949eb30a558590b94d299baae66aebb9db9e",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "body_sha256": [
+          "48998bd3854ebfa7e460996da3826fc1d2ef8b6347280de98d844b3273464fd7",
+          "48998bd3854ebfa7e460996da3826fc1d2ef8b6347280de98d844b3273464fd7"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20123,
+          20131
+        ],
+        "persona_lines": [
+          13902,
+          13910
+        ],
+        "port_normalized_body_sha256": "48998bd3854ebfa7e460996da3826fc1d2ef8b6347280de98d844b3273464fd7",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "body_sha256": [
+          "efaca5391fbc8ec4e210dab09c3ad1ac784c34336c9444608c5db239dc801200",
+          "efaca5391fbc8ec4e210dab09c3ad1ac784c34336c9444608c5db239dc801200"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20132,
+          20167
+        ],
+        "persona_lines": [
+          13913,
+          13948
+        ],
+        "port_normalized_body_sha256": "efaca5391fbc8ec4e210dab09c3ad1ac784c34336c9444608c5db239dc801200",
+        "symbol": "_source_health_bindings_from_requirements"
+      },
+      {
+        "body_sha256": [
+          "f18862ab3ed1b22535bca5f87226fd8256b1d63b379bf8d55f0f95668857e4c8",
+          "f18862ab3ed1b22535bca5f87226fd8256b1d63b379bf8d55f0f95668857e4c8"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20168,
+          20170
+        ],
+        "persona_lines": [
+          13951,
+          13953
+        ],
+        "port_normalized_body_sha256": "f18862ab3ed1b22535bca5f87226fd8256b1d63b379bf8d55f0f95668857e4c8",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "body_sha256": [
+          "56a95cfa09d812ac8bb8f39257c1cbefada1185975cfde88564af46ec4a0dfac",
+          "56a95cfa09d812ac8bb8f39257c1cbefada1185975cfde88564af46ec4a0dfac"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20171,
+          20185
+        ],
+        "persona_lines": [
+          13956,
+          13970
+        ],
+        "port_normalized_body_sha256": "56a95cfa09d812ac8bb8f39257c1cbefada1185975cfde88564af46ec4a0dfac",
+        "symbol": "_upgrade_all_green_data_source_state"
+      },
+      {
+        "body_sha256": [
+          "c0f151fd026fa4d51e898f0bff65ed82f937af51a9959acf55ddb5f83dd7ff74",
+          "c0f151fd026fa4d51e898f0bff65ed82f937af51a9959acf55ddb5f83dd7ff74"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20186,
+          20267
+        ],
+        "persona_lines": [
+          13973,
+          14054
+        ],
+        "port_normalized_body_sha256": "c0f151fd026fa4d51e898f0bff65ed82f937af51a9959acf55ddb5f83dd7ff74",
+        "symbol": "_overlay_source_health_truth"
+      }
+    ],
+    "normalization": "ast.dump(Module(function.body), include_attributes=False); separate explicit normalization replaces only zero-argument _get_active_read_store() with read_store",
+    "references": [
+      {
+        "kind": "name_load",
+        "line": 9595,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_project_persona_dto",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 19985,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 19986,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 19986,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_TTL"
+      },
+      {
+        "kind": "name_load",
+        "line": 20018,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 20019,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 20020,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 20033,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_connector_candidates_for_provider",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 20065,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_provider_status_from_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20078,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_source_failure_reason"
+      },
+      {
+        "kind": "name_load",
+        "line": 20145,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20162,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 20175,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 20177,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 20194,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "name_load",
+        "line": 20207,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20208,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_connector_candidates_for_provider"
+      },
+      {
+        "kind": "name_load",
+        "line": 20212,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 20250,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 20253,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_health_bindings_from_requirements"
+      },
+      {
+        "kind": "name_load",
+        "line": 20266,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_upgrade_all_green_data_source_state"
+      },
+      {
+        "kind": "name_load",
+        "line": 20637,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_build_persona_health_items",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20769,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_build_persona_health_items",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 20770,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_build_persona_health_items",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 21169,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_sem_final_generic_list_for_path",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 22069,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "<module>",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "name_load",
+        "line": 22069,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "<module>",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "name_load",
+        "line": 2096,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_dto",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 7773,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_fleet_list_row",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 7861,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_fleet_list_row",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 7862,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_fleet_list_row",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 13746,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13747,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13747,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_TTL"
+      },
+      {
+        "kind": "name_load",
+        "line": 13779,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13780,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13781,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13792,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_live_source_health_by_connector",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "name_load",
+        "line": 13804,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_connector_candidates_for_provider",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 13842,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_provider_status_from_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 13855,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_source_failure_reason"
+      },
+      {
+        "kind": "name_load",
+        "line": 13926,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 13943,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 13960,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 13962,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 13981,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "name_load",
+        "line": 13994,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 13995,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_connector_candidates_for_provider"
+      },
+      {
+        "kind": "name_load",
+        "line": 13999,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 14037,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 14040,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_health_bindings_from_requirements"
+      },
+      {
+        "kind": "name_load",
+        "line": 14053,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_upgrade_all_green_data_source_state"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 44,
+        "path": "services/control-plane/bff/runtime/router.py",
+        "scope": "create_runtime_router",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "name_load",
+        "line": 1229,
+        "path": "services/control-plane/bff/runtime/router.py",
+        "scope": "create_runtime_router.bff_v5_execution_persona_health",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 924,
+        "path": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "scope": "test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 190,
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "scope": "test_source_health_connector_truth_projects_to_persona_panel",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 209,
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "scope": "test_source_health_connector_truth_projects_to_persona_panel",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 7,
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "scope": "test_trading_performance_delta_is_unavailable_without_return_schema",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 11,
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "scope": "test_build_persona_health_items_binds_telemetry_and_seed_flags",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1105,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_live_finmind_health_flips_to_read_ok",
+        "symbol": "_live_source_health_by_connector"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1118,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_live_finmind_health_noop_when_unavailable",
+        "symbol": "_live_source_health_by_connector"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1151,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_projects_connector_panel_fields",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1201,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_projects_connector_panel_fields",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1250,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_preserves_credential_unavailable_when_health_degraded",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1283,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_preserves_credential_unavailable_when_health_degraded",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1322,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_upgrades_credential_unavailable_when_health_ok",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1343,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_upgrades_credential_unavailable_when_health_ok",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1372,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1407,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1423,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1445,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 60,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_all_green_live_overlay_promotes_summary_badge_state",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 68,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_all_green_live_overlay_promotes_summary_badge_state",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 99,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_tw_official_sources_flip_only_from_source_ingest_health",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 106,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_tw_official_sources_flip_only_from_source_ingest_health",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 136,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_missing_source_ingest_health_does_not_fake_green",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 138,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_missing_source_ingest_health_does_not_fake_green",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 180,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavailable",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 191,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavailable",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 210,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_crypto_coingecko_flips_from_source_ingest_health",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 214,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_crypto_coingecko_flips_from_source_ingest_health",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 186,
+        "path": "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "scope": "test_zero_unreferenced_dead_functions_in_main_py",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 187,
+        "path": "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "scope": "test_zero_unreferenced_dead_functions_in_main_py",
+        "symbol": "_trading_performance_delta"
+      }
+    ],
+    "scanned_python_files": 619,
+    "source_files": [
+      {
+        "path": "services/control-plane/bff/main.py",
+        "sha256": "4559d036d7eaddb74332cd8c48fbe7819de827769e70c1dca6de8bb93f97571c"
+      },
+      {
+        "path": "services/control-plane/bff/personas/service.py",
+        "sha256": "79d6a4dbc0d56c815a67cbd2a9d2222a403bdafad3dfc0ebe35b180de2d0560a"
+      },
+      {
+        "path": "services/control-plane/bff/runtime/router.py",
+        "sha256": "7678db04c980e4fd43f6a2320c740b367a7079dd178ff534b5c36622f201de8a"
+      },
+      {
+        "path": "services/control-plane/bff/runtime/service.py",
+        "sha256": "217fcdd9f16df1f2cc405277bd0c5a68a0959b1cc9929fcdcde42572078f448a"
+      }
+    ]
+  },
+  "source_base_sha": "fb142e4f4e9289a984e42e563de16ce58c079b71",
+  "task_id": "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001",
+  "validation": [
+    {
+      "command": "python3 /tmp/b14-ownership-audit.py > /tmp/b14-source-audit.json",
+      "exit_code": 0,
+      "reproduction": "Python block between B14_AUDIT_BEGIN and B14_AUDIT_END in the decision document",
+      "result": "619 Python files parsed; 83 references; 10 exact duplicate bodies; one read-port-only difference; three equal-valued constants; complete builder free-name inventory"
+    }
+  ],
+  "writer_gates": {
+    "authority": "proposed admission constraints; no canonical contracts or leases edited by this task",
+    "b03_pr_gate": [
+      {
+        "headRefOid": "6bc5eb05b3ece7a34854caa8be61d2cfdd1e91fe",
+        "mergedAt": null,
+        "number": 5494,
+        "state": "OPEN",
+        "url": "https://github.com/ajoe734/pantheon/pull/5494"
+      },
+      {
+        "headRefOid": "1d7e471656bc6949b9ed4de53cd6c91ba83b541b",
+        "mergedAt": null,
+        "number": 5517,
+        "state": "CLOSED",
+        "url": "https://github.com/ajoe734/pantheon/pull/5517"
+      },
+      {
+        "headRefOid": "a3513e5ef5274e43d771ea3c75575f0860239177",
+        "mergedAt": null,
+        "number": 5577,
+        "state": "OPEN",
+        "url": "https://github.com/ajoe734/pantheon/pull/5577"
+      },
+      {
+        "headRefOid": "61c537bf39baa78d3ad7412aa3074d8fdbb21a66",
+        "mergedAt": null,
+        "number": 5721,
+        "state": "OPEN",
+        "url": "https://github.com/ajoe734/pantheon/pull/5721"
+      }
+    ],
+    "b03_pr_gate_cleared": false,
+    "required_order": [
+      "existing admitted overlapping writers finish and leases release",
+      "B03 CORS/JWKS/MFA source seam after all four PRs merge or close and fresh artifact preflight",
+      "B14 projection source seam after B03 seam and this decision merge",
+      "B05 journal seam, B06 seam and all other main writers serialized afterwards"
+    ]
+  }
+}
