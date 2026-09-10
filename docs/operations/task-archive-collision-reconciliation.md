@@ -19,6 +19,72 @@ were reconciled.
 
 ## 2. Governed Reconciliation Authority
 
+The source task does not activate the live fence. Execute these steps in order:
+
+1. Merge the mechanism through independent exact-head review and required checks.
+   Promote that merged source through the existing supervisor runtime promotion
+   flow. Verify command-runtime SHA, supervisor health, and watchdog health at
+   the promoted identity; a source merge alone is insufficient.
+2. Read the current canonical parent and immutable archive. For a nonmatching
+   `todo` parent with no active worker, lease, queue intent, recovery, or terminal
+   fact, prepare the exact fence request below. Execute the guarded local command.
+3. Read back the committed activation marker and blocked parent. Qualify **fresh
+   post-fence** evidence, obtain independent review, and merge those records.
+   Evidence prepared before activation has a stale parent CAS and is rejected.
+4. Execute `archive_reconcile` separately using that merged evidence. Verify the
+   permanent disposition, archive outbox recovery, receipts, terminal facts, and
+   the still-blocked parent. Preserve raw archive bytes throughout.
+
+### 2.1 Guarded activation
+
+The local operator must have `AI_NAME=Human/Ops`, explicitly enable local mode,
+and have no `ORCH_RUN_ID` or worker command lease. Supplying an agent name with
+the local flag is rejected by activation, even though other local maintenance
+commands may normalize the actor to Human/Ops. Ordinary `blocker` stays owner-only.
+An unavailable or malformed runtime inventory fails closed.
+
+Prepare an external request JSON (not a canonical task file):
+
+```json
+{
+  "schema": "pantheon.archive-collision-fence.v1",
+  "reason": "Hold the nonmatching parent for independent historical qualification",
+  "parent": {
+    "task_id": "<parent-id>",
+    "generation": 1,
+    "snapshot_sha256": "<historical snapshot digest>",
+    "archive_file_sha256": "<raw archive bytes digest>",
+    "scope_sha256": "<historical scope digest>",
+    "active_generation": 9,
+    "active_sha256": "<exact current todo row digest>",
+    "active_scope_sha256": "<current scope digest>"
+  }
+}
+```
+
+Digest values are lowercase SHA-256 hex. Use `task_mutation_cas_digest` for the
+exact todo row, `_archive_scope_digest` for scope, and
+`_collision_archive_identity` for the snapshot/raw-byte identities, from the
+qualified source. Do not reuse example generations without fresh readback.
+
+```bash
+AI_NAME="Human/Ops" \
+PANTHEON_LOCAL_HUMAN_OPS=1 \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" archive_collision_fence \
+  <parent-id> <request-json-file>
+```
+
+The existing `block` lifecycle transition and TaskStore transaction change only
+status and hold metadata on the parent. The same `archive_collision_disposition`
+marker has `phase: activation` and retains the original request, actor, archive
+identity, and activation timestamp. Parent identity, generation, assignment,
+scope, artifacts, and dependencies remain unchanged. No historical fact or
+archive outbox is created. Repeating the exact request while the activation
+remains current is idempotent; different reason, CAS, actor, or archive bytes
+fails. A permanent disposition cannot be reactivated.
+
+### 2.2 Qualified reconciliation
+
 Reconciliation is performed strictly through the governed command root via:
 
 ```bash
@@ -67,6 +133,10 @@ The evidence file must be merged into `origin/dev` at `<evidence-commit>` and co
   - When `"withheld"`:
     - `reason`: explicit justification why independent approval is not qualified
 - `review`: independent review binding for the overall collision evidence
+- For an activated parent, `activation_sha256`: canonical JSON SHA-256 of the
+  committed marker's entire `activation` object. The parent `active_sha256` uses
+  `collision_parent_digest` on the **blocked** readback, excluding the marker
+  and derived pending-write counters. Both bindings are reviewed with the evidence.
 
 ### 3.2 Collision Review Schema (`pantheon.archive-collision-review.v1`)
 
@@ -87,10 +157,18 @@ The reconciliation mechanism enforces strict fences across lifecycle and storage
    ensures the active parent never transitions to `todo`, `in_progress`, or `done`.
 2. **Prior Block Requirement**:
    The parent must already be committed in `blocked` status before reconciliation.
+   A nonmatching `todo` parent uses guarded activation first; matching archives,
+   ordinary tasks, active execution, and other lifecycle states are rejected.
 3. **Immutable Marker**:
    The `archive_collision_disposition` marker is bound to the parent's CAS digest.
    Any subsequent attempt to unblock, drop, mutate scope, or remove the marker is
    rejected by `validate_archive_collision_fences` in `task_state_store.py`.
+   Activation immediately enforces the same fence, including across restart and
+   journal replay. Reconciliation may upgrade it only while retaining the exact
+   activation/archive binding and parent digest. The permanent disposition and
+   qualified outbox are committed atomically; facts require a subsequent recovery
+   transaction. Reopen, unblock, drop, and scope mutation are never intermediate
+   qualification steps.
 4. **Fact Admission Guard**:
    `_guard_collision_fact_admission` prevents terminal facts from being recorded for
    either the collision parent or any withheld dependency. Qualified dependency facts
@@ -109,8 +187,10 @@ The reconciliation mechanism enforces strict fences across lifecycle and storage
   that the committed disposition and receipts match and succeeds without re-executing
   mutations.
 - **Rollback**: If a rollback is required before the operator executes live reconciliation,
-  revert the code commit on `dev`. If rolled back after live reconciliation, Human/Ops
-  can restore task state using the standard TaskStore snapshot transaction.
+  revert the source through the repository workflow only while no live activation
+  relies on it. Once a fence exists, retain a runtime that enforces it. A generic
+  snapshot restore cannot remove its immutable binding; any future disposition
+  change requires separately governed work rather than a raw state rewrite.
 
 ## 6. Limits of Historical Proof
 

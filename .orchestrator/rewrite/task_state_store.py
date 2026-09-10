@@ -63,8 +63,11 @@ def _validate_collision_activation(marker: dict, row: dict) -> None:
         raise TaskStateStoreError("archive collision activation is invalid")
     request = activation.get("request")
     archive = activation.get("archive")
-    if (activation.get("actor") != "Human/Ops" or not activation.get("activated_at")
+    if (set(activation) != {"actor", "activated_at", "request", "archive"}
+            or activation.get("actor") != "Human/Ops" or not activation.get("activated_at")
             or not isinstance(request, dict) or not isinstance(archive, dict)
+            or set(request) != {"schema", "parent", "reason"}
+            or set(archive) != {"task_id", "generation", "snapshot_sha256", "archive_file_sha256", "scope_sha256"}
             or request.get("schema") != "pantheon.archive-collision-fence.v1"
             or not isinstance(request.get("reason"), str) or not request["reason"].strip()
             or not isinstance(request.get("parent"), dict)
@@ -72,6 +75,16 @@ def _validate_collision_activation(marker: dict, row: dict) -> None:
             or any(request["parent"].get(key) != value for key, value in archive.items())
             or request["parent"].get("active_generation") != row.get("generation")):
         raise TaskStateStoreError("archive collision activation binding is invalid")
+    parent = request["parent"]
+    if (set(parent) != set(archive) | {"active_generation", "active_sha256", "active_scope_sha256"}
+            or type(archive["generation"]) is not int or archive["generation"] < 1
+            or type(parent["active_generation"]) is not int or parent["active_generation"] < 1
+            or (parent["active_generation"] == archive["generation"]
+                and parent["active_scope_sha256"] == archive["scope_sha256"])):
+        raise TaskStateStoreError("archive collision activation requires nonmatching identity")
+    for value in [archive[key] for key in ("snapshot_sha256", "archive_file_sha256", "scope_sha256")] + [parent["active_sha256"], parent["active_scope_sha256"]]:
+        if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            raise TaskStateStoreError("archive collision activation digest is invalid")
 
 
 def validate_archive_collision_fences(new_state: dict, previous_state: dict | None) -> None:
@@ -113,11 +126,14 @@ def validate_archive_collision_fences(new_state: dict, previous_state: dict | No
             if (marker.get("qualified_facts") != {}
                     or marker.get("withheld_task_ids") != list(row.get("depends_on") or [])):
                 raise TaskStateStoreError("archive collision activation cannot qualify facts")
+            protected = {task_id, *(row.get("depends_on") or [])}
+            outbox = new_state.get("status_archive_outbox") or {}
+            if any(snapshot.get("task_id") in protected for snapshot in outbox.get("snapshots", [])):
+                raise TaskStateStoreError("archive collision activation cannot stage archive outbox")
             if previous_state is not None:
                 if facts != old_facts:
                     # Activation is not terminal fact authority. Existing facts
                     # remain untouched; unrelated later task completion is allowed.
-                    protected = {task_id, *(row.get("depends_on") or [])}
                     if any(facts.get(dep) != old_facts.get(dep) for dep in protected):
                         raise TaskStateStoreError("archive collision activation cannot admit facts")
                 if old_marker is None:

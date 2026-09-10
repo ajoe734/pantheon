@@ -218,6 +218,233 @@ class ArchiveCollisionContractTests(unittest.TestCase):
         self.assertEqual(before, self.state)
 
 
+class ArchiveCollisionFenceTests(unittest.TestCase):
+    _review = ArchiveCollisionContractTests._review
+    _prepare = ArchiveCollisionContractTests._prepare
+    _apply = ArchiveCollisionContractTests._apply
+
+    def setUp(self):
+        ArchiveCollisionContractTests.setUp(self)
+        self.parent["status"] = "todo"
+        self.parent.pop("waiting_for")
+        self.journal = self._test_root.parent / (self._test_root.name + "-journal") / "events.jsonl"
+        self.addCleanup(shutil.rmtree, self.journal.parent, True)
+        self.config = {"paths": {"state_file": str(ai_status.ORCHESTRATOR_STATE_FILE),
+                                "status_file": str(self._test_status_file),
+                                "activity_log": str(self._test_log_file)}}
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        import runtime_state
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(runtime_state.default_state()))
+        env = mock.patch.dict(os.environ, {
+            "PANTHEON_WORKTREE_ROOT": "", "ORCH_WORKSPACE_PATH": "",
+            ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+            ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.journal),
+            common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(self._test_root, self.journal),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        self.request = {"schema": "pantheon.archive-collision-fence.v1",
+                        "reason": "Hold nonmatching historical archive for qualification",
+                        "parent": {**ai_status._collision_archive_identity("PARENT")[1],
+                                   "active_generation": 9,
+                                   "active_sha256": ai_status.task_mutation_cas_digest(self.parent),
+                                   "active_scope_sha256": ai_status._archive_scope_digest(self.parent)}}
+        self.request_file = self._test_root / "fence.json"
+        self.fence_args = ["PARENT", str(self.request_file)]
+        self._seed()
+
+    def _seed(self):
+        task_state_store.append_state_commit(self.journal, self.state, source="fence-fixture")
+
+    def _cli(self, command="archive_collision_fence", args=None):
+        self.request_file.write_text(json.dumps(self.request))
+        with (mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+              mock.patch.object(ai_status, "validate_status_root_binding"),
+              mock.patch.object(ai_status, "load_config", return_value=self.config),
+              mock.patch.object(ai_status, "refresh_derived_status_views_if_current")):
+            return ai_status.main(["ai_status.py", command, *(args or self.fence_args)])
+
+    def _readback(self):
+        self.state = task_state_store.load_snapshot(self.journal)["state"]
+        self.parent = self.state["tasks"][0]
+        return self.state
+
+    def test_cli_full_activation_upgrade_recovery_and_replay(self):
+        before = deepcopy(self.parent)
+        runtime_bytes = ai_status.ORCHESTRATOR_STATE_FILE.read_bytes()
+        self.assertEqual(self._cli(), 0)
+        self._readback()
+        activation_parent = deepcopy(self.parent)
+        marker = self.parent[task_state_store.ARCHIVE_COLLISION_KEY]
+        self.assertEqual(marker["phase"], "activation")
+        self.assertEqual(ai_status.ORCHESTRATOR_STATE_FILE.read_bytes(), runtime_bytes)
+        changed = {"status", "waiting_for", "next", "last_update", task_state_store.ARCHIVE_COLLISION_KEY}
+        self.assertEqual({k:v for k,v in before.items() if k not in changed},
+                         {k:v for k,v in self.parent.items() if k not in changed})
+        self.assertFalse(self.state.get("terminal_facts"))
+        self.assertFalse(self.state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        self.assertIsNone(task_machine.dispatch_reason("blocked", is_owner=True,
+            is_reviewer=False, deps_satisfied=True))
+        self.assertEqual(self._cli(), 0)
+        self.assertEqual(self._readback()["tasks"][0], activation_parent)
+        for command, args in [("reopen", ["PARENT", "bypass"]),
+                              ("artifact-contract", ["PARENT", "new.py"])]:
+            with self.assertRaises((SystemExit, RuntimeError)):
+                self._cli(command, args)
+            self.assertEqual(self._readback()["tasks"][0], activation_parent)
+        for change in ["drop", "todo", "scope"]:
+            bad = deepcopy(self.state)
+            if change == "drop":
+                bad["tasks"] = []
+            elif change == "todo":
+                bad["tasks"][0]["status"] = "todo"
+            else:
+                bad["tasks"][0]["artifacts"] = ["substitute.py"]
+            with self.assertRaisesRegex(RuntimeError, "archive collision"):
+                task_state_store.append_state_commit(self.journal, bad, source="bypass")
+        with self.assertRaisesRegex(SystemExit, "Stale collision parent"):
+            self._prepare()
+        self.evidence["parent"]["active_sha256"] = task_state_store.collision_parent_digest(self.parent)
+        with self.assertRaisesRegex(SystemExit, "activation/archive binding"):
+            self._prepare()
+        self.evidence["activation_sha256"] = ai_status._canonical_json_sha256(marker["activation"])
+        self._review(self.evidence, "parent-review.json")
+        self.assertEqual(self._cli("archive_reconcile", self.args), 0)
+        self._readback()
+        upgraded = self.parent[task_state_store.ARCHIVE_COLLISION_KEY]
+        self.assertNotIn("phase", upgraded)
+        self.assertEqual(upgraded["activation"], marker["activation"])
+        self.assertEqual(set(self.state["terminal_facts"]), {"CHILD"})
+        with self.assertRaisesRegex(SystemExit, "replay differs"):
+            self._cli()
+        self.assertEqual(self._cli("archive_reconcile", self.args), 0)
+        self.journal.with_name(self.journal.name + task_state_store.HEAD_SUFFIX).unlink()
+        self._readback()
+        self.assertEqual(set(self.state["terminal_facts"]), {"CHILD"})
+        for task_id, raw in self.archive_bytes.items():
+            self.assertEqual(task_archive.archive_task_path(task_id).read_bytes(), raw)
+
+    def test_cli_rejects_nonlocal_worker_and_asserted_agent(self):
+        for env in [{"AI_NAME": "Codex"}, {ai_status.LOCAL_HUMAN_OPS_ENV: ""},
+                    {"ORCH_RUN_ID": "worker-run"},
+                    {"AI_NAME": "Codex", ai_status.LOCAL_HUMAN_OPS_ENV: ""}]:
+            with self.subTest(env=env), mock.patch.dict(os.environ, env):
+                before = self.journal.read_bytes()
+                with self.assertRaises((SystemExit, RuntimeError)):
+                    self._cli()
+                self.assertEqual(self.journal.read_bytes(), before)
+        with self.assertRaisesRegex(SystemExit, "Only the owner"):
+            ai_status.command_blocker(self.state, ["PARENT", "foreign block", "Human/Ops", "external"])
+
+    def test_cli_rejects_non_todo_stale_identity_and_terminal_fact(self):
+        original = deepcopy(self.state)
+        for key, value in [("status", "in_progress"), ("status", "blocked"),
+                           ("status", "done"), ("status", "review"),
+                           ("status", "review_approved"), ("generation", 10),
+                           ("title", "changed"), ("generation", "9")]:
+            with self.subTest(key=key, value=value):
+                # Independent journals allow terminal and invalid fixture rows.
+                self.journal.unlink(missing_ok=True)
+                self.journal.with_name(self.journal.name + task_state_store.HEAD_SUFFIX).unlink(missing_ok=True)
+                self.state = deepcopy(original)
+                self.state["tasks"][0][key] = value
+                self._seed()
+                before = self.journal.read_bytes()
+                with self.assertRaises((SystemExit, RuntimeError)):
+                    self._cli()
+                self.assertEqual(self.journal.read_bytes(), before)
+        self.state = deepcopy(original)
+        self.state["terminal_facts"] = {"PARENT": {"status": "done", "generation": 1,
+            "terminal_outcome": "completed", "recorded_at": "2026-09-10T00:00:00Z"}}
+        self._seed()
+        with self.assertRaisesRegex(SystemExit, "terminal fact"):
+            self._cli()
+
+    def test_rejects_archive_and_runtime_failures(self):
+        path = task_archive.archive_task_path("PARENT")
+        for raw in [b"{}", b"not json", None, self.archive_bytes["PARENT"] + b"\n"]:
+            with self.subTest(raw=raw):
+                if raw is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(raw)
+                with self.assertRaises((SystemExit, RuntimeError, ValueError)):
+                    self._cli()
+                path.write_bytes(self.archive_bytes["PARENT"])
+        for runtime in [{"workers": {"Codex": {"task_id": "PARENT", "status": "running"}}},
+                        {"worker_worktrees": {"leases": {"PARENT": {"task_id": "PARENT"}}}},
+                        {"workers": "invalid"}, []]:
+            if isinstance(runtime, dict):
+                runtime["version"] = 2
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(runtime))
+            with self.assertRaises((SystemExit, RuntimeError)):
+                self._cli()
+        ai_status.ORCHESTRATOR_STATE_FILE.unlink()
+        with self.assertRaisesRegex(SystemExit, "available runtime"):
+            self._cli()
+
+    def test_matching_archive_and_changed_replay_reject(self):
+        snapshot = json.loads(self.archive_bytes["PARENT"])
+        historical = snapshot["task"]
+        historical.update({k:v for k,v in self.parent.items() if k != "status"})
+        task_archive.archive_task_path("PARENT").write_text(json.dumps(snapshot))
+        with self.assertRaisesRegex(SystemExit, "Matching archive"):
+            self._cli()
+        task_archive.archive_task_path("PARENT").write_bytes(self.archive_bytes["PARENT"])
+        self.assertEqual(self._cli(), 0)
+        original = deepcopy(self.request)
+        for field, value in [("reason", "different"), ("active_sha256", "0" * 64),
+                             ("archive_file_sha256", "0" * 64)]:
+            self.request = deepcopy(original)
+            if field == "reason":
+                self.request[field] = value
+            else:
+                self.request["parent"][field] = value
+            with self.assertRaisesRegex(SystemExit, "replay differs"):
+                self._cli()
+
+    def test_preflight_cas_archive_and_lease_races(self):
+        self.request_file.write_text(json.dumps(self.request))
+        prepared = ai_status.prepare_external_mutation_preflight("archive_collision_fence", self.parent, self.fence_args)
+        before = deepcopy(self.state)
+        for change in ["scope", "archive", "lease"]:
+            with self.subTest(change=change):
+                if change == "scope":
+                    self.parent["title"] = "raced"
+                elif change == "archive":
+                    task_archive.archive_task_path("PARENT").write_bytes(self.archive_bytes["PARENT"] + b"\n")
+                else:
+                    ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({"version": 2, "workers": {"Codex": {"task_id": "PARENT", "status": "running"}}}))
+                with ai_status.bound_external_mutation_preflight(prepared):
+                    with self.assertRaises((SystemExit, RuntimeError)):
+                        ai_status.command_archive_collision_fence(self.state, self.fence_args)
+                self.state = deepcopy(before)
+                self.parent = self.state["tasks"][0]
+                task_archive.archive_task_path("PARENT").write_bytes(self.archive_bytes["PARENT"])
+
+    def test_unknown_parent_and_existing_disposition_reject(self):
+        before = self.journal.read_bytes()
+        with self.assertRaisesRegex(SystemExit, "Unknown task"):
+            self._cli(args=["ORDINARY", str(self.request_file)])
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.parent[task_state_store.ARCHIVE_COLLISION_KEY] = {"disposition": "other"}
+        self.request_file.write_text(json.dumps(self.request))
+        with self.assertRaisesRegex(RuntimeError, "archive collision"):
+            ai_status.prepare_external_mutation_preflight("archive_collision_fence", self.parent, self.fence_args)
+
+    def test_completed_and_valid_archive_generation_required(self):
+        path = task_archive.archive_task_path("PARENT")
+        for key, value in [("generation", "1"), ("generation", 0),
+                           ("terminal_outcome", "superseded")]:
+            snapshot = json.loads(self.archive_bytes["PARENT"])
+            snapshot["task"][key] = value
+            if key == "terminal_outcome":
+                snapshot[key] = value
+            path.write_text(json.dumps(snapshot))
+            with self.assertRaises((SystemExit, RuntimeError)):
+                self._cli()
+
+
 class DependencyContractBatchTests(unittest.TestCase):
     def setUp(self):
         _setup_test_isolation(self)

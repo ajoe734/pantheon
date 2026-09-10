@@ -10075,10 +10075,21 @@ def _collision_review(reference: Mapping[str, Any], subject: Mapping[str, Any]) 
 
 
 def _require_local_collision_operator() -> None:
-    if current_actor() != "Human/Ops" or not local_human_ops_requested():
+    if (current_actor() != "Human/Ops" or not local_human_ops_requested()
+            or canonical_agent_name(os.environ.get("AI_NAME", "")) != "Human/Ops"):
         raise SystemExit("Only explicit local Human/Ops may activate an archive collision fence")
     if getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None):
         raise SystemExit("Archive collision fence rejects a worker command lease")
+
+
+def _assert_collision_fence_idle(task: Mapping[str, Any]) -> None:
+    state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else STATUS_ROOT / ".orchestrator/state.json"
+    if not state_file.exists():
+        raise SystemExit("Collision fence requires available runtime state")
+    runtime = json.loads(state_file.read_text(encoding="utf-8"))
+    if not isinstance(runtime, dict) or runtime.get("version") != 2:
+        raise SystemExit("Collision fence requires a valid V2 runtime inventory")
+    _assert_no_active_execution(str(task["id"]), active_task=task)
 
 
 def _prepare_archive_collision_fence(task: dict[str, Any], args: list[str]) -> dict[str, Any]:
@@ -10091,9 +10102,12 @@ def _prepare_archive_collision_fence(task: dict[str, Any], args: list[str]) -> d
             or not isinstance(request.get("reason"), str) or not request["reason"].strip()):
         raise SystemExit("Invalid archive collision fence request")
     snapshot, identity = _collision_archive_identity(args[0])
+    if (type(snapshot["task"].get("generation")) is not int
+            or snapshot["task"]["generation"] < 1):
+        raise SystemExit("Malformed archive collision generation")
     if not _is_archive_collision(task, snapshot):
         raise SystemExit("Matching archive must use same-delivery reconciliation")
-    _assert_no_active_execution(args[0], active_task=task)
+    _assert_collision_fence_idle(task)
     marker = task.get(task_state_store.ARCHIVE_COLLISION_KEY)
     if marker is not None:
         task_state_store.validate_archive_collision_fences({"tasks": [task]}, None)
@@ -10103,7 +10117,10 @@ def _prepare_archive_collision_fence(task: dict[str, Any], args: list[str]) -> d
             raise SystemExit("Collision fence replay differs from committed activation")
     else:
         if (task.get("status") != "todo" or type(task.get("generation")) is not int
-                or task["generation"] < 1 or not task.get("owner") or not task.get("reviewer")):
+                or task["generation"] < 1 or not task.get("owner") or not task.get("reviewer")
+                or task.get("terminal_outcome")
+                or not isinstance(task.get("depends_on", []), list)
+                or any(not isinstance(dep, str) or not dep for dep in task.get("depends_on", []))):
             raise SystemExit("Collision fence requires a well-formed active todo parent")
         expected = {**identity, "active_generation": task_assignment_generation(task),
                     "active_sha256": task_mutation_cas_digest(task),
@@ -10120,7 +10137,7 @@ def command_archive_collision_fence(state: dict[str, Any], args: list[str]) -> N
     if parent is None:
         raise SystemExit("Unknown collision parent")
     prepared = consume_external_mutation_preflight("archive_collision_fence", parent)
-    _assert_no_active_execution(args[0], active_task=parent)
+    _assert_collision_fence_idle(parent)
     if has_terminal_fact(state, args[0]):
         raise SystemExit("Collision parent already has a terminal fact")
     request = prepared["collision_fence_request"]
@@ -10170,6 +10187,7 @@ def _prepare_archive_collision(task: dict[str, Any], args: list[str]) -> dict[st
     marker = task.get(task_state_store.ARCHIVE_COLLISION_KEY) or {}
     activation = marker.get("activation")
     if activation is not None:
+        _require_local_collision_operator()
         if (activation.get("archive") != identity
                 or evidence.get("activation_sha256") != _canonical_json_sha256(activation)):
             raise SystemExit("Stale collision activation/archive binding")
@@ -10262,6 +10280,7 @@ def _reconcile_archive_collision(state: dict[str, Any], args: list[str]) -> None
     }
     previous = parent.get(task_state_store.ARCHIVE_COLLISION_KEY)
     if previous is not None and "activation" in previous:
+        _require_local_collision_operator()
         marker["activation"] = deepcopy(previous["activation"])
     if previous is not None and previous.get("phase") != "activation":
         if previous != marker:
