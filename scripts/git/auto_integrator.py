@@ -523,6 +523,19 @@ def resolve_execute_authority(
         raise ExecuteAuthorityError(
             f"live auto-integrator lock must be canonical ({settings.lock_path} != {canonical_lock})"
         )
+    if isinstance(payload, Mapping) and (
+        "review_gate" in payload
+        or (
+            isinstance(payload.get("branch_workflow"), Mapping)
+            and "task_pr" in payload["branch_workflow"]
+        )
+    ):
+        try:
+            orchestrator_common.validate_review_bridge_policy(payload)
+        except (ValueError, TypeError) as exc:
+            raise ExecuteAuthorityError(
+                f"live supervisor config has invalid review bridge policy: {exc}"
+            ) from exc
     settings = Settings(**{**settings.__dict__, "command_runtime_sha": head})
     return status_file, status_root, settings, payload
 
@@ -730,7 +743,9 @@ def is_check_required(item: Mapping[str, Any]) -> bool | None:
     return None
 
 
-def is_ignorable_diagnostic(item: Mapping[str, Any]) -> bool:
+def is_ignorable_diagnostic(
+    item: Mapping[str, Any], *, review_bridge_is_required: bool = True
+) -> bool:
     """Return true only for an explicitly optional, known diagnostic issuer.
 
     GitHub's ``isRequired`` describes branch-protection requirements, not
@@ -739,13 +754,21 @@ def is_ignorable_diagnostic(item: Mapping[str, Any]) -> bool:
     failures. The workflow provenance is therefore a second mandatory input.
     """
 
+    if (
+        not review_bridge_is_required
+        and check_name(item) == github_review_bridge.CANONICAL_REVIEW_CONTEXT
+    ):
+        return True
+
     if is_check_required(item) is not False:
         return False
     workflow_name = str(item.get("workflowName") or "").strip()
     return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
 
 
-def summarize_status_rollup(rollup: Any) -> CheckSummary:
+def summarize_status_rollup(
+    rollup: Any, *, review_bridge_is_required: bool = True
+) -> CheckSummary:
     if not isinstance(rollup, list) or not rollup:
         return CheckSummary("empty")
     failing: list[str] = []
@@ -755,7 +778,9 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
         if not isinstance(item, Mapping):
             pending.append("malformed-check")
             continue
-        is_non_required_diagnostic = is_ignorable_diagnostic(item)
+        is_non_required_diagnostic = is_ignorable_diagnostic(
+            item, review_bridge_is_required=review_bridge_is_required
+        )
         values = [
             normalize_state(item.get("conclusion")),
             normalize_state(item.get("state")),
@@ -815,19 +840,11 @@ def is_canonical_review_gate_green(rollup: Any) -> bool:
 def integration_status_rollup(
     rollup: Any, *, review_bridge_is_required: bool
 ) -> CheckSummary:
-    """Summarize checks after removing an explicitly disabled legacy bridge."""
+    """Summarize checks treating the review gate as diagnostic when disabled."""
 
-    filtered = (
-        [
-            item
-            for item in rollup
-            if review_bridge_is_required
-            or check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT
-        ]
-        if isinstance(rollup, list)
-        else rollup
+    return summarize_status_rollup(
+        rollup, review_bridge_is_required=review_bridge_is_required
     )
-    return summarize_status_rollup(filtered)
 
 
 def make_integrator_tag_lookup(
@@ -1753,6 +1770,21 @@ def revalidate_before_merge(
             "final-auto-merge-armed",
             f"PR #{fresh_number} has an auto-merge request at final revalidation.",
         )
+
+    if isinstance(config, Mapping) and (
+        "review_gate" in config
+        or (
+            isinstance(config.get("branch_workflow"), Mapping)
+            and "task_pr" in config["branch_workflow"]
+        )
+    ):
+        try:
+            orchestrator_common.validate_review_bridge_policy(config)
+        except (ValueError, TypeError) as exc:
+            raise FinalMergeRevalidationError(
+                "contradictory-review-bridge-policy",
+                f"PR #{fresh_number} has contradictory or invalid review bridge policy: {exc}",
+            )
 
     fresh_checks = integration_status_rollup(
         fresh_pr.get("statusCheckRollup"),
@@ -2713,6 +2745,27 @@ def integrate_candidate(
             runner.commands[:],
         )
 
+    if isinstance(config, Mapping) and (
+        "review_gate" in config
+        or (
+            isinstance(config.get("branch_workflow"), Mapping)
+            and "task_pr" in config["branch_workflow"]
+        )
+    ):
+        try:
+            orchestrator_common.validate_review_bridge_policy(config)
+        except (ValueError, TypeError) as exc:
+            detail = f"PR #{number} has contradictory or invalid review bridge policy: {exc}"
+            return IntegrationResult(
+                candidate.task_id,
+                "blocked",
+                detail,
+                number,
+                url,
+                None,
+                not execute,
+                runner.commands[:],
+            )
     review_bridge_is_required = orchestrator_common.github_review_bridge_required(config)
     rollup = pr.get("statusCheckRollup")
     checks = integration_status_rollup(

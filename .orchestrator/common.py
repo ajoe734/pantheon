@@ -40,6 +40,74 @@ DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 
 
+CANONICAL_REVIEW_GATE_CONTEXT = "Pantheon canonical review gate"
+CANONICAL_REVIEW_CONTEXT = CANONICAL_REVIEW_GATE_CONTEXT
+
+
+def validate_review_bridge_policy(
+    config: Mapping[str, Any],
+) -> tuple[bool, tuple[str, ...]]:
+    """Validate review bridge toggle and declared task PR checks.
+
+    Defines one fail-closed relationship between
+    ``review_gate.github_review_bridge_required`` and
+    ``branch_workflow.task_pr.required_status_checks``:
+    - when the bridge is false, 'Pantheon canonical review gate' must be absent;
+    - when it is true, that context must be present.
+
+    Missing, malformed, duplicated, or contradictory policy fails closed.
+    """
+
+    if not isinstance(config, Mapping):
+        raise ValueError("config must be a mapping")
+
+    review_gate = config.get("review_gate")
+    if not isinstance(review_gate, Mapping):
+        raise ValueError("review_gate configuration is required and must be a mapping")
+    bridge_required = review_gate.get("github_review_bridge_required")
+    if bridge_required is None:
+        raise ValueError("review_gate.github_review_bridge_required is required")
+    if not isinstance(bridge_required, bool):
+        raise ValueError("review_gate.github_review_bridge_required must be a boolean")
+
+    branch_workflow = config.get("branch_workflow")
+    if not isinstance(branch_workflow, Mapping):
+        raise ValueError("branch_workflow configuration is required and must be a mapping")
+    task_pr = branch_workflow.get("task_pr")
+    if not isinstance(task_pr, Mapping):
+        raise ValueError("branch_workflow.task_pr configuration is required and must be a mapping")
+    raw_checks = task_pr.get("required_status_checks")
+    if raw_checks is None:
+        raise ValueError("branch_workflow.task_pr.required_status_checks is required")
+    if not isinstance(raw_checks, (list, tuple)):
+        raise ValueError("branch_workflow.task_pr.required_status_checks must be a sequence of strings")
+    checks: list[str] = []
+    seen: set[str] = set()
+    for check in raw_checks:
+        if not isinstance(check, str) or not check.strip():
+            raise ValueError("branch_workflow.task_pr.required_status_checks items must be non-empty strings")
+        if check in seen:
+            raise ValueError(
+                f"branch_workflow.task_pr.required_status_checks contains duplicate check: {check!r}"
+            )
+        seen.add(check)
+        checks.append(check)
+
+    has_canonical = CANONICAL_REVIEW_GATE_CONTEXT in seen
+    if not bridge_required and has_canonical:
+        raise ValueError(
+            f"contradictory review bridge policy: github_review_bridge_required is false, "
+            f"but {CANONICAL_REVIEW_GATE_CONTEXT!r} is declared in branch_workflow.task_pr.required_status_checks"
+        )
+    if bridge_required and not has_canonical:
+        raise ValueError(
+            f"contradictory review bridge policy: github_review_bridge_required is true, "
+            f"but {CANONICAL_REVIEW_GATE_CONTEXT!r} is missing from branch_workflow.task_pr.required_status_checks"
+        )
+
+    return bridge_required, tuple(checks)
+
+
 def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
     """Return whether development review must publish GitHub proof.
 
@@ -53,7 +121,11 @@ def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
     a new runtime packaging dependency.
     """
 
-    review_gate = config.get("review_gate")
+    if isinstance(config, Mapping) and "review_gate" in config and "branch_workflow" in config:
+        bridge_required, _ = validate_review_bridge_policy(config)
+        return bridge_required
+
+    review_gate = config.get("review_gate") if isinstance(config, Mapping) else None
     if not isinstance(review_gate, Mapping):
         return True
     value = review_gate.get("github_review_bridge_required")
@@ -554,6 +626,8 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     config = load_json(config_file, default={})
     if LOCAL_CONFIG_PATH.exists():
         config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
+    if isinstance(config, Mapping) and ("review_gate" in config or "branch_workflow" in config):
+        validate_review_bridge_policy(config)
     return config
 
 

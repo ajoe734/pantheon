@@ -2488,15 +2488,184 @@ class CheckClassifierTests(unittest.TestCase):
                 "isRequired": True,
             }
         )
+        valid_false_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
         result = auto_integrator.integrate_candidate(
             candidate,
             auto_integrator.Settings(),
             FakeRunner(pr=pr),
             execute=False,
             gate=approved_gate(),
-            config={"review_gate": {"github_review_bridge_required": False}},
+            config=valid_false_config,
         )
         self.assertEqual(result.action, "would_merge")
+        self.assertIn("Ignored explicitly non-required diagnostics: Pantheon canonical review gate", result.detail)
+
+    def test_valid_false_mode_declared_check_failure_blocks(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {"name": "Smoke acceptance", "state": "FAILURE"},
+            {
+                "name": "Pantheon canonical review gate",
+                "state": "FAILURE",
+                "isRequired": False,
+            },
+        ]
+        valid_false_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            FakeRunner(pr=pr),
+            execute=False,
+            gate=approved_gate(),
+            config=valid_false_config,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("failing checks: Smoke acceptance", result.detail)
+
+    def test_valid_false_mode_declared_check_pending_waits(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {"name": "Smoke acceptance", "state": "PENDING"},
+            {
+                "name": "Pantheon canonical review gate",
+                "state": "FAILURE",
+                "isRequired": False,
+            },
+        ]
+        valid_false_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                    ]
+                }
+            },
+        }
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            FakeRunner(pr=pr),
+            execute=False,
+            gate=approved_gate(),
+            config=valid_false_config,
+        )
+        self.assertEqual(result.action, "waiting")
+        self.assertIn("checks are pending; not merging", result.detail)
+
+    def test_contradictory_review_bridge_config_blocks_fail_closed(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        contradictory_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            FakeRunner(pr=pr),
+            execute=False,
+            gate=approved_gate(),
+            config=contradictory_config,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("contradictory or invalid review bridge policy", result.detail)
+
+    def test_valid_true_mode_canonical_gate_failure_blocks(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"].append(
+            {
+                "name": "Pantheon canonical review gate",
+                "state": "FAILURE",
+                "isRequired": True,
+            }
+        )
+        valid_true_config = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        # FakeRunner with no proof tags will see canonical review gate fail and fall through to red checks
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            FakeRunner(pr=pr),
+            execute=False,
+            gate=approved_gate(),
+            config=valid_true_config,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("failing checks: Pantheon canonical review gate", result.detail)
 
     def test_exact_head_drift_blocks_integration(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -2518,6 +2687,45 @@ class CheckClassifierTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
+
+    def test_revalidate_before_merge_rejects_contradictory_policy(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        gate = approved_gate()
+        settings = auto_integrator.Settings()
+        decision = gate.decide(candidate, green_pr(), settings)
+        contradictory_config = {
+            "review_gate": {"github_review_bridge_required": False},
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        with self.assertRaises(auto_integrator.FinalMergeRevalidationError) as ctx:
+            auto_integrator.revalidate_before_merge(
+                candidate,
+                auto_integrator.Settings(),
+                FakeRunner(pr=green_pr()),
+                root=Path("/tmp"),
+                status_root=Path("/tmp"),
+                canonical_state_file=None,
+                prior_gate=gate,
+                prior_decision=decision,
+                prior_pr_number=44,
+                config=contradictory_config,
+            )
+        self.assertEqual(ctx.exception.reason, "contradictory-review-bridge-policy")
 
 
 def green_ep_pr(number: int = 99, *, task_id: str = "FE-001") -> dict[str, Any]:

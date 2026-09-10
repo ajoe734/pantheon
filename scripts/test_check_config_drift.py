@@ -10,6 +10,7 @@ from check_config_drift import (
     DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
     fleet_capacity_errors,
+    review_bridge_policy_errors,
     find_repository_integration_drift,
     find_repository_source_drift,
     get_dotted,
@@ -393,3 +394,161 @@ def test_fleet_contract_drift_is_actionable_and_valid_shape_passes(tmp_path, cap
     assert report["drift"] == [{"path": "ready_dispatcher.max_concurrent_workers", "repo": 13, "live": 14}]
     live.write_text(json.dumps(valid))
     assert main(["--repo-config", str(repo), "--live-config", str(live)]) == 0
+
+
+def test_review_bridge_policy_errors_flags_invalid_or_contradictory_shapes() -> None:
+    valid_false = {
+        "review_gate": {"github_review_bridge_required": False},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                ]
+            }
+        },
+    }
+    valid_true = {
+        "review_gate": {"github_review_bridge_required": True},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                    "Pantheon canonical review gate",
+                ]
+            }
+        },
+    }
+    contradictory_false = {
+        "review_gate": {"github_review_bridge_required": False},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                    "Pantheon canonical review gate",
+                ]
+            }
+        },
+    }
+
+    # Both valid false
+    assert review_bridge_policy_errors(valid_false, valid_false) == []
+    # Both valid true
+    assert review_bridge_policy_errors(valid_true, valid_true) == []
+
+    # Repo valid, live contradictory
+    errors = review_bridge_policy_errors(valid_false, contradictory_false)
+    assert len(errors) == 1
+    assert errors[0]["source"] == "live"
+    assert "contradictory review bridge policy" in errors[0]["error"]
+
+    # Repo contradictory, live valid
+    errors = review_bridge_policy_errors(contradictory_false, valid_false)
+    assert len(errors) == 1
+    assert errors[0]["source"] == "repo"
+    assert "contradictory review bridge policy" in errors[0]["error"]
+
+    # Both contradictory
+    errors = review_bridge_policy_errors(contradictory_false, contradictory_false)
+    assert len(errors) == 2
+    assert {e["source"] for e in errors} == {"repo", "live"}
+
+
+def test_find_drift_flags_review_bridge_policy_drift() -> None:
+    repo = {
+        "review_gate": {"github_review_bridge_required": False},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                ]
+            }
+        },
+    }
+    live = {
+        "review_gate": {"github_review_bridge_required": True},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                    "Pantheon canonical review gate",
+                ]
+            }
+        },
+    }
+
+    report = find_drift(repo, live)
+    assert report["intentional"] == []
+    drift_paths = {item["path"]: item for item in report["drift"]}
+    assert "review_gate.github_review_bridge_required" in drift_paths
+    assert drift_paths["review_gate.github_review_bridge_required"]["repo"] is False
+    assert drift_paths["review_gate.github_review_bridge_required"]["live"] is True
+    assert "branch_workflow.task_pr.required_status_checks" in drift_paths
+
+
+def test_main_rejects_contradictory_review_bridge_policy_even_when_equal_and_fix_requested(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contradictory = {
+        "ready_dispatcher": {"max_concurrent_workers": 13},
+        "review_gate": {"github_review_bridge_required": False},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                    "Pantheon canonical review gate",
+                ]
+            }
+        },
+    }
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    payload = json.dumps(contradictory)
+    repo.write_text(payload)
+    live.write_text(payload)
+
+    assert main(["--repo-config", str(repo), "--live-config", str(live), "--json", "--fix"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert len(report["review_bridge_policy_errors"]) == 2
+    assert report["fixed"] == []
+    assert live.read_text() == payload
+
+
+def test_main_passes_with_valid_aligned_false_review_bridge_policy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    valid_cfg = {
+        "ready_dispatcher": {"max_concurrent_workers": 13},
+        "review_gate": {"github_review_bridge_required": False},
+        "branch_workflow": {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                ]
+            }
+        },
+    }
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    payload = json.dumps(valid_cfg)
+    repo.write_text(payload)
+    live.write_text(payload)
+
+    assert main(["--repo-config", str(repo), "--live-config", str(live), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["review_bridge_policy_errors"] == []
+    assert report["drift"] == []
+

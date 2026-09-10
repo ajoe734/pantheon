@@ -24,12 +24,18 @@ review_approved exact-head task OR active permitted merge_then_review task
    - Local task worktree copies (`ROOT / ai-status.json`) are disposable execution projections
      and do not mask canonical runtime truth.
 
-2. **Review Gate Enforced**:
-   - Merge authority is governed by `scripts/git/task_review_merge_gate.py`.
+2. **Review Gate & Policy Alignment Enforced**:
+   - Merge authority is governed by `scripts/git/task_review_merge_gate.py` with canonical TaskStore exact-head review as the mandatory merge prerequisite.
    - For tasks requiring independent review, only the exact head approved by the assigned
      reviewer can be merged. The REST merge request carries that SHA as its
      optimistic-concurrency guard.
    - Standing auto-merge requests on gated PRs are actively revoked before evaluation.
+   - **Review Bridge & Status Check Policy Alignment**:
+     - When `review_gate.github_review_bridge_required` is `false` (TaskStore-only review mode), GitHub `dev` branch protection enforces three required status checks (`Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance`). The legacy `Pantheon canonical review gate` context must be absent from `branch_workflow.task_pr.required_status_checks`.
+     - In this valid false mode, external canonical review gate failures are treated as diagnostic only and do not block merge; they are recorded as ignored diagnostics and auditable in candidate logs (`Ignored explicitly non-required diagnostics: Pantheon canonical review gate`).
+     - Failures or pending states on any declared check (`Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`) continue to block merge fail-closed without a REST merge or integration receipt.
+     - When `review_gate.github_review_bridge_required` is `true`, `Pantheon canonical review gate` must be declared, and its failure blocks merge unless verified proof tags exist.
+     - Contradictory, missing, or malformed review bridge configuration fails closed immediately during discovery, evaluation, and final pre-merge revalidation.
 
 3. **Owner-Finalize Handoff (No Unauthorized `done` Mutation)**:
    - The auto-integrator merges the PR into `dev` without changing canonical
@@ -67,7 +73,7 @@ review_approved exact-head task OR active permitted merge_then_review task
   the scheduled canonical supervisor integration runner uses `--execute`; it
   calls the synchronous pull-request REST merge endpoint with the exact head
   and accepts only a response containing `merged: true`.
-- **Fail-closed checks**: Draft PRs, missing PRs, CI failures, rebase conflicts, or head drift
+- **Fail-closed checks**: Draft PRs, missing PRs, CI failures, contradictory review bridge policy, rebase conflicts, or head drift
   produce an `INTEGRATION-UNBLOCK-*` task to assign the blocker back to the owner/reviewer.
 - **Environment-only recovery**: If a task was already exactly approved and was blocked solely
   because the integrator could not acquire its writable lock or Git worktree, local Human/Ops may
