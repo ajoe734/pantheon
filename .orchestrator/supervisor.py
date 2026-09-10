@@ -32,6 +32,8 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 import model_rotation
+import runtime_state as promotion_state
+from functools import wraps
 import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
@@ -3219,6 +3221,21 @@ def reserve_execution_authorization_for_launch(
         write_status(config, status, source="supervisor-execution-authorization-reserve")
 
 
+def promotion_launch_guard(operation):
+    @wraps(operation)
+    def guarded(config, state, *args, **kwargs):
+        # The final fresh admission read and adapter process creation share the
+        # promotion lock. Detached runtime-phase snapshots cannot bypass it.
+        with runtime_state_lock(config):
+            current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
+            runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
+            if not promotion_state.promotion_admission_allowed(current, runtime):
+                return False, "runtime_promotion_fenced", None
+            return operation(config, state, *args, **kwargs)
+    return guarded
+
+
+@promotion_launch_guard
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3610,6 +3627,11 @@ def process_queue(
     """
     if delivery_outcome is not None:
         delivery_outcome["launched"] = False
+    with runtime_state_lock(config):
+        current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
+        runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
+        if not promotion_state.promotion_admission_allowed(current, runtime):
+            return False
     if not bool(ready_dispatch_settings(config).get("enabled", False)):
         return False
     if command_runtime_dispatch_block_reason(state):
@@ -9261,7 +9283,9 @@ def _persist_worker_recovery_receipt_locked(
     event = _worker_recovery_activity_event(
         canonical,
         event_type=(
-            "worker_lost_lease_recovery_pending"
+            "worker_promotion_continuation_pending"
+            if canonical_status == "pending" and canonical.get("reason_kind") == "promotion_drained"
+            else "worker_lost_lease_recovery_pending"
             if canonical_status == "pending"
             else f"worker_lost_lease_recovery_{canonical_status}"
         ),
@@ -11785,6 +11809,8 @@ def poll_workers(
     activity_events: list[dict[str, Any]] | None = None,
     governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
+    if state.get("promotion") and state["promotion"].get("phase") not in {"ready", "rolled_back"}:
+        return False
     changed = False
     approval_state = load_approval_state(config)
     status_snapshot = load_status(config)
@@ -11829,6 +11855,9 @@ def poll_workers(
     if workers and not governance_activity_events:
         governance_activity_events = activity_events or recent_governance_activity_events(config)
     for run_id, worker in list(workers.items()):
+        if promotion_state.valid_promotion_drain(state, worker) and not pid_is_alive(worker.get("pid")):
+            changed = recover_lost_worker_lease(config, state, worker, reason_kind="promotion_drained", reason="Planned runtime promotion drain.", status=status_snapshot) or changed
+            continue
         orphan = poll_worker_orphan_stage(
             config,
             state,
@@ -12356,6 +12385,13 @@ def worker_recovery_assignment_pair(
     settings = worker_reassignment_settings(config)
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    if receipt.get("reason_kind") == "promotion_drained":
+        target = reviewer if receipt.get("recovery_role") == "reviewer" else owner
+        if owner and reviewer and _worker_recovery_candidate_has_capacity(
+            config, state, status, task, owner=owner, reviewer=reviewer, target_agent=target,
+        ):
+            return owner, reviewer
+        return None
     finalize_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("finalize_statuses"),
         ["review_approved"],
@@ -12722,6 +12758,15 @@ def recover_lost_worker_lease(
 ) -> bool:
     """Shared boot/poll recovery path for a missing PID or expired lease."""
 
+    drain = promotion_state.valid_promotion_drain(state, worker)
+    if drain:
+        runtime = status_command_runtime_record_from_env(status_command_runtime_env(config))
+        if not promotion_state.promotion_admission_allowed(state, runtime):
+            return False
+        reason_kind = "promotion_drained"
+        reason = "Planned runtime promotion drain; continue the existing task lease."
+    elif reason_kind == "promotion_drained":
+        return False
     status = status if isinstance(status, dict) else load_status(config)
     task_id = str(worker.get("task_id") or "")
     task = canonical_task_with_archive_proof(
@@ -12786,6 +12831,8 @@ def recover_lost_worker_lease(
         reason=reason,
         status="held" if held else "pending",
     )
+    if drain:
+        receipt["promotion_drain"] = deepcopy(drain)
     persist_worker_recovery_receipt(
         config,
         receipt,
@@ -12812,11 +12859,14 @@ def recover_lost_worker_lease(
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
         return True
+    if drain:
+        drain["status"] = "consumed"
+        drain["recovery_receipt_id"] = canonical["receipt_id"]
     _fence_lost_worker_runtime(config, state, worker, canonical)
     write_activity_log(
         config,
         {
-            "type": "worker_lost_lease",
+            "type": "worker_promotion_drained" if drain else "worker_lost_lease",
             "task_id": task_id,
             "provider": worker.get("provider"),
             "worker_run_id": worker.get("run_id"),
@@ -13493,6 +13543,8 @@ def record_retry_exhausted_worker_terminal_outcome(
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    if state.get("promotion") and state["promotion"].get("phase") not in {"ready", "rolled_back"}:
+        return False
     # Account topology is V2 configuration, not runtime state to migrate.
     # Starting from a persisted V2 cache therefore needs no account rewrite.
     changed = False
@@ -13526,6 +13578,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if promotion_state.valid_promotion_drain(state, worker) and not pid_is_alive(worker.get("pid")):
+            changed = recover_lost_worker_lease(config, state, worker, reason_kind="promotion_drained", reason="Planned runtime promotion drain.", status=status_snapshot) or changed
+            continue
         if worker.get("status") not in active_statuses:
             continue
         marker_changed = update_worker_runtime_markers(worker)

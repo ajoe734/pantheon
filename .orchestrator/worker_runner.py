@@ -40,6 +40,7 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     validate_status_command_runtime as _validate_status_command_runtime,
 )
 import execution_authorization  # noqa: E402 - see sys.path bootstrap above
+import runtime_state as promotion_state  # noqa: E402
 from rewrite.task_state_store import load_snapshot  # noqa: E402
 from rewrite.task_identity import task_generation as canonical_task_generation  # noqa: E402
 
@@ -828,6 +829,31 @@ def _own_process_start_ticks() -> int:
     return int(raw[raw.rfind(")") + 2:].split()[19])
 
 
+def worker_runtime_config(coordination_root: Path) -> dict[str, Any]:
+    return {"paths": {
+        "status_file": str(coordination_root / "ai-status.json"),
+        "state_file": str(coordination_root / ".orchestrator" / "worker-runtime" / "state.json"),
+    }}
+
+
+def validate_promotion_admission(coordination_root: Path, command_runtime: dict[str, str]) -> None:
+    state = promotion_state.load_runtime_state(worker_runtime_config(coordination_root))
+    if not promotion_state.promotion_admission_allowed(state, command_runtime):
+        raise RuntimeError("worker_runner: runtime promotion admission fenced")
+
+
+def planned_drain_digest(coordination_root: Path, run_id: str, command_runtime: dict[str, str]) -> str | None:
+    # No lock in the termination path: promotion holds admission while waiting
+    # for this process. The atomic state file is evidence, never write authority.
+    state = promotion_state.load_runtime_state_snapshot(worker_runtime_config(coordination_root))
+    worker = state.get("workers", {}).get(run_id, {})
+    if (worker.get("pid") != os.getpid() or worker.get("pid_start_ticks") != _own_process_start_ticks()
+            or worker.get("status_command_runtime") != command_runtime):
+        return None
+    receipt = promotion_state.valid_promotion_drain(state, worker, terminal=False)
+    return receipt["digest"] if receipt else None
+
+
 def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, Any] | None:
     runtime_state = coordination_root / ".orchestrator" / "worker-runtime" / "state.json"
     # The V2 supervisor owns its receipt in worker-runtime.  Retain the
@@ -1127,6 +1153,14 @@ def main(argv: list[str] | None = None) -> int:
 
     def publish(next_status: str) -> None:
         now = utc_now()
+        if status.get("finished_at") and terminating_signal == signal.SIGTERM:
+            try:
+                digest = planned_drain_digest(coordination_root, args.run_id, command_runtime)
+            except (OSError, ValueError, RuntimeError):
+                digest = None
+            if digest and not status.get("execution_authorization_revoked"):
+                status["promotion_drain_digest"] = digest
+                next_status = "promotion_drained"
         status["status"] = next_status
         status["last_heartbeat_at"] = now
         write_json(heartbeat_path, {
@@ -1168,8 +1202,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         assert coordination_root is not None
-        with canonical_task_state_lock_file(coordination_root / "ai-status.json", shared=True):
+        with promotion_state.runtime_state_lock(worker_runtime_config(coordination_root)), canonical_task_state_lock_file(coordination_root / "ai-status.json", shared=True):
+            validate_promotion_admission(coordination_root, command_runtime)
             validate_worker_entry_binding(coordination_root, **entry_arguments)
+            if terminating_signal is not None:
+                raise RuntimeError("worker_runner: terminated before child launch")
             publish("starting")
             child = subprocess.Popen(
                 sandboxed_command,
