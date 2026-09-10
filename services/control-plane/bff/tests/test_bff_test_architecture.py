@@ -232,12 +232,12 @@ def test_total_main_importers_is_bounded_and_strictly_decreased() -> None:
     assert len(catalog_importers) == current, (
         f"Inventory current_main_importers ({current}) does not match live AST count ({len(catalog_importers)})"
     )
-    assert current <= 184, f"Expected current main importers <= 184, got {current}"
+    assert current <= 192, f"Expected current main importers <= 192, got {current}"
     assert current < baseline, f"Current ({current}) must be strictly less than baseline ({baseline})"
 
     # 2. Live scan across all test files, helpers, fixtures, conftest, and smoke suites
     all_test_files: List[Path] = []
-    for p in BFF_DIR.glob("**/*.py"):
+    for p in BFF_DIR.resolve().glob("**/*.py"):
         if ".venv" in p.parts or "__pycache__" in p.parts:
             continue
         if (

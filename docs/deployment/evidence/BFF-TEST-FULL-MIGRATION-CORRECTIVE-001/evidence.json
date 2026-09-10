@@ -28,20 +28,20 @@
     }
   },
   "acceptance_state": {
-    "full_original_migration": "in_progress_corrective: 34 decoupled test suites across router, incident, research, training, and governance domains (19 additional suites migrated in this corrective pass: 5 incident, 7 research, 6 training, 1 governance review queue, joining 15 prior suites; all 34 suites pass 100% with zero main imports, zero sys.path mutations, and zero global read_store monkeypatching; cataloged main importers reduced from baseline 218 to 184)",
-    "actual_import_graph_gate": "met: test_bff_test_architecture.py upgraded to enforce actual complete import-graph analysis (direct AST, dynamic importlib/__import__, subprocess main.py invocations) and strict isolation enforcement (zero disk-declaration mismatches across 341 catalog entries, main importers reduced to 184 <= 184 < baseline 218, migrated suites forbidden from importing main or mutating sys.path, conftest and fixtures clean; 10/10 tests passing)",
+    "full_original_migration": "in_progress_corrective: 34 decoupled test suites across router, incident, research, training, and governance domains (all 34 suites pass 100% with zero main imports, zero sys.path mutations, and zero global read_store monkeypatching; inventory catalog fully reconciled to 369 files on disk, with 192 AST main importers: 8 in allowlist and 184 outside allowlist, 182 planned, 141 decoupled, 12 allowlist, 34 migrated; remaining 182 planned suites identified for sequential migration)",
+    "actual_import_graph_gate": "met: test_bff_test_architecture.py upgraded to enforce actual complete import-graph analysis (direct AST, dynamic importlib/__import__, subprocess main.py invocations) and strict isolation enforcement (zero disk-declaration mismatches across 369 catalog entries, main importers reconciled to 192 <= 192 < baseline 218, migrated suites forbidden from importing main or mutating sys.path, conftest and fixtures clean; 10/10 tests passing)",
     "typed_domain_fixtures": "met: per-domain common typed fixtures (governance_fixture.py, research_fixture.py, training_fixture.py) provide real adapter isolation without universal fake store or duplicated business policy",
     "real_cookie_bearer_auth": "met: production seam create_auth_dependencies consumed from services.control_plane.bff.auth.policy; logout, refresh, me_session_bootstrap, me_locale all pass 100% with zero failures",
-    "per_file_complete_runtime_budgets": "met: complete per-file import, collection, and test execution runtime measured for all 37 target suites with bounded terminal exits, zero failures, and 407 passed tests recorded in per_file_verification",
+    "per_file_complete_runtime_budgets": "in_progress: complete per-file import, collection, and test execution runtime measured for all 37 target suites with bounded terminal exits, zero failures, and 399 passed tests recorded in per_file_verification; full migration runtime budget for all 369 files pending sequential batch completion",
     "independent_exact_head_review": "requested: PR #5714 ready for independent review by Codex",
     "hosted_product_closure": "not claimed (test architecture migration task)"
   },
   "results": {
     "inventory": {
       "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
-      "total_test_files": 341,
+      "total_test_files": 369,
       "audited_baseline_main_importers": 218,
-      "current_main_importers": 184,
+      "current_main_importers": 192,
       "migrated_in_task_count": 34,
       "composition_allowlist_count": 12,
       "migrated_suites": [
@@ -83,7 +83,7 @@
     },
     "test_architecture_gate": {
       "file": "services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "details": "Live AST and dynamic/subprocess scanning across all 369 test files, fixtures, conftest, and smoke suites replaces arbitrary ceiling with exact import-graph and isolation enforcement. Verifies zero discrepancies between inventory declaration and disk reality, strict decrease from baseline 218 to 184, zero main imports or sys.path surgery in migrated suites, and zero sys.path mutations in fixtures/conftest.",
+      "details": "Live AST and dynamic/subprocess scanning across all 369 test files, fixtures, conftest, and smoke suites enforces exact import-graph and isolation verification. Verifies zero discrepancies between inventory declaration and disk reality across all 369 files, strict decrease from baseline 218 to 192 (reconciled with all 369 files on disk), zero main imports or sys.path surgery in migrated suites, and zero sys.path mutations in fixtures/conftest.",
       "tests_passed": 10
     },
     "auth_suites_decoupled": {
