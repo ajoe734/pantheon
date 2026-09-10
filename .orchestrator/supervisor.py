@@ -14090,10 +14090,15 @@ def task_execution_dispatch_candidate(
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
-        and not task_has_current_canonical_integration_receipt(config, task)
+        and is_non_default_repository_finalization_pending(config, task)
     ):
         # Approval and cron integration are separate transactions. Closeout
         # starts only after the canonical integrator records this exact landing.
+        # Consume the same repo-scoped predicate evaluate_task_delivery_admission
+        # uses so planning, runtime reservation, and this freshness/candidate
+        # path cannot disagree about whether a receipt is required (normal
+        # unmerged Pantheon finalization stays eligible; a non-default
+        # repository delivery stays gated until its exact receipt lands).
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.REVIEW_READY

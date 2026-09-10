@@ -2987,12 +2987,26 @@ class SharedPlannerContractTests(unittest.TestCase):
         )
 
     def test_review_approved_waits_for_exact_integration_receipt(self) -> None:
+        # Non-default-repository delivery: owner finalize must wait for the
+        # sole auto-integrator's exact canonical receipt. task_execution_
+        # dispatch_candidate is the same function stale_dispatch_skip_message
+        # uses to revalidate a queued event's freshness, and it must reach the
+        # identical is_non_default_repository_finalization_pending verdict
+        # evaluate_task_delivery_admission (the planner/runtime-reservation
+        # predicate) already reaches -- otherwise the planner could reserve an
+        # owned_finalize_dispatch event that this exact freshness check then
+        # discards as stale. Normal Pantheon (default-repository) finalize
+        # remains eligible without a receipt; see
+        # test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator.
         task = task_fixture(status="review_approved")
-        binding = review_admission_binding()
+        task["target_repo"] = "execute-plans"
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
         task["generation"] = 4
         task["review_binding"] = {
-            key: binding[key]
-            for key in ("pr", "head_sha", "head_branch", "base")
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
         }
 
         self.assertIsNone(
@@ -3006,10 +3020,10 @@ class SharedPlannerContractTests(unittest.TestCase):
             "result": "landed",
             "observation": "performed_merge",
             "task_generation": 4,
-            "repository": "ajoe734/pantheon",
-            "target_branch": binding["base"],
-            "pr": binding["pr"],
-            "head_sha": binding["head_sha"],
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
             "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
             "observed_at": "2026-09-04T00:00:00Z",
             "source": "canonical_auto_integrator",
@@ -3020,6 +3034,75 @@ class SharedPlannerContractTests(unittest.TestCase):
                 self.config, task, "Codex", {"TASK-1": task}
             ),
             (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+
+    def test_planner_and_freshness_agree_across_integration_receipt_states(self) -> None:
+        """Reproduce, then prove fixed, the planner-versus-freshness mismatch:
+        the planner (evaluate_dispatch_candidate/evaluate_task_delivery_admission)
+        and the stale-event freshness recheck (task_execution_dispatch_candidate,
+        consulted by stale_dispatch_skip_message/current_dispatch_event_key) must
+        reach the identical owner-finalize verdict, or the planner could reserve
+        an owned_finalize_dispatch event this exact freshness check then discards
+        as stale. A receipt-less row must not reserve the event; once a current
+        canonical integration receipt lands, exactly one stable event exists.
+        """
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+        task = task_fixture(status="review_approved")
+        task["target_repo"] = "execute-plans"
+        task["generation"] = 4
+        task["review_binding"] = {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        task_map = {"TASK-1": task}
+
+        # Receipt-less: neither the planner nor the freshness recheck may
+        # reserve/keep an owned_finalize_dispatch event.
+        unreceipted_plan = planner_decision(self.config, task, target="Codex")
+        self.assertFalse(unreceipted_plan["eligible"])
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", task_map
+            )
+        )
+
+        task["integration_receipt"] = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 4,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+            "observed_at": "2026-09-04T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        }
+
+        # Once the exact canonical receipt lands, the planner reserves exactly
+        # one owned_finalize_dispatch event, and building that event and
+        # immediately revalidating it through the freshness path must not
+        # discard it as stale -- the event key the planner computed and the
+        # key the freshness recheck recomputes must match.
+        receipted_plan = planner_decision(self.config, task, target="Codex")
+        self.assertTrue(receipted_plan["eligible"])
+        self.assertEqual(receipted_plan["reason"], supervisor.REASON_OWNED_FINALIZE)
+        planned_event = receipted_plan["event"]
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", task_map
+            ),
+            (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+        self.assertIsNone(
+            supervisor.stale_dispatch_skip_message(self.config, planned_event, task_map)
+        )
+        self.assertEqual(
+            supervisor.current_dispatch_event_key(self.config, planned_event, task_map),
+            planned_event["key"],
         )
 
     def test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator(self) -> None:
