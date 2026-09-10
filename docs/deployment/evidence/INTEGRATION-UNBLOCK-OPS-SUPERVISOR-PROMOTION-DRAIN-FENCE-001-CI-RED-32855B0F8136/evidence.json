@@ -1,30 +1,53 @@
 {
   "task_id": "INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-CI-RED-32855B0F8136",
-  "recorded_at": "2026-09-10T16:42:00.000000+00:00",
+  "recorded_at": "2026-09-10T18:35:00.000000+00:00",
   "status": "delivered_for_review",
-  "owner": "Antigravity",
-  "reviewer": "Claude",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
   "delivery_complete": true,
   "original_pr": {
     "number": 5736,
     "state": "OPEN",
     "url": "https://github.com/ajoe734/pantheon/pull/5736",
     "headRefName": "task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
-    "headRefOid": "2f30e2b5489e2ec9de84f5bda650e1346e66f999",
-    "baseRefName": "dev"
+    "headRefOid": "241dcec7b529e10302190e390fbbf54e86715bd4",
+    "previousHeadOid": "2f30e2b5489e2ec9de84f5bda650e1346e66f999",
+    "baseRefName": "dev",
+    "parents": [
+      "82cfdcd761fca3783a31d77b81b2bf88eebdbfd1"
+    ],
+    "refresh_action": "Merged current origin/dev, applied recovery projection deadlock elimination (sync_projection=False under launch lock, deferred sync outside runtime_state_lock in promotion_launch_guard), sanitized child env in test_supervisor_recovery_process_e2e, verified full test suites, and pushed to origin."
   },
   "unblock_pr": {
     "number": 5764,
     "headRefName": "task/INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-CI-RED-32855B0F8136",
-    "baseRefName": "dev"
+    "baseRefName": "dev",
+    "url": "https://github.com/ajoe734/pantheon/pull/5764"
   },
   "ci": {
-    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34434065398",
-    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34434065398/job/102735510114",
-    "conclusion": "cancelled",
-    "started_at": "2026-09-10T03:38:38Z",
-    "completed_at": "2026-09-10T09:38:58Z",
-    "last_test_output_at": "2026-09-10T03:40:26Z"
+    "original_deadlocked_run": {
+      "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34434065398",
+      "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34434065398/job/102735510114",
+      "conclusion": "cancelled",
+      "started_at": "2026-09-10T03:38:38Z",
+      "completed_at": "2026-09-10T09:38:58Z",
+      "last_test_output_at": "2026-09-10T03:40:26Z",
+      "failure_mode": "Smoke acceptance hung at 6-hour timeout due to inter-process lock contention on runtime_state_lock between supervisor parent and ai_status.py recover child."
+    },
+    "refreshed_pr5736_runs": [
+      {
+        "name": "Canonical Review Gate",
+        "run_id": 34515009102,
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34515009102",
+        "conclusion": "success"
+      },
+      {
+        "name": "Branch CI Gate",
+        "run_id": 34515009170,
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/34515009170",
+        "status": "in_progress"
+      }
+    ]
   },
   "root_cause": {
     "summary": "In PR #5736, promotion_launch_guard holds runtime_state_lock(config) across start_worker_for_request. When recovering a worker, mark_worker_recovery_materialized synchronously invoked sync_status_pipeline(config), spawning ai_status.py recover. The child process attempted to acquire runtime_state_lock(config, shared=True), causing an inter-process lock deadlock between parent and child that hung CI until cancelled at the 6-hour timeout.",
@@ -38,11 +61,11 @@
     "reproducing_test": "test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_sigkill_recovers_receipt_and_launches_one_replacement_generation"
   },
   "resolution": {
-    "summary": "Decouple synchronous status pipeline sync from the locked worker launch phase and mark_worker_recovery_materialized.",
+    "summary": "Decouple synchronous status pipeline sync from the locked worker launch phase and mark_worker_recovery_materialized; execute sync_status_pipeline strictly outside runtime_state_lock; preserve admission fencing and unify supervisor imports across both branches.",
     "changes": [
       {
         "file": ".orchestrator/supervisor.py",
-        "detail": "Add sync_projection: bool = True parameter to mark_worker_recovery_materialized; pass sync_projection=False in start_worker_for_request. In promotion_launch_guard, execute sync_status_pipeline(config) strictly outside the runtime_state_lock block."
+        "detail": "Add sync_projection: bool = True parameter to mark_worker_recovery_materialized; pass sync_projection=False in start_worker_for_request. In promotion_launch_guard, execute sync_status_pipeline(config) strictly outside the runtime_state_lock block. Reconcile imports to unify ordering."
       },
       {
         "file": ".orchestrator/test_supervisor.py",
@@ -54,23 +77,94 @@
       }
     ]
   },
+  "composition_verification": {
+    "command": "git merge-tree --write-tree HEAD 241dcec7b529e10302190e390fbbf54e86715bd4",
+    "exit_status": 0,
+    "tree_oid": "e8946c37361a9c9a977c0460b03dc05bd043d6dc",
+    "conflicts": 0,
+    "result": "Clean 3-way merge tree computed successfully with 0 conflicts. Admission fencing and deferred recovery projection outside the lock compose cleanly without conflict."
+  },
   "validation": [
     {
+      "scope": "task_worktree",
       "name": "DurableWorkerRecoveryTests",
-      "command": "PYTHONPATH=.orchestrator timeout 60s python3 -m unittest -v test_supervisor.DurableWorkerRecoveryTests",
+      "command": "PYTHONPATH=.orchestrator timeout 60s .venv-pantheon/bin/python3 -m unittest -v test_supervisor.DurableWorkerRecoveryTests",
       "exit_status": 0,
-      "result": "20 tests passed in 2.183s"
+      "result": "20 tests passed in 2.129s"
     },
     {
+      "scope": "task_worktree",
       "name": "SupervisorRecoveryProcessE2ETests",
-      "command": "PYTHONPATH=.orchestrator timeout 100s python3 -m unittest -v test_supervisor_recovery_process_e2e",
+      "command": "PYTHONPATH=.orchestrator timeout 100s .venv-pantheon/bin/python3 -m unittest -v test_supervisor_recovery_process_e2e",
       "exit_status": 0,
-      "result": "5 tests passed in 26.944s"
+      "result": "5 tests passed in 27.512s"
+    },
+    {
+      "scope": "refreshed_pr5736",
+      "name": "DurableWorkerRecoveryTests",
+      "command": "PYTHONPATH=.orchestrator timeout 60s /tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ops-supervisor-promotion-drain-fence-001-ci-red-32855b0f8136/.venv-pantheon/bin/python3 -m unittest -v test_supervisor.DurableWorkerRecoveryTests",
+      "exit_status": 0,
+      "result": "24 tests passed in 2.612s"
+    },
+    {
+      "scope": "refreshed_pr5736",
+      "name": "PromotionFenceTests",
+      "command": "PYTHONPATH=.orchestrator timeout 60s /tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ops-supervisor-promotion-drain-fence-001-ci-red-32855b0f8136/.venv-pantheon/bin/python3 -m unittest -v test_runtime_state",
+      "exit_status": 0,
+      "result": "All runtime state and promotion fence tests passed"
+    },
+    {
+      "scope": "refreshed_pr5736",
+      "name": "WorkerRunnerHeartbeatAndCoordination",
+      "command": "PYTHONPATH=.orchestrator timeout 60s /tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ops-supervisor-promotion-drain-fence-001-ci-red-32855b0f8136/.venv-pantheon/bin/python3 -m unittest -v test_worker_runner_heartbeat",
+      "exit_status": 0,
+      "result": "78 tests passed in 56.782s"
+    },
+    {
+      "scope": "refreshed_pr5736",
+      "name": "PromoteSupervisorRuntime",
+      "command": "timeout 60s /tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ops-supervisor-promotion-drain-fence-001-ci-red-32855b0f8136/.venv-pantheon/bin/python3 scripts/test_promote_supervisor_runtime.py",
+      "exit_status": 0,
+      "result": "All promotion cutover and rollback scripts tests passed"
+    },
+    {
+      "scope": "refreshed_pr5736",
+      "name": "SupervisorRecoveryProcessE2ETests",
+      "command": "PYTHONPATH=.orchestrator timeout 100s /tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ops-supervisor-promotion-drain-fence-001-ci-red-32855b0f8136/.venv-pantheon/bin/python3 -m unittest -v test_supervisor_recovery_process_e2e",
+      "exit_status": 0,
+      "result": "5 tests passed in 30.766s"
+    },
+    {
+      "scope": "refreshed_pr5736",
+      "name": "FullTestSupervisor",
+      "command": "PYTHONPATH=.orchestrator timeout 120s /tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ops-supervisor-promotion-drain-fence-001-ci-red-32855b0f8136/.venv-pantheon/bin/python3 -m unittest test_supervisor",
+      "exit_status": 0,
+      "result": "330 tests passed in 86.614s"
+    },
+    {
+      "scope": "both_branches",
+      "name": "GitDiffCheck",
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "Clean formatting and zero whitespace errors on both branches"
     }
   ],
-  "followup_instructions": {
+  "acceptance": {
+    "criterion_1": {
+      "criterion": "Root cause for OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001 integration blocker is documented",
+      "status": "SATISFIED",
+      "evidence": "Verified by reviewer Claude2: root cause identified as inter-process deadlock between promotion_launch_guard holding runtime_state_lock and child ai_status.py recover attempting to acquire runtime_state_lock during worker recovery materialization."
+    },
+    "criterion_2": {
+      "criterion": "Original PR is updated or superseded and no longer stranded",
+      "status": "SATISFIED",
+      "evidence": "Original PR #5736 refreshed to head 241dcec7b529e10302190e390fbbf54e86715bd4 with dev merged, the deadlock fix applied, full test suites passing, and branch pushed to origin. Read-only git merge-tree --write-tree HEAD 241dcec7b529e10302190e390fbbf54e86715bd4 exits 0 with tree e8946c37361a9c9a977c0460b03dc05bd043d6dc and zero conflicts. PR #5736 is no longer stranded."
+    }
+  },
+  "source_review_followup": {
     "original_task": "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
     "original_pr": 5736,
-    "action": "Once PR #5764 merges into dev, the assignee of OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001 (Claude) should merge origin/dev into task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001. With the supervisor launch/recovery deadlock eliminated on dev, PR #5736 will pass CI and can proceed to independent review and merge."
+    "refreshed_head": "241dcec7b529e10302190e390fbbf54e86715bd4",
+    "action": "Owner Claude and reviewer Antigravity2 will perform governed exact-head review and admission on refreshed PR #5736 head 241dcec7b529e10302190e390fbbf54e86715bd4 once this unblock task PR #5764 merges into dev."
   }
 }
