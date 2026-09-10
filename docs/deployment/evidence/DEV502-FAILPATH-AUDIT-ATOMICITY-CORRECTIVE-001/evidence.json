@@ -1,0 +1,63 @@
+{
+  "task_id": "DEV502-FAILPATH-AUDIT-ATOMICITY-CORRECTIVE-001",
+  "title": "Make the dev-paper failure-path lease audit fixture atomic and CI-stable",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "baseline_evidence": {
+    "workflow_run_id": "34448892277",
+    "job_id": "102779938048",
+    "failure_location": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline",
+    "failure_message": "AssertionError: compensation must succeed, got 75: Traceback (most recent call last):\n  File \"/tmp/tmpwbie4t41/compensation/bin/python3\", line 88, in <module>\n    log_audit(lid, \"verify\", \"verified\")\n  File \"/tmp/tmpwbie4t41/compensation/bin/python3\", line 12, in log_audit\n    d = json.loads(p.read_text(encoding=\"utf-8\")) if p.exists() else {\"events\": [], \"leases\": {}}\n  File \"/usr/lib/python3.12/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n  File \"/usr/lib/python3.12/json/decoder.py\", line 337, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n  File \"/usr/lib/python3.12/json/decoder.py\", line 355, in raw_decode\n    raise JSONDecodeError(\"Expecting value\", s, err.value) from None\njson.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n[cross-repo-release-compensation] rollback incomplete; lease remains quarantined until TTL",
+    "root_cause": "Pre-existing concurrent fake lease audit JSON race where primary fake CLI record_audit and compensation shim log_audit used un-synchronized Path.write_text, truncating the shared audit file to 0 bytes and exposing an empty JSON window to concurrent readers and writers during D3.6 failure-path execution"
+  },
+  "repair_summary": {
+    "protocol": "Unified safe journal protocol: dedicated sibling lock (.lock), locked read-modify-write via fcntl.flock(LOCK_EX), same-directory temporary file (NamedTemporaryFile), and atomic os.replace",
+    "components_updated": [
+      "FAKE_ADJACENT_CLI: record_audit updated with sibling lock, temp file, atomic os.replace, and barrier rendezvous hooks",
+      "FAKE_ADJACENT_CLI: audit-transition command added for explicit controlled transitions",
+      "setup_compensation_fixture: log_audit shim updated with identical sibling lock, temp file, atomic os.replace, and barrier rendezvous hooks",
+      "setup_compensation_fixture: audit-transition command added to compensation python3 shim",
+      "setup_compensation_fixture: audit_file_path prioritizes FAKE_LEASE_AUDIT_FILE env var over baked default",
+      "prepare_guard_fixture: write_audit_atomic helper introduced for locked atomic file initialization",
+      "regression_test: test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression added covering forward forced interleaving, reverse forced interleaving, continuous read integrity (zero parse errors), and real heartbeat SIGTERM race"
+    ]
+  },
+  "test_suite": "scripts/test_dev_paper_diagnostics_failure_path.py",
+  "checksums": {
+    "scripts/test_dev_paper_diagnostics_failure_path.py": "052ca36befbf0ccd0dd05c83e649a2c011c740be0bfe328688f93d5ea83683ce"
+  },
+  "artifacts": [
+    "scripts/test_dev_paper_diagnostics_failure_path.py",
+    "docs/deployment/evidence/DEV502-FAILPATH-AUDIT-ATOMICITY-CORRECTIVE-001/evidence.json"
+  ],
+  "verification": {
+    "d3_6_rerun_ten_times": {
+      "command": "for i in $(seq 1 10); do python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py -k test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline; done",
+      "iterations_executed": 10,
+      "iterations_passed": 10,
+      "status": "passed"
+    },
+    "full_failure_path_suite": {
+      "command": "python3 -m pytest -v scripts/test_dev_paper_diagnostics_failure_path.py",
+      "total_tests": 20,
+      "passed_tests": 20,
+      "failed_tests": 0,
+      "duration_seconds": 40.13,
+      "status": "passed"
+    },
+    "controlled_barrier_regression": {
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression",
+      "part_1_primary_holds_lock_compensation_blocked": "passed (0 parse errors observed, both lease states retained)",
+      "part_2_compensation_holds_lock_primary_blocked": "passed (0 parse errors observed, both lease states retained)",
+      "part_3_heartbeat_sigterm_concurrent_with_release": "passed (0 parse errors observed, primary quarantined, compensation released)",
+      "status": "passed"
+    },
+    "proof_only_fixtures_ran": {
+      "changed_files": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py",
+        "docs/deployment/evidence/DEV502-FAILPATH-AUDIT-ATOMICITY-CORRECTIVE-001/evidence.json"
+      ],
+      "scope_check": "Only the declared fixture test and evidence files changed from clean current-dev branch. Zero modifications to production scripts, run-acceptance wiring, workflows, B05 docs/sources, deployment configs, or credentials."
+    }
+  }
+}
