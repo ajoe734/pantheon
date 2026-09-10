@@ -1,0 +1,227 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+  "batch_id": "B17_router_sse_surfaces",
+  "title": "Router and SSE surfaces",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "1a46c158c210d82ef93f43ed5db24087f417512f",
+  "scope": {
+    "batch_source_files": [
+      "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+      "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
+      "services/control-plane/bff/test_pkt003_lineage_view_contract.py",
+      "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+      "services/control-plane/bff/test_pkt012_alerts_rail_contract.py",
+      "services/control-plane/bff/test_pkt013_operator_home_contract.py",
+      "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+      "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py",
+      "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+      "services/control-plane/bff/tests/test_bff_lineage_contract.py",
+      "services/control-plane/bff/tests/test_sse_backpressure.py"
+    ],
+    "exact_file_count": 11,
+    "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": {
+      "bytes": 24389,
+      "sha256": "ad1cfe6bb5a1f4793eca6e8bb0026092b6069918f9ec99664744c33e9b55be05",
+      "lines": 619
+    },
+    "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py": {
+      "bytes": 10524,
+      "sha256": "803a5c15147ea6c790b1dd0af61f5bc7468045c7d0e43555ad75ac69743ae5b9",
+      "lines": 249
+    },
+    "services/control-plane/bff/test_pkt003_lineage_view_contract.py": {
+      "bytes": 7530,
+      "sha256": "6df25badd1ad062c7fe701a1ffb15a7feccc0a9a6a76a63e307ed80d67dcf706",
+      "lines": 230
+    },
+    "services/control-plane/bff/test_pkt005_sse_substrate_contract.py": {
+      "bytes": 20503,
+      "sha256": "3399e1a24011d0bf5dfaf02ea9a8efa83e2a3afc5defcd6e19018de91ceaa818",
+      "lines": 544
+    },
+    "services/control-plane/bff/test_pkt012_alerts_rail_contract.py": {
+      "bytes": 9173,
+      "sha256": "d1504cae55ae996b49b405a34be65c3f6d32a1e9db1837f30db996310e47ffbe",
+      "lines": 239
+    },
+    "services/control-plane/bff/test_pkt013_operator_home_contract.py": {
+      "bytes": 5791,
+      "sha256": "0e6c089b787ccdf24ddf454d4039f968d3628d95844db1c76ac4b55f162cf704",
+      "lines": 168
+    },
+    "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py": {
+      "bytes": 10821,
+      "sha256": "b8e454d98506fcb9655477e8f060fedcbd03b2b67894623d6eb6a3d794f38f0c",
+      "lines": 258
+    },
+    "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py": {
+      "bytes": 4173,
+      "sha256": "56fb78b857945597822a119d7f8a0cfc4c15f74c9b4dd65fd5ab36e11433d7ba",
+      "lines": 135
+    },
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py": {
+      "bytes": 56425,
+      "sha256": "7335ac4ad2bf90f72ff45404e78d265c778371c2bc797715acfadcedcef7faf2",
+      "lines": 1417
+    },
+    "services/control-plane/bff/tests/test_bff_lineage_contract.py": {
+      "bytes": 5846,
+      "sha256": "1e18e64ba9d3bec3b35ff466e61350f8b19d04d19f07a273341c827a4da25e67",
+      "lines": 175
+    },
+    "services/control-plane/bff/tests/test_sse_backpressure.py": {
+      "bytes": 9169,
+      "sha256": "0be6295b55ccc863fdc41dac3f00dc84edcb656e7ed72a64a654c2f02fbe388e",
+      "lines": 239
+    }
+  },
+  "suite_results": {
+    "total_suites": 11,
+    "total_tests_passed": 91,
+    "total_tests_failed": 0,
+    "details_by_file": {
+      "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": {
+        "tests_passed": 12,
+        "decoupling_approach": "Decoupled via isolated FastAPI app mounting the retained create_identity_router and create_governance_router. The injected submit_action storage double resolves idempotency/replay solely from the real CommandStore.get_command_by_idempotency_key (no separate in-memory fast-path dict), so command idempotency/conflict/replay is not duplicated in the test. The injected publish_event callback (_governance_publish_event) is now a pure pass-through matching main.py's retained wiring (lambda event_type, data: _publish_event(buffer, subscribers, event_type, data)) exactly -- no replay suppression, no payload reshaping. See review_findings_resolved_round_2 for the P1 fix."
+      },
+      "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Mounted isolated create_deployment_router with DeploymentReadSurfaceAdapter and read cutoff policy validation without bff main or sys.path mutation."
+      },
+      "services/control-plane/bff/test_pkt003_lineage_view_contract.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Mounted create_evolution_router on clean FastAPI instance with isolated in-memory read surface ports."
+      },
+      "services/control-plane/bff/test_pkt005_sse_substrate_contract.py": {
+        "tests_passed": 14,
+        "decoupling_approach": "Mounted create_events_router and retained Agora router (create_agora_router) with handle_sse_stream, and AST-inspected _CORS_ALLOW_HEADERS from main.py without importing bff main."
+      },
+      "services/control-plane/bff/test_pkt012_alerts_rail_contract.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Direct router and service mounting for alerts rail endpoints with package-qualified imports and isolated in-memory read store."
+      },
+      "services/control-plane/bff/test_pkt013_operator_home_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Isolated operator home projection test mounting with InMemoryReadSurfacePorts without global read_store monkeypatching."
+      },
+      "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Direct domain service projection testing using PaperLiveDriftService and DriftReadPorts without bff main import."
+      },
+      "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Mounts the retained production services.control_plane.bff.governance.router.create_governance_router and exercises the real GovernanceService.consultation_workbench builder against the GET /api/v1/workbench/consultation route, using storage-double read stores (empty and seeded) instead of a duplicate local builder/endpoint. Reproduction check: stubbing GovernanceService.consultation_workbench to raise fails both tests."
+      },
+      "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py": {
+        "tests_passed": 40,
+        "decoupling_approach": "Mounted retained production routers (create_strategies_router, create_personas_router, create_capital_router, create_deployment_router) with dynamic store proxy and _FacadeDeploymentQueries without hand-rolled fake endpoints or bff main import. The persona-create coordination seam (personas/routes/collection.py and personas/service.py module globals, which the production router factory has no DI hook for) is patched only inside a module-scoped autouse pytest fixture with an isolation-check assertion on setup and teardown, not as a permanent top-level import-time write; a fresh-process probe confirms all three production globals are restored after this module's tests complete."
+      },
+      "services/control-plane/bff/tests/test_bff_lineage_contract.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Mounted create_evolution_router with LineageService and LineageReadSurfaceAdapter on clean FastAPI instance without bff main import."
+      },
+      "services/control-plane/bff/tests/test_sse_backpressure.py": {
+        "tests_passed": 4,
+        "decoupling_approach": "Direct service-level validation using EventStreamService and asyncio SSE streaming without bff main import."
+      }
+    }
+  },
+  "architecture_invariants": {
+    "zero_main_imports": true,
+    "zero_sys_path_mutations": true,
+    "zero_permanent_import_time_global_monkeypatching": true,
+    "bounded_fixture_scoped_patch": "test_bff_b2_list_detail_facade.py patches personas.routes.collection._coordinate_persona_create, personas.service._coordinate_persona_create, and personas.service._PERSONA_PROVISIONING_STORE inside a module-scoped autouse fixture with isolation-check assertions; restored via fixture teardown, not left as a module-level write",
+    "test_bff_test_architecture_passed": 8
+  },
+  "verification_commands": [
+    ".venv/bin/pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py services/control-plane/bff/test_pkt003_lineage_view_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/test_pkt013_operator_home_contract.py services/control-plane/bff/test_pkt014_paper_live_drift_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/tests/test_bff_lineage_contract.py services/control-plane/bff/tests/test_sse_backpressure.py (91 passed)",
+    ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
+  ],
+  "refresh": {
+    "reason": "origin/dev advanced past the recorded base_sha before handoff; owner merged current dev tip and re-ran the full suite before re-handoff",
+    "previous_base_sha": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
+    "merged_dev_tip": "6f00d0eb38e57946fe784de493df4606a55169b3",
+    "no_owned_source_files_changed_by_merge": true,
+    "verification_command": ".venv-pantheon/bin/python3 -m pytest -q <the 11 owned suites> services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "verification_result": "99 passed in 40.04s",
+    "diff_check": "git diff --check 6f00d0eb3...HEAD exits 0 (no whitespace/EOF errors)",
+    "ast_scan": "no main imports, sys.path mutations, or subprocess calls found in the 11 owned files"
+  },
+  "review_findings_resolved": {
+    "reason": "Independent review of PR #5761 head 8c5ee77597cf03ff3d6ba2298d896c1386ef1de3 found 3 P1 defects; this revision resolves all three within the same 11-file scope, no production files touched",
+    "reviewed_head": "8c5ee77597cf03ff3d6ba2298d896c1386ef1de3",
+    "findings": [
+      {
+        "file": "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py",
+        "defect": "Test built its own FastAPI app and GET handler duplicating a module-readiness builder instead of exercising the production route; stubbing GovernanceService.consultation_workbench left both tests passing.",
+        "fix": "Rewrote the test to mount services.control_plane.bff.governance.router.create_governance_router and assert on the real GovernanceService.consultation_workbench output (empty-store fail-closed case and a seeded requests/committees/memos aggregation case). Reproduction re-check: stubbing GovernanceService.consultation_workbench to raise now fails both tests."
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+        "defect": "persona_collection._coordinate_persona_create, persona_service._coordinate_persona_create, and persona_service._PERSONA_PROVISIONING_STORE were assigned at module import time with no restoration, leaking into other collected suites (confirmed by a fresh-process import probe).",
+        "fix": "Moved the patch into a module-scoped autouse pytest fixture (_patch_persona_create_coordination_seam) with an isolation-check assertion before patching and after restoring; a fresh-process probe run after the module's tests complete confirms all three production globals are back to their original identity."
+      },
+      {
+        "file": "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+        "defect": "The injected submit_action test callback reimplemented command idempotency, conflict detection, and replay marking using a private in-memory dict (_FINAL_CONTRACT_IDEMPOTENCY) duplicated from services/control-plane/bff/main.py's private module-level pattern, in addition to the real CommandStore, so the replay/no-double-publish tests verified the fake dict rather than durable production storage.",
+        "fix": "Removed _FINAL_CONTRACT_IDEMPOTENCY entirely; the submit_action storage double now resolves idempotency/replay/conflict solely from services.control_plane.bff.command_queue.CommandStore.get_command_by_idempotency_key (the real, already-imported production durable command store), so there is a single source of truth instead of a duplicate parallel implementation. The 'durable replay' test now explicitly asserts the command persisted in CommandStore before replaying, rather than clearing a since-removed in-memory cache."
+      }
+    ],
+    "corrected_evidence_claims": [
+      "test_pkt015 no longer claims a 'ConsultationWorkbenchService' class (no such class exists in production; the real seam is GovernanceService.consultation_workbench via create_governance_router)",
+      "architecture_invariants.zero_global_monkeypatching (previously claimed unconditionally) is replaced by zero_permanent_import_time_global_monkeypatching plus an explicit bounded_fixture_scoped_patch disclosure for test_bff_b2_list_detail_facade.py"
+    ],
+    "verification_command": ".venv-pantheon/bin/python3 -m pytest -q <the 11 owned suites> services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "verification_result": "99 passed in 39.22s",
+    "isolation_probe": "fresh-process pytest.main() run of test_bff_b2_list_detail_facade.py followed by identity assertions on persona_collection._coordinate_persona_create, persona_service._coordinate_persona_create, and persona_service._PERSONA_PROVISIONING_STORE against their pre-run values: all three restored",
+    "reproduction_recheck": "stubbing GovernanceService.consultation_workbench to raise RuntimeError now fails both test_pkt015 tests (previously both passed)",
+    "diff_check": "git diff --check exits 0",
+    "ast_scan": "no main imports, sys.path mutations, or subprocess calls found in the 11 owned files"
+  },
+  "refresh_2": {
+    "reason": "origin/dev advanced twice more (INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-FIXTURE-GIT-CLEANUP-001, then OPS-ANTIGRAVITY2-AUTH-PROBE-TIMEOUT-PARITY-001) before this re-handoff; owner merged current dev tip both times and re-ran the full suite",
+    "previous_base_sha": "6f00d0eb38e57946fe784de493df4606a55169b3",
+    "merged_dev_tip": "1a46c158c210d82ef93f43ed5db24087f417512f",
+    "no_owned_source_files_changed_by_merge": true,
+    "verification_command": ".venv-pantheon/bin/python3 -m pytest -q <the 11 owned suites> services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "verification_result": "99 passed in 36.70s",
+    "diff_check": "git diff --check HEAD exits 0 (no whitespace/EOF errors)",
+    "ast_scan": "no main imports, sys.path mutations, or subprocess calls found in the 11 owned files"
+  },
+  "review_findings_resolved_round_2": {
+    "reason": "Independent review of PR #5761 exact head 1e87b88e818cb643d177f5e0fc98cde3e31f347b found 1 remaining P1 in test_ask005_sse_event_publishing_contract.py:234-250; this revision resolves it within the same 11-file scope, no production files touched",
+    "reviewed_head": "1e87b88e818cb643d177f5e0fc98cde3e31f347b",
+    "findings": [
+      {
+        "file": "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+        "defect": "_governance_publish_event (the test's publish_event callback injected into the retained create_governance_router) suppressed the SSE publish call when a test-owned _last_replayed flag was set, and synthesized outcome/current_stage/decided_by payload keys that services/control_plane/bff/governance/router.py does not emit. The retained router (bff_approvals_decide, router.py:1060-1061) always computes {\"approval_id\": clean_id, \"decision\": decision, \"actor_id\": actor_id} and calls publish_event unconditionally after every submit_governance_action call, including replays -- there is no seam-level replay dedup for this endpoint today. Reproduction: mounting the same create_governance_router/_submit_action with a passive publish_event recorder shows the router invokes publish_event twice on replay even though the response correctly reports replayed=true, so the prior 'no double publish' assertions passed only because the test-owned callback swallowed the second call, not because retained production behavior prevents it.",
+        "fix": "Replaced _governance_publish_event with a pure pass-through matching services/control-plane/bff/main.py's retained wiring exactly (lambda event_type, data: _publish_event(buffer, subscribers, event_type, data), no suppression, no reshaping). Removed the now-unused _last_replayed test-owned flag. Corrected the 5 decide-event assertions (approve/reject/request_revision/escalate/freeze) to check the real emitted keys (decision, actor_id) instead of the previously-synthesized outcome/current_stage/decided_by keys, which router.py never sends. The two replay tests (test_bff_approvals_decide_replay_does_not_double_publish, test_bff_approvals_decide_durable_replay_does_not_double_publish) now assert what the retained seam actually guarantees -- durable command-level idempotency (same command_id, replayed=true) -- and pin the current SSE publish count (2, not 1) with an explicit KNOWN DISCREPANCY docstring/assertion message documenting that the pre-extraction bff/main.py implementation (git history commits 632d72a85/106b0ccae, ASK-005 R3/R4) had an explicit _is_approval_replay pre-check that was not carried into governance/router.py during a prior extraction, tracked here as a residual for governed contract revision rather than papered over in a test callback. Production files (governance/router.py, governance/service.py, main.py) were not touched -- out of scope for this test-file-only migration task."
+      }
+    ],
+    "known_discrepancies": [
+      {
+        "surface": "POST /bff/approvals/{approval_id}/decide (services/control-plane/bff/governance/router.py:1032-1062)",
+        "discrepancy": "No seam-level SSE replay dedup: publish_event fires unconditionally after every submit_governance_action call, including a replay resolved via durable CommandStore idempotency. The pre-extraction bff/main.py implementation had an explicit _is_approval_replay pre-check (commits 632d72a85 'extend approval SSE pre-check to durable command_store replay' and 106b0ccae 'fix idempotency conflict path double-publishes approval SSE') that skipped the SSE publish on replay; that check does not exist in the retained governance/router.py + governance/service.py seam.",
+        "scope_note": "Out of scope for BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001 (test-file-only, 11 declared source files, foundation files untouched). Flagged for governed contract revision, not silently fixed or hidden in a test callback.",
+        "test_evidence": "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py::test_bff_approvals_decide_replay_does_not_double_publish and ::test_bff_approvals_decide_durable_replay_does_not_double_publish assert the current 2-publish behavior with an explicit KNOWN DISCREPANCY message rather than a false 1-publish guarantee."
+      }
+    ],
+    "verification_command": ".venv-pantheon/bin/python3 -m pytest -q <the 11 owned suites> services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "verification_result": "99 passed in 36.70s",
+    "reproduction_recheck": "Before the fix: stubbing the test's publish_event to a passive recorder while keeping _last_replayed suppression showed a real double-invoke of publish_event on replay that the suppression masked; after the fix the tests assert and pin that exact 2-call behavior instead of masking it.",
+    "diff_check": "git diff --check exits 0",
+    "ast_scan": "no main imports, sys.path mutations, or subprocess calls found in the 11 owned files"
+  }
+}
