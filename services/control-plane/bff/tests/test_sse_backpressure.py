@@ -2,35 +2,22 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from typing import Callable
 
 import pytest
 
-BFF_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-sys.path.insert(0, str(REPO_ROOT))
+import services.control_plane.bff.events.service as evt_service_module
+from services.control_plane.bff.events.service import (
+    DEFAULT_SSE_CHANNEL_CATALOG,
+    EventStreamService,
+    MAX_SSE_EVENTS,
+    SseReplayUnavailableError,
+)
 
-import main as bff_main
 
-
-@pytest.fixture(autouse=True)
-def clean_sse_buffers():
-    for buffer in bff_main._sse_buffers.values():
-        buffer.clear()
-    for subscribers in bff_main._sse_subscribers.values():
-        subscribers.clear()
-    bff_main._incident_events.clear()
-    bff_main._incident_subscribers.clear()
-    yield
-    for buffer in bff_main._sse_buffers.values():
-        buffer.clear()
-    for subscribers in bff_main._sse_subscribers.values():
-        subscribers.clear()
-    bff_main._incident_events.clear()
-    bff_main._incident_subscribers.clear()
+@pytest.fixture
+def sse_service() -> EventStreamService:
+    return EventStreamService()
 
 
 async def _wait_until(predicate: Callable[[], bool], *, timeout_seconds: float = 1.0) -> None:
@@ -48,12 +35,14 @@ def _event_id_from_chunk(chunk: str) -> str:
     raise AssertionError(f"SSE chunk did not contain an event id: {chunk!r}")
 
 
-def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect() -> None:
+def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect(
+    sse_service: EventStreamService,
+) -> None:
     async def scenario() -> dict[str, int | str]:
         channel = "approval"
-        buffer = bff_main._sse_buffers[channel]
-        subscribers = bff_main._sse_subscribers[channel]
-        stream = bff_main._sse_stream(buffer, subscribers)
+        buffer = sse_service.buffers[channel]
+        subscribers = sse_service.subscribers[channel]
+        stream = sse_service.stream(channel, buffer, subscribers, last_event_id=None)
         first_chunk_task = asyncio.create_task(anext(stream))
 
         await _wait_until(lambda: len(subscribers) == 1)
@@ -65,7 +54,7 @@ def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect
         published_ids: list[str] = []
         for index in range(total_events):
             published_ids.append(
-                bff_main._publish_event(
+                sse_service.publish(
                     buffer,
                     subscribers,
                     "approval.backpressure",
@@ -78,7 +67,7 @@ def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect
                 )
             )
 
-        assert len(buffer) == bff_main._MAX_EVENTS
+        assert len(buffer) == sse_service.max_events
         assert subscriber_queue.full()
         assert subscriber_queue.qsize() == max_queue_events
 
@@ -112,15 +101,17 @@ def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect
     }
 
 
-def test_replay_window_is_bounded_drops_oldest_and_preserves_per_aggregate_ordering() -> None:
+def test_replay_window_is_bounded_drops_oldest_and_preserves_per_aggregate_ordering(
+    sse_service: EventStreamService,
+) -> None:
     channel = "approval"
-    buffer = bff_main._sse_buffers[channel]
-    subscribers = bff_main._sse_subscribers[channel]
+    buffer = sse_service.buffers[channel]
+    subscribers = sse_service.subscribers[channel]
     published_ids: list[str] = []
     causal_parent_id = None
 
-    for sequence_no in range(1, bff_main._MAX_EVENTS + 6):
-        event_id = bff_main._publish_event(
+    for sequence_no in range(1, sse_service.max_events + 6):
+        event_id = sse_service.publish(
             buffer,
             subscribers,
             "approval.ordering",
@@ -136,56 +127,60 @@ def test_replay_window_is_bounded_drops_oldest_and_preserves_per_aggregate_order
         causal_parent_id = event_id
 
     window_ids = [event_id for event_id, _event in buffer]
-    assert len(buffer) == bff_main._MAX_EVENTS
-    assert window_ids == published_ids[-bff_main._MAX_EVENTS :]
+    assert len(buffer) == sse_service.max_events
+    assert window_ids == published_ids[-sse_service.max_events :]
 
-    with pytest.raises(bff_main.SseReplayUnavailableError):
-        bff_main._replay_from(buffer, published_ids[0])
+    with pytest.raises(SseReplayUnavailableError):
+        sse_service.replay(channel, buffer, published_ids[0])
 
-    replayed = bff_main._replay_from(buffer, published_ids[-4])
+    replayed = sse_service.replay(channel, buffer, published_ids[-4])
 
     assert [event["id"] for event in replayed] == published_ids[-3:]
     assert [event["data"]["sequence_no"] for event in replayed] == [
-        bff_main._MAX_EVENTS + 3,
-        bff_main._MAX_EVENTS + 4,
-        bff_main._MAX_EVENTS + 5,
+        sse_service.max_events + 3,
+        sse_service.max_events + 4,
+        sse_service.max_events + 5,
     ]
     assert all(
         event["data"]["aggregate_id"] == "appr-bff-consol-012" for event in replayed
     )
 
 
-def test_replay_headers_publish_window_policy_for_clients() -> None:
-    headers = bff_main._sse_replay_headers("approval")
+def test_replay_headers_publish_window_policy_for_clients(
+    sse_service: EventStreamService,
+) -> None:
+    headers = sse_service.replay_headers("approval")
 
     assert headers["X-SSE-Replay-Supported"] == "true"
-    assert headers["X-SSE-Replay-Window-Events"] == str(bff_main._MAX_EVENTS)
-    assert headers["X-SSE-Buffer-Size"] == str(bff_main._MAX_EVENTS)
+    assert headers["X-SSE-Replay-Window-Events"] == str(sse_service.max_events)
+    assert headers["X-SSE-Buffer-Size"] == str(sse_service.max_events)
     assert headers["X-SSE-Replay-Store"] == "in-memory"
     assert headers["X-SSE-Resync-Routes"] == "/bff/approvals,/bff/v5/interventions"
 
 
-def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(monkeypatch) -> None:
+def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(
+    sse_service: EventStreamService, monkeypatch
+) -> None:
     async def scenario() -> dict[str, int | list[str] | str]:
         channel = "approval"
-        buffer = bff_main._sse_buffers[channel]
-        subscribers = bff_main._sse_subscribers[channel]
+        buffer = sse_service.buffers[channel]
+        subscribers = sse_service.subscribers[channel]
         original_wait_for = asyncio.wait_for
 
-        first_id = bff_main._publish_event(
+        first_id = sse_service.publish(
             buffer,
             subscribers,
             "approval.reconnect",
             {"approval_id": "appr-long-001", "sequence_no": 1},
         )
-        initial_stream = bff_main._sse_stream(buffer, subscribers)
+        initial_stream = sse_service.stream(channel, buffer, subscribers, last_event_id=None)
         first_chunk = await original_wait_for(anext(initial_stream), timeout=1.0)
         assert _event_id_from_chunk(first_chunk) == first_id
         await initial_stream.aclose()
         await _wait_until(lambda: len(subscribers) == 0)
 
         replay_ids = [
-            bff_main._publish_event(
+            sse_service.publish(
                 buffer,
                 subscribers,
                 "approval.reconnect",
@@ -193,7 +188,7 @@ def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(monkeypa
             )
             for sequence_no in (2, 3)
         ]
-        reconnect_stream = bff_main._sse_stream(buffer, subscribers, last_event_id=first_id)
+        reconnect_stream = sse_service.stream(channel, buffer, subscribers, last_event_id=first_id)
         replay_chunks = [
             await original_wait_for(anext(reconnect_stream), timeout=1.0),
             await original_wait_for(anext(reconnect_stream), timeout=1.0),
@@ -215,13 +210,13 @@ def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(monkeypa
                 raise asyncio.TimeoutError
             return await original_wait_for(awaitable, timeout=timeout)
 
-        monkeypatch.setattr(bff_main.asyncio, "wait_for", force_one_heartbeat)
+        monkeypatch.setattr(evt_service_module.asyncio, "wait_for", force_one_heartbeat)
         heartbeat_chunk = await original_wait_for(anext(reconnect_stream), timeout=1.0)
         assert heartbeat_chunk == ": heartbeat\n\n"
         await reconnect_stream.aclose()
         await _wait_until(lambda: len(subscribers) == 0)
 
-        second_reconnect_stream = bff_main._sse_stream(buffer, subscribers, last_event_id=first_id)
+        second_reconnect_stream = sse_service.stream(channel, buffer, subscribers, last_event_id=first_id)
         second_replay_chunks = [
             await original_wait_for(anext(second_reconnect_stream), timeout=1.0),
             await original_wait_for(anext(second_reconnect_stream), timeout=1.0),
