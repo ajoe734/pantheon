@@ -80,10 +80,16 @@ The supervisor provides bounded automatic recovery across three distinct
 lanes. None of these lanes launches workers directly. Automatic reassignment
 actions across all three lanes commit through canonical `persist_task_reassignment`
 (respecting generation fences and lease locks), after which the normal planner
-evaluates dispatch on a subsequent pass. If repeated failures exhaust the
-auto-reassignment budget, the escalation hold tier uses `record_failure_loop_blocker`,
-which commits via its own locked `BLOCK` transition, outbox, and status-pipeline
-sync path rather than `persist_task_reassignment`.
+evaluates dispatch on a subsequent pass. While the design includes an escalation
+hold tier via `record_failure_loop_blocker` (intended to commit via a locked
+`BLOCK` transition, status outbox, and sync path rather than
+`persist_task_reassignment`), in the current live runtime implementation that
+escalation call is a no-op that returns `None` before any status mutation or write:
+`supervisor.py` lines 9001 and 9107 pass the `TaskAction.BLOCK` Enum object
+directly into `rewrite_task_machine.transition()`, for which `coerce_action`
+returns `None` and causes `transition()` to raise `TransitionError`. The internal
+handler catches `TransitionError` and returns `None`, so no escalation hold is
+written pending a separate governed source repair.
 
 1. **Durable unavailability recovery (`reconcile_unavailable_assignments`)**:
    - Master switch: `worker_reassignment.enabled` (default `false`), bounded
@@ -167,25 +173,39 @@ sync path rather than `persist_task_reassignment`.
        continue to count toward the task.
      - Explicit escalation tier: once the auto-reassignment budget
        (`max_auto_reassignments`) is exhausted, automatic reassignment ceases.
-       The supervisor can escalate on the same retained task count—without
+       In design, the supervisor escalates on the same retained task count—without
        requiring fresh failures after reassignment—or after further failures,
        placing the task on an explicit `Human/Ops` hold via
-       `record_failure_loop_blocker`. Rather than using `persist_task_reassignment`,
-       this path acquires the canonical task state lock, executes an explicit
-       task state machine `BLOCK` transition, records `waiting_for = "Human/Ops"`,
-       appends an open blocker with `blocker_kind = "failure_loop"`, enqueues a
-       `task_failure_loop_blocked` activity event in the status outbox, writes
-       the status file, and synchronizes the status pipeline and activity log.
-       This halts silent recycling between agents until Human/Ops investigates.
+       `record_failure_loop_blocker` (which is designed to acquire the canonical
+       task state lock, execute an explicit task state machine `BLOCK`
+       transition, record `waiting_for = "Human/Ops"`, append an open blocker
+       with `blocker_kind = "failure_loop"`, enqueue a `task_failure_loop_blocked`
+       activity event in the status outbox, write the status file, and
+       synchronize the status pipeline and activity log).
+       However, in current live runtime, this escalation tier does not function
+       and is a complete no-op: `supervisor.py` lines 9001 and 9107 pass the
+       `TaskAction.BLOCK` Enum object directly to
+       `rewrite_task_machine.transition(...)`, while `task_machine.coerce_action`
+       returns `None` for Enum instances, raising `TransitionError`.
+       `_prepare_failure_loop_blocker_locked` catches `TransitionError` and
+       returns `None` before mutating `task["status"]`, setting `waiting_for`,
+       appending an open blocker, enqueuing an outbox event, writing the status
+       file, or running `sync_status_pipeline`. `record_failure_loop_blocker`
+       thus returns `None` without writing any hold or altering task state.
+       Operational recovery and documentation must not claim that this escalation
+       tier functions in production until a separate governed source repair
+       corrects the transition invocation.
 
 ### Authority boundary
 
 These automated recovery lanes reuse existing TaskStore mutations (canonical CAS
-reassignment and locked task-machine `BLOCK` transitions); they do not introduce
-a second authority or bypass active leases. Human/Ops retains supreme authority
-and may always correct a current owner or reviewer through canonical
-`ai-status assign`; repository branch, PR, or check governance does not grant
-or revoke that runtime authority.
+reassignment for durable unavailability, load-balance recovery, and bounded
+failure-loop reassignment; the escalation tier's locked `BLOCK` transition
+currently no-ops due to the `TaskAction.BLOCK` Enum coercion defect pending
+governed source repair); they do not introduce a second authority or bypass
+active leases. Human/Ops retains supreme authority and may always correct a
+current owner or reviewer through canonical `ai-status assign`; repository
+branch, PR, or check governance does not grant or revoke that runtime authority.
 
 ## Atomic dependency contract maintenance
 
