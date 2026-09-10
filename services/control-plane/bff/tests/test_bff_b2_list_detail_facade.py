@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import urllib.request as urllib_request
 import uuid
 
+import pytest
 from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -456,10 +457,6 @@ def _forward_coordinate_persona_create(record: Any, *, payload: dict, owner: str
     return facade_state._coordinate_persona_create(record, payload, owner)
 
 
-persona_collection._coordinate_persona_create = _forward_coordinate_persona_create
-persona_service._coordinate_persona_create = _forward_coordinate_persona_create
-
-
 class _DummyProvisioningStore:
     def list_by_tenant(self, tenant_id: str) -> list:
         return []
@@ -477,7 +474,40 @@ class _DummyProvisioningStore:
         return None, None
 
 
-persona_service._PERSONA_PROVISIONING_STORE = _DummyProvisioningStore()
+_ORIGINAL_PERSONA_COLLECTION_COORDINATE = persona_collection._coordinate_persona_create
+_ORIGINAL_PERSONA_SERVICE_COORDINATE = persona_service._coordinate_persona_create
+_ORIGINAL_PERSONA_PROVISIONING_STORE = persona_service._PERSONA_PROVISIONING_STORE
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _patch_persona_create_coordination_seam():
+    """Route persona-create coordination to this module's test double.
+
+    ``personas/routes/collection.py`` imports ``_coordinate_persona_create``
+    by value at module-import time, and ``_persona_provisioning_store()``
+    reads a bare module global; the production router factory has no
+    dependency-injection hook for either, so this fixture patches the two
+    production module globals for the lifetime of this test module only and
+    restores the originals afterward, with an isolation check on both ends
+    so a leaked patch fails loudly instead of silently affecting other
+    collected suites.
+    """
+    assert persona_collection._coordinate_persona_create is _ORIGINAL_PERSONA_COLLECTION_COORDINATE
+    assert persona_service._coordinate_persona_create is _ORIGINAL_PERSONA_SERVICE_COORDINATE
+    assert persona_service._PERSONA_PROVISIONING_STORE is _ORIGINAL_PERSONA_PROVISIONING_STORE
+
+    persona_collection._coordinate_persona_create = _forward_coordinate_persona_create
+    persona_service._coordinate_persona_create = _forward_coordinate_persona_create
+    persona_service._PERSONA_PROVISIONING_STORE = _DummyProvisioningStore()
+    try:
+        yield
+    finally:
+        persona_collection._coordinate_persona_create = _ORIGINAL_PERSONA_COLLECTION_COORDINATE
+        persona_service._coordinate_persona_create = _ORIGINAL_PERSONA_SERVICE_COORDINATE
+        persona_service._PERSONA_PROVISIONING_STORE = _ORIGINAL_PERSONA_PROVISIONING_STORE
+        assert persona_collection._coordinate_persona_create is _ORIGINAL_PERSONA_COLLECTION_COORDINATE
+        assert persona_service._coordinate_persona_create is _ORIGINAL_PERSONA_SERVICE_COORDINATE
+        assert persona_service._PERSONA_PROVISIONING_STORE is _ORIGINAL_PERSONA_PROVISIONING_STORE
 
 
 class _DynamicStoreProxy:

@@ -62,7 +62,6 @@ _sse_subscribers: dict[str, list] = {
     "approval": [],
 }
 _AGORA_CORE_BFF_IDEMPOTENCY: dict[str, Any] = {}
-_FINAL_CONTRACT_IDEMPOTENCY: dict[str, Any] = {}
 _last_replayed = [False]
 
 
@@ -144,6 +143,15 @@ async def _submit_action(
     identity: Any,
     idempotency_key: str,
 ) -> Any:
+    """Storage-double ``submit_action`` for ``GovernanceService.submit_governance_action``.
+
+    This intentionally holds no idempotency/replay decision state of its
+    own: ``services.control_plane.bff.command_queue.CommandStore`` (real
+    production durable command storage, already imported above) is the
+    single source of truth for whether an ``idempotency_key`` has already
+    been seen. Body-idempotencyKey rejection mirrors the retained
+    architecture's precondition check ahead of any command submission.
+    """
     if "idempotencyKey" in payload:
         raise HTTPException(
             status_code=400,
@@ -158,46 +166,30 @@ async def _submit_action(
     payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     actor_id = getattr(identity, "operator_id", "anonymous")
 
-    if idempotency_key:
-        if idempotency_key in _FINAL_CONTRACT_IDEMPOTENCY:
-            cached = _FINAL_CONTRACT_IDEMPOTENCY[idempotency_key]
-            if cached.get("request_hash") != payload_hash:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "error": {
-                            "code": "IDEMPOTENCY_CONFLICT",
-                            "message": "Idempotency key was reused with a different command payload",
-                        }
-                    },
-                )
-            _last_replayed[0] = True
-            replay = copy.deepcopy(cached["result"])
-            replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-            return replay
+    existing = None
+    if idempotency_key and _holder.command_store is not None:
+        existing = _holder.command_store.get_command_by_idempotency_key(
+            idempotency_key,
+            operator_id=actor_id,
+        )
 
-        if _holder.command_store is not None:
-            existing = _holder.command_store.get_command_by_idempotency_key(
-                idempotency_key,
-                operator_id=actor_id,
+    if existing is not None:
+        stored_hash = (existing.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
+        if stored_hash and stored_hash != payload_hash:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Idempotency key was reused with a different command payload",
+                    }
+                },
             )
-            if existing:
-                stored_hash = (existing.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
-                if stored_hash and stored_hash != payload_hash:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "error": {
-                                "code": "IDEMPOTENCY_CONFLICT",
-                                "message": "Idempotency key was reused with a different command payload",
-                            }
-                        },
-                    )
-                cached_res = existing.get("result") or (existing.get("foundation") or {}).get("idempotency_record", {}).get("result")
-                _last_replayed[0] = True
-                replay = copy.deepcopy(cached_res or {})
-                replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-                return replay
+        cached_res = existing.get("result") or (existing.get("foundation") or {}).get("idempotency_record", {}).get("result")
+        _last_replayed[0] = True
+        replay = copy.deepcopy(cached_res or {})
+        replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+        return replay
 
     _last_replayed[0] = False
     cmd_id = f"cmd-{uuid.uuid4().hex[:16]}"
@@ -235,12 +227,6 @@ async def _submit_action(
             },
         )
         _holder.command_store.update_status(cmd_id, CommandStatus.EXECUTED, result=result)
-
-    if idempotency_key:
-        _FINAL_CONTRACT_IDEMPOTENCY[idempotency_key] = {
-            "request_hash": payload_hash,
-            "result": result,
-        }
 
     return result
 
@@ -300,7 +286,6 @@ def clear_sse_buffers():
         _sse_buffers["approval"].clear()
         _sse_subscribers["approval"].clear()
         _AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        _FINAL_CONTRACT_IDEMPOTENCY.clear()
         try:
             yield
         finally:
@@ -310,7 +295,6 @@ def clear_sse_buffers():
             _sse_buffers["approval"].clear()
             _sse_subscribers["approval"].clear()
             _AGORA_CORE_BFF_IDEMPOTENCY.clear()
-            _FINAL_CONTRACT_IDEMPOTENCY.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +486,11 @@ def test_bff_approvals_decide_replay_does_not_double_publish() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
-    """After _FINAL_CONTRACT_IDEMPOTENCY is evicted, durable command_store replay must not re-publish SSE."""
+    """A replay resolved purely from CommandStore (the sole idempotency source
+
+    of truth for this submit_action double; there is no separate in-memory
+    fast-path cache) must not re-publish SSE.
+    """
     client = TestClient(app)
     idem = _idem()
 
@@ -514,10 +502,10 @@ def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
     assert resp1.status_code == 202, resp1.text
     assert len(_sse_buffers["approval"]) == 1
 
-    # Simulate in-memory eviction: clear _FINAL_CONTRACT_IDEMPOTENCY but leave command_store intact
-    _FINAL_CONTRACT_IDEMPOTENCY.clear()
+    # Confirm the command persisted to the durable command_store, then replay
+    # the same idempotency key — must NOT publish a second SSE event.
+    assert _holder.command_store.get_command_by_idempotency_key(idem, operator_id="ask005-approver") is not None
 
-    # Durable replay via command_store — must NOT publish a second SSE event
     resp2 = client.post(
         f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
         json={"decision": "approve"},
