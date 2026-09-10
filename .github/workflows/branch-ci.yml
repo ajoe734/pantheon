@@ -224,6 +224,7 @@ jobs:
   smoke:
     name: Smoke acceptance
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs:
       - trailers
       - generated-files
@@ -273,6 +274,10 @@ jobs:
           if [[ -f deploy/execution-grant-issuer/requirements.txt ]]; then
             python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt || true
           fi
+
+      - name: Verify workflow contract
+        run: |
+          python3 -m unittest scripts.test_branch_ci_gate_selection
 
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
