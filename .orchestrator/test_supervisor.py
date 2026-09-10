@@ -4512,6 +4512,34 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
         launch.assert_called_once()
 
+    def test_launch_auth_retry_reuses_health_admission_and_pending_intent(self) -> None:
+        state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
+        with_queue_intents(state, self.event)
+        accounts_before = copy.deepcopy(state["delivery_health"]["accounts"])
+        retry = common.ClaudeAuthRetry("Claude OAuth refresh temporarily unavailable (HTTP 429).", retry_after="120")
+        request = supervisor.DeliveryRequest(agent_id="codex", provider="claude", delivery_mode="claude_cli",
+            message="wake", task_id="TASK-1", reason=supervisor.REASON_OWNED_IN_PROGRESS)
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(supervisor, "start_worker_for_request", return_value=(False, str(retry), {"metadata": {"auth_probe": retry.as_probe()}})) as launch,
+            mock.patch.object(supervisor, "classify_worker_failure", side_effect=AssertionError("auth retry must not become model capacity")),
+        ):
+            supervisor.process_queue(self.config, state)
+            supervisor.process_queue(self.config, state)
+            launch.assert_called_once()
+            self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "pending")
+            self.assertEqual(state["delivery_health"]["accounts"], accounts_before)
+            self.assertEqual(state["delivery_health"]["endpoints"]["codex"]["state"], "retry_after")
+            supervisor.apply_delivery_health_observations(self.config, state, [{"endpoint_id": "codex",
+                "account_id": supervisor.agent_account_id(self.config, "codex"),
+                "probe": {"source": "live", "ready": True}}])
+            supervisor.process_queue(self.config, state)
+            self.assertEqual(launch.call_count, 2)
+
     def test_missing_or_stale_auth_evidence_stays_pending(self) -> None:
         stale = {
             "version": 1,
@@ -4837,6 +4865,43 @@ class DurableQueueContractTests(unittest.TestCase):
                 "process_queue",
                 final_state["supervisor"]["runtime_phase_reservations"],
             )
+
+    def test_adapter_auth_retry_survives_reserved_phase_without_worker_or_capacity_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            state = runtime_state.default_state()
+            state["delivery_health"] = healthy_delivery_health(config)
+            with_queue_intents(state, self.event)
+            accounts_before = copy.deepcopy(state["delivery_health"]["accounts"])
+            runtime_state.save_runtime_state(config, state)
+            retry = common.ClaudeAuthRetry("Claude OAuth refresh temporarily unavailable (HTTP 429).", retry_after="120")
+            adapter = mock.Mock()
+            adapter.deliver.return_value = DeliveryResult(
+                ok=False, adapter="claude_cli", mode="claude_cli", target="codex",
+                auto_delivered=False, manual_confirmation_required=False,
+                error=str(retry), metadata={"auth_probe": retry.as_probe()},
+            )
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
+                mock.patch.object(supervisor, "build_adapter", return_value=adapter),
+                mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+                mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+                mock.patch.object(supervisor, "status_command_runtime_record_from_env", return_value={}),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "write_failure_evidence", side_effect=AssertionError("no fabricated worker failure")),
+            ):
+                supervisor._run_reserved_runtime_phase(config, "process_queue", lambda scratch: supervisor.process_queue(config, scratch))
+                supervisor._run_reserved_runtime_phase(config, "process_queue", lambda scratch: supervisor.process_queue(config, scratch))
+            adapter.deliver.assert_called_once()
+            final = runtime_state.load_runtime_state(config)
+            self.assertEqual(final["workers"], {})
+            self.assertEqual(final["queue"]["events"]["evt-1"]["status"], "pending")
+            self.assertEqual(final["delivery_health"]["accounts"], accounts_before)
+            self.assertEqual(final["delivery_health"]["endpoints"]["codex"]["state"], "retry_after")
+            self.assertNotIn("process_queue", final["supervisor"]["runtime_phase_reservations"])
 
     def test_nonplanner_queue_reason_is_never_launched(self) -> None:
         legacy_event = {**self.event, "reason": "github_retry"}

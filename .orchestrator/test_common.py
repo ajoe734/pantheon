@@ -1258,6 +1258,59 @@ class ClaudeAuthTests(unittest.TestCase):
 
             self.assertIsNone(refreshed)
 
+    def test_temporary_oauth_failures_preserve_retry_not_auth_rejection(self) -> None:
+        oauth = {"accessToken": "expired-secret", "refreshToken": "refresh-secret", "expiresAt": 1}
+        for error in (
+            HTTPError("https://example.invalid", 429, "secret-body", {"Retry-After": "120"}, None),
+            HTTPError("https://example.invalid", 503, "secret-body", {}, None),
+            common.urllib.error.URLError("secret-transport-detail"),
+            TimeoutError("secret-timeout-detail"),
+            json.JSONDecodeError("secret-response", "", 0),
+        ):
+            with (
+                self.subTest(error=type(error).__name__, code=getattr(error, "code", None)),
+                mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, oauth, Path("/tmp/never-written"))),
+                mock.patch.object(common, "run_command", return_value=mock.Mock(returncode=0, stdout='{"loggedIn":true}')),
+                mock.patch.object(common.urllib.request, "urlopen", side_effect=error),
+                mock.patch.object(common, "write_json") as write,
+                self.assertRaises(common.ClaudeAuthRetry) as caught,
+            ):
+                common.claude_auth_ready("claude", env={"HOME": "/tmp/synthetic"})
+            probe = caught.exception.as_probe()
+            self.assertIs(probe["ready"], False)
+            self.assertEqual(probe["status"], "auth_retry_after")
+            self.assertNotIn("secret", json.dumps(probe))
+            self.assertEqual(bool(probe["retry_at"]), getattr(error, "code", None) == 429)
+            write.assert_not_called()
+
+    def test_auth_retry_after_uses_existing_deadline_format(self) -> None:
+        future = common.datetime.now(common.timezone.utc) + common.timedelta(minutes=5)
+        header = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        retry = common.ClaudeAuthRetry("safe", retry_after=header)
+        self.assertEqual(retry.retry_at, future.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+        now = common.datetime.now(common.timezone.utc)
+        numeric = common.ClaudeAuthRetry("safe", retry_after="120")
+        deadline = common.datetime.fromisoformat(numeric.retry_at.replace("Z", "+00:00"))
+        self.assertGreaterEqual((deadline - now).total_seconds(), 120)
+        self.assertLess((deadline - now).total_seconds(), 122)
+        for header in (None, "garbage", "-1", "0", "9" * 500, "Wed, 01 Jan 2020 00:00:00 GMT"):
+            with self.subTest(header=header):
+                self.assertIsNone(common.ClaudeAuthRetry("safe", retry_after=header).retry_at)
+
+    def test_invalid_oauth_success_cannot_overwrite_credentials(self) -> None:
+        for body in (b"[]", b"{}", b'{"access_token":""}'):
+            response = mock.MagicMock()
+            response.__enter__.return_value.read.return_value = body
+            with (
+                self.subTest(body=body),
+                mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, {"refreshToken": "secret"}, Path("/tmp/never-written"))),
+                mock.patch.object(common.urllib.request, "urlopen", return_value=response),
+                mock.patch.object(common, "write_json") as write,
+                self.assertRaises(common.ClaudeAuthRetry),
+            ):
+                common.refresh_claude_oauth_tokens({"HOME": "/tmp/synthetic"})
+            write.assert_not_called()
+
     def test_refresh_claude_oauth_tokens_serializes_same_account_lock_key(self) -> None:
         # Two distinct CLI identities (separate credentials files) that share
         # one Anthropic account must never have their refresh network calls
