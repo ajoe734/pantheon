@@ -1,127 +1,191 @@
 {
-  "schema_version": "pantheon.task-evidence.v1",
+  "schema_version": "pantheon.review-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
   "batch_id": "B03_auth_session_jwks",
   "owner": "Antigravity2",
   "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "delivery_state": "blocked_contract_discrepancy",
+  "implementation_complete": false,
   "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
-  "delivery_state": "ready_for_independent_review",
-  "migrated_artifacts": {
-    "services/control-plane/bff/test_bff_auth_facade.py": {
-      "bytes": 50809,
-      "sha256": "2464c949eee30315af6d06042367ba097d67ae44a1527554b9aa95e1a52b0114",
-      "tests_passed": 85,
-      "tests_failed": 0,
-      "imports_main": false,
-      "mutates_sys_path": false
+  "audited_source_head_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "head_binding_note": "This artifact audits the unchanged source at audited_source_head_sha. Its publication commit is supplied by git/PR metadata; no self-referential commit hash is claimed.",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001/evidence.json"
+  ],
+  "source_artifacts": [
+    "services/control-plane/bff/test_bff_auth_facade.py",
+    "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+    "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+    "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+    "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+    "services/control-plane/bff/tests/test_confirm_token_lifecycle.py"
+  ],
+  "source_files_changed": [],
+  "blocker": {
+    "kind": "external",
+    "waiting_for": "Human/Ops",
+    "declared_dependency_satisfied": {
+      "BFF-TEST-MIGRATION-REPARTITION-PLAN-001": true
     },
-    "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py": {
-      "bytes": 6924,
-      "sha256": "eb69de2ef5a5a88f31e647b8a27809d0d63e81634ff2dff5206e5b2a95b2a0d7",
-      "tests_passed": 13,
-      "tests_failed": 0,
-      "imports_main": false,
-      "mutates_sys_path": false
+    "summary": "Reviewed test-only partition does not provide the production seams or shared fixtures needed to decouple B03 test suites from services/control-plane/bff/main.py while preserving production acceptance behavior.",
+    "rejection_context": "PR #5749 head 6ec109a6815fcebf5012133b1721a22784d75789 was rejected by independent reviewer Codex on acceptance behavior preservation. Decoupling attempts that substituted test-local replicas, copied CORS logic, and synthetic route stubs violated acceptance invariants. Reviewer mandated: 'exercise the actual production-owned behavior through retained seams, using doubles only for external dependencies; if missing seams require files outside the six-path grant, stop for governed prerequisite/contract revision instead of duplicating implementations or widening scope.'",
+    "proof": [
+      "P1 (test_bff_jwks_prewarm.py): Production _prewarm_jwks_cache previously resided in main.py:1269 (added in 71afb1668) but was deleted in c1894c3b0 (prune dead code). No production prewarm function currently exists anywhere in services/. Restoring it to a production module requires editing files outside the six-path grant.",
+      "P1 (test_auth_jwks_strict.py): Directly asserts on CORS constants (_CORS_ALLOW_HEADERS, _CORS_EXPOSE_HEADERS), environment resolution (_cors_origins_from_env), regex preview matching (_LOVABLE_PREVIEW_ORIGIN_PATTERN), and CORS middleware (_PantheonCORSMiddleware). All are defined only in services/control-plane/bff/main.py lines 230-633. No decoupled production CORS seam exists outside main.py.",
+      "P1 (test_bff_session_auth_me_contract.py): Exercises session and role authorization across 5 actual production management routes (/bff/management/persona-fleet, /bff/strategies, /bff/personas, /bff/management/human-inbox, /bff/management/evidence) residing in separate domain routers (personas.router, strategies.router, management_read_models.router). No lightweight shared test fixture or multi-router test harness exists to mount these routes in an isolated test client without importing main.py or bringing up full database dependencies.",
+      "P1 (test_bff_auth_facade.py): TestSettingsAuthIntegration exercises role and MFA enforcement on /api/v1/settings. The settings router dependency require_admin_mfa is implemented only in services/control-plane/bff/main.py:1770 (_require_admin_mfa), while core/app_factory.py only provides a no-op default. No shared production authorization guard is exported outside main.py."
+    ],
+    "missing_production_seams": [
+      {
+        "concern": "JWKS cache pre-warm",
+        "affected_test": "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+        "deleted_location": "services/control-plane/bff/main.py:1269 (deleted in c1894c3b0)",
+        "current_production_status": "absent from all production modules",
+        "required_seam": "Exported prewarm helper in services/control-plane/bff/auth/service.py or services/runtime_auth_inbound.py"
+      },
+      {
+        "concern": "CORS constants, origin policy, and middleware",
+        "affected_test": "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+        "current_location": "services/control-plane/bff/main.py:230-633",
+        "current_production_status": "private unexported helpers in composition root",
+        "required_seam": "Decoupled CORS module (e.g. services/control-plane/bff/cors.py or auth/cors.py) exportable without importing main.py"
+      },
+      {
+        "concern": "Multi-domain management read route session contract",
+        "affected_test": "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+        "current_location": "personas/router.py, strategies/router.py, management_read_models/router.py composed in main.py",
+        "current_production_status": "requires full service and DB composition",
+        "required_seam": "Shared test harness fixture mounting production management routes with stubbed read models, or route-level auth dependency decoupling"
+      },
+      {
+        "concern": "Settings admin and MFA authorization guard",
+        "affected_test": "services/control-plane/bff/test_bff_auth_facade.py",
+        "current_location": "services/control-plane/bff/main.py:1770 (_require_admin_mfa)",
+        "current_production_status": "private helper in composition root, passed to create_settings_router",
+        "required_seam": "Exported production guard in services/control-plane/bff/auth/policy.py or core/app_factory.py"
+      }
+    ],
+    "required_action": "Governed prerequisite / contract revision by Human/Ops to either: (1) extract _prewarm_jwks_cache, CORS constants/middleware, _require_admin_mfa, and multi-router management test fixtures into shared production/fixture modules; or (2) expand the B03 child task grant to include the requisite production files (services/control-plane/bff/main.py, services/control-plane/bff/auth/, etc.).",
+    "implementation_stopped": true
+  },
+  "source_scope": [
+    {
+      "path": "services/control-plane/bff/test_bff_auth_facade.py",
+      "disposition": "blocked_unmigrated_main_importer",
+      "main_imports": [
+        {
+          "line": 30,
+          "import": "import main"
+        },
+        {
+          "line": 31,
+          "import": "from main import _extract_identity, _extract_identity_jwt, _extract_identity_stub"
+        }
+      ],
+      "sys_path_mutations": [
+        25,
+        28
+      ]
     },
-    "services/control-plane/bff/test_bff_session_auth_me_contract.py": {
-      "bytes": 41835,
-      "sha256": "67960df71490ee0adbcfea09bc0ff901ca6889161658d05266888903e6c2305e",
-      "tests_passed": 44,
-      "tests_failed": 0,
-      "imports_main": false,
-      "mutates_sys_path": false
+    {
+      "path": "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+      "disposition": "blocked_unmigrated_main_importer",
+      "main_imports": [
+        {
+          "line": 18,
+          "import": "import main"
+        }
+      ],
+      "sys_path_mutations": [
+        16
+      ]
     },
-    "services/control-plane/bff/tests/test_auth_jwks_strict.py": {
-      "bytes": 27028,
-      "sha256": "a392636e8da0b7a4652708d62059dbbca90f4e7b95d09545fd44fa8dee78f398",
-      "tests_passed": 26,
-      "tests_failed": 0,
-      "imports_main": false,
-      "mutates_sys_path": false
+    {
+      "path": "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "disposition": "blocked_unmigrated_main_importer",
+      "main_imports": [
+        {
+          "line": 15,
+          "import": "import main"
+        }
+      ],
+      "sys_path_mutations": [
+        13
+      ]
     },
-    "services/control-plane/bff/tests/test_bff_jwks_prewarm.py": {
-      "bytes": 3983,
-      "sha256": "6cf94272c9998817a88e324a656767ac2a01daad1d41349dd23bd2447f228b02",
-      "tests_passed": 5,
-      "tests_failed": 0,
-      "imports_main": false,
-      "mutates_sys_path": false
+    {
+      "path": "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+      "disposition": "blocked_unmigrated_main_importer",
+      "main_imports": [
+        {
+          "line": 21,
+          "import": "import main"
+        }
+      ],
+      "sys_path_mutations": [
+        18,
+        19
+      ]
     },
-    "services/control-plane/bff/tests/test_confirm_token_lifecycle.py": {
-      "bytes": 7060,
-      "sha256": "007753ab785a8b8374bd88ef6190ca8f292faf9d6e58afa194947d680aae593c",
-      "tests_passed": 2,
-      "tests_failed": 0,
-      "imports_main": false,
-      "mutates_sys_path": false
+    {
+      "path": "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+      "disposition": "blocked_unmigrated_main_importer",
+      "main_imports": [
+        {
+          "line": 13,
+          "import": "import main"
+        }
+      ],
+      "sys_path_mutations": [
+        10,
+        11
+      ]
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
+      "disposition": "blocked_unmigrated_main_importer",
+      "main_imports": [
+        {
+          "line": 13,
+          "import": "import main"
+        }
+      ],
+      "sys_path_mutations": [
+        11
+      ]
+    }
+  ],
+  "verification": {
+    "git_fetch_origin_dev": {
+      "exit_status": 0
+    },
+    "git_diff_dev_source": {
+      "exit_status": 0,
+      "result": "Zero source diff across all six B03 suites against e093ac6cc"
+    },
+    "exact_scope_ast_scan": {
+      "exit_status": 0,
+      "source_file_count": 6,
+      "bff_main_importer_count": 6,
+      "sys_path_mutation_count": 10,
+      "method": "Python ast.parse / ast.walk on the six exact source paths; verified all 6 files import main and mutate sys.path at e093ac6cc."
+    },
+    "focused_tests": {
+      "status": "not_run",
+      "reason": "Stopped at mandatory missing-seam discrepancy gate per reviewer instructions; source tests left unmodified at dev base."
+    },
+    "existing_architecture_tests": {
+      "status": "not_run",
+      "reason": "No migration claimed; tests stopped for governed prerequisite/contract revision."
     }
   },
-  "architectural_seams_used": [
-    "services.control_plane.bff.auth.policy (create_auth_dependencies, extract_identity*, bff_error, require_read_role, bff_me_tenant_payload, create_session_logout_guard)",
-    "services.control_plane.bff.auth.handlers (create_auth_handlers)",
-    "services.control_plane.bff.auth.service (AuthFacadeService)",
-    "services.control_plane.bff.auth.router (create_auth_router)",
-    "services.control_plane.bff.session_lifecycle_store (SessionLifecycleStore)",
-    "services.control_plane.bff.core.app_factory (create_settings_router)",
-    "services.control_plane.bff.command_adapters.router (create_command_adapters_router, CommandStore)",
-    "services.runtime_auth_inbound (encode_jwt_hs256, dynamic prewarm delegation)"
-  ],
-  "decoupling_summary": {
-    "composition_root_isolation": "All 6 test files decoupled from services/control-plane/bff/main.py. Zero imports of main remain.",
-    "sys_path_cleanliness": "All sys.path.insert calls removed. Standard package resolution via services.control_plane utilized.",
-    "state_isolation": "Eliminated global monkeypatching of main.session_lifecycle_store, main.settings_store, and main.command_store. Isolated stores instantiated per test fixture.",
-    "behavior_preservation": "All 175 tests across the 6 suites pass with identical contract semantics, including resolution of the 4 pre-existing session contract test failures caused by global store leakage."
+  "review_decision": {
+    "status": "not_requested_incomplete_implementation",
+    "reviewer": "Codex"
   },
-  "verification": [
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_auth_facade.py",
-      "exit_code": 0,
-      "result": "85 passed"
-    },
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
-      "exit_code": 0,
-      "result": "13 passed"
-    },
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/test_bff_session_auth_me_contract.py",
-      "exit_code": 0,
-      "result": "44 passed"
-    },
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_auth_jwks_strict.py",
-      "exit_code": 0,
-      "result": "26 passed"
-    },
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
-      "exit_code": 0,
-      "result": "5 passed"
-    },
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
-      "exit_code": 0,
-      "result": "2 passed"
-    },
-    {
-      "command": ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "exit_code": 0,
-      "result": "8 passed"
-    },
-    {
-      "command": "Batch pytest on all 6 B03 suites",
-      "exit_code": 0,
-      "result": "175 passed, 4 warnings in 48.25s"
-    },
-    {
-      "command": "AST and sys.path scan across all 6 B03 suites",
-      "exit_code": 0,
-      "result": "0 main imports, 0 sys.path mutations, 0 bff_main references"
-    }
-  ],
-  "review": {
-    "owner": "Antigravity2",
-    "reviewer": "Codex",
-    "decision": "pending independent exact-head review"
+  "delivery": {
+    "purpose": "Durable blocker evidence only; source migration, independent review, merge and task done remain incomplete.",
+    "auto_merge": false
   }
 }

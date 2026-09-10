@@ -7,17 +7,16 @@ the session kind.
 from __future__ import annotations
 
 import os
+import sys
 import time
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.auth.handlers import create_auth_handlers
-from services.control_plane.bff.auth.policy import create_auth_dependencies
-from services.control_plane.bff.auth.router import create_auth_router
-from services.control_plane.bff.auth.service import AuthFacadeService
-from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from session_lifecycle_store import SessionLifecycleStore
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 JWT_SECRET = "test-bff-consol-013"
@@ -49,39 +48,22 @@ def _strict_auth_env(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
 
 
-def _make_app(session_store: SessionLifecycleStore | None = None) -> FastAPI:
-    deps = create_auth_dependencies(session_lifecycle_store=session_store)
-    handlers = create_auth_handlers(dependencies=deps)
-    service = AuthFacadeService(handlers=handlers)
-    router = create_auth_router(service=service)
-    app = FastAPI()
-    app.include_router(router)
-    return app
-
-
-_current_store: SessionLifecycleStore | None = None
-
-
 @pytest.fixture(autouse=True)
 def isolated_session_store(tmp_path):
-    global _current_store
-    _current_store = SessionLifecycleStore(
+    original = bff_main.session_lifecycle_store
+    bff_main.session_lifecycle_store = SessionLifecycleStore(
         str(tmp_path / "session_lifecycle.json")
     )
     try:
-        yield _current_store
+        yield
     finally:
-        _current_store = None
-
-
-def _get_client() -> TestClient:
-    return TestClient(_make_app(_current_store))
+        bff_main.session_lifecycle_store = original
 
 
 class TestSessionKindStub:
     def test_stub_session_returns_session_kind_stub(self, monkeypatch) -> None:
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-        client = _get_client()
+        client = TestClient(bff_main.app)
         resp = client.get("/bff/me", headers={"Authorization": "Bearer op-1:operator"})
         assert resp.status_code == 200, resp.text
         session = resp.json()["data"]["session"]
@@ -92,7 +74,7 @@ class TestSessionKindBearer:
     def test_bearer_jwt_returns_session_kind_bearer(self, monkeypatch) -> None:
         _strict_auth_env(monkeypatch)
         token = _jwt_token(roles=["operator"])
-        client = _get_client()
+        client = TestClient(bff_main.app)
         resp = client.get(
             "/bff/me", headers={"Authorization": f"Bearer {token}"}
         )
@@ -105,7 +87,7 @@ class TestSessionKindCookie:
     def test_cookie_jwt_returns_session_kind_cookie(self, monkeypatch) -> None:
         _strict_auth_env(monkeypatch)
         token = _jwt_token(roles=["operator"])
-        client = _get_client()
+        client = TestClient(bff_main.app)
         # Send JWT as a cookie, no Authorization header
         resp = client.get(
             "/bff/me",
@@ -120,7 +102,7 @@ class TestSessionKindCookie:
         """Cookie session must not be treated as unauthenticated for write gating."""
         _strict_auth_env(monkeypatch)
         token = _jwt_token(roles=["operator"])
-        client = _get_client()
+        client = TestClient(bff_main.app)
         resp = client.get(
             "/bff/me",
             cookies={"pantheon_session": token},
@@ -135,7 +117,7 @@ class TestSessionKindCookie:
         """When both bearer and cookie are present, bearer wins."""
         _strict_auth_env(monkeypatch)
         token = _jwt_token(roles=["operator"])
-        client = _get_client()
+        client = TestClient(bff_main.app)
         resp = client.get(
             "/bff/me",
             headers={"Authorization": f"Bearer {token}"},
@@ -179,7 +161,7 @@ class TestSessionKindWriteGateLogic:
 
     def test_bff_me_session_payload_includes_session_kind(self, monkeypatch) -> None:
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-        client = _get_client()
+        client = TestClient(bff_main.app)
         resp = client.get("/bff/me", headers={"Authorization": "Bearer op-gate:operator"})
         assert resp.status_code == 200, resp.text
         session = resp.json()["data"]["session"]
