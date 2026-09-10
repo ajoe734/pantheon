@@ -123,13 +123,19 @@ jobs:
       release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
       compatibility_manifest_sha256: ${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}
       admission_artifact_digest: ${{ steps.release_admission_upload.outputs.artifact-digest }}
+      artifact_baseline_manifest_sha256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
+      artifact_baseline_id: ${{ steps.artifact_baseline_upload.outputs.artifact-id }}
+      artifact_baseline_digest: ${{ steps.artifact_baseline_upload.outputs.artifact-digest }}
+      artifact_candidate_manifest_sha256: ${{ steps.artifact_candidate_seal.outputs.candidate_image_manifest_sha256 }}
+      artifact_candidate_id: ${{ steps.artifact_candidate_upload.outputs.artifact-id }}
+      artifact_candidate_digest: ${{ steps.artifact_candidate_upload.outputs.artifact-digest }}
       # Whether BFF/FE compatibility was itself verified -- deliberately narrower
       # than the job's own pass/fail. `deploy-dev` also runs smoke tests for
       # unrelated subsystems (e.g. the OpenClaw assistant integration) later in
       # the same job; their failure must not block admitting an already-verified
       # FE/BFF pair. `public_smoke` is the step that curls the live BFF and
       # asserts its version matches this deploy's exact target sha.
-      bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' && steps.public_smoke.outcome == 'success' }}
+      bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' && steps.public_smoke.outcome == 'success' && steps.artifact_baseline_upload.outcome == 'success' && steps.artifact_candidate_seal.outcome == 'success' && steps.artifact_candidate_upload.outcome == 'success' }}
     env:
       TARGET_ENV: dev
       TARGET_COMPONENT: ${{ inputs.component }}
@@ -141,7 +147,7 @@ jobs:
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
       BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'chloe_ong_dev_cctech_support_com' }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
       BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ inputs.bootstrap_predecessor_backend_sha || '' }}
       BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ inputs.bootstrap_predecessor_frontend_sha || '' }}
@@ -1097,6 +1103,70 @@ jobs:
           }, indent=2) + "\n", encoding="utf-8")
           PY
 
+      - name: Capture actual prior artifacts under pinned dev lease
+        id: artifact_baseline
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ID: ${{ steps.release_admission.outputs.release_candidate_id }}
+          PANTHEON_DEV_ARTIFACT_RUN_ID: ${{ github.run_id }}
+          PANTHEON_DEV_ARTIFACT_ATTEMPT: ${{ github.run_attempt }}
+          PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          printf '%s  %s\n' \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          exec "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            python3 "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/capture_dev_artifact_baseline.py" \
+            --evidence-dir "${RUNNER_TEMP}/pantheon-dev-artifacts-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/baseline"
+
+      - name: Upload sealed prior artifact metadata before candidate mutation
+        id: artifact_baseline_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-artifact-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.artifact_baseline.outputs.evidence_dir }}/artifact-baseline.json
+            ${{ steps.artifact_baseline.outputs.evidence_dir }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Deploy dev VM stack under lease
         id: deploy
         env:
@@ -1212,6 +1282,21 @@ jobs:
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ID: ${{ steps.release_admission.outputs.release_candidate_id }}
+          PANTHEON_DEV_ARTIFACT_RUN_ID: ${{ github.run_id }}
+          PANTHEON_DEV_ARTIFACT_ATTEMPT: ${{ github.run_attempt }}
+          PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+          PANTHEON_DEV_ARTIFACT_MANIFEST_PATH: ${{ steps.artifact_baseline.outputs.manifest_path }}
+          PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_DRIVER_PATH: ${{ steps.artifact_baseline.outputs.driver_path }}
+          PANTHEON_DEV_ARTIFACT_DRIVER_SHA256: ${{ steps.artifact_baseline.outputs.driver_sha256 }}
+          PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256: ${{ steps.artifact_baseline.outputs.library_sha256 }}
+          PANTHEON_DEV_ARTIFACT_COMPOSE_FILE: ${{ steps.artifact_baseline.outputs.compose_file }}
+          PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR: ${{ runner.temp }}/pantheon-dev-artifacts-${{ github.run_id }}-${{ github.run_attempt }}/candidate
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -1250,6 +1335,27 @@ jobs:
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "${args[@]}"
+
+      - name: Validate retained candidate image seal for evidence upload
+        id: artifact_candidate_seal
+        if: ${{ always() && steps.artifact_baseline.outcome == 'success' && steps.deploy.outcome != 'skipped' }}
+        continue-on-error: true
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          candidate_dir="${RUNNER_TEMP}/pantheon-dev-artifacts-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/candidate"
+          python3 "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_candidate_receipt.py" \
+            --context "${candidate_dir}/context.json" --receipt "${candidate_dir}/candidate-receipt.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Upload candidate image admission receipt
+        id: artifact_candidate_upload
+        if: ${{ always() && steps.artifact_candidate_seal.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-artifact-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.artifact_candidate_seal.outputs.receipt_file }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Ensure governed dev paper baseline under lease
         id: paper_bootstrap
@@ -1697,7 +1803,7 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.rollback_baseline.outputs.sha != '' && (steps.deploy.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success') }}
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (steps.deploy.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success') }}
         continue-on-error: true
         timeout-minutes: 60
         env:
@@ -1789,6 +1895,17 @@ jobs:
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_FAILED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
           PANTHEON_FAILED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
+          PANTHEON_RELEASE_CANDIDATE_ID: ${{ steps.release_admission.outputs.release_candidate_id }}
+          PANTHEON_RELEASE_REPO_ROOT: ${{ github.workspace }}/.agora-gate-controller
+          PANTHEON_DEV_ARTIFACT_BASELINE_FILE: ${{ steps.artifact_baseline.outputs.evidence_dir }}/artifact-baseline.json
+          PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_ID: ${{ steps.artifact_baseline_upload.outputs.artifact-id }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_SHA256: ${{ steps.artifact_baseline_upload.outputs.artifact-digest }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE: ${{ steps.artifact_candidate_seal.outputs.receipt_file }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256: ${{ steps.artifact_candidate_seal.outputs.candidate_image_manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_ID: ${{ steps.artifact_candidate_upload.outputs.artifact-id }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_SHA256: ${{ steps.artifact_candidate_upload.outputs.artifact-digest }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
@@ -1820,12 +1937,15 @@ jobs:
               exit 1
               ;;
           esac
-          current_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
-          if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then
-            echo "Hosted BFF is already at baseline ${current_bff}; skipping rollback deploy and verifying baseline pair"
-          else
-            echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA} (current=${current_bff:-unknown})"
-
+          artifact_env="${RUNNER_TEMP}/pantheon-dev-artifacts-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/rollback.env"
+          python3 "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_artifact_compensation_evidence.py" \
+            prepare --provenance runner-local --output-env "${artifact_env}"
+          # This file is generated only from validated fixed-schema nonsecret
+          # values; the downloaded manifest itself is never executed.
+          source "${artifact_env}"
+          # Equal source SHAs do not prove equal images. Always enter a fresh
+          # guard to restore admitted artifacts or verify an unchanged baseline.
+          {
             rollback_lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-rollback-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
             chmod 0700 "${rollback_lease_dir}"
             rollback_state_file="${rollback_lease_dir}/state.json"
@@ -2062,20 +2182,27 @@ jobs:
                 --component bff \
                 --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
                 --rollback-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+                "--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}" \
+                --artifact-readback-out "${EVIDENCE_DIR}/dev-compensation-artifact-readback.json" \
                 --project-id "${GCP_DEPLOY_PROJECT_ID}" \
                 --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
 
             rollback_deploy_succeeded=true
-          fi
+          }
           actual_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
           [[ "${actual_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]
           actual_fe="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
           [[ "${actual_fe}" == "${PANTHEON_ROLLBACK_FRONTEND_SHA}" ]]
-          if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then
-            echo "Preserved exact hosted dev baseline pair without deploy mutation: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
-          else
-            echo "Restored exact hosted dev baseline pair: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
-          fi
+          echo "Artifact ${PANTHEON_DEV_ARTIFACT_OPERATION} proved exact prior images and FE bytes: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload validated dev compensation artifact readback
+        if: ${{ always() && steps.deploy_compensation.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-artifact-compensation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/dev-compensation-artifact-readback.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Stop heartbeat and release only after complete success
         id: lease_cleanup
@@ -2258,6 +2385,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     outputs:
       backend_sha: ${{ needs.deploy-dev.outputs.backend_sha }}
       frontend_sha: ${{ needs.deploy-dev.outputs.frontend_sha }}
@@ -2275,6 +2403,8 @@ jobs:
       DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
       FRONTEND_REF: ${{ needs.deploy-dev.outputs.frontend_ref }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'chloe_ong_dev_cctech_support_com' }}
     steps:
       - name: Checkout pinned lease controller
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -2294,6 +2424,28 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Fetch exact same-run rollback artifacts before frontend switch
+        id: artifact_download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BASELINE_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_baseline_id }}
+          BASELINE_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_baseline_digest }}
+          CANDIDATE_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_candidate_id }}
+          CANDIDATE_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_candidate_digest }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          install -d -m 0700 "${RELEASE_EVIDENCE_DIR}"
+          python3 .target/scripts/fetch_dev_artifact_evidence.py \
+            --kind baseline --artifact-id "${BASELINE_ARTIFACT_ID}" \
+            --artifact-sha256 "${BASELINE_ARTIFACT_SHA256}" \
+            --run-id "${GITHUB_RUN_ID}" --attempt "${GITHUB_RUN_ATTEMPT}" \
+            --output-dir "${RELEASE_EVIDENCE_DIR}/baseline"
+          python3 .target/scripts/fetch_dev_artifact_evidence.py \
+            --kind candidate --artifact-id "${CANDIDATE_ARTIFACT_ID}" \
+            --artifact-sha256 "${CANDIDATE_ARTIFACT_SHA256}" \
+            --run-id "${GITHUB_RUN_ID}" --attempt "${GITHUB_RUN_ATTEMPT}" \
+            --output-dir "${RELEASE_EVIDENCE_DIR}/candidate"
+
       - name: Dispatch exact frontend gate and switch
         id: frontend_release
         continue-on-error: true
@@ -2309,6 +2461,7 @@ jobs:
         run: |
           install -d -m 0700 "${RELEASE_EVIDENCE_DIR}"
           controller_log="${RELEASE_EVIDENCE_DIR}/release-controller.log"
+          umask 077
           controller_evidence="${RELEASE_EVIDENCE_DIR}/release-controller-accepted.json"
           set +e
           python3 .target/scripts/cross_repo_release_controller.py \
@@ -2411,6 +2564,15 @@ jobs:
           PANTHEON_RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
           PANTHEON_RELEASE_CONTROLLER_LOG: ${{ steps.frontend_release.outputs.controller_log }}
           PANTHEON_ROLLBACK_EVIDENCE_OUT: ${{ env.RELEASE_EVIDENCE_DIR }}/release-compensation.json
+          PANTHEON_DEV_ARTIFACT_BASELINE_FILE: ${{ env.RELEASE_EVIDENCE_DIR }}/baseline/artifact-baseline.json
+          PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.artifact_baseline_manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_baseline_id }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_baseline_digest }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE: ${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-receipt.json
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.artifact_candidate_manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_candidate_id }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_candidate_digest }}
           GITHUB_TOKEN: ${{ github.token }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}

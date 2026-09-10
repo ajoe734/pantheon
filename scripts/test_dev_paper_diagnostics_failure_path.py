@@ -22,11 +22,13 @@ Test Scenarios (SD D3):
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import hashlib
 import http.server
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -56,11 +58,13 @@ PINNED_LEASE_CONTROLLER_SHA = "9e564718da8c39199a4c311f1a667b74226e3428"
 FAKE_ADJACENT_CLI = r"""#!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -89,21 +93,64 @@ def record_audit(lease_id: str, action: str, status: str, details: dict | None =
     if not audit_file:
         return
     p = Path(audit_file)
-    data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"events": [], "leases": {}}
-    event = {
-        "timestamp": time.time(),
-        "lease_id": lease_id,
-        "action": action,
-        "status": status,
-        "details": details or {},
-    }
-    data["events"].append(event)
-    lease_info = data["leases"].setdefault(lease_id, {})
-    lease_info["status"] = status
-    lease_info["last_action"] = action
-    if details:
-        lease_info.update(details)
-    p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    lock_path = p.with_name(p.name + ".lock")
+    barrier_dir_str = os.environ.get("FAKE_AUDIT_BARRIER_DIR")
+    barrier_dir = Path(barrier_dir_str) if barrier_dir_str else None
+    role = os.environ.get("FAKE_AUDIT_ROLE", "primary")
+
+    if barrier_dir and role:
+        (barrier_dir / f"{role}_entered").write_text("1\n", encoding="utf-8")
+
+    with open(lock_path, "a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if barrier_dir and role:
+                (barrier_dir / f"{role}_locked").write_text("1\n", encoding="utf-8")
+                wait_file = barrier_dir / f"{role}_wait_for"
+                if wait_file.exists():
+                    expected_signal = wait_file.read_text(encoding="utf-8").strip()
+                    deadline = time.monotonic() + 5.0
+                    while not (barrier_dir / expected_signal).exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+
+            if p.exists() and p.stat().st_size > 0:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            else:
+                data = {"events": [], "leases": {}}
+            event = {
+                "timestamp": time.time(),
+                "lease_id": lease_id,
+                "action": action,
+                "status": status,
+                "details": details or {},
+            }
+            data["events"].append(event)
+            lease_info = data["leases"].setdefault(lease_id, {})
+            lease_info["status"] = status
+            lease_info["last_action"] = action
+            if details:
+                lease_info.update(details)
+
+            tmp = tempfile.NamedTemporaryFile("w", dir=p.parent, prefix=f"{p.name}.", suffix=".tmp", delete=False, encoding="utf-8")
+            try:
+                tmp.write(json.dumps(data, indent=2) + "\n")
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp.close()
+                os.replace(tmp.name, p)
+            except Exception:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                raise
+
+            if barrier_dir and role:
+                (barrier_dir / f"{role}_written").write_text("1\n", encoding="utf-8")
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if barrier_dir and role:
+                (barrier_dir / f"{role}_released").write_text("1\n", encoding="utf-8")
 
 
 command = sys.argv[1]
@@ -257,6 +304,14 @@ if command == "release":
     print('{"status":"released"}')
     raise SystemExit(0)
 
+if command == "audit-transition":
+    lease_id = option("--lease-id")
+    action = option("--action")
+    status = option("--status")
+    record_audit(lease_id, action, status)
+    print('{"status":"recorded"}')
+    raise SystemExit(0)
+
 raise SystemExit(f"unsupported fake CLI command: {command}")
 """
 
@@ -402,9 +457,32 @@ def assert_processes_terminated(pids: list[int], timeout: float = 4.0) -> None:
     assert False, f"processes still have live members: {states}"
 
 
+def write_audit_atomic(p: Path, data: dict) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = p.with_name(p.name + ".lock")
+    with open(lock_path, "a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            tmp = tempfile.NamedTemporaryFile("w", dir=p.parent, prefix=f"{p.name}.", suffix=".tmp", delete=False, encoding="utf-8")
+            try:
+                tmp.write(json.dumps(data, indent=2) + "\n")
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp.close()
+                os.replace(tmp.name, p)
+            except Exception:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def prepare_guard_fixture(root: Path, *, lease_id: str = TEST_LEASE_ID, expired: bool = False) -> dict[str, Path]:
     guard_dir = root / "guard"
-    guard_dir.mkdir(exist_ok=True)
+    guard_dir.mkdir(parents=True, exist_ok=True)
     guard = guard_dir / GUARD_SCRIPT.name
     shutil.copy2(GUARD_SCRIPT, guard)
     guard.chmod(0o755)
@@ -414,7 +492,7 @@ def prepare_guard_fixture(root: Path, *, lease_id: str = TEST_LEASE_ID, expired:
     adjacent_cli.chmod(0o755)
 
     audit_file = root / "lease_authority_audit.json"
-    audit_file.write_text(json.dumps({"events": [], "leases": {}}) + "\n", encoding="utf-8")
+    write_audit_atomic(audit_file, {"events": [], "leases": {}})
 
     paths = {
         "guard": guard,
@@ -771,10 +849,14 @@ def setup_compensation_fixture(
     *,
     rollback_bff: str,
     rollback_fe: str,
-    deploy_exit: int = 0,
     audit_file: Path | None = None,
     compensation_lease_id: str = "22222222-2222-4222-8222-222222222222",
 ) -> tuple[Path, Path, Path]:
+    # The compensator rejects evidence below a group/world-accessible parent.
+    # `git clone` would otherwise create this test-only parent at the process
+    # umask before the fixture writes its private evidence outputs.
+    tmp.mkdir(parents=True, mode=0o700, exist_ok=True)
+    tmp.chmod(0o700)
     lease_ctrl = tmp / "lease-controller"
     subprocess.run(["git", "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
     # A shallow source checkout may contain the pinned commit only in
@@ -787,11 +869,28 @@ def setup_compensation_fixture(
     subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
     subprocess.run(["git", "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    # This is an offline test fixture, not hosted rollback evidence.  The
+    # production compensator now consumes only an exact sealed baseline plus a
+    # durably acknowledged candidate receipt; model both sides so the
+    # fresh-lease tests continue to exercise a successful *admitted* restore
+    # rather than reviving the former source-SHA-only fallback.
     release_root = tmp / "release-root"
     (release_root / "scripts").mkdir(parents=True, exist_ok=True)
-    deploy_script = release_root / "scripts" / "deploy_nonprod_vm.sh"
-    deploy_script.write_text(f"#!/usr/bin/env bash\nexit {deploy_exit}\n", encoding="utf-8")
-    deploy_script.chmod(0o755)
+    for name in (
+        "capture_dev_artifact_baseline.py",
+        "dev_candidate_receipt.py",
+        "dev_artifact_compensation_evidence.py",
+        "dev_release_artifact_driver.py",
+        "dev_release_artifacts.py",
+    ):
+        target = release_root / "scripts" / name
+        shutil.copyfile(REPO_ROOT / "scripts" / name, target)
+        target.chmod(0o644)
+    subprocess.run(["git", "init", "--quiet", str(release_root)], check=True)
+    subprocess.run(["git", "-C", str(release_root), "config", "user.name", "Pantheon fixture"], check=True)
+    subprocess.run(["git", "-C", str(release_root), "config", "user.email", "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(release_root), "add", "scripts"], check=True)
+    subprocess.run(["git", "-C", str(release_root), "commit", "--quiet", "-m", "fixture controller"], check=True)
 
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -800,24 +899,67 @@ def setup_compensation_fixture(
     audit_path_str = str(audit_file) if audit_file else ""
 
     shim_code = f"""#!/usr/bin/python3
-import sys, os, json, signal, time, pathlib
+import sys, os, json, signal, time, pathlib, fcntl, tempfile
 
 is_lease = any("dev_environment_lease.py" in arg for arg in sys.argv)
 if is_lease:
     cmd = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1].endswith(".py") else (sys.argv[1] if len(sys.argv) > 1 else "")
-    audit_file_path = "{audit_path_str}" or os.environ.get("FAKE_LEASE_AUDIT_FILE")
+    audit_file_path = os.environ.get("FAKE_LEASE_AUDIT_FILE") or "{audit_path_str}"
 
     def log_audit(lid, act, stat, extra=None):
         if not audit_file_path: return
         p = pathlib.Path(audit_file_path)
-        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {{"events": [], "leases": {{}}}}
-        ev = {{"timestamp": time.time(), "lease_id": lid, "action": act, "status": stat, "details": extra or {{}}}}
-        d["events"].append(ev)
-        li = d["leases"].setdefault(lid, {{}})
-        li["status"] = stat
-        li["last_action"] = act
-        if extra: li.update(extra)
-        p.write_text(json.dumps(d, indent=2) + "\\n", encoding="utf-8")
+        lock_path = p.with_name(p.name + ".lock")
+        barrier_dir_str = os.environ.get("FAKE_AUDIT_BARRIER_DIR")
+        barrier_dir = pathlib.Path(barrier_dir_str) if barrier_dir_str else None
+        role = os.environ.get("FAKE_AUDIT_ROLE", "compensation")
+
+        if barrier_dir and role:
+            (barrier_dir / f"{{role}}_entered").write_text("1\\n", encoding="utf-8")
+
+        with open(lock_path, "a", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                if barrier_dir and role:
+                    (barrier_dir / f"{{role}}_locked").write_text("1\\n", encoding="utf-8")
+                    wait_file = barrier_dir / f"{{role}}_wait_for"
+                    if wait_file.exists():
+                        expected_signal = wait_file.read_text(encoding="utf-8").strip()
+                        deadline = time.monotonic() + 5.0
+                        while not (barrier_dir / expected_signal).exists() and time.monotonic() < deadline:
+                            time.sleep(0.01)
+
+                if p.exists() and p.stat().st_size > 0:
+                    d = json.loads(p.read_text(encoding="utf-8"))
+                else:
+                    d = {{"events": [], "leases": {{}}}}
+                ev = {{"timestamp": time.time(), "lease_id": lid, "action": act, "status": stat, "details": extra or {{}}}}
+                d["events"].append(ev)
+                li = d["leases"].setdefault(lid, {{}})
+                li["status"] = stat
+                li["last_action"] = act
+                if extra: li.update(extra)
+
+                tmp = tempfile.NamedTemporaryFile("w", dir=p.parent, prefix=f"{{p.name}}.", suffix=".tmp", delete=False, encoding="utf-8")
+                try:
+                    tmp.write(json.dumps(d, indent=2) + "\\n")
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+                    tmp.close()
+                    os.replace(tmp.name, p)
+                except Exception:
+                    try:
+                        os.unlink(tmp.name)
+                    except OSError:
+                        pass
+                    raise
+
+                if barrier_dir and role:
+                    (barrier_dir / f"{{role}}_written").write_text("1\\n", encoding="utf-8")
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                if barrier_dir and role:
+                    (barrier_dir / f"{{role}}_released").write_text("1\\n", encoding="utf-8")
 
     if cmd == "acquire":
         state_idx = sys.argv.index("--state-file")
@@ -894,6 +1036,13 @@ if is_lease:
         log_audit(lid, "release", "released")
         print('{{"status":"released"}}')
         sys.exit(0)
+    elif cmd == "audit-transition":
+        lid = sys.argv[sys.argv.index("--lease-id") + 1]
+        act = sys.argv[sys.argv.index("--action") + 1]
+        stat = sys.argv[sys.argv.index("--status") + 1]
+        log_audit(lid, act, stat)
+        print('{{"status":"recorded"}}')
+        sys.exit(0)
 
 # Forward non-lease invocations to real system python3
 os.execv("/usr/bin/python3", ["python3"] + sys.argv[1:])
@@ -902,6 +1051,185 @@ os.execv("/usr/bin/python3", ["python3"] + sys.argv[1:])
     shim_py.chmod(0o755)
 
     return lease_ctrl, release_root, bin_dir
+
+
+def install_compensation_artifact_fixture(
+    tmp: Path,
+    release_root: Path,
+    *,
+    rollback_bff: str,
+    rollback_fe: str,
+    failed_bff: str,
+    failed_fe: str,
+    candidate_id: str,
+    deploy_exit: int,
+) -> dict[str, str]:
+    """Create a private, canonical actions-download compensation admission.
+
+    The real compensator is intentionally exercised with the actual evidence
+    modules copied into the temporary controller checkout.  No source commit
+    is treated as a substitute for an image/FE artifact here.
+    """
+    controller_sha = subprocess.run(
+        ["git", "-C", str(release_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    identity = {
+        "candidate_id": candidate_id,
+        "run_id": "999",
+        "attempt": "1",
+        "controller_sha": controller_sha,
+        "candidate_backend_sha": failed_bff,
+        "candidate_frontend_sha": failed_fe,
+        "previous_backend_sha": rollback_bff,
+        "previous_frontend_sha": rollback_fe,
+    }
+
+    def canonical(value: dict) -> bytes:
+        return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    def private_write(path: Path, raw: bytes) -> Path:
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        path.parent.chmod(0o700)
+        path.write_bytes(raw)
+        path.chmod(0o600)
+        return path
+
+    services = ("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler")
+    baseline_services = {}
+    archives = {}
+    for index, service in enumerate(services, 1):
+        image = "sha256:" + str(index) * 64
+        baseline_services[service] = {"image_id": image, "oci_revision": rollback_bff, "repo_digests": None}
+        archives[image] = {"name": image[7:] + "-" + "9" * 64 + ".tar", "sha256": "9" * 64, "size": 1}
+    image_bundle = {
+        "schema_version": "pantheon.dev-bff-image-bundle.v1",
+        "source_sha": rollback_bff,
+        "services": baseline_services,
+        "archives": archives,
+    }
+    capture_lease = "12345678-1234-4234-8234-123456789abc"
+    frontend = {
+        "target": "/var/www/pantheon-dev-fe-releases/prior-fixture",
+        "dist_sha256": "7" * 64,
+        "manifest_sha256": "6" * 64,
+        "frontend_sha": rollback_fe,
+        "backend_sha": rollback_bff,
+    }
+    baseline = {
+        "schema_version": "pantheon.dev-release-artifact-baseline.v1",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": identity,
+        "capture_lease_id": capture_lease,
+        "captured_at": "2026-09-09T00:00:00Z",
+        "image_bundle": image_bundle,
+        "image_bundle_sha256": hashlib.sha256(canonical(image_bundle)).hexdigest(),
+        "compose_sha256": "8" * 64,
+        "frontend": frontend,
+        "baseline_nonsecret_config": {
+            "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
+        },
+    }
+    baseline_raw = canonical(baseline)
+    baseline_hash = hashlib.sha256(baseline_raw).hexdigest()
+    candidate_services = {}
+    for index, service in enumerate(services, 4):
+        candidate_services[service] = {
+            "image_id": "sha256:" + str(index) * 64,
+            "oci_revision": failed_bff,
+            "git_sha": None if service == "loop-run-projector-scheduler" else failed_bff,
+            "compose_image": "pantheon-" + service,
+        }
+    candidate_record = {
+        "schema_version": "pantheon.dev-candidate-image-admission.v1",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": identity,
+        "seal_lease_id": capture_lease,
+        "sealed_at": "2026-09-09T00:01:00Z",
+        "baseline_manifest_sha256": baseline_hash,
+        "candidate_compose_sha256": "5" * 64,
+        "image_override_sha256": "",
+        "services": candidate_services,
+    }
+    candidate_override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
+                                        for service, row in candidate_services.items()}}
+    candidate_record["image_override_sha256"] = hashlib.sha256(canonical(candidate_override)).hexdigest()
+    artifact_root = "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts"
+    remote_folder = f"{artifact_root}/baseline-999-1-{candidate_id}"
+    receipt = {
+        "candidate_image_manifest_path": f"{remote_folder}/candidate-images.json",
+        "candidate_image_manifest_sha256": hashlib.sha256(canonical(candidate_record)).hexdigest(),
+        "candidate_image_manifest": candidate_record,
+        "candidate_image_override_path": f"{remote_folder}/candidate-images.override.json",
+        "candidate_image_override_sha256": candidate_record["image_override_sha256"],
+    }
+    retained = tmp / "pantheon-dev-artifacts-999-1"
+    retained.mkdir(mode=0o700, exist_ok=True)
+    retained.chmod(0o700)
+    baseline_path = private_write(retained / "baseline" / "artifact-baseline.json", baseline_raw)
+    receipt_path = private_write(retained / "candidate" / "candidate-receipt.json", canonical(receipt))
+    readback = {
+        "schema_version": "pantheon.dev-artifact-readback.v1",
+        "operation": "restore",
+        "manifest_sha256": baseline_hash,
+        "identity": identity,
+        "pre_restore_source_observations": ["unavailable_http_503"],
+        "image_readback_verified": True,
+        "images": {service: row["image_id"] for service, row in baseline_services.items()},
+        "frontend": frontend,
+        "baseline_nonsecret_config_verified": True,
+        "protected_owners_unchanged": True,
+        "owners": {
+            "governance": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                           "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "registry": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                         "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "deployment": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                           "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "runtime-manager": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                                "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "deployment-outbox-consumer": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                                            "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "capital": {"container_id": "a" * 64, "image_id": "sha256:" + "b" * 64,
+                        "started_at": "2026-09-09T00:00:00.000001Z", "restart_count": 0},
+            "dev-paper-principal-issuer": None,
+        },
+        "public": {
+            "source_sha": rollback_bff,
+            "fe_manifest_bytes_verified": True,
+            "strict_auth_denials_verified": True,
+            "authenticated_viewer_readback_verified": True,
+        },
+    }
+    deploy_script = release_root / "scripts" / "deploy_nonprod_vm.sh"
+    readback_text = canonical(readback).decode()
+    deploy_script.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        f"[[ {deploy_exit} -eq 0 ]] || exit {deploy_exit}\n"
+        "artifact_readback=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ $1 == --artifact-readback-out ]]; then artifact_readback=${2:?}; shift 2; else shift; fi\n"
+        "done\n"
+        "[[ -n $artifact_readback ]]\n"
+        f"printf '%s' {shlex.quote(readback_text)} > \"$artifact_readback\"\n"
+        "chmod 0600 \"$artifact_readback\"\n",
+        encoding="utf-8",
+    )
+    deploy_script.chmod(0o755)
+    return {
+        "controller_sha": controller_sha,
+        "baseline_path": str(baseline_path),
+        "baseline_hash": baseline_hash,
+        "receipt_path": str(receipt_path),
+        "candidate_manifest_hash": receipt["candidate_image_manifest_sha256"],
+    }
 
 
 def execute_fresh_lease_compensation(
@@ -921,9 +1249,18 @@ def execute_fresh_lease_compensation(
         tmp,
         rollback_bff=rollback_bff,
         rollback_fe=rollback_fe,
-        deploy_exit=deploy_exit,
         audit_file=audit_file,
         compensation_lease_id=compensation_lease_id,
+    )
+    artifact = install_compensation_artifact_fixture(
+        tmp,
+        release_root,
+        rollback_bff=rollback_bff,
+        rollback_fe=rollback_fe,
+        failed_bff=failed_bff,
+        failed_fe=failed_fe,
+        candidate_id=rc_id,
+        deploy_exit=deploy_exit,
     )
 
     MockRollbackHandler.backend_sha = rollback_bff
@@ -937,6 +1274,7 @@ def execute_fresh_lease_compensation(
 
     log_file = tmp / "controller.log"
     log_file.write_text("failure log detail\n", encoding="utf-8")
+    log_file.chmod(0o600)
     evidence_out = tmp / "release-compensation.json"
 
     env = {
@@ -955,14 +1293,23 @@ def execute_fresh_lease_compensation(
         "DEV_BFF_URL": f"http://127.0.0.1:{port}",
         "DEV_FE_URL": f"http://127.0.0.1:{port}",
         "REMOTE_USER": "testuser",
-        "DEV_VM": "pantheon-dev",
+        "DEV_VM": "pantheon-dev-deploy",
         "DEV_ZONE": "asia-east1-b",
-        "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-proj",
+        "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "RUNNER_TEMP": str(tmp),
         "GITHUB_REPOSITORY": "ajoe734/pantheon",
         "GITHUB_RUN_ID": "999",
         "GITHUB_RUN_ATTEMPT": "1",
         "GITHUB_SERVER_URL": "https://github.com",
+        "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA": artifact["controller_sha"],
+        "PANTHEON_DEV_ARTIFACT_BASELINE_FILE": artifact["baseline_path"],
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": artifact["baseline_hash"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE": artifact["receipt_path"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256": artifact["candidate_manifest_hash"],
+        "PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_ID": "123",
+        "PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_SHA256": "1" * 64,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_ID": "456",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_SHA256": "4" * 64,
     }
     if audit_file:
         env["FAKE_LEASE_AUDIT_FILE"] = str(audit_file)
@@ -2729,6 +3076,290 @@ exit 0
             if heartbeat.poll() is None:
                 heartbeat.kill()
                 heartbeat.wait()
+
+
+def test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression():
+    """SD D3.6 regression: prove atomic lease audit journal under controlled barrier interleaving.
+
+    Exercises the historical overlapping write window between primary lease quarantine
+    and compensation release. Proves that every observed audit file state parses
+    without JSONDecodeError (no zero-byte windows), and both primary quarantined and
+    compensation released records are durably retained in the shared authority audit.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        paths = prepare_guard_fixture(root)
+        primary_lease_id = TEST_LEASE_ID
+        comp_lease_id = "22222222-2222-4222-8222-666666666666"
+
+        _lease_ctrl, _release_root, bin_dir = setup_compensation_fixture(
+            root / "compensation",
+            rollback_bff=TEST_BFF_SHA,
+            rollback_fe=TEST_FE_SHA,
+            audit_file=paths["audit"],
+            compensation_lease_id=comp_lease_id,
+        )
+        shim_py = bin_dir / "python3"
+        cli_py = paths["cli"]
+
+        # -------------------------------------------------------------
+        # Part 1: Controlled barrier interleaving: Primary holds lock,
+        #         Compensation blocks on lock, concurrent reader parses every state.
+        # -------------------------------------------------------------
+        barrier_1 = root / "barrier_1"
+        barrier_1.mkdir()
+        (barrier_1 / "primary_wait_for").write_text("compensation_entered\n", encoding="utf-8")
+
+        observed_states_1: list[dict] = []
+        parse_errors_1: list[Exception] = []
+        stop_reader_1 = threading.Event()
+
+        def continuous_reader_1():
+            while not stop_reader_1.is_set():
+                try:
+                    if paths["audit"].exists():
+                        raw = paths["audit"].read_text(encoding="utf-8")
+                        if raw.strip():
+                            parsed = json.loads(raw)
+                            observed_states_1.append(parsed)
+                except Exception as exc:
+                    parse_errors_1.append(exc)
+                time.sleep(0.001)
+
+        reader_t1 = threading.Thread(target=continuous_reader_1, daemon=True)
+        reader_t1.start()
+
+        env_primary = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_1),
+            "FAKE_AUDIT_ROLE": "primary",
+        }
+        proc_primary = subprocess.Popen(
+            [
+                sys.executable,
+                str(cli_py),
+                "audit-transition",
+                "--lease-id",
+                primary_lease_id,
+                "--action",
+                "heartbeat_term",
+                "--status",
+                "quarantined",
+            ],
+            env=env_primary,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        # Wait until Primary holds lock
+        deadline = time.monotonic() + 5.0
+        while not (barrier_1 / "primary_locked").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (barrier_1 / "primary_locked").exists(), "primary failed to acquire lock"
+
+        # Now start Compensation writer (which will enter and block on lock)
+        env_comp = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_1),
+            "FAKE_AUDIT_ROLE": "compensation",
+        }
+        proc_comp = subprocess.Popen(
+            [
+                str(shim_py),
+                "dev_environment_lease.py",
+                "audit-transition",
+                "--lease-id",
+                comp_lease_id,
+                "--action",
+                "release",
+                "--status",
+                "released",
+            ],
+            env=env_comp,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        out_primary, err_primary = proc_primary.communicate(timeout=10)
+        assert proc_primary.returncode == 0, f"primary audit-transition failed: {err_primary}"
+
+        out_comp, err_comp = proc_comp.communicate(timeout=10)
+        assert proc_comp.returncode == 0, f"compensation audit-transition failed: {err_comp}"
+
+        stop_reader_1.set()
+        reader_t1.join(timeout=2.0)
+
+        assert not parse_errors_1, f"parse errors during overlapping writes: {parse_errors_1}"
+        assert len(observed_states_1) > 0, "reader observed no states"
+
+        final_audit_1 = json.loads(paths["audit"].read_text(encoding="utf-8"))
+        assert final_audit_1["leases"][primary_lease_id]["status"] == "quarantined"
+        assert final_audit_1["leases"][comp_lease_id]["status"] == "released"
+
+        # -------------------------------------------------------------
+        # Part 2: Controlled barrier interleaving: Compensation holds lock,
+        #         Primary blocks on lock, concurrent reader parses every state.
+        # -------------------------------------------------------------
+        barrier_2 = root / "barrier_2"
+        barrier_2.mkdir()
+        (barrier_2 / "compensation_wait_for").write_text("primary_entered\n", encoding="utf-8")
+
+        observed_states_2: list[dict] = []
+        parse_errors_2: list[Exception] = []
+        stop_reader_2 = threading.Event()
+
+        def continuous_reader_2():
+            while not stop_reader_2.is_set():
+                try:
+                    if paths["audit"].exists():
+                        raw = paths["audit"].read_text(encoding="utf-8")
+                        if raw.strip():
+                            parsed = json.loads(raw)
+                            observed_states_2.append(parsed)
+                except Exception as exc:
+                    parse_errors_2.append(exc)
+                time.sleep(0.001)
+
+        reader_t2 = threading.Thread(target=continuous_reader_2, daemon=True)
+        reader_t2.start()
+
+        env_comp_2 = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_2),
+            "FAKE_AUDIT_ROLE": "compensation",
+        }
+        proc_comp_2 = subprocess.Popen(
+            [
+                str(shim_py),
+                "dev_environment_lease.py",
+                "audit-transition",
+                "--lease-id",
+                comp_lease_id,
+                "--action",
+                "release",
+                "--status",
+                "released",
+            ],
+            env=env_comp_2,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        deadline = time.monotonic() + 5.0
+        while not (barrier_2 / "compensation_locked").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (barrier_2 / "compensation_locked").exists(), "compensation failed to acquire lock"
+
+        env_primary_2 = {
+            **os.environ,
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            "FAKE_AUDIT_BARRIER_DIR": str(barrier_2),
+            "FAKE_AUDIT_ROLE": "primary",
+        }
+        proc_primary_2 = subprocess.Popen(
+            [
+                sys.executable,
+                str(cli_py),
+                "audit-transition",
+                "--lease-id",
+                primary_lease_id,
+                "--action",
+                "heartbeat_term",
+                "--status",
+                "quarantined",
+            ],
+            env=env_primary_2,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        out_comp_2, err_comp_2 = proc_comp_2.communicate(timeout=10)
+        assert proc_comp_2.returncode == 0, f"compensation audit-transition failed: {err_comp_2}"
+
+        out_primary_2, err_primary_2 = proc_primary_2.communicate(timeout=10)
+        assert proc_primary_2.returncode == 0, f"primary audit-transition failed: {err_primary_2}"
+
+        stop_reader_2.set()
+        reader_t2.join(timeout=2.0)
+
+        assert not parse_errors_2, f"parse errors during overlapping writes: {parse_errors_2}"
+        assert len(observed_states_2) > 0, "reader observed no states"
+
+        final_audit_2 = json.loads(paths["audit"].read_text(encoding="utf-8"))
+        assert final_audit_2["leases"][primary_lease_id]["status"] == "quarantined"
+        assert final_audit_2["leases"][comp_lease_id]["status"] == "released"
+
+        # -------------------------------------------------------------
+        # Part 3: Real heartbeat SIGTERM quarantine concurrently with compensation release
+        # -------------------------------------------------------------
+        hb_paths = prepare_guard_fixture(root / "hb_fixture")
+        hb_heartbeat = start_fake_heartbeat(hb_paths)
+        hb_comp_lease = "33333333-3333-4333-8333-333333333333"
+
+        parse_errors_3: list[Exception] = []
+        stop_reader_3 = threading.Event()
+
+        def continuous_reader_3():
+            while not stop_reader_3.is_set():
+                try:
+                    if hb_paths["audit"].exists():
+                        raw = hb_paths["audit"].read_text(encoding="utf-8")
+                        if raw.strip():
+                            json.loads(raw)
+                except Exception as exc:
+                    parse_errors_3.append(exc)
+                time.sleep(0.001)
+
+        reader_t3 = threading.Thread(target=continuous_reader_3, daemon=True)
+        reader_t3.start()
+
+        try:
+            # Concurrently signal SIGTERM to heartbeat and run compensation release
+            env_hb_comp = {
+                **os.environ,
+                "FAKE_LEASE_AUDIT_FILE": str(hb_paths["audit"]),
+            }
+            comp_subproc = subprocess.Popen(
+                [
+                    str(shim_py),
+                    "dev_environment_lease.py",
+                    "audit-transition",
+                    "--lease-id",
+                    hb_comp_lease,
+                    "--action",
+                    "release",
+                    "--status",
+                    "released",
+                ],
+                env=env_hb_comp,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            os.kill(hb_heartbeat.pid, signal.SIGTERM)
+            hb_heartbeat.wait(timeout=5)
+
+            comp_out, comp_err = comp_subproc.communicate(timeout=5)
+            assert comp_subproc.returncode == 0, f"comp failed: {comp_err}"
+        finally:
+            stop_reader_3.set()
+            reader_t3.join(timeout=2.0)
+            if hb_heartbeat.poll() is None:
+                hb_heartbeat.kill()
+                hb_heartbeat.wait()
+
+        assert not parse_errors_3, f"parse errors during heartbeat term race: {parse_errors_3}"
+        hb_audit = json.loads(hb_paths["audit"].read_text(encoding="utf-8"))
+        assert hb_audit["leases"][TEST_LEASE_ID]["status"] == "quarantined"
+        assert hb_audit["leases"][hb_comp_lease]["status"] == "released"
 
 
 # ==============================================================================

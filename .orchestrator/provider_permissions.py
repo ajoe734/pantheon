@@ -854,12 +854,11 @@ def _claude_auth_probe(
         metadata["account_identity"] = account_identity
     if account_group:
         metadata["account_group"] = account_group
-    # Several Claude CLI identities (claude, claude2, claude1-1..4, ...) can
-    # share one underlying Anthropic account. Uncoordinated, concurrent OAuth
-    # refresh calls from those identities have been observed to intermittently
-    # fail (rate limiting reads as a plain network error here), so refresh
-    # calls sharing an account are serialized via this static config label
-    # rather than depending on a live account-identity probe succeeding.
+    # ``account`` remains the scheduler-capacity identity.  The common auth
+    # helper derives an opaque refresh mutex from this live status payload when
+    # it identifies an Anthropic account, then uses the scheduler account only
+    # as a compatibility fallback.  Passing the payload avoids a second CLI
+    # status query immediately before a refresh.
     account_lock_key = str(
         (config.get("providers", {}).get(provider_id, {}) or {}).get("account") or ""
     ).strip() or None
@@ -869,6 +868,7 @@ def _claude_auth_probe(
             env=env,
             refresh_if_needed=True,
             account_lock_key=account_lock_key,
+            auth_status_payload=status_payload or None,
         )
     except ClaudeAuthRetry as exc:
         return {

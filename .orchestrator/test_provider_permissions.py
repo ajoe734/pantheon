@@ -1223,6 +1223,7 @@ EOF
             env: dict[str, str] | None = None,
             refresh_if_needed: bool = True,
             account_lock_key: str | None = None,
+            auth_status_payload: dict[str, object] | None = None,
         ) -> bool:
             home = str((env or {}).get("HOME") or "")
             return bool(binary) and home.endswith(".claude2")
@@ -1375,11 +1376,29 @@ EOF
             [env["CLAUDE_CONFIG_DIR"] for env in probe_envs],
             [
                 str(claude2_config_dir),
-                str(claude2_config_dir),
-                str(claude_config_dir),
                 str(claude_config_dir),
             ],
         )
+
+    def test_claude_probe_reuses_status_payload_for_refresh_lock_resolution(self) -> None:
+        payload = {"loggedIn": True, "organization": {"orgId": "unit-shared-org"}}
+        config = {"providers": {"claude2": {"account": "claude2"}}}
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.object(
+                provider_permissions,
+                "_claude_auth_status_payload",
+                return_value=payload,
+            ),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True) as auth_ready,
+        ):
+            probe = provider_permissions._claude_auth_probe(
+                config, "claude2", "claude", {"HOME": tmpdir}
+            )
+
+        self.assertTrue(probe["ready"])
+        self.assertEqual(auth_ready.call_args.kwargs["account_lock_key"], "claude2")
+        self.assertIs(auth_ready.call_args.kwargs["auth_status_payload"], payload)
 
     def test_provider_capabilities_include_custom_gemini_provider(self) -> None:
         config = {

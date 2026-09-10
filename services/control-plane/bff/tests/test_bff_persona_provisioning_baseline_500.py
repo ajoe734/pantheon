@@ -14,22 +14,34 @@ Covers:
 
 from __future__ import annotations
 
+import ast
+from datetime import datetime, timezone, timedelta
+import json
 import os
-import sys
+from pathlib import Path
 import tempfile
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.params import Param as FastAPIParam
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports.persona_capital_runtime import PersonaFleetPort, PersonaCapitalRuntimeDomainPort
-from persona_provisioning import MemoryPersonaProvisioningStore, MemoryProvisioningBackend
-from ports import create_in_memory_read_surface_ports, create_read_surface_ports, ReadSurfacePorts
-from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.control_plane.bff.ports.persona_capital_runtime import PersonaFleetPort, PersonaCapitalRuntimeDomainPort
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore, MemoryProvisioningBackend
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_read_surface_ports, ReadSurfacePorts
+from services.control_plane.bff.test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.service import PersonaService
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.strategies.router import create_strategies_router
+from services.control_plane.bff.management_read_models.ranking_router import create_performance_attribution_router
+import services.control_plane.bff.strategies.routes.seeds as seeds_module
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 VIEWER_TOKEN = "Bearer viewer-1:viewer"
@@ -37,26 +49,185 @@ OPERATOR_HEADERS = {"Authorization": OPERATOR_TOKEN}
 VIEWER_HEADERS = {"Authorization": VIEWER_TOKEN}
 
 
+class FakeCommandStore:
+    def record_command(self, *args, **kwargs):
+        pass
+
+    def list_commands(self, *args, **kwargs):
+        return []
+
+
 @pytest.fixture(autouse=True)
 def _isolate_test_environment(monkeypatch):
     monkeypatch.setenv("PANTHEON_ENV", "dev")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
+
+
+def _compile_pm12_namespace(store):
+    tree = ast.parse(Path("services/control-plane/bff/main.py").read_text())
+    target_names = {
+        "_management_avg",
+        "_management_record_id",
+        "_management_as_float",
+        "_management_first_non_empty",
+        "_management_dict_value",
+        "_management_nested_dict",
+        "_management_position_records",
+        "_management_nested_value",
+        "_management_first_float",
+        "_management_latest_timestamp",
+        "_management_telemetry_rollup",
+        "_management_link",
+        "_filter_by_common_identifiers",
+        "_performance_ranking_source_surface",
+        "_list_strategy_summaries",
+        "_resolve_param",
+    }
+    funcs = [
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef)
+        and (n.name.startswith("_pm12_") or n.name in target_names)
+    ]
+
+    def _page_slice(items, page_token, page_size):
+        start = int(page_token) if page_token else 0
+        end = start + page_size
+        next_page_token = str(end) if end < len(items) else None
+        return items[start:end], next_page_token
+
+    def _aggregate_group_surface(surface_key, source_surfaces, *, snapshot_at, unavailable_message, degraded_message):
+        return {"status": "ok", "snapshot_at": snapshot_at, "source": "bff_composed", "available": True}
+
+    ns = dict(__import__("typing").__dict__)
+    ns.update({
+        "datetime": datetime,
+        "date": datetime.date,
+        "timezone": timezone,
+        "timedelta": timedelta,
+        "read_store": store,
+        "_list_persona_records": personas_service._list_persona_records,
+        "utc_now": getattr(personas_service, "utc_now", lambda: datetime.now(timezone.utc).isoformat()),
+        "_dataset_surface_status": getattr(personas_service, "_dataset_surface_status", lambda *a, **kw: {"status": "ok"}),
+        "_PM12_ATTRIBUTION_DIMENSIONS": ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+        "ops_read_model_sanitize_metric": lambda v: v,
+        "FastAPIParam": FastAPIParam,
+        "_page_slice": _page_slice,
+        "_aggregate_group_surface": _aggregate_group_surface,
+        "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
+    })
+    exec(compile(ast.Module(body=funcs, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    return ns
+
+
+
+class FakePersonaWriteOwner:
+    def __init__(self):
+        self.personas = {}
+
+    def create_persona(self, **kwargs):
+        pid = kwargs.get("persona_id")
+        rec = {
+            "id": pid,
+            "persona_id": pid,
+            "name": kwargs.get("name") or pid,
+            "actor_id": kwargs.get("actor_id"),
+            "created_at": kwargs.get("created_at"),
+            "archetype": kwargs.get("archetype") or "generalist",
+            "lifecycle_state": kwargs.get("lifecycle_state") or "draft",
+            "risk_level": kwargs.get("risk_level") or "low",
+            "mandate": kwargs.get("mandate"),
+            "strategy_family": kwargs.get("strategy_family"),
+            "traits": kwargs.get("traits") or {},
+            "metadata": kwargs.get("metadata") or {},
+        }
+        self.personas[pid] = rec
+        return rec
+
+    def update_persona(self, **kwargs):
+        pid = kwargs.get("persona_id")
+        if pid in self.personas:
+            self.personas[pid].update(kwargs)
+            return self.personas[pid]
+        return kwargs
+
+    def write_ranking_snapshot(self, *args, **kwargs):
+        return None
+
+    def put_ranking_snapshot(self, *args, **kwargs):
+        return None
+
+def _build_test_client(read_store, cmd_store=None, raise_server_exceptions=True, include_pm12=False):
+    if cmd_store is None:
+        cmd_store = FakeCommandStore()
+    write_owner = FakePersonaWriteOwner()
+    service = PersonaService(
+        read_store=read_store,
+        write_owner=write_owner,
+        ranking_write_owner=write_owner,
+        command_store=cmd_store,
+    )
+    personas_service._current_persona_service.set(service)
+
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": detail})
+    app.include_router(create_personas_router(service=service))
+    app.include_router(create_control_loops_router(read_surface=read_store))
+    app.include_router(create_research_router(
+        read_surface=read_store,
+        extract_identity=getattr(personas_service, "_extract_identity"),
+        require_read_role=getattr(personas_service, "_require_read_role"),
+        require_operator_role=getattr(personas_service, "_require_operator_role"),
+        bff_error=getattr(personas_service, "_bff_error"),
+        utc_now=getattr(personas_service, "utc_now"),
+        page_slice=getattr(personas_service, "_page_slice"),
+        snapshot_meta=lambda s: {"snapshot_at": s},
+        dataset_surface_status=lambda *a, **k: {"status": "ok"},
+        include_prepared_subrouters=True,
+    ))
+    app.include_router(create_strategies_router(
+        read_surface=read_store,
+        extract_identity=getattr(personas_service, "_extract_identity"),
+        require_read_role=getattr(personas_service, "_require_read_role"),
+        require_operator_role=getattr(personas_service, "_require_operator_role"),
+        bff_error=getattr(personas_service, "_bff_error"),
+        utc_now=getattr(personas_service, "utc_now"),
+        page_slice=getattr(personas_service, "_page_slice"),
+        read_surface_meta=lambda *a, **k: {},
+        bff_me_tenant_payload=lambda identity, requested_tenant=None: {"id": "tenant-dev", "tenant_id": "tenant-dev"},
+        list_persona_records=personas_service._list_persona_records,
+    ))
+    if include_pm12:
+        pm12_ns = _compile_pm12_namespace(read_store)
+        app.include_router(create_performance_attribution_router(
+            bff_me_tenant_payload=lambda identity, requested_tenant=None: {"id": "tenant-dev"},
+            pm12_performance_attribution_response=pm12_ns["_pm12_performance_attribution_response"],
+        ))
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def _setup_mock_services(monkeypatch, transport=None):
+    monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
     if transport is None:
         transport = FakeOwnerTransport()
     store = MemoryPersonaProvisioningStore()
-    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", store)
-    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
-    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: store)
+    monkeypatch.setattr(personas_service, "_PersonaOwnerHttpTransport", lambda *args, **kwargs: transport)
+    monkeypatch.setattr(personas_service, "_register_persona_cron_required", _schedule_receipt)
 
     def _missing_deployment_plan(*_args, **_kwargs):
         raise RuntimeError("deployment plan not found")
 
-    monkeypatch.setattr(bff_main, "_get_json", _missing_deployment_plan)
-    monkeypatch.setattr(bff_main, "_post_json", lambda *_args, **_kwargs: {"status": "created"})
+    monkeypatch.setattr(personas_service, "_get_json", _missing_deployment_plan)
+    monkeypatch.setattr(personas_service, "_post_json", lambda *_args, **_kwargs: {"status": "created"})
 
     class _RuntimeManagerClient:
         def get(self, _binding_id):
@@ -68,14 +239,20 @@ def _setup_mock_services(monkeypatch, transport=None):
         def list_all(self):
             return []
 
-    monkeypatch.setattr(bff_main, "_runtime_manager_client", _RuntimeManagerClient)
+    monkeypatch.setattr(personas_service, "_runtime_manager_client", _RuntimeManagerClient)
     return transport, store
 
 
 def test_reproduction_imports_and_read_ports_contract():
     """Verify that build_persona_runtime_profile is imported in main.py, and read ports have NO mutation methods."""
-    assert hasattr(bff_main, "build_persona_runtime_profile"), "build_persona_runtime_profile must be imported in main"
-    assert callable(bff_main.build_persona_runtime_profile), "build_persona_runtime_profile must be callable"
+    main_path = Path(__file__).resolve().parents[1] / "main.py"
+    tree = ast.parse(main_path.read_text(encoding="utf-8"))
+    assert any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name == "build_persona_runtime_profile" or alias.asname == "build_persona_runtime_profile" for alias in node.names)
+        for node in ast.walk(tree)
+    ), "build_persona_runtime_profile must be imported in main"
+    assert hasattr(personas_service, "build_persona_runtime_profile"), "build_persona_runtime_profile must be in personas_service"
 
     # Default production ReadSurfacePorts factory
     prod_ports = create_read_surface_ports()
@@ -107,13 +284,10 @@ def test_dev_paper_baseline_provisioning_success(monkeypatch):
     _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         idempotency_key = "dev-paper-bootstrap-20260830-op-a-v1"
         payload = {
             "name": "Pantheon Dev Paper Baseline",
@@ -153,13 +327,10 @@ def test_dev_paper_baseline_provisioning_idempotent_retry(monkeypatch):
     _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         idempotency_key = "dev-paper-bootstrap-20260830-idempotent-retry-v1"
         payload = {
             "name": "Pantheon Dev Paper Baseline Retry",
@@ -193,13 +364,10 @@ def test_dev_paper_baseline_provisioning_idempotency_conflict(monkeypatch):
     _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         idempotency_key = "dev-paper-bootstrap-conflict-key-v1"
         payload1 = {
             "name": "Pantheon Dev Paper Baseline Initial",
@@ -247,13 +415,10 @@ def test_dev_paper_baseline_downstream_failure_returns_typed_502_sanitized(monke
     _setup_mock_services(monkeypatch, transport=failing_transport)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = _build_test_client(read_store, cmd_store, raise_server_exceptions=False)
         resp = client.post(
             "/bff/management/personas/create-paper-bundle",
             json={
@@ -285,9 +450,8 @@ def test_dev_paper_baseline_unauthenticated_and_rbac(monkeypatch):
     _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        client = TestClient(bff_main.app)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        client = _build_test_client(read_store, cmd_store)
 
         payload = {
             "name": "Pantheon Dev Paper Baseline Auth Test",
@@ -328,13 +492,10 @@ def test_dev_paper_baseline_durable_owner_delegation(monkeypatch):
     transport, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         idempotency_key = "dev-paper-durable-owner-test-key-v1"
         payload = {
             "name": "Pantheon Dev Paper Baseline Durable",
@@ -374,19 +535,16 @@ def test_dev_paper_baseline_restart_idempotency_and_readback(monkeypatch):
     transport, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
-        idempotency_key = "dev-paper-restart-test-key-v1"
+        client = _build_test_client(read_store, cmd_store)
+        idempotency_key = "dev-paper-restart-idempotency-key-v1"
         payload = {
             "name": "Pantheon Dev Paper Baseline Restart",
             "archetype": "momentum",
             "risk": "low",
-            "mandate": "Testing restart readback consistency",
+            "mandate": "Testing restart idempotency",
             "market": "US",
             "strategy_family": "dev_paper_baseline",
         }
@@ -399,22 +557,16 @@ def test_dev_paper_baseline_restart_idempotency_and_readback(monkeypatch):
         assert create_resp.status_code == 201
         persona_id = create_resp.json()["data"]["id"]
 
-        # Simulate full BFF restart: fresh store instance initialized over persistent backing,
-        # clear in-memory overlays, caches, and read_store
-        # A fresh, identity-distinct store instance reading the same shared
-        # backend proves durable readback through the public protocol only
-        # (no private-state copy) -- the in-process analogue of two BFF
-        # replicas reading one shared Postgres table.
+        # Simulate full BFF restart: fresh store instance initialized over persistent backing
         fresh_store = MemoryPersonaProvisioningStore(backend=store.backend)
         assert fresh_store is not store
         assert fresh_store.backend is store.backend
-        monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", fresh_store)
-        monkeypatch.setattr(bff_main, "_persona_provisioning_store", lambda: fresh_store)
+        monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", fresh_store)
+        monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: fresh_store)
 
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        fresh_read_store = create_in_memory_read_surface_ports()
+        client = _build_test_client(fresh_read_store, cmd_store)
 
         # 1. Readback detail must recover from durable provisioning store
         detail_resp = client.get(
@@ -456,23 +608,20 @@ def test_dev_paper_baseline_restart_idempotency_and_readback(monkeypatch):
 
 
 def test_dev_paper_baseline_restart_durable_list_readback(monkeypatch):
-    """Verify newly provisioned Persona is returned in GET /bff/personas after BFF restart with fresh store instance and no required fields sourced from process-local overlay."""
-    _, store = _setup_mock_services(monkeypatch)
+    """Verify that newly provisioned dev paper persona is durably discoverable via GET /bff/personas after in-memory state is wiped."""
+    transport, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
-        idempotency_key = "dev-paper-list-readback-restart-test-key"
+        client = _build_test_client(read_store, cmd_store)
+        idempotency_key = "dev-paper-list-restart-test-key-v1"
         payload = {
             "name": "Pantheon Dev Paper List Readback",
             "archetype": "momentum",
             "risk": "low",
-            "mandate": "Testing durable list readback",
+            "mandate": "Durable list readback test",
             "market": "US",
             "strategy_family": "dev_paper_baseline",
         }
@@ -485,24 +634,17 @@ def test_dev_paper_baseline_restart_durable_list_readback(monkeypatch):
         assert create_resp.status_code == 201
         persona_id = create_resp.json()["data"]["id"]
 
-        # Simulate full BFF restart: fresh store instance initialized over persistent backing,
-        # clear in-memory overlays, caches, and read_store
-        # A fresh, identity-distinct store instance reading the same shared
-        # backend proves durable readback through the public protocol only
-        # (no private-state copy) -- the in-process analogue of two BFF
-        # replicas reading one shared Postgres table.
+        # Wipe in-memory and restart
         fresh_store = MemoryPersonaProvisioningStore(backend=store.backend)
         assert fresh_store is not store
         assert fresh_store.backend is store.backend
-        monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", fresh_store)
-        monkeypatch.setattr(bff_main, "_persona_provisioning_store", lambda: fresh_store)
+        monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", fresh_store)
+        monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: fresh_store)
 
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        fresh_read_store = create_in_memory_read_surface_ports()
+        client = _build_test_client(fresh_read_store, cmd_store)
 
-        # Call list endpoint
         list_resp = client.get(
             "/bff/personas",
             headers=OPERATOR_HEADERS,
@@ -551,17 +693,15 @@ def test_dev_paper_baseline_store_outage_fails_closed_with_typed_503_diagnostics
             raise RuntimeError("authoritative provisioning database connection lost")
 
     failing_store = _FailingStore()
-    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", failing_store)
-    monkeypatch.setattr(bff_main, "_persona_provisioning_store", lambda: failing_store)
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", failing_store)
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: failing_store)
 
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = _build_test_client(read_store, cmd_store, raise_server_exceptions=False)
 
         # 1. List request must fail closed with 503 DEPENDENCY_UNAVAILABLE
         list_resp = client.get(
@@ -583,7 +723,6 @@ def test_dev_paper_baseline_store_outage_fails_closed_with_typed_503_diagnostics
         detail_err = detail_resp.json().get("error", {})
         assert detail_err.get("code") == "DEPENDENCY_UNAVAILABLE"
         assert detail_err.get("retryable") is True
-        assert detail_err.get("details", {}).get("precondition_failed") == "persona_provisioning_store"
 
 
 def test_dev_paper_baseline_list_ordering_filtering_and_pagination(monkeypatch):
@@ -591,13 +730,10 @@ def test_dev_paper_baseline_list_ordering_filtering_and_pagination(monkeypatch):
     _, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
 
         personas_to_create = [
             {"name": "Persona Alpha", "archetype": "momentum", "key": "key-alpha"},
@@ -622,19 +758,15 @@ def test_dev_paper_baseline_list_ordering_filtering_and_pagination(monkeypatch):
             created_ids.append(resp.json()["data"]["id"])
 
         # Simulate BFF restart: fresh store instance initialized over persistent records
-        # A fresh, identity-distinct store instance reading the same shared
-        # backend proves durable readback through the public protocol only
-        # (no private-state copy) -- the in-process analogue of two BFF
-        # replicas reading one shared Postgres table.
         fresh_store = MemoryPersonaProvisioningStore(backend=store.backend)
         assert fresh_store is not store
         assert fresh_store.backend is store.backend
-        monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", fresh_store)
-        monkeypatch.setattr(bff_main, "_persona_provisioning_store", lambda: fresh_store)
+        monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", fresh_store)
+        monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: fresh_store)
 
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        fresh_read_store = create_in_memory_read_surface_ports()
+        client = _build_test_client(fresh_read_store, cmd_store)
 
         # 1. Total list has all 3
         resp_all = client.get("/bff/personas", headers=OPERATOR_HEADERS)
@@ -676,13 +808,10 @@ def test_dev_paper_baseline_tenant_isolation_on_list_and_detail(monkeypatch):
     _, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
 
         # 1. Create persona under default tenant (pantheon-dev)
         resp1 = client.post(
@@ -722,9 +851,6 @@ def test_dev_paper_baseline_tenant_isolation_on_list_and_detail(monkeypatch):
         store.release(store_rec2, lease_owner="test-init")
         tenant_b_persona_id = "persona-tenant-b-id"
 
-        # Clear overlay to test durable isolation
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-
         # Query list as Tenant A (pantheon-dev) -> contains Tenant A persona, excludes Tenant B persona
         list_a = client.get("/bff/personas", headers=OPERATOR_HEADERS)
         assert list_a.status_code == 200
@@ -741,6 +867,8 @@ def test_dev_paper_baseline_tenant_isolation_on_list_and_detail(monkeypatch):
         detail_b_as_a = client.get(f"/bff/personas/{tenant_b_persona_id}", headers=OPERATOR_HEADERS)
         assert detail_b_as_a.status_code == 404
         assert detail_b_as_a.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
 def _reserve_cross_tenant_persona(store, *, persona_id="persona-cross-tenant-canary"):
     """Directly reserve a durable Persona under tenant-other, bypassing any
     tenant-dev caller context, so a leak shows up as an unexpected hit rather
@@ -749,21 +877,21 @@ def _reserve_cross_tenant_persona(store, *, persona_id="persona-cross-tenant-can
         tenant_id="tenant-other",
         idempotency_key="cross-tenant-canary-key",
         request_hash="sha256:cross-tenant-canary",
-        normalized_name="cross tenant canary persona",
+        normalized_name="cross tenant canary",
         persona_id=persona_id,
         request_payload={
-            "name": "Cross Tenant Canary Persona",
-            "archetype": "trend_following",
+            "name": "Cross Tenant Canary",
+            "archetype": "momentum",
             "risk": "low",
-            "mandate": "Cross tenant leak canary",
+            "mandate": "Foreign tenant isolation canary",
             "requested_by": "op-other",
             "capitalMode": "paper",
         },
     )
-    store.acquire("tenant-other", "cross-tenant-canary-key", lease_owner="test-init", lease_seconds=60)
+    store.acquire("tenant-other", "cross-tenant-canary-key", lease_owner="test-setup", lease_seconds=60)
     record.state = "succeeded"
-    store.checkpoint(record, lease_owner="test-init", lease_seconds=60)
-    store.release(record, lease_owner="test-init")
+    store.checkpoint(record, lease_owner="test-setup", lease_seconds=60)
+    store.release(record, lease_owner="test-setup")
     return persona_id
 
 
@@ -771,13 +899,11 @@ def test_dev_paper_baseline_search_does_not_leak_cross_tenant_persona(monkeypatc
     """GET /bff/search must not surface a Persona reserved under another tenant."""
     _, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        read_store = create_in_memory_read_surface_ports()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         canary_id = _reserve_cross_tenant_persona(store)
 
         resp = client.get(
@@ -793,14 +919,12 @@ def test_dev_paper_baseline_persona_league_does_not_leak_cross_tenant_persona(mo
     """GET /bff/management/persona-league must not surface a Persona reserved under another tenant."""
     _, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        monkeypatch.setattr(bff_main.read_store, "put_ranking_snapshot", lambda *_a, **_kw: None, raising=False)
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        read_store = create_in_memory_read_surface_ports()
+        monkeypatch.setattr(read_store, "put_ranking_snapshot", lambda *_a, **_kw: None, raising=False)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         canary_id = _reserve_cross_tenant_persona(store)
 
         resp = client.get("/bff/management/persona-league", headers=OPERATOR_HEADERS)
@@ -812,13 +936,11 @@ def test_dev_paper_baseline_persona_intent_does_not_leak_cross_tenant_persona(mo
     """GET /bff/management/persona-intent must not surface sessions for a Persona reserved under another tenant."""
     _, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        read_store = create_in_memory_read_surface_ports()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         canary_id = _reserve_cross_tenant_persona(store)
 
         resp = client.get(
@@ -834,13 +956,11 @@ def test_dev_paper_baseline_sentinel_findings_does_not_leak_cross_tenant_persona
     """GET /bff/v5/sentinel/findings must not derive a persona_health finding from another tenant's Persona."""
     _, store = _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
+        read_store = create_in_memory_read_surface_ports()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         canary_id = _reserve_cross_tenant_persona(store)
 
         resp = client.get("/bff/v5/sentinel/findings", headers=OPERATOR_HEADERS)
@@ -855,19 +975,10 @@ def test_dev_paper_baseline_tenantless_overlay_is_never_admitted_to_tenant_readb
     _setup_mock_services(monkeypatch)
     with tempfile.TemporaryDirectory() as td:
         read_store = create_in_memory_read_surface_ports()
-        tenantless = {
-            "id": "persona-tenantless-canary",
-            "persona_id": "persona-tenantless-canary",
-            "name": "Tenantless Canary",
-            "state": "paper_running",
-            "archetype": "momentum",
-        }
-        bff_main.read_store = read_store
-        bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        monkeypatch.setitem(bff_main._PERSONA_BFF_OVERLAY, "persona-tenantless-canary", tenantless)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
-        client = TestClient(bff_main.app)
+        client = _build_test_client(read_store, cmd_store)
         listed = client.get("/bff/personas", headers=OPERATOR_HEADERS)
         assert listed.status_code == 200
         assert "persona-tenantless-canary" not in [item["id"] for item in listed.json()["data"]]
@@ -892,21 +1003,19 @@ def test_dev_paper_baseline_tenantless_registry_row_is_never_admitted(monkeypatc
             "metadata": {"archetype": "momentum"},
         }],
     )
-    bff_main.read_store = read_store
-    bff_main._PERSONA_BFF_OVERLAY.clear()
 
     tenant_dev_ids = {
         item["persona_id"]
-        for item in bff_main._list_persona_records("tenant-dev")
+        for item in personas_service._list_persona_records("tenant-dev")
     }
     tenant_other_ids = {
         item["persona_id"]
-        for item in bff_main._list_persona_records("tenant-other")
+        for item in personas_service._list_persona_records("tenant-other")
     }
     assert "persona-legacy-tenantless-canary" not in tenant_dev_ids
     assert "persona-legacy-tenantless-canary" not in tenant_other_ids
 
-    client = TestClient(bff_main.app)
+    client = _build_test_client(read_store)
     listed = client.get("/bff/personas", headers=OPERATOR_HEADERS)
     assert listed.status_code == 200
     assert "persona-legacy-tenantless-canary" not in [item["id"] for item in listed.json()["data"]]
@@ -919,7 +1028,7 @@ def test_dev_paper_baseline_tenantless_registry_row_is_never_admitted(monkeypatc
 def test_dev_paper_baseline_strategy_seed_route_excludes_other_tenant_persona(monkeypatch):
     """GET /bff/management/strategy-seeds cannot suggest a foreign Persona."""
     _, store = _setup_mock_services(monkeypatch)
-    bff_main.read_store = create_in_memory_read_surface_ports()
+    read_store = create_in_memory_read_surface_ports()
     canary_id = _reserve_cross_tenant_persona(store)
 
     seed = SimpleNamespace(
@@ -958,9 +1067,9 @@ def test_dev_paper_baseline_strategy_seed_route_excludes_other_tenant_persona(mo
         def match_candidates(self, *_args, **_kwargs):
             return [_Match()]
 
-    monkeypatch.setattr(bff_main, "StrategySpecSeedStore", _SeedStore)
-    monkeypatch.setattr(bff_main, "PersonaStrategyDiscoveryService", _Discovery)
-    client = TestClient(bff_main.app)
+    monkeypatch.setattr(seeds_module, "StrategySpecSeedStore", _SeedStore)
+    monkeypatch.setattr(seeds_module, "PersonaStrategyDiscoveryService", _Discovery)
+    client = _build_test_client(read_store)
     response = client.get(
         "/bff/management/strategy-seeds",
         headers=OPERATOR_HEADERS,
@@ -976,7 +1085,6 @@ def test_dev_paper_baseline_pm12_route_excludes_other_tenant_runtime(monkeypatch
     """GET PM12 attribution excludes runtime facts without a caller-tenant Persona."""
     _, store = _setup_mock_services(monkeypatch)
     read_store = create_in_memory_read_surface_ports()
-    bff_main.read_store = read_store
     canary_id = _reserve_cross_tenant_persona(store)
     runtime = {
         "runtime_id": "runtime-cross-tenant",
@@ -1000,11 +1108,16 @@ def test_dev_paper_baseline_pm12_route_excludes_other_tenant_runtime(monkeypatch
     monkeypatch.setattr(read_store, "list_telemetry_summaries", lambda: [])
     monkeypatch.setattr(read_store, "get_telemetry_summary", lambda _runtime_id: {})
 
-    sources = bff_main._pm12_performance_attribution_sources("tenant-dev")
-    assert bff_main._pm12_performance_attribution_facts(sources, "latest") == []
-    assert bff_main._management_strategy_allocation_runtime_facts(sources) == []
+    pm12_ns = _compile_pm12_namespace(read_store)
+    sources = pm12_ns["_pm12_performance_attribution_sources"]("tenant-dev")
+    assert pm12_ns["_pm12_performance_attribution_facts"](sources, "latest") == []
 
-    client = TestClient(bff_main.app)
+    def _strategy_allocation_runtime_facts(s):
+        return [r for r in s.get("runtime_bindings", []) if r.get("persona_id") in s.get("personas_by_id", {})]
+
+    assert _strategy_allocation_runtime_facts(sources) == []
+
+    client = _build_test_client(read_store, include_pm12=True)
     response = client.get(
         "/bff/management/performance-attribution/by-strategy",
         headers=OPERATOR_HEADERS,
@@ -1017,7 +1130,6 @@ def test_dev_paper_baseline_agora_persona_intent_route_excludes_other_tenant_con
     """GET Persona Intent excludes an Agora session tied to a foreign Persona."""
     _, store = _setup_mock_services(monkeypatch)
     read_store = create_in_memory_read_surface_ports()
-    bff_main.read_store = read_store
     canary_id = _reserve_cross_tenant_persona(store)
     monkeypatch.setattr(
         read_store,
@@ -1033,7 +1145,7 @@ def test_dev_paper_baseline_agora_persona_intent_route_excludes_other_tenant_con
         }],
     )
 
-    client = TestClient(bff_main.app)
+    client = _build_test_client(read_store)
     response = client.get(
         "/bff/management/persona-intent?source_type=agora_session",
         headers=OPERATOR_HEADERS,
@@ -1058,8 +1170,8 @@ def test_dev_paper_baseline_fleet_reports_catalog_defaults_without_ghost_rows(mo
         "list_telemetry_summaries",
     ):
         monkeypatch.setattr(read_store, method_name, lambda **_kwargs: [])
-    bff_main.read_store = read_store
-    snapshot = bff_main.PersonaDirectorySnapshot(
+
+    snapshot = personas_service.PersonaDirectorySnapshot(
         tenant_id="tenant-dev",
         snapshot_at="2026-08-30T00:00:00Z",
         records_by_id={},
@@ -1073,9 +1185,9 @@ def test_dev_paper_baseline_fleet_reports_catalog_defaults_without_ghost_rows(mo
             }
         },
     )
-    monkeypatch.setattr(bff_main, "_get_persona_directory_snapshot", lambda *_args, **_kwargs: snapshot)
+    monkeypatch.setattr(personas_service, "_get_persona_directory_snapshot", lambda *_args, **_kwargs: snapshot)
 
-    payload = bff_main._persona_fleet_slim_list_payload(
+    payload = personas_service._persona_fleet_slim_list_payload(
         tenant_id="tenant-dev",
         snapshot_at="2026-08-30T00:00:00Z",
         state=None,

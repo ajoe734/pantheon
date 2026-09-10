@@ -3,7 +3,7 @@
 
 Used by:
   - .githooks/commit-msg          (one commit, the staged message)
-  - .github/workflows/branch-ci.yml (range of commits in a PR)
+  - .github/workflows/branch-ci.yml (commits in PR and push ranges)
 
 Reads required trailers from .orchestrator/config.json:
   branch_workflow.task_pr.require_commit_trailers   (preferred, post-2026-05-17)
@@ -15,7 +15,7 @@ still tolerated when present but no longer required.)
 
 CLI:
   check_commit_trailers.py --message-file <path>
-  check_commit_trailers.py --range <base>..<head>
+  check_commit_trailers.py --range <base>..<head> --delivery-class auto
   check_commit_trailers.py --rev <sha>
 """
 
@@ -343,6 +343,21 @@ def collect_messages_from_range(rev_range: str) -> list[tuple[str, str]]:
     return items
 
 
+def commit_delivery_class(sha: str, manifest: dict) -> str:
+    """Classify this commit, not its event label or the range's net diff."""
+    from scripts.component_boundary import classify_paths
+
+    result = subprocess.run(
+        ["git", "diff-tree", "--root", "--no-commit-id", "--name-only",
+         "--no-renames", "-r", "-z", sha],
+        check=True, capture_output=True, text=True, cwd=ROOT,
+    )
+    # NUL boundaries preserve unusual filenames; disabling rename detection
+    # includes the deleted product path when a file moves into tooling.
+    paths = [path for path in result.stdout.split("\0") if path]
+    return "tooling" if classify_paths(manifest, paths)["tooling_only"] else "product"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
@@ -356,9 +371,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--delivery-class",
-        choices=("product", "tooling"),
+        choices=("product", "tooling", "auto"),
         default="product",
-        help="Tooling delivery does not require the product-reviewer trailer.",
+        help="Auto classifies each committed change with the component manifest; "
+             "tooling delivery does not require the product-reviewer trailer.",
     )
     parser.add_argument(
         "--task-id",
@@ -366,13 +382,23 @@ def main() -> int:
         help="Expected task id to validate against.",
     )
     args = parser.parse_args()
+    if args.delivery_class == "auto" and args.message_file:
+        parser.error("auto delivery classification requires --range or --rev")
 
     # Allow CI/cron jobs to bypass with explicit opt-out (used by automated merge bots).
     if os.environ.get("PANTHEON_TRAILER_CHECK_DISABLED") == "1":
         return 0
 
     required, prefix_required = load_settings()
-    required = required_trailers_for_delivery(required, args.delivery_class)
+    manifest = None
+    if args.delivery_class == "auto":
+        # Explicit product/tooling callers (including commit-message validation)
+        # do not need the Git source classifier or its YAML dependency.
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from scripts.component_boundary import load_manifest
+
+        manifest = load_manifest(ROOT / "docs/02-architecture/component-boundary.yaml")
 
     targets: list[tuple[str, str]]
     if args.message_file:
@@ -404,12 +430,16 @@ def main() -> int:
             ).stdout.split()
             if len(parents) > 2:  # merge commit
                 continue
+        delivery_class = args.delivery_class
+        if manifest is not None:
+            delivery_class = commit_delivery_class(sha, manifest)
+            print(f"[trailers] {sha}: delivery_class={delivery_class}")
         problems = check_message(
             msg,
             required=required,
             prefix_required=prefix_required,
             expected_task_id=args.task_id,
-            delivery_class=args.delivery_class,
+            delivery_class=delivery_class,
         )
         if problems:
             exit_code = 1
