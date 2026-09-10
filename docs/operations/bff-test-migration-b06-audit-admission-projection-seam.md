@@ -4,7 +4,7 @@ Status: canonical architectural decision for batch B06 command admission and aud
 Task ID: `BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001`  
 Owner: Antigravity  
 Reviewer: Antigravity2  
-Base Commit: `b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a` (origin/dev)  
+Base Commit: `ff1e8781c05650868614b995edd29287cc01fc68` (origin/dev)  
 Related Tasks:
 - `BFF-TEST-MIGRATION-REPARTITION-PLAN-001` (predecessor plan, done)
 - `BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001` (predecessor shared foundation correction, done)
