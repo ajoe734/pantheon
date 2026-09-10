@@ -10206,6 +10206,10 @@ class DiscoverOpenPullRequestForBranchTests(unittest.TestCase):
 class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
 
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
