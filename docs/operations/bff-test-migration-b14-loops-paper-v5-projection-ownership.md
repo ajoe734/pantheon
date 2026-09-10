@@ -176,15 +176,26 @@ the service instance. A direct delta import alone does not solve that problem.
 There is no supported intermediate merge with inert patches, absent symbols,
 or a source seam waiting on its downstream B14 consumer.
 
-Paths in this table are relative to `services/control-plane/bff/`. Batch IDs
-and full paths are reproduced in the evidence `consumer_migration` section
-from the accepted repartition's `partition.json`.
+Paths in this table are relative to `services/control-plane/bff/`. Historical
+partition IDs and full paths remain recorded in the evidence
+`consumer_migration` section. They are provenance, not current write authority.
+Canonical readback confirms `BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001` is
+`done` with `terminal_outcome=superseded` and an empty artifact contract.
+The live transfer/restore/dependency target for `test_srclive_overlay_contract.py`
+is `BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001`.
+Preserve its prerequisite `BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001`
+as well as repartition; the parent already depends on both B15 successors.
+No operation in this proposal targets the superseded row. In the rest of this
+document, B15 means the live remainder unless explicitly labelled historical.
+The future whole-app correction separately reconciles 184 historical files to
+182 non-allowlist importers; this decision preserves the current 184-file
+partition and eleven-file B14 scope without claiming that correction delivered.
 
 | Exact test file | Current partition owner | Source-seam edit and required assertion coverage |
 | --- | --- | --- |
 | `test_p0_tw_paper_activate_honesty.py` | B14 | Import the canonical service delta; call the real instance builder with an explicit empty read fixture. Retain unavailable return, TW default persona, seed and telemetry assertions. |
 | `test_loop_auto_bff004_cross_loop_drill.py` | B14 | Replace the main loader patch and overlay call in the source-to-health drill with the real instance overlay and explicit registry/health snapshot fixture. Preserve provider, binding, health-source and live-ingestion assertions; leave other drills for B14. |
-| `test_srclive_overlay_contract.py` | B15 | Replace all five main-loader patches/overlay calls with explicit service/read-port fixtures. Retain all-green summary, TW/US/crypto connector mapping, unavailable credential and missing-truth assertions. |
+| `test_srclive_overlay_contract.py` | B15 live remainder (historical partition: B15) | Replace all five main-loader patches/overlay calls with explicit service/read-port fixtures. Retain all-green summary, TW/US/crypto connector mapping, unavailable credential and missing-truth assertions. |
 | `test_pathreon_market_persona_fleet_contract.py` | B07 | Migrate all source-truth patches/overlay calls and the two obsolete FinMind overlay tests to the canonical instance and read-port fixture. Preserve credential/degraded behavior, source mapping, row count, live status and missing-truth intent as detailed below; unrelated fleet routes remain B07 work. |
 | `test_bff_promotion_review_governance.py` | B05 | Replace the readiness test's forbidden main-loader patch with observable counters at both injected read-port methods `get_source_connector_registry` and `get_source_health_usage_snapshot`. Assert zero calls as well as the existing two batched reads and forbidden fleet subreads. Its unrelated journal/router migration stays downstream. |
 
@@ -221,7 +232,12 @@ complete-row CAS digests; this document is a proposal and performs none of them:
    In particular reconcile B14 PR #5751 and the proposed B05 journal seam's
    overlapping governance test grant. Let an existing writer finish and release
    its lease or obtain an explicit governed handback before transfer.
-2. Temporarily remove items 6–10 from all overlapping writer grants before adding
+2. Artifact-contract edits are legal only for `todo`/`blocked` rows, with no
+   terminal fact or immutable conflict guard. An active writer must first finish
+   or return through a governed handback to an eligible state; never mutate an
+   active/review/terminal contract or reopen a terminal task merely to transfer
+   files. Terminal history does not hold a live lease. Temporarily remove items
+   6–10 from eligible overlapping writer grants before adding
    those exact paths to this source-seam task. Retain each batch's other files,
    evidence and prerequisites. Only the seam holds these five file leases during
    extraction, and acceptance limits its edits to the projection consumers above.
@@ -240,10 +256,16 @@ complete-row CAS digests; this document is a proposal and performs none of them:
    service/router/composition suites; preserve collection and assertion coverage.
    A partial patch or uncollected/failing batch does not authorize symbol removal
    to merge. Record any pre-existing failures separately; do not claim them green.
-5. After the seam is reviewed, merged and canonically done, remove the five
-   temporary grants from the seam and restore them to their original batches
-   using fresh CAS and lease checks. Restore the B05 corrective overlap only
-   under its serialized lease. Read back contracts before redispatch. Rebase
+5. After exact reviewed merge, canonical `done` readback and released seam
+   leases, **leave the seam's terminal artifact contract unchanged** as immutable
+   delivery history. Do not issue post-done artifact removal. Restore the five
+   paths only to their live destination tasks, which must still be `todo` or
+   `blocked`, using fresh complete-row CAS and conflict/lease checks. In
+   particular restore the source-live test to the B15 remainder, never old B15.
+   A terminal destination requires a separately admitted successor, not reopening
+   its history. Restore the B05 corrective overlap only under its serialized
+   lease. Read back all destination contracts and terminal seam truth before
+   redispatch; any partial restoration leaves affected consumers undispatched. Rebase
    consumer PRs on the merged seam; they retain full batch acceptance and may
    not restore main projection patches. This transfer does not mark a batch done
    or alter the 184-file final acceptance universe or the eleven-file B14 run.
@@ -257,8 +279,10 @@ from this document without canonical admission readback.
 ### API and dependency direction
 
 Retain the module function `_trading_performance_delta() -> Optional[float]`
-in `personas/service.py` as the sole implementation; main may directly import
-the same function object during compatibility migration. It returns `None`
+in `personas/service.py` as the sole implementation. Main uses an explicit
+module import (`from personas import service as persona_projection`) and calls
+`persona_projection._trading_performance_delta()` at residual delta call sites;
+it must not export the old name, even as an imported alias. It returns `None`
 until a separate canonical return-schema decision changes that contract.
 
 Expose these read-only service methods, placing the actual implementation in
@@ -288,14 +312,15 @@ and invoke its method. No module-global fallback cache is retained.
 In main, construct the existing `PersonaService` once, earlier than runtime
 router assembly, using the same `app_deps` read/command/write-owner ports now
 passed at 22514. Replace the later construction with reuse of that instance.
-Bind `_build_persona_health_items = persona_service.build_persona_health_items`
-and, if needed by residual main callers,
-`_overlay_source_health_truth = persona_service.overlay_source_health_truth`.
-These are object references, not new function bodies. Delete main's duplicate
-overlay/helper/cache block and delta body. Retire the old service module overlay
-body once moved into its method. Preserve generic-list and DTO consumers through
-these direct references. Bind runtime's existing dependency key to the real
-service method; leave its route, envelopes and read surface unchanged.
+Update generic-list and DTO call sites to call
+`persona_service.build_persona_health_items(...)` and
+`persona_service.overlay_source_health_truth(...)` directly. Delete main's
+duplicate overlay/helper/cache block and delta body; **no old-name aliases,
+imports, wrappers or fallback globals remain**. Retire the old service module
+overlay body once moved into its method. Inject the existing runtime key as
+`("_build_persona_health_items", persona_service.build_persona_health_items)`
+directly; that protocol string is the only main legacy-name literal exception.
+Leave the route, envelopes and read surface unchanged.
 
 Dependency flow: main constructs service → injects its bound method into runtime;
 persona routes use the same service → service reads supplied ports. The service
@@ -308,12 +333,16 @@ configuration, source provider, credential handling or capital behavior is added
 The new service tests must use explicit in-memory read/command/write-owner
 fixtures and the real service implementation, without importing main or patching
 its globals. The new wiring test must statically prove the actual main
-constructor/alias/dependency assignments and execute `create_runtime_router`
+constructor/direct-call/dependency assignments and execute `create_runtime_router`
 with a real service method and explicit unrelated route ports. A fake projection
 callback alone is insufficient. Verify:
 
 1. Exactly one delta definition and one overlay implementation; no duplicate
    cache globals, reverse imports, third wrapper, or runtime projection body.
+   Copy the executable no-legacy-main gate below into the new scoped
+   `personas/test_health_projection_wiring.py` and require zero violations at
+   the extraction head. Retired definitions, aliases and all five consumers'
+   old projection imports/calls/patches must fail that test.
 2. `None` for delta and both `perf_delta`/`perfDelta`; do not substitute PnL,
    training improvement, or zero for an unavailable trading-return schema.
 3. Existing paper seed/default-persona behavior, telemetry flags, filtering,
@@ -514,8 +543,9 @@ print(json.dumps(dict(source_files=[dict(path=str(p), sha256=hashlib.sha256(p.re
 
 Run this read-only block from the same checkout. It validates the proposed
 transfers against the accepted partition, the complete inventoried consumer
-set, and the proposed dependency graph. It does not validate or modify live
-canonical admission, and it does not run the future product tests.
+set, and the full captured canonical dependency graph with a proposed overlay.
+The separate live-read block below refreshes that snapshot without mutations.
+Neither check is source admission or a future product test run.
 
 <!-- B14_CONSUMER_CHECK_BEGIN -->
 ```python
@@ -541,13 +571,23 @@ graph = m['proposed_dependency_graph']
 order = list(TopologicalSorter(graph).static_order())
 for r in rows:
     batch, = [b for b in partition if r['path'] in b['source_artifacts']]
-    assert batch['task_id'] == r['partition_task'] == r['restore_to_task']
+    assert batch['task_id'] == r['partition_task']
+    expected = m['b15_successor']['live_task'] if r['partition_task'] == m['b15_successor']['historical_partition_task'] else r['partition_task']
+    assert r['transfer_from_task'] == r['restore_to_task'] == expected
     assert r['temporary_owner_task'] == seam
     assert r['path'] in d['future_packet']['artifacts']
-    assert seam in graph[r['partition_task']]
-    assert order.index(seam) < order.index(r['partition_task'])
-for batch in partition:
-    assert set(batch['depends_on_after_plan']) <= set(graph[batch['task_id']])
+    assert seam in graph[r['restore_to_task']]
+    assert order.index(seam) < order.index(r['restore_to_task'])
+readback = m['canonical_graph_readback']
+list(TopologicalSorter(readback['current_graph']).static_order())
+for task, deps in readback['current_graph'].items():
+    assert set(deps) <= set(graph[task]), task
+b15 = m['b15_successor']
+assert b15['required_prerequisite'] in graph[b15['live_task']]
+assert {b15['live_task'], b15['required_prerequisite']} <= set(graph[b15['parent']])
+assert b15['historical_partition_task'] not in graph[b15['parent']]
+assert m['terminal_contract_policy']['seam_after_done'] == 'immutable; no artifact removals'
+assert m['terminal_contract_policy']['mutable_states'] == ['todo', 'blocked']
 def ancestors(node):
     return {p for p in graph.get(node, [])} | {
         a for p in graph.get(node, []) for a in ancestors(p)}
@@ -555,6 +595,211 @@ assert not ancestors(seam).intersection(m['no_reverse_dependency'])
 assert sum(len(b['source_artifacts']) for b in partition) == 184
 assert len(next(b for b in partition if b['group'] == 'B14_loops_paper_v5')['source_artifacts']) == 11
 assert hashlib.sha256(Path(d['future_packet']['specification']).read_bytes()).hexdigest() == d['decision_document_sha256']
-print('PASS: five explicit consumer transfers, partition ownership, preserved prerequisites, proposed DAG, 184/11 acceptance counts, document hash')
+print('PASS: five live consumer transfers, historical partition provenance, all canonical prerequisites, full captured DAG and conditional overlay, terminal immutability, 184/11 counts, document hash')
 ```
 <!-- B14_CONSUMER_CHECK_END -->
+
+
+### Executable no-legacy-main acceptance gate
+
+The following gate is part of the **future extraction packet**, to be copied
+into its declared `personas/test_health_projection_wiring.py`. Run
+`test_gate_controls` and `test_no_legacy_main_projection_surface` under pytest
+there; zero violations is mandatory before symbol removal can merge. Main may
+call the canonical delta through its module, but may not bind/export any retired
+name. Its one runtime dependency-key string is allowed only when paired directly
+with the actual service method. Consumer imports, aliases, attributes and patch
+strings naming retired projections fail, including obsolete FinMind helpers.
+Only a delta import from the canonical service is permitted in those tests.
+Other main route fixtures in the five files remain their batches' separate
+migration scope; they do not authorize any legacy projection patch/import.
+Existing AST/dynamic-import/subprocess inventory gates remain required.
+
+For this docs task the script entry point runs positive/negative checker controls
+and reports current violations. It deliberately does **not** call the future
+zero-violation test: current production has not been extracted and all six
+scanned files must still report baseline violations. This proves gate sensitivity,
+not product acceptance. The existing composition allowlist stays read-only.
+
+<!-- B14_NO_LEGACY_BEGIN -->
+```python
+import ast
+import json
+import re
+from pathlib import Path
+
+RETIRED = {
+    '_trading_performance_delta', '_source_ingest_truth_by_connector',
+    '_connector_candidates_for_provider', '_source_failure_reason',
+    '_provider_status_from_truth', '_source_truth_projection', '_select_source_truth',
+    '_source_health_bindings_from_requirements', '_data_source_ok_tone',
+    '_upgrade_all_green_data_source_state', '_overlay_source_health_truth',
+    '_SOURCE_HEALTH_OVERLAY_CACHE', '_SOURCE_HEALTH_OVERLAY_TTL',
+    '_SOURCE_PROVIDER_CONNECTOR_CANDIDATES', '_build_persona_health_items',
+    '_live_source_health_by_connector', '_overlay_live_finmind_health',
+}
+DELTA = '_trading_performance_delta'
+BUILDER = '_build_persona_health_items'
+
+def legacy_violations(source, *, composition=False):
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    module_aliases = {a.asname or a.name for n in ast.walk(tree)
+                      if isinstance(n, ast.ImportFrom) and n.module == 'personas'
+                      for a in n.names if a.name == 'service'}
+    delta_aliases = {a.asname or a.name for n in ast.walk(tree)
+                     if isinstance(n, ast.ImportFrom) and n.module == 'personas.service'
+                     for a in n.names if a.name == DELTA} if not composition else set()
+    failures = set()
+    def reject(node, name):
+        failures.add((node.lineno, name))
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name in RETIRED:
+            reject(n, n.name)
+        elif isinstance(n, ast.Name) and n.id in RETIRED:
+            if not (isinstance(n.ctx, ast.Load) and n.id in delta_aliases):
+                reject(n, n.id)
+        elif isinstance(n, ast.alias):
+            parent = parents[n]
+            canonical_delta = (not composition and isinstance(parent, ast.ImportFrom)
+                               and parent.module == 'personas.service' and n.name == DELTA)
+            if not canonical_delta:
+                for name in (n.name, n.asname):
+                    if name in RETIRED:
+                        reject(n, name)
+        elif isinstance(n, ast.Attribute) and n.attr in RETIRED:
+            if not (n.attr == DELTA and isinstance(n.value, ast.Name)
+                    and n.value.id in module_aliases):
+                reject(n, n.attr)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            # Ignore docstrings only; patches, getattr, globals, exec/import strings count.
+            parent = parents.get(n)
+            grandparent = parents.get(parent)
+            if (isinstance(parent, ast.Expr) and
+                isinstance(grandparent, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and grandparent.body[0] is parent):
+                continue
+            key = (composition and n.value == BUILDER and isinstance(parent, ast.Tuple)
+                   and len(parent.elts) == 2 and parent.elts[0] is n
+                   and ast.dump(parent.elts[1], include_attributes=False) ==
+                   ast.dump(ast.parse('persona_service.build_persona_health_items', mode='eval').body,
+                            include_attributes=False))
+            for name in RETIRED:
+                if re.search(r'(?<!\w)' + re.escape(name) + r'(?!\w)', n.value) and not key:
+                    reject(n, name)
+    return sorted(failures)
+
+def test_gate_controls():
+    for name in RETIRED:
+        for bad in (f'def {name}(): pass', f'{name} = service.method',
+                    f'from main import {name} as hidden', f'alias.{name}()',
+                    f'monkeypatch.setattr(alias, "{name}", stub)',
+                    f'globals()["{name}"] = stub'):
+            assert legacy_violations(bad, composition=True), bad
+            assert legacy_violations(bad), bad
+    assert legacy_violations('from personas.service import _trading_performance_delta', composition=True)
+    assert not legacy_violations('from personas.service import _trading_performance_delta\n_trading_performance_delta()')
+    assert not legacy_violations('from personas import service as persona_projection\n'
+                                 'persona_projection._trading_performance_delta()\n'
+                                 'persona_service.overlay_source_health_truth({}, [])\n'
+                                 '("_build_persona_health_items", persona_service.build_persona_health_items)',
+                                 composition=True)
+
+def scan_projection_consumers():
+    e = json.loads(Path('docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001/evidence.json').read_text())
+    paths = ['services/control-plane/bff/main.py'] + [r['path'] for r in e['consumer_migration']['transfers']]
+    return {p: legacy_violations(Path(p).read_text(), composition=p.endswith('/main.py')) for p in paths}
+
+def test_no_legacy_main_projection_surface():
+    violations = {p: v for p, v in scan_projection_consumers().items() if v}
+    assert not violations, violations
+
+if __name__ == '__main__':
+    test_gate_controls()
+    print(json.dumps(scan_projection_consumers(), indent=2))
+```
+<!-- B14_NO_LEGACY_END -->
+
+### Reproduce the complete canonical graph readback
+
+Run the following observational block with `AI_NAME=Codex` and the inherited
+supervisor bindings. It uses the pinned command runtime's TaskStore V2 read API,
+never the worktree status mirror or the full activity history. The manifest
+stores snapshot hashes, every active edge, terminal leaves and archive hashes
+for terminal dependencies absent from the compact facts. Unknown/unproven
+references fail closed. The checker adds proposed edges to a copy, preserves all
+current prerequisites and verifies the complete graph for cycles. It does not
+apply contract operations. The unresolved B03 role remains explicitly
+non-executable; its real dependencies must replace that role and pass the same
+full-graph check at admission. A current DAG pass cannot certify an unknown
+future B03 task. Recheck eligible row states, PRs and leases separately then.
+
+<!-- B14_FULL_GRAPH_BEGIN -->
+```python
+import hashlib
+import json
+import os
+import sys
+from graphlib import TopologicalSorter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(os.environ['PANTHEON_COMMAND_ROOT']) / '.orchestrator'))
+from rewrite.task_state_store import load_snapshot
+snapshot = load_snapshot(Path(os.environ['PANTHEON_TASK_STATE_EVENT_LOG']), refresh_checkpoint=False)
+state = snapshot['state']
+rows = {r['id']: r for r in state['tasks']}
+terminal = state['terminal_facts']
+graph = {k: r.get('depends_on', []) for k, r in rows.items()}
+# Terminal facts are satisfied leaves; historical dependencies do not gate dispatch.
+for k in terminal:
+    graph.setdefault(k, [])
+archive_leaves = {}
+missing = {p for deps in graph.values() for p in deps} - graph.keys()
+for k in sorted(missing):
+    path = Path(os.environ['PANTHEON_STATUS_ROOT']) / 'ai-task-archive/tasks' / (k + '.json')
+    raw = path.read_bytes()  # Missing/unproven dependency fails closed.
+    archived = json.loads(raw)
+    assert archived['task_id'] == k and archived['terminal_status'] == 'done', k
+    archive_leaves[k] = {'status': archived['terminal_status'], 'sha256': hashlib.sha256(raw).hexdigest()}
+    graph[k] = []
+list(TopologicalSorter(graph).static_order())
+manifest = json.loads(Path('docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001/evidence.json').read_text())
+m = manifest['consumer_migration']
+seam = manifest['future_packet']['id']
+proposed = {k: list(v) for k, v in graph.items()}
+proposed[seam] = [manifest['task_id'], 'ROLE:accepted-B03-source-seam']
+proposed['ROLE:accepted-B03-source-seam'] = []  # Unresolved, NOT dispatch authority.
+for r in m['transfers']:
+    target = r['restore_to_task']
+    assert r['path'] in rows[target]['artifacts'], (target, r['path'])
+    assert not (rows[target].get('terminal_outcome') or target in terminal), target
+    proposed[target] = sorted(set(proposed[target]) | {seam})
+journal = 'BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001'
+proposed[journal] = sorted(set(proposed.get(journal, [])) | {seam})
+b05 = 'BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001'
+proposed[b05] = sorted(set(proposed[b05]) | {journal})
+list(TopologicalSorter(proposed).static_order())
+def ancestors(node):
+    found, pending = set(), list(proposed.get(node, []))
+    while pending:
+        p = pending.pop()
+        if p not in found:
+            found.add(p)
+            pending.extend(proposed.get(p, []))
+    return found
+assert not ancestors(seam).intersection(m['no_reverse_dependency'])
+b15 = m['b15_successor']
+assert b15['required_prerequisite'] in proposed[b15['live_task']]
+assert {b15['required_prerequisite'], b15['live_task']} <= set(proposed[b15['parent']])
+assert b15['historical_partition_task'] not in proposed[b15['parent']]
+result = dict(event_count=snapshot['event_count'], state_sha256=snapshot['state_sha256'],
+              last_event_sha256=snapshot['last_event_sha256'], active_rows=len(rows),
+              terminal_facts=len(terminal), archive_terminal_leaves=archive_leaves,
+              current_graph=graph, proposed_graph=proposed,
+              current_graph_acyclic=True, proposed_graph_acyclic=True,
+              proposed_nodes=len(proposed), unresolved_admission_role='ROLE:accepted-B03-source-seam',
+              consumer_rows={k: {f: rows[k].get(f) for f in ('status','depends_on','artifacts')}
+                             for k in sorted({r['restore_to_task'] for r in m['transfers']})})
+print(json.dumps(result, indent=2, sort_keys=True))
+```
+<!-- B14_FULL_GRAPH_END -->
