@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
-import os
-import sys
+from typing import Any, Optional
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from models import (
+from services.control_plane.bff.events.router import create_events_router
+from services.control_plane.bff.events.service import (
+    DEFAULT_SSE_CHANNEL_CATALOG,
+    EventStreamService,
+    SseReplayUnavailableError,
+)
+from services.control_plane.bff.models import (
     ApprovalCreatedPayload,
     ApprovalDecidedPayload,
     ApprovalSlaEscalatedPayload,
@@ -23,9 +26,11 @@ from models import (
     AskSessionFailedPayload,
     AskSessionStartedPayload,
     AskToolCalledPayload,
+    ErrorCode,
     ObjectType,
     SseEventEnvelope,
 )
+from services.control_plane.bff.tools_integrations.service import SSE_CHANNEL_CATALOG
 
 
 AUTH = "Bearer test-operator:operator,admin"
@@ -52,39 +57,130 @@ FINAL_CHANNEL_CATALOG = (
     "audit",
     "system",
 )
+SSE_CHANNELS = set(FINAL_CHANNEL_CATALOG)
+
+_CORS_ALLOW_HEADERS = (
+    "Accept",
+    "Accept-Language",
+    "Authorization",
+    "Cache-Control",
+    "Content-Type",
+    "If-Match",
+    "X-BFF-Api-Version",
+    "X-Confirm-Token",
+    "Idempotency-Key",
+    "Last-Event-ID",
+    "X-Correlation-Id",
+    "X-Dry-Run",
+    "X-Idempotency-Key",
+    "X-Locale",
+    "X-MFA-Token",
+    "X-Request-Id",
+    "X-Refresh-Token",
+    "X-Tenant-Id",
+)
 
 
-def _error_code_value(code):
+def _error_code_value(code: Any) -> Any:
     return getattr(code, "value", code)
 
 
-def _response_error(response) -> dict:
+def _response_error(response: Any) -> dict:
     payload = response.json()
     return payload.get("detail", payload)["error"]
 
 
+from services.control_plane.bff.auth.policy import bff_error as _bff_error
+
+
+sse_service = EventStreamService(channels=FINAL_CHANNEL_CATALOG)
+_events_router = create_events_router(
+    event_stream_service=sse_service,
+    bff_error=_bff_error,
+    include_domain_sse_aliases=True,
+)
+app = FastAPI()
+app.include_router(_events_router)
+
+_publish_event = sse_service.publish
+_replay_from = sse_service.replay
+_sse_format = sse_service.format_event
+_sse_buffers = sse_service.buffers
+_sse_subscribers = sse_service.subscribers
+
+stream_generic_events = next(r.endpoint for r in _events_router.routes if r.path == "/api/v1/stream/{channel}")
+stream_bff_events = next(r.endpoint for r in _events_router.routes if r.path == "/bff/events/stream")
+bff_events_stream_alias = lambda channel="system", last_event_id=None, authorization=None: stream_generic_events(channel, last_event_id, authorization)
+bff_sse_notifications_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/notifications")
+bff_sse_cc_kpi_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/command-center/kpi")
+bff_sse_cc_events_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/command-center/events")
+bff_sse_job_progress_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/jobs/{jobId}/progress")
+bff_sse_alerts_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/alerts")
+bff_sse_incident_timeline_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/incidents/{incidentId}/timeline")
+bff_sse_deployment_events_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/deployment/events")
+bff_sse_review_updates_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/review/updates")
+
+
+def bff_sse_agora_signals_alias(
+    authorization: Optional[str] = None,
+    last_event_id: Optional[str] = None,
+    last_event_id_header: Optional[str] = None,
+) -> Any:
+    return sse_service.stream_response(
+        "signal",
+        last_event_id or last_event_id_header,
+        bff_error=_bff_error,
+        conflict_code=ErrorCode.RESOURCE_CONFLICT,
+    )
+
+
+def bff_sse_agora_session_alias(
+    sessionId: str,
+    authorization: Optional[str] = None,
+    last_event_id: Optional[str] = None,
+    last_event_id_header: Optional[str] = None,
+) -> Any:
+    ch = f"session:{sessionId}"
+    sse_service.buffers.setdefault(ch, deque(maxlen=sse_service.max_events))
+    sse_service.subscribers.setdefault(ch, [])
+    return sse_service.stream_response(
+        ch,
+        last_event_id or last_event_id_header,
+        bff_error=_bff_error,
+        conflict_code=ErrorCode.RESOURCE_CONFLICT,
+    )
+
+
+async def stream_approval_events(last_event_id: Optional[str] = None, authorization: Optional[str] = None):
+    return await stream_generic_events("approval", last_event_id, authorization)
+
+
+async def stream_ask_events(last_event_id: Optional[str] = None, authorization: Optional[str] = None):
+    return await stream_generic_events("ask", last_event_id, authorization)
+
+
 @pytest.fixture(autouse=True)
 def clean_sse_buffers():
-    for buffer in bff_main._sse_buffers.values():
+    for buffer in _sse_buffers.values():
         buffer.clear()
-    for subscribers in bff_main._sse_subscribers.values():
+    for subscribers in _sse_subscribers.values():
         subscribers.clear()
-    bff_main._incident_events.clear()
-    bff_main._incident_subscribers.clear()
+    sse_service.incident_buffer.clear()
+    sse_service.incident_subscribers.clear()
     yield
-    for buffer in bff_main._sse_buffers.values():
+    for buffer in _sse_buffers.values():
         buffer.clear()
-    for subscribers in bff_main._sse_subscribers.values():
+    for subscribers in _sse_subscribers.values():
         subscribers.clear()
-    bff_main._incident_events.clear()
-    bff_main._incident_subscribers.clear()
+    sse_service.incident_buffer.clear()
+    sse_service.incident_subscribers.clear()
 
 
 def test_final_sse_channel_catalog_contains_approval_and_ask() -> None:
-    assert bff_main.SSE_CHANNEL_CATALOG == FINAL_CHANNEL_CATALOG
-    assert "approval" in bff_main.SSE_CHANNELS
-    assert "ask" in bff_main.SSE_CHANNELS
-    assert "incident" not in bff_main.SSE_CHANNELS
+    assert SSE_CHANNEL_CATALOG == FINAL_CHANNEL_CATALOG
+    assert "approval" in SSE_CHANNELS
+    assert "ask" in SSE_CHANNELS
+    assert "incident" not in SSE_CHANNELS
 
 
 def test_sse_event_envelope_and_payload_models_are_importable() -> None:
@@ -150,29 +246,29 @@ def test_sse_event_envelope_and_payload_models_are_importable() -> None:
 
 def test_replay_success_returns_events_after_last_event_id() -> None:
     channel = "approval"
-    first_id = bff_main._publish_event(
-        bff_main._sse_buffers[channel],
-        bff_main._sse_subscribers[channel],
+    first_id = _publish_event(
+        _sse_buffers[channel],
+        _sse_subscribers[channel],
         "approval.created",
         {"approval_id": "appr-final-sse-001"},
     )
-    second_id = bff_main._publish_event(
-        bff_main._sse_buffers[channel],
-        bff_main._sse_subscribers[channel],
+    second_id = _publish_event(
+        _sse_buffers[channel],
+        _sse_subscribers[channel],
         "approval.decided",
         {"approval_id": "appr-final-sse-001", "outcome": "approved"},
     )
 
-    replayed = bff_main._replay_from(bff_main._sse_buffers[channel], first_id)
+    replayed = _replay_from(channel, _sse_buffers[channel], first_id)
 
     assert [event["id"] for event in replayed] == [second_id]
     assert replayed[0]["type"] == "approval.decided"
     assert replayed[0]["data"]["outcome"] == "approved"
-    assert "event: approval.decided" in bff_main._sse_format(replayed[0])
+    assert "event: approval.decided" in _sse_format(replayed[0])
 
 
 def test_replay_unavailable_uses_final_error_envelope_with_resync_metadata() -> None:
-    client = TestClient(bff_main.app)
+    client = TestClient(app)
 
     response = client.get(
         "/api/v1/stream/approval?last_event_id=evt-final-sse-missing",
@@ -193,9 +289,9 @@ def test_replay_unavailable_uses_final_error_envelope_with_resync_metadata() -> 
 
 def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> None:
     for route, channel, resync in [
-        (bff_main.stream_approval_events, "approval", "/bff/approvals,/bff/v5/interventions"),
+        (stream_approval_events, "approval", "/bff/approvals,/bff/v5/interventions"),
         (
-            bff_main.stream_ask_events,
+            stream_ask_events,
             "ask",
             (
                 "/bff/management/ai/conversations,"
@@ -215,10 +311,8 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
 
 
 def test_execute_plans_sse_compatibility_routes_are_registered() -> None:
-    # Included routers are represented as lazy ``_IncludedRouter`` entries in
-    # current FastAPI, so ``app.routes`` does not flatten their child paths.
     # OpenAPI is the compiled client-visible routing surface.
-    registered_paths = set(bff_main.app.openapi()["paths"])
+    registered_paths = set(app.openapi()["paths"])
 
     assert {
         "/bff/events/stream",
@@ -238,29 +332,29 @@ def test_execute_plans_sse_compatibility_routes_are_registered() -> None:
 def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
     route_factories = [
         (
-            lambda: bff_main.bff_events_stream_alias(
+            lambda: bff_events_stream_alias(
                 channel="system", last_event_id=None, authorization=AUTH,
             ),
             "system",
         ),
-        (lambda: bff_main.bff_sse_notifications_alias(last_event_id=None, authorization=AUTH), "inbox"),
-        (lambda: bff_main.bff_sse_cc_kpi_alias(last_event_id=None, authorization=AUTH), "ranking"),
-        (lambda: bff_main.bff_sse_cc_events_alias(last_event_id=None, authorization=AUTH), "loop"),
+        (lambda: bff_sse_notifications_alias(last_event_id=None, authorization=AUTH), "inbox"),
+        (lambda: bff_sse_cc_kpi_alias(last_event_id=None, authorization=AUTH), "ranking"),
+        (lambda: bff_sse_cc_events_alias(last_event_id=None, authorization=AUTH), "loop"),
         (
-            lambda: bff_main.bff_sse_job_progress_alias(
+            lambda: bff_sse_job_progress_alias(
                 jobId="job-final-sse-001", last_event_id=None, authorization=AUTH,
             ),
             "tool",
         ),
-        (lambda: bff_main.bff_sse_alerts_alias(last_event_id=None, authorization=AUTH), "sentinel"),
+        (lambda: bff_sse_alerts_alias(last_event_id=None, authorization=AUTH), "sentinel"),
         (
-            lambda: bff_main.bff_sse_incident_timeline_alias(
+            lambda: bff_sse_incident_timeline_alias(
                 incidentId="inc-final-sse-001", last_event_id=None, authorization=AUTH,
             ),
             "journal",
         ),
-        (lambda: bff_main.bff_sse_deployment_events_alias(last_event_id=None, authorization=AUTH), "artifact"),
-        (lambda: bff_main.bff_sse_review_updates_alias(last_event_id=None, authorization=AUTH), "approval"),
+        (lambda: bff_sse_deployment_events_alias(last_event_id=None, authorization=AUTH), "artifact"),
+        (lambda: bff_sse_review_updates_alias(last_event_id=None, authorization=AUTH), "approval"),
     ]
 
     for response_factory, expected_channel in route_factories:
@@ -278,13 +372,13 @@ def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
     # that header dependency explicitly supplied rather than via asyncio.run.
     for sync_factory, expected_channel in [
         (
-            lambda: bff_main.bff_sse_agora_signals_alias(
+            lambda: bff_sse_agora_signals_alias(
                 last_event_id=None, authorization=AUTH, last_event_id_header=None,
             ),
             "signal",
         ),
         (
-            lambda: bff_main.bff_sse_agora_session_alias(
+            lambda: bff_sse_agora_session_alias(
                 sessionId="ask-final-sse-001", last_event_id=None, authorization=AUTH,
                 last_event_id_header=None,
             ),
@@ -299,7 +393,7 @@ def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
         assert response.headers["X-SSE-Replay-Store"] == "in-memory"
 
 
-async def _first_sse_payload(response) -> dict:
+async def _first_sse_payload(response: Any) -> dict:
     iterator = response.body_iterator
     try:
         chunk = await anext(iterator)
@@ -313,18 +407,18 @@ async def _first_sse_payload(response) -> dict:
 
 
 def test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream() -> None:
-    bff_main._publish_event(
-        bff_main._sse_buffers["inbox"],
-        bff_main._sse_subscribers["inbox"],
+    _publish_event(
+        _sse_buffers["inbox"],
+        _sse_subscribers["inbox"],
         "inbox.notification.created",
         {"notification_id": "note-final-sse-001"},
     )
 
     async def compare_alias_to_generic() -> tuple[dict, dict]:
-        generic_response = await bff_main.stream_generic_events(
+        generic_response = await stream_generic_events(
             channel="inbox", last_event_id=None, authorization=AUTH,
         )
-        alias_response = await bff_main.bff_sse_notifications_alias(
+        alias_response = await bff_sse_notifications_alias(
             last_event_id=None, authorization=AUTH,
         )
         return (
@@ -343,7 +437,7 @@ def test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream() ->
 def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(
-            bff_main.bff_sse_notifications_alias(
+            bff_sse_notifications_alias(
                 last_event_id="evt-final-sse-missing",
                 authorization=AUTH,
             )
@@ -359,7 +453,7 @@ def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
 
 def test_bff_events_stream_matches_lovable_shell_schema_without_auth() -> None:
     response = asyncio.run(
-        bff_main.stream_bff_events(
+        stream_bff_events(
             channels="system,loop",
             last_event_id=None,
             last_event_id_camel=None,
@@ -381,15 +475,15 @@ def test_bff_events_stream_matches_lovable_shell_schema_without_auth() -> None:
 
 
 def test_cors_allow_headers_include_lovable_bff_client_headers() -> None:
-    assert "Accept-Language" in bff_main._CORS_ALLOW_HEADERS
-    assert "X-BFF-Api-Version" in bff_main._CORS_ALLOW_HEADERS
-    assert "X-Locale" in bff_main._CORS_ALLOW_HEADERS
-    assert "X-Request-Id" in bff_main._CORS_ALLOW_HEADERS
-    assert "X-Tenant-Id" in bff_main._CORS_ALLOW_HEADERS
+    assert "Accept-Language" in _CORS_ALLOW_HEADERS
+    assert "X-BFF-Api-Version" in _CORS_ALLOW_HEADERS
+    assert "X-Locale" in _CORS_ALLOW_HEADERS
+    assert "X-Request-Id" in _CORS_ALLOW_HEADERS
+    assert "X-Tenant-Id" in _CORS_ALLOW_HEADERS
 
 
 def test_internal_publish_infers_approval_and_ask_channels() -> None:
-    client = TestClient(bff_main.app)
+    client = TestClient(app)
 
     approval_response = client.post(
         "/api/v1/internal/sse/publish?event_type=approval.created",
@@ -404,8 +498,8 @@ def test_internal_publish_infers_approval_and_ask_channels() -> None:
 
     assert approval_response.status_code == 200, approval_response.text
     assert ask_response.status_code == 200, ask_response.text
-    approval_event = bff_main._sse_buffers["approval"][0][1]
-    ask_event = bff_main._sse_buffers["ask"][0][1]
+    approval_event = _sse_buffers["approval"][0][1]
+    ask_event = _sse_buffers["ask"][0][1]
     assert approval_event["id"] == approval_response.json()["event_id"]
     assert approval_event["type"] == "approval.created"
     assert approval_event["data"]["approval_id"] == "appr-final-sse-001"
@@ -415,7 +509,7 @@ def test_internal_publish_infers_approval_and_ask_channels() -> None:
 
 
 def test_invalid_generic_channel_returns_catalog_validation_error() -> None:
-    client = TestClient(bff_main.app)
+    client = TestClient(app)
 
     response = client.get("/api/v1/stream/not-a-channel", headers={"Authorization": AUTH})
 
@@ -428,15 +522,15 @@ def test_invalid_generic_channel_returns_catalog_validation_error() -> None:
 
 def test_ask_replay_payload_is_json_serializable_sse_data() -> None:
     channel = "ask"
-    event_id = bff_main._publish_event(
-        bff_main._sse_buffers[channel],
-        bff_main._sse_subscribers[channel],
+    event_id = _publish_event(
+        _sse_buffers[channel],
+        _sse_subscribers[channel],
         "ask.message.delta",
         {"session_id": "ask-final-sse-001", "message_id": "msg-1", "delta": "hello"},
     )
-    event = bff_main._sse_buffers[channel][0][1]
+    event = _sse_buffers[channel][0][1]
 
     assert event["id"] == event_id
-    formatted = bff_main._sse_format(event)
+    formatted = _sse_format(event)
     data_line = next(line for line in formatted.splitlines() if line.startswith("data: "))
     assert json.loads(data_line.removeprefix("data: "))["data"]["delta"] == "hello"

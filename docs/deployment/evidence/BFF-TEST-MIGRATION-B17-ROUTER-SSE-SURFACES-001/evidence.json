@@ -1,0 +1,151 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+  "batch_id": "B17_router_sse_surfaces",
+  "title": "Router and SSE surfaces",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c99c090b405d95bff5fa0c426d249ea75ffcc9eb",
+  "scope": {
+    "batch_source_files": [
+      "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+      "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
+      "services/control-plane/bff/test_pkt003_lineage_view_contract.py",
+      "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+      "services/control-plane/bff/test_pkt012_alerts_rail_contract.py",
+      "services/control-plane/bff/test_pkt013_operator_home_contract.py",
+      "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+      "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py",
+      "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+      "services/control-plane/bff/tests/test_bff_lineage_contract.py",
+      "services/control-plane/bff/tests/test_sse_backpressure.py"
+    ],
+    "exact_file_count": 11,
+    "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": {
+      "bytes": 21520,
+      "sha256": "4be124e93a649ea315d33c8adad00877dc0329f3bfa1348c3706fa46943e7ff5",
+      "lines": 554
+    },
+    "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py": {
+      "bytes": 10535,
+      "sha256": "d96d71e0a7a672d7a8d186cb0c676fd262ef813d084ab15dca0be82e173729c3",
+      "lines": 250
+    },
+    "services/control-plane/bff/test_pkt003_lineage_view_contract.py": {
+      "bytes": 7551,
+      "sha256": "9bbb0afee6d3ecb95cb201ad734635a22e1a66961a0d67a12f2004f4a152bf21",
+      "lines": 232
+    },
+    "services/control-plane/bff/test_pkt005_sse_substrate_contract.py": {
+      "bytes": 19686,
+      "sha256": "e578b59184638b3d6061302ceb8a81d151a4de99658c83e0c0b0bf66ab998007",
+      "lines": 536
+    },
+    "services/control-plane/bff/test_pkt012_alerts_rail_contract.py": {
+      "bytes": 22413,
+      "sha256": "e223c10ccdcd3f7ea9c23a0976840b873ac8402585276a0613a939938a1cb098",
+      "lines": 531
+    },
+    "services/control-plane/bff/test_pkt013_operator_home_contract.py": {
+      "bytes": 14797,
+      "sha256": "b29b2d18b06ee3fcdb7efe11e32fd4fced7508dd6496411109a6527f1598a618",
+      "lines": 389
+    },
+    "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py": {
+      "bytes": 10822,
+      "sha256": "a271178e3395731d798f93bf93d54390775ab036f5bf7a978184021100360dac",
+      "lines": 259
+    },
+    "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py": {
+      "bytes": 2907,
+      "sha256": "3d5f636dc3aefafde9da3a363ed5a7bf5a6af678a006c73b1b19a62c4b217d1b",
+      "lines": 77
+    },
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py": {
+      "bytes": 56253,
+      "sha256": "e7b1dfbff20a9f88f00ee38a21c7fcf7482e6a8c00ad56bb29f32ffc6e12e24e",
+      "lines": 1425
+    },
+    "services/control-plane/bff/tests/test_bff_lineage_contract.py": {
+      "bytes": 5847,
+      "sha256": "ad9606225ff524812fadeccc7a5658220646038eb384362c6b95193b6b953de4",
+      "lines": 176
+    },
+    "services/control-plane/bff/tests/test_sse_backpressure.py": {
+      "bytes": 9169,
+      "sha256": "0be6295b55ccc863fdc41dac3f00dc84edcb656e7ed72a64a654c2f02fbe388e",
+      "lines": 239
+    }
+  },
+  "suite_results": {
+    "total_suites": 11,
+    "total_tests_passed": 91,
+    "total_tests_failed": 0,
+    "details_by_file": {
+      "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": {
+        "tests_passed": 12,
+        "decoupling_approach": "Decoupled via isolated FastAPI app with CommandStore durable idempotency, InMemoryAskSessionStore, and SSE buffers without importing bff main."
+      },
+      "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Mounted isolated router and read cutoff policy validation without bff main or sys.path mutation."
+      },
+      "services/control-plane/bff/test_pkt003_lineage_view_contract.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Mounted create_lineage_router on clean FastAPI instance with isolated LineageService."
+      },
+      "services/control-plane/bff/test_pkt005_sse_substrate_contract.py": {
+        "tests_passed": 14,
+        "decoupling_approach": "Decoupled via EventStreamService, create_events_router, and auth_policy.bff_error without importing bff main."
+      },
+      "services/control-plane/bff/test_pkt012_alerts_rail_contract.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Direct router and service mounting for alerts rail endpoints with package-qualified imports."
+      },
+      "services/control-plane/bff/test_pkt013_operator_home_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Isolated operator home projection test mounting without global read_store monkeypatching."
+      },
+      "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Direct domain service projection testing without bff main import."
+      },
+      "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Clean route mounting of consultation workbench endpoints on isolated FastAPI instance."
+      },
+      "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py": {
+        "tests_passed": 40,
+        "decoupling_approach": "Decoupled list-detail facade via isolated FastAPI test harness with _ListDetailFacadeTestStore, JSONResponse exception handler, and package-qualified ports."
+      },
+      "services/control-plane/bff/tests/test_bff_lineage_contract.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Mounted create_lineage_router on clean FastAPI instance with LineageService."
+      },
+      "services/control-plane/bff/tests/test_sse_backpressure.py": {
+        "tests_passed": 4,
+        "decoupling_approach": "Mounted isolated FastAPI app using EventStreamService and asyncio SSE streaming without bff main."
+      }
+    }
+  },
+  "architecture_invariants": {
+    "zero_main_imports": true,
+    "zero_sys_path_mutations": true,
+    "zero_global_monkeypatching": true,
+    "test_bff_test_architecture_passed": 8
+  },
+  "verification_commands": [
+    ".venv/bin/pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py services/control-plane/bff/test_pkt003_lineage_view_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/test_pkt013_operator_home_contract.py services/control-plane/bff/test_pkt014_paper_live_drift_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/tests/test_bff_lineage_contract.py services/control-plane/bff/tests/test_sse_backpressure.py (91 passed)",
+    ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
+  ]
+}

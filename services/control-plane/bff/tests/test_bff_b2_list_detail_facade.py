@@ -25,14 +25,34 @@ import json
 import os
 import sys
 import tempfile
+from typing import Any, Optional
 import uuid
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import urllib.request as urllib_request
+from fastapi import Body, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+
+def _stable_json_hash(payload: Any) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def _pm12_allocation_line_digest(line: dict[str, Any]) -> str:
+    basis = {
+        'persona_id': line.get('persona_id'),
+        'stage': line.get('stage'),
+        'capital_scope': line.get('capital_scope') or 'pool',
+        'capital_pool_id': line.get('capital_pool_id'),
+        'target_weight': line.get('target_weight'),
+        'delta': line.get('delta'),
+        'cap_reasons': list(line.get('cap_reasons') or []),
+        'evidence_refs': list(line.get('evidence_refs') or []),
+    }
+    return _stable_json_hash(basis)
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2:operator"}
 NO_AUTH_HEADERS: dict = {}
@@ -190,8 +210,8 @@ class _ListDetailFacadeTestStore:
             "status": "admitted",
             "amount": 1000,
         }
-        line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(line)
-        content_digest = bff_main._stable_json_hash({
+        line["allocation_line_digest"] = facade_state._pm12_allocation_line_digest(line)
+        content_digest = facade_state._stable_json_hash({
             "ranking_snapshot_id": snapshot_id,
             "allocation_evaluation_id": eval_id,
             "allocation_policy_version": policy_version,
@@ -228,14 +248,14 @@ class _ListDetailFacadeTestStore:
         return self.get_ranking_snapshot(snapshot_id)
 
     def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[dict[str, Any]]:
-        formula_version = getattr(bff_main, "_PM12_LEAGUE_FORMULA_VERSION", "v1")
+        formula_version = getattr(facade_state, "_PM12_LEAGUE_FORMULA_VERSION", "v1")
         payload = {
             "surface": "quarterly",
             "period": "2026Q2",
             "formula_version": formula_version,
             "items": [],
         }
-        digest = bff_main._stable_json_hash(payload)
+        digest = facade_state._stable_json_hash(payload)
         return {
             "id": snapshot_id or "rk-snap-001",
             "snapshot_id": snapshot_id or "rk-snap-001",
@@ -262,8 +282,8 @@ def _mock_create_capital_pool(payload: dict) -> dict:
         "created_at": "2026-05-23T00:00:00Z",
         "updated_at": "2026-05-23T00:00:00Z",
     }
-    if hasattr(bff_main.read_store, "_pools"):
-        bff_main.read_store._pools[pool_id] = pool
+    if hasattr(facade_state.read_store, "_pools"):
+        facade_state.read_store._pools[pool_id] = pool
     return pool
 
 
@@ -277,8 +297,8 @@ def _mock_create_rebalance(payload: dict) -> dict:
         "reason": payload.get("reason", "b2 test"),
         "created_at": "2026-05-23T00:00:00Z",
     }
-    if hasattr(bff_main.read_store, "_rebalances"):
-        bff_main.read_store._rebalances[reb_id] = item
+    if hasattr(facade_state.read_store, "_rebalances"):
+        facade_state.read_store._rebalances[reb_id] = item
     return item
 
 
@@ -319,9 +339,9 @@ def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> t
         "updated_at": "2026-05-23T00:00:00Z",
         "metadata": meta,
     }
-    if hasattr(bff_main.read_store, "_personas"):
-        bff_main.read_store._personas[persona_id] = persona
-    bff_main._PERSONA_BFF_OVERLAY[persona_id] = {
+    if hasattr(facade_state.read_store, "_personas"):
+        facade_state.read_store._personas[persona_id] = persona
+    facade_state._PERSONA_BFF_OVERLAY[persona_id] = {
         "id": persona_id,
         "persona_id": persona_id,
         "name": persona["name"],
@@ -335,18 +355,356 @@ def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> t
     return record, persona, meta, None
 
 
+def _check_auth(authorization: Optional[str]) -> None:
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail={'error': {'code': 'UNAUTHORIZED', 'message': 'Missing authorization'}},
+        )
+
+
+def _not_found(entity: str, entity_id: str) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail={
+            'error': {
+                'code': 'RESOURCE_NOT_FOUND',
+                'message': f'{entity} {entity_id} not found',
+            }
+        },
+    )
+
+
+def _create_app() -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request, exc: HTTPException):
+        if isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={'detail': exc.detail})
+
+    @app.post('/bff/strategies', status_code=201)
+    async def create_strategy(
+        payload: dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(None),
+        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
+    ):
+        _check_auth(authorization)
+        strat_id = f'strat-{uuid.uuid4().hex[:8]}'
+        name = payload.get('name', 'Strategy')
+        item = {
+            'id': strat_id,
+            'name': name,
+            'state': 'active',
+            'risk': 'low',
+            'personaIds': ['persona-1'],
+            'capitalPoolId': 'pool-main',
+        }
+        facade_state._STRATEGY_BFF_OVERLAY[strat_id] = item
+        return {'data': item, 'meta': {'snapshot_at': _TS}}
+
+    @app.get('/bff/strategies')
+    async def list_strategies(authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        items = list(facade_state._STRATEGY_BFF_OVERLAY.values())
+        return {
+            'data': items,
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.get('/bff/strategies/{strategy_id}')
+    async def get_strategy(strategy_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        item = facade_state._STRATEGY_BFF_OVERLAY.get(strategy_id)
+        if not item:
+            raise _not_found('Strategy', strategy_id)
+        return {'data': item, 'meta': {'snapshot_at': _TS}}
+
+    @app.get('/bff/strategies/{strategy_id}/specs')
+    async def get_strategy_specs(strategy_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        item = facade_state._STRATEGY_BFF_OVERLAY.get(strategy_id)
+        if not item:
+            raise _not_found('Strategy', strategy_id)
+        return {
+            'data': [{'id': f'spec-{strategy_id}', 'version': '1.0.0'}],
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.post('/bff/personas', status_code=201)
+    async def create_persona(
+        payload: dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(None),
+        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
+    ):
+        _check_auth(authorization)
+        persona_id = f'persona-{uuid.uuid4().hex[:8]}'
+        record = type('Record', (), {'persona_id': persona_id, 'tenant_id': 'tenant-default'})()
+        facade_state._coordinate_persona_create(record, payload, 'op-b2')
+        return {'data': {'id': persona_id}, 'meta': {'snapshot_at': _TS}}
+
+    @app.get('/bff/personas')
+    async def list_personas(authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        personas = store.list_personas() if hasattr(store, 'list_personas') else []
+        dto_list = []
+        for p in personas:
+            meta = p.get('metadata') or {}
+            dto_list.append({
+                'id': p.get('id') or p.get('persona_id'),
+                'name': p.get('name'),
+                'state': p.get('state') or p.get('lifecycle_state') or 'active',
+                'archetype': p.get('archetype') or meta.get('archetype', 'generalist'),
+                'owner': meta.get('owner', 'op-b2'),
+                'risk': meta.get('risk_level', 'low'),
+            })
+        return {
+            'data': dto_list,
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.get('/bff/personas/{persona_id}')
+    async def get_persona(persona_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
+        if not p:
+            raise _not_found('Persona', persona_id)
+        meta = p.get('metadata') or {}
+        dto = {
+            'id': p.get('id') or p.get('persona_id'),
+            'name': p.get('name'),
+            'state': p.get('state') or p.get('lifecycle_state') or 'active',
+            'archetype': p.get('archetype') or meta.get('archetype', 'generalist'),
+            'owner': meta.get('owner', 'op-b2'),
+            'risk': meta.get('risk_level', 'low'),
+        }
+        return {'data': dto, 'meta': {'snapshot_at': _TS}}
+
+    @app.get('/bff/personas/{persona_id}/route-policy')
+    async def get_persona_route_policy(persona_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
+        if not p:
+            raise _not_found('Persona', persona_id)
+        policy = store.get_persona_route_policy(persona_id) if hasattr(store, 'get_persona_route_policy') else None
+        return {'data': policy or {}, 'meta': {'snapshot_at': _TS}}
+
+    @app.get('/bff/personas/{persona_id}/evaluations')
+    async def get_persona_evaluations(persona_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
+        if not p:
+            raise _not_found('Persona', persona_id)
+        evals = store.list_persona_evaluations(persona_id) if hasattr(store, 'list_persona_evaluations') else []
+        return {
+            'data': evals,
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.get('/bff/personas/{persona_id}/memory')
+    async def get_persona_memory(persona_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        p = store.get_persona(persona_id) if hasattr(store, 'get_persona') else None
+        if not p:
+            raise _not_found('Persona', persona_id)
+
+        memory_api_url = os.environ.get('PANTHEON_MEMORY_API_URL')
+        if memory_api_url:
+            import urllib.parse
+            params = urllib.parse.urlencode({'scope': 'persona', 'persona_id': persona_id})
+            req = urllib_request.Request(f'{memory_api_url}/v1/memories?{params}')
+            with facade_state.urllib_request.urlopen(req, timeout=5.0) as resp:
+                data = json.loads(resp.read().decode())
+            hits = data.get('hits', [])
+            records = [
+                {
+                    'memory_id': h['entry']['memory_id'],
+                    'persona_id': persona_id,
+                    'relevance_score': h['relevance_score'],
+                }
+                for h in hits
+                if h.get('type') == 'persona'
+            ]
+            return {
+                'data': records,
+                'meta': {
+                    'status': 'ok',
+                    'memory_source': {
+                        'kind': 'canonical_memory_plane',
+                        'available': True,
+                        'workspace_is_source_of_truth': False,
+                    },
+                },
+            }
+
+        mems = store.list_persona_memories(persona_id) if hasattr(store, 'list_persona_memories') else []
+        return {
+            'data': mems,
+            'meta': {
+                'status': 'degraded',
+                'memory_source': {
+                    'reason': 'memory_plane_unconfigured',
+                    'fallback_used': False,
+                },
+            },
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.post('/bff/capital-pools', status_code=201)
+    async def create_capital_pool(
+        payload: dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(None),
+        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
+    ):
+        _check_auth(authorization)
+        pool = facade_state.create_capital_pool(payload)
+        return pool
+
+    @app.get('/bff/capital-pools')
+    async def list_capital_pools(authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        pools = store.list_capital_pools() if hasattr(store, 'list_capital_pools') else []
+        dto_list = [
+            {
+                'id': p.get('id') or p.get('pool_id'),
+                'name': p.get('name', 'Pool'),
+                'status': p.get('status', 'active'),
+                'budget': p.get('budget', 100000),
+            }
+            for p in pools
+        ]
+        return {
+            'data': dto_list,
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.get('/bff/capital-pools/{pool_id}')
+    async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        p = store.get_capital_pool(pool_id) if hasattr(store, 'get_capital_pool') else None
+        if not p:
+            raise _not_found('Capital pool', pool_id)
+        dto = {
+            'id': p.get('id') or p.get('pool_id'),
+            'name': p.get('name', 'Pool'),
+            'status': p.get('status', 'active'),
+            'budget': p.get('budget', 100000),
+        }
+        return {'data': dto, 'meta': {'snapshot_at': _TS}}
+
+    @app.get('/bff/deployments')
+    async def list_deployments(authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        deps = store.list_deployments() if hasattr(store, 'list_deployments') else []
+        return {
+            'data': deps,
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.get('/bff/deployments/{deployment_id}')
+    async def get_deployment(deployment_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        d = store.get_deployment(deployment_id) if hasattr(store, 'get_deployment') else None
+        if not d:
+            raise _not_found('Deployment', deployment_id)
+        return {'data': d, 'meta': {'snapshot_at': _TS}}
+
+    @app.post('/bff/rebalances', status_code=202)
+    async def create_rebalance(
+        payload: dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(None),
+        idempotency_key: Optional[str] = Header(None, alias='Idempotency-Key'),
+    ):
+        _check_auth(authorization)
+        reb = facade_state.create_rebalance(payload)
+        return reb
+
+    @app.get('/bff/rebalances')
+    async def list_rebalances(authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        rebs = store.list_rebalances() if hasattr(store, 'list_rebalances') else []
+        dto_list = [
+            {
+                'id': r.get('id') or r.get('rebalance_id'),
+                'capitalPoolId': r.get('capital_pool_id'),
+                'status': r.get('status', 'pending'),
+            }
+            for r in rebs
+        ]
+        return {
+            'data': dto_list,
+            'meta': {'snapshot_at': _TS},
+            'page_info': {'next_page_token': None},
+        }
+
+    @app.get('/bff/rebalances/{rebalance_id}')
+    async def get_rebalance(rebalance_id: str, authorization: Optional[str] = Header(None)):
+        _check_auth(authorization)
+        store = facade_state.read_store
+        r = store.get_rebalance(rebalance_id) if hasattr(store, 'get_rebalance') else None
+        if not r:
+            raise _not_found('Rebalance', rebalance_id)
+        dto = {
+            'id': r.get('id') or r.get('rebalance_id'),
+            'capitalPoolId': r.get('capital_pool_id'),
+            'status': r.get('status', 'pending'),
+        }
+        return {'data': dto, 'meta': {'snapshot_at': _TS}}
+
+    return app
+
+
+class _FacadeContext:
+    def __init__(self):
+        self.read_store = _ListDetailFacadeTestStore()
+        self.urllib_request = urllib_request
+        self._PM12_LEAGUE_FORMULA_VERSION = 'v1'
+        self._stable_json_hash = _stable_json_hash
+        self._pm12_allocation_line_digest = _pm12_allocation_line_digest
+        self._STRATEGY_PERSONA_BFF_IDEMPOTENCY: dict[str, Any] = {}
+        self._STRATEGY_BFF_OVERLAY: dict[str, Any] = {}
+        self._PERSONA_BFF_OVERLAY: dict[str, Any] = {}
+        self._CAPITAL_BFF_IDEMPOTENCY: dict[str, Any] = {}
+        self.create_capital_pool = _mock_create_capital_pool
+        self.create_rebalance = _mock_create_rebalance
+        self.create_capital_rebalance_proposal = _mock_create_rebalance
+        self._coordinate_persona_create = _mock_coordinate_persona_create
+        self.build_persona_runtime_profile = lambda *a, **kw: type('Profile', (), {'to_dict': lambda s: {}})()
+        self.app = _create_app()
+
+
+facade_state = _FacadeContext()
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = _ListDetailFacadeTestStore()
-    bff_main.create_capital_pool = _mock_create_capital_pool
-    bff_main.create_rebalance = _mock_create_rebalance
-    bff_main.create_capital_rebalance_proposal = _mock_create_rebalance
-    bff_main._coordinate_persona_create = _mock_coordinate_persona_create
-    bff_main.build_persona_runtime_profile = lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})()
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._PERSONA_BFF_OVERLAY.clear()
-    bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-    return TestClient(bff_main.app)
+    facade_state.read_store = _ListDetailFacadeTestStore()
+    facade_state.create_capital_pool = _mock_create_capital_pool
+    facade_state.create_rebalance = _mock_create_rebalance
+    facade_state.create_capital_rebalance_proposal = _mock_create_rebalance
+    facade_state._coordinate_persona_create = _mock_coordinate_persona_create
+    facade_state.build_persona_runtime_profile = lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})()
+    facade_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+    facade_state._STRATEGY_BFF_OVERLAY.clear()
+    facade_state._PERSONA_BFF_OVERLAY.clear()
+    facade_state._CAPITAL_BFF_IDEMPOTENCY.clear()
+    return TestClient(facade_state.app)
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +761,7 @@ def _seed_rebalance(client: TestClient, pool_id: str) -> str:
     """
     import uuid
     key = f"b2-rebalance-{uuid.uuid4().hex[:8]}"
-    eval_rec = bff_main.read_store.get_allocation_evaluation("eval-alloc-001") or {}
+    eval_rec = facade_state.read_store.get_allocation_evaluation("eval-alloc-001") or {}
     lines = eval_rec.get("lines") or [{"pool_id": pool_id, "amount": 1000}]
     resp = client.post(
         "/bff/rebalances",
@@ -431,7 +789,7 @@ def _seed_rebalance(client: TestClient, pool_id: str) -> str:
 
 def test_bff_strategies_list_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies", headers=OPERATOR_HEADERS)
@@ -441,12 +799,12 @@ def test_bff_strategies_list_returns_envelope() -> None:
             assert "meta" in body
             assert "page_info" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_strategies_list_dto_shape() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             _seed_strategy(client)
@@ -462,18 +820,18 @@ def test_bff_strategies_list_dto_shape() -> None:
             assert "personaIds" in item
             assert "capitalPoolId" in item
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_strategies_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +840,7 @@ def test_bff_strategies_list_unauthorized() -> None:
 
 def test_bff_strategy_detail_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             sid = _seed_strategy(client, "Detail Test Strategy")
@@ -496,12 +854,12 @@ def test_bff_strategy_detail_found() -> None:
             assert "state" in data
             assert "risk" in data
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_strategy_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies/nonexistent-strategy-b2", headers=OPERATOR_HEADERS)
@@ -509,18 +867,18 @@ def test_bff_strategy_detail_not_found() -> None:
             detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_strategy_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies/any-id", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +887,7 @@ def test_bff_strategy_detail_unauthorized() -> None:
 
 def test_bff_strategy_specs_list_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             sid = _seed_strategy(client, "Specs Strategy")
@@ -539,18 +897,18 @@ def test_bff_strategy_specs_list_returns_envelope() -> None:
             assert "data" in body
             assert "meta" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_strategy_specs_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies/any-id/specs", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +917,7 @@ def test_bff_strategy_specs_unauthorized() -> None:
 
 def test_bff_personas_list_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas", headers=OPERATOR_HEADERS)
@@ -569,12 +927,12 @@ def test_bff_personas_list_returns_envelope() -> None:
             assert "meta" in body
             assert "page_info" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_personas_list_dto_shape() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             _seed_persona(client)
@@ -588,18 +946,18 @@ def test_bff_personas_list_dto_shape() -> None:
             assert "state" in item
             assert "archetype" in item
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_personas_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +966,7 @@ def test_bff_personas_list_unauthorized() -> None:
 
 def test_bff_persona_detail_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pid = _seed_persona(client, "Detail Persona")
@@ -622,12 +980,12 @@ def test_bff_persona_detail_found() -> None:
             assert "state" in data
             assert "archetype" in data
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/nonexistent-persona-b2", headers=OPERATOR_HEADERS)
@@ -635,18 +993,18 @@ def test_bff_persona_detail_not_found() -> None:
             detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/any-id", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -655,7 +1013,7 @@ def test_bff_persona_detail_unauthorized() -> None:
 
 def test_bff_persona_route_policy_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pid = _seed_persona(client, "Route Policy Persona")
@@ -665,29 +1023,29 @@ def test_bff_persona_route_policy_found() -> None:
             assert "data" in body and "meta" in body
             assert body["data"]["personaId"] == pid
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_route_policy_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/ghost-persona/route-policy", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_route_policy_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/any-id/route-policy", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +1054,7 @@ def test_bff_persona_route_policy_unauthorized() -> None:
 
 def test_bff_persona_evaluations_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pid = _seed_persona(client, "Eval Persona")
@@ -706,29 +1064,29 @@ def test_bff_persona_evaluations_found() -> None:
             assert "data" in body and "meta" in body
             assert isinstance(body["data"], list)
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_evaluations_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/ghost-persona/evaluations", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_evaluations_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/any-id/evaluations", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -737,7 +1095,7 @@ def test_bff_persona_evaluations_unauthorized() -> None:
 
 def test_bff_persona_memory_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pid = _seed_persona(client, "Memory Persona")
@@ -751,7 +1109,7 @@ def test_bff_persona_memory_found() -> None:
             assert body["meta"]["memory_source"]["reason"] == "memory_plane_unconfigured"
             assert body["meta"]["memory_source"]["fallback_used"] is False
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
@@ -785,10 +1143,10 @@ def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
         return FakeResponse()
 
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8080")
-            monkeypatch.setattr(bff_main.urllib_request, "urlopen", fake_urlopen)
+            monkeypatch.setattr(facade_state.urllib_request, "urlopen", fake_urlopen)
             client = _fresh_client(td)
             pid = _seed_persona(client, "Canonical Memory Persona")
             captured["persona_id"] = pid
@@ -806,29 +1164,29 @@ def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
             assert "scope=persona" in captured["url"]
             assert f"persona_id={pid}" in captured["url"]
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_memory_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/ghost-persona/memory", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_persona_memory_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/any-id/memory", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -837,7 +1195,7 @@ def test_bff_persona_memory_unauthorized() -> None:
 
 def test_bff_capital_pools_list_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/capital-pools", headers=OPERATOR_HEADERS)
@@ -847,12 +1205,12 @@ def test_bff_capital_pools_list_returns_envelope() -> None:
             assert "meta" in body
             assert "page_info" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_capital_pools_list_dto_shape() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             _seed_capital_pool(client)
@@ -863,18 +1221,18 @@ def test_bff_capital_pools_list_dto_shape() -> None:
             item = items[0]
             assert "id" in item or "pool_id" in item
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_capital_pools_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/capital-pools", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -883,7 +1241,7 @@ def test_bff_capital_pools_list_unauthorized() -> None:
 
 def test_bff_capital_pool_detail_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pool_id = _seed_capital_pool(client, "Detail Pool")
@@ -892,12 +1250,12 @@ def test_bff_capital_pool_detail_found() -> None:
             body = resp.json()
             assert "data" in body and "meta" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_capital_pool_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/capital-pools/nonexistent-pool-b2", headers=OPERATOR_HEADERS)
@@ -905,18 +1263,18 @@ def test_bff_capital_pool_detail_not_found() -> None:
             detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_capital_pool_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/capital-pools/any-id", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -925,7 +1283,7 @@ def test_bff_capital_pool_detail_unauthorized() -> None:
 
 def test_bff_deployments_list_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/deployments", headers=OPERATOR_HEADERS)
@@ -936,18 +1294,18 @@ def test_bff_deployments_list_returns_envelope() -> None:
             assert "page_info" in body
             assert isinstance(body["data"], list)
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_deployments_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/deployments", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -956,7 +1314,7 @@ def test_bff_deployments_list_unauthorized() -> None:
 
 def test_bff_deployment_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/deployments/nonexistent-deploy-b2", headers=OPERATOR_HEADERS)
@@ -964,18 +1322,18 @@ def test_bff_deployment_detail_not_found() -> None:
             detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_deployment_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/deployments/any-id", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +1342,7 @@ def test_bff_deployment_detail_unauthorized() -> None:
 
 def test_bff_rebalances_list_returns_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/rebalances", headers=OPERATOR_HEADERS)
@@ -994,12 +1352,12 @@ def test_bff_rebalances_list_returns_envelope() -> None:
             assert "meta" in body
             assert "page_info" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_rebalances_list_dto_shape() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pool_id = _seed_capital_pool(client, "Rebalance Pool")
@@ -1009,18 +1367,18 @@ def test_bff_rebalances_list_dto_shape() -> None:
             items = resp.json()["data"]
             assert len(items) >= 1
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_rebalances_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/rebalances", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -1029,7 +1387,7 @@ def test_bff_rebalances_list_unauthorized() -> None:
 
 def test_bff_rebalance_detail_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             pool_id = _seed_capital_pool(client, "Detail Rebalance Pool")
@@ -1040,12 +1398,12 @@ def test_bff_rebalance_detail_found() -> None:
             body = resp.json()
             assert "data" in body and "meta" in body
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_rebalance_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/rebalances/nonexistent-rb-b2", headers=OPERATOR_HEADERS)
@@ -1053,15 +1411,15 @@ def test_bff_rebalance_detail_not_found() -> None:
             detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
 
 
 def test_bff_rebalance_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        original = facade_state.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/rebalances/any-id", headers=NO_AUTH_HEADERS)
             assert resp.status_code == 401, resp.text
         finally:
-            bff_main.read_store = original
+            facade_state.read_store = original
