@@ -4,7 +4,7 @@
   "owner": "Antigravity2",
   "reviewer": "Codex",
   "delivery_status": "complete_ready_for_review",
-  "base_ref": "dev@fb610da233c6caa072ede145f2a8167a7842dfd5",
+  "base_ref": "dev@2b4c83dee61a7943f12e3a8a3275a487755fe98c",
   "pr": 5714,
   "normative_plan": "STRUCTURAL_RESIDUAL_SA_SD_20260906.md Section C; original SD8.5-8.6 retained in full",
   "prerequisite_resolution": {
