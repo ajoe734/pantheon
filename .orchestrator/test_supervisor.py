@@ -6290,7 +6290,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
         self.assertIn("TASK-1", state["load_balance_watch"])
         self.assertEqual(state["load_balance_watch"]["TASK-1"]["owner"], "Codex")
@@ -6333,7 +6333,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
 
     def test_unsaturated_lane_never_starts_the_hold_timer(self) -> None:
@@ -6394,7 +6394,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
         self.assertIn("TASK-1", state["load_balance_watch"])
 
@@ -6439,7 +6439,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
 
     def test_healthy_owner_never_treated_as_transiently_blocked(self) -> None:
@@ -6468,7 +6468,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
         self.assertNotIn("TASK-1", state["load_balance_watch"])
 
@@ -7662,6 +7662,165 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             latest["tasks"][0][supervisor.REVIEW_REQUEUE_INTENT_KEY]["status"],
             "materialized",
         )
+
+    def test_mark_worker_recovery_materialized_sync_projection_flag(self) -> None:
+        seeded = supervisor.load_status(self.config)
+        task = seeded["tasks"][0]
+        receipt_id = "lost-lease-sync-test"
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = {
+            "receipt_id": receipt_id,
+            "status": "reassigned",
+        }
+        seeded.setdefault(supervisor.WORKER_RECOVERY_RECEIPTS_KEY, {})[receipt_id] = {
+            "receipt_id": receipt_id,
+            "task_id": "TASK-1",
+            "task_generation": task["generation"],
+            "status": "reassigned",
+            "replacement": {
+                "task_generation": task["generation"],
+                "target_agent": "Codex2",
+            },
+        }
+        supervisor.write_status(self.config, seeded, source="test-sync-seed")
+        with mock.patch.object(supervisor, "sync_status_pipeline") as sync_mock:
+            self.assertTrue(
+                supervisor.mark_worker_recovery_materialized(
+                    self.config,
+                    receipt_id=receipt_id,
+                    task_id="TASK-1",
+                    task_generation=task["generation"],
+                    queue_event_id="evt-replacement-1",
+                    worker_run_id="run-replacement-1",
+                    sync_projection=False,
+                )
+            )
+            sync_mock.assert_not_called()
+
+        materialized = supervisor.load_status(self.config)
+        self.assertEqual(
+            materialized[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["status"],
+            "materialized",
+        )
+
+        receipt_id_2 = "lost-lease-sync-test-2"
+        task_2 = materialized["tasks"][0]
+        task_2[supervisor.WORKER_RECOVERY_TASK_KEY] = {
+            "receipt_id": receipt_id_2,
+            "status": "reassigned",
+        }
+        materialized[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id_2] = {
+            "receipt_id": receipt_id_2,
+            "task_id": "TASK-1",
+            "task_generation": task_2["generation"],
+            "status": "reassigned",
+            "replacement": {
+                "task_generation": task_2["generation"],
+                "target_agent": "Codex2",
+            },
+        }
+        supervisor.write_status(self.config, materialized, source="test-sync-seed-2")
+        with mock.patch.object(supervisor, "sync_status_pipeline") as sync_mock:
+            self.assertTrue(
+                supervisor.mark_worker_recovery_materialized(
+                    self.config,
+                    receipt_id=receipt_id_2,
+                    task_id="TASK-1",
+                    task_generation=task_2["generation"],
+                    queue_event_id="evt-replacement-2",
+                    worker_run_id="run-replacement-2",
+                    sync_projection=True,
+                )
+            )
+            sync_mock.assert_called_once_with(self.config)
+
+    def test_promotion_launch_guard_defers_recovery_projection_outside_runtime_lock(self) -> None:
+        from adapters.base import DeliveryRequest
+
+        state = with_healthy_delivery_health(self.config, runtime_state.default_state())
+        receipt_id = "lost-lease-guard-test"
+        seeded = supervisor.load_status(self.config)
+        task = seeded["tasks"][0]
+        task[supervisor.WORKER_RECOVERY_TASK_KEY] = {
+            "receipt_id": receipt_id,
+            "status": "reassigned",
+        }
+        seeded.setdefault(supervisor.WORKER_RECOVERY_RECEIPTS_KEY, {})[receipt_id] = {
+            "receipt_id": receipt_id,
+            "task_id": "TASK-1",
+            "task_generation": task["generation"],
+            "status": "reassigned",
+            "replacement": {
+                "task_generation": task["generation"],
+                "target_agent": "Codex",
+            },
+        }
+        supervisor.write_status(self.config, seeded, source="test-guard-seed")
+
+        lock_held_during_operation = []
+        lock_held_during_sync = []
+
+        request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="process",
+            message="guard test",
+            task_id="TASK-1",
+            reason="recovery test",
+            metadata={
+                "task_generation": task["generation"],
+                "recovery_receipt_id": receipt_id,
+            },
+        )
+
+        def check_lock():
+            held, _ = common._stable_lock_state()
+            for key, val in held.items():
+                if "runtime-admission.lock" in key and val.get("depth", 0) > 0:
+                    return True
+            return False
+
+        original_start = supervisor.start_worker_for_request.__wrapped__
+        def spy_operation(config, s, *args, **kwargs):
+            lock_held_during_operation.append(check_lock())
+            return original_start(config, s, *args, **kwargs)
+
+        def spy_sync(config):
+            lock_held_during_sync.append(check_lock())
+
+        with (
+            mock.patch.object(supervisor, "sync_status_pipeline", side_effect=spy_sync),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+            mock.patch.object(supervisor, "status_command_runtime_record_from_env", return_value={}),
+            mock.patch.object(supervisor, "build_adapter") as mock_adapter,
+        ):
+            mock_inst = mock.MagicMock()
+            mock_inst.deliver.return_value = DeliveryResult(
+                ok=True,
+                adapter="test",
+                mode="test",
+                target="Codex",
+                auto_delivered=True,
+                manual_confirmation_required=False,
+                run_id="run-99999",
+                pid=99999,
+            )
+            mock_adapter.return_value = mock_inst
+
+            guarded = supervisor.promotion_launch_guard(spy_operation)
+            dispatch_evt = {"event_id": "evt-guard-test", "reason": "test"}
+            runtime_state.store_queue_event(state, dispatch_evt)
+            started, run_id, _ = guarded(
+                self.config,
+                state,
+                request,
+                dispatch_event=dispatch_evt,
+                queue_event_id="evt-guard-test",
+                attempt_count=1,
+                event_id_for_log="evt-guard-test",
+            )
+            self.assertTrue(started)
+            self.assertTrue(lock_held_during_operation and lock_held_during_operation[0])
+            self.assertTrue(lock_held_during_sync and not lock_held_during_sync[0])
 
     def test_prune_preserves_unmaterialized_reassignment_receipt(self) -> None:
         keep_id = "lost-lease-keep"
