@@ -844,6 +844,25 @@ class MockRollbackHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
 
+FIXTURE_GIT_CONFIG = (
+    "maintenance.auto=false",
+    "maintenance.autoDetach=false",
+    "gc.auto=0",
+)
+FIXTURE_GIT = ["git", *(arg for setting in FIXTURE_GIT_CONFIG for arg in ("-c", setting))]
+
+
+def configure_fixture_git(repository: Path) -> None:
+    # Later compensator subprocesses invoke Git directly. Keep their automatic
+    # maintenance disabled too, so no detached writer outlives fixture teardown.
+    for setting in FIXTURE_GIT_CONFIG:
+        key, value = setting.split("=", 1)
+        subprocess.run(
+            [*FIXTURE_GIT, "-C", str(repository), "config", "--local", key, value],
+            check=True,
+        )
+
+
 def setup_compensation_fixture(
     tmp: Path,
     *,
@@ -858,16 +877,18 @@ def setup_compensation_fixture(
     tmp.mkdir(parents=True, mode=0o700, exist_ok=True)
     tmp.chmod(0o700)
     lease_ctrl = tmp / "lease-controller"
-    subprocess.run(["git", "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
+    # Command-scoped settings protect clone/init before local config exists.
+    subprocess.run([*FIXTURE_GIT, "clone", "--shared", "--no-checkout", str(REPO_ROOT), str(lease_ctrl)], check=True, stdout=subprocess.DEVNULL)
+    configure_fixture_git(lease_ctrl)
     # A shallow source checkout may contain the pinned commit only in
     # FETCH_HEAD. Local clone does not necessarily carry that unadvertised
     # object; explicitly fetch from the local source, never from the network.
-    present = subprocess.run(["git", "-C", str(lease_ctrl), "cat-file", "-e", f"{PINNED_LEASE_CONTROLLER_SHA}^{{commit}}"], capture_output=True)
+    present = subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "cat-file", "-e", f"{PINNED_LEASE_CONTROLLER_SHA}^{{commit}}"], capture_output=True)
     if present.returncode:
-        subprocess.run(["git", "-C", str(lease_ctrl), "fetch", "--no-tags", "--depth=1", str(REPO_ROOT), PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "init"], check=True)
-    subprocess.run(["git", "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
-    subprocess.run(["git", "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "fetch", "--no-tags", "--depth=1", str(REPO_ROOT), PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "sparse-checkout", "init"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "sparse-checkout", "set", "scripts/"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(lease_ctrl), "checkout", PINNED_LEASE_CONTROLLER_SHA], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # This is an offline test fixture, not hosted rollback evidence.  The
     # production compensator now consumes only an exact sealed baseline plus a
@@ -886,11 +907,12 @@ def setup_compensation_fixture(
         target = release_root / "scripts" / name
         shutil.copyfile(REPO_ROOT / "scripts" / name, target)
         target.chmod(0o644)
-    subprocess.run(["git", "init", "--quiet", str(release_root)], check=True)
-    subprocess.run(["git", "-C", str(release_root), "config", "user.name", "Pantheon fixture"], check=True)
-    subprocess.run(["git", "-C", str(release_root), "config", "user.email", "fixture@example.invalid"], check=True)
-    subprocess.run(["git", "-C", str(release_root), "add", "scripts"], check=True)
-    subprocess.run(["git", "-C", str(release_root), "commit", "--quiet", "-m", "fixture controller"], check=True)
+    subprocess.run([*FIXTURE_GIT, "init", "--quiet", str(release_root)], check=True)
+    configure_fixture_git(release_root)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "config", "user.name", "Pantheon fixture"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "config", "user.email", "fixture@example.invalid"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "add", "scripts"], check=True)
+    subprocess.run([*FIXTURE_GIT, "-C", str(release_root), "commit", "--quiet", "-m", "fixture controller"], check=True)
 
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -1071,7 +1093,7 @@ def install_compensation_artifact_fixture(
     is treated as a substitute for an image/FE artifact here.
     """
     controller_sha = subprocess.run(
-        ["git", "-C", str(release_root), "rev-parse", "HEAD"],
+        [*FIXTURE_GIT, "-C", str(release_root), "rev-parse", "HEAD"],
         check=True,
         capture_output=True,
         text=True,
