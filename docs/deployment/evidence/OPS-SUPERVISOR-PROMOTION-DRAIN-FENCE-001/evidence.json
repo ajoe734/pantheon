@@ -3,14 +3,14 @@
   "task_id": "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
   "scope": "development tooling: supervisor runtime promotion admission and planned drain continuation",
   "owner": "Codex",
-  "reviewer": "Antigravity",
+  "reviewer": "Antigravity2",
   "review_status": "pending_independent_exact_head_review",
   "source": {
     "repository": "ajoe734/pantheon",
     "branch": "task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
-    "base_sha": "6e47504746b3acd02bbce537440778095ea905e0",
-    "implementation_commit": "8cd9fde763b8038a5becd74a0a3b05ba998a2dad",
-    "implementation_tree": "ae5b0e124e92a7aaf7e5707b29cf0b9246523477",
+    "base_sha": "9efcb763c44fdaf3f9f73dcafe4d9d3bf5e0fd91",
+    "implementation_commit": "07dcb74a0cabedb5855f9f52505766dc559431c4",
+    "implementation_tree": "db930cf5dff3d40921774db2968162acda8b36d6",
     "files_sha256": {
       ".orchestrator/rewrite/worker_recovery.py": "4be8f31f2c511b061b0c7d23726d084a8861f8acf940f7138368ac7746f82e94",
       ".orchestrator/runtime_state.py": "703241fb7c39e8c448ca6e518ebb621b1616e94e9627f00256e0f322c6d6a3d9",
@@ -35,24 +35,24 @@
       "command": "timeout 300 .venv-pantheon/bin/python -m pytest .orchestrator/test_supervisor.py -q --disable-warnings --maxfail=3",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "328 passed, 78 subtests passed in 117.20s (0:01:57)",
-      "terminal_log_sha256": "25cfdda6c2c5eac2a0613dc8e9594e666689a13adbd1874663deb752a8a199a2"
+      "summary": "328 passed, 78 subtests passed in 114.14s (0:01:54)",
+      "terminal_log_sha256": "e9ba89bbce1d255a44d4d55008f4c5ec9a09c23935a2700a8560ed77383a9fdc"
     },
     {
       "name": "runtime_and_runner",
-      "command": "timeout 180 .venv-pantheon/bin/python -m pytest .orchestrator/test_runtime_state.py .orchestrator/test_worker_runner_heartbeat.py -q --disable-warnings --maxfail=3",
+      "command": "timeout 240 .venv-pantheon/bin/python -m pytest .orchestrator/test_runtime_state.py .orchestrator/test_worker_runner_heartbeat.py -q --disable-warnings --maxfail=3",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "113 passed, 26 subtests passed in 84.45s (0:01:24)",
-      "terminal_log_sha256": "c0b4071f19f7db62d76a78573d3ff8677c69b4dadca738296e4fef719b6fb009"
+      "summary": "113 passed, 26 subtests passed in 82.03s (0:01:22)",
+      "terminal_log_sha256": "58bf8638bf9c760ff5fd0097e88ab19bcab8ec9f5601185fab4e02b19fecceb8"
     },
     {
       "name": "readiness_and_promotion",
-      "command": "timeout 120 .venv-pantheon/bin/python -m pytest .orchestrator/test_worker_runner_heartbeat.py::TestCanonicalWorkerEntryProcess scripts/test_promote_supervisor_runtime.py -q --disable-warnings --maxfail=3",
+      "command": "timeout 180 .venv-pantheon/bin/python -m pytest .orchestrator/test_worker_runner_heartbeat.py::TestCanonicalWorkerEntryProcess scripts/test_promote_supervisor_runtime.py -q --disable-warnings --maxfail=3",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "115 passed in 76.32s (0:01:16)",
-      "terminal_log_sha256": "07f95cc02ca7de3cf47667dfb2ac61ca65e4c288164ddda26c04fecc36f0c2ab"
+      "summary": "115 passed in 77.77s (0:01:17)",
+      "terminal_log_sha256": "e137cd5a2713b19e6a03119e30a852e5e3d6980c04606fd15bea82e1c1d5f481"
     }
   ],
   "bounded_attempts_not_counted_as_passed": [
@@ -91,5 +91,17 @@
     ],
     "handoff": "Independent reviewer and supervisor integration precede live promotion and owner done finalization."
   },
-  "operator_runbook": "docs/operations/supervisor-runtime-promotion-drain.md"
+  "operator_runbook": "docs/operations/supervisor-runtime-promotion-drain.md",
+  "delivery_refresh": {
+    "recorded_at": "2026-09-10T02:37:35.744725+00:00",
+    "contract_revision_at": "2026-09-10T02:33:00Z",
+    "canonical_generation_at_dispatch": 4,
+    "added_declared_artifact": ".orchestrator/rewrite/worker_recovery.py",
+    "previous_delivery_head": "2076ad4020082cb22e8e7d32c39c7ec6cb5259a4",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/5736",
+    "review_status": "fresh_independent_exact_head_review_required",
+    "previous_approval_and_ci_reused": false,
+    "validation": "All three focused batches rerun after integrating the current base; terminal output and zero exit status collected before this manifest update.",
+    "integration": "Merged current origin/dev without rewriting the published task history."
+  }
 }
