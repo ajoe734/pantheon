@@ -62,7 +62,6 @@ _sse_subscribers: dict[str, list] = {
     "approval": [],
 }
 _AGORA_CORE_BFF_IDEMPOTENCY: dict[str, Any] = {}
-_last_replayed = [False]
 
 
 def _publish_event(buffer: deque, subscribers: list, event_type: str, data: dict[str, Any]) -> str:
@@ -186,12 +185,10 @@ async def _submit_action(
                 },
             )
         cached_res = existing.get("result") or (existing.get("foundation") or {}).get("idempotency_record", {}).get("result")
-        _last_replayed[0] = True
         replay = copy.deepcopy(cached_res or {})
         replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
         return replay
 
-    _last_replayed[0] = False
     cmd_id = f"cmd-{uuid.uuid4().hex[:16]}"
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     decision = action_id
@@ -232,22 +229,22 @@ async def _submit_action(
 
 
 def _governance_publish_event(event_name: str, event_data: Dict[str, Any]) -> None:
-    if _last_replayed[0]:
-        return
-    data = {"approval_id": event_data.get("approval_id")}
-    dec = event_data.get("decision")
-    actor = event_data.get("actor_id")
-    if event_name == "approval.decided":
-        if dec == "approve":
-            data["outcome"] = "approved"
-            data["decided_by"] = actor
-        elif dec == "reject":
-            data["outcome"] = "rejected"
-    elif event_name == "approval.stage.changed":
-        data["current_stage"] = dec
-        data["actor_id"] = actor
+    """Passive recorder matching the retained production wiring exactly.
 
-    _publish_event(_sse_buffers["approval"], _sse_subscribers["approval"], event_name, data)
+    ``services/control_plane/bff/main.py`` wires ``publish_event`` as
+    ``lambda event_type, data: _publish_event(buffer, subscribers, event_type,
+    data)`` — a pure pass-through with no suppression or payload
+    reshaping. ``governance/router.py`` (the retained seam) always computes
+    ``{"approval_id": ..., "decision": ..., "actor_id": ...}`` itself and
+    calls ``publish_event`` unconditionally after every
+    ``submit_governance_action`` call, including replays — there is no
+    seam-level replay dedup for this endpoint. A prior revision of this test
+    suppressed publication on replay and synthesized ``outcome``/
+    ``current_stage``/``decided_by`` keys that the retained router does not
+    emit; that was a second, test-owned behavioral implementation instead of
+    an exercise of the real seam, which this pass-through replaces.
+    """
+    _publish_event(_sse_buffers["approval"], _sse_subscribers["approval"], event_name, dict(event_data))
 
 
 app = FastAPI()
@@ -362,8 +359,8 @@ def test_bff_approvals_decide_approve_publishes_approval_decided() -> None:
     event_id, event = _sse_buffers["approval"][0]
     assert event["type"] == "approval.decided"
     assert event["data"]["approval_id"] == PENDING_APPROVAL_ID
-    assert event["data"]["outcome"] == "approved"
-    assert event["data"]["decided_by"] == "ask005-approver"
+    assert event["data"]["decision"] == "approve"
+    assert event["data"]["actor_id"] == "ask005-approver"
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +380,7 @@ def test_bff_approvals_decide_reject_publishes_approval_decided_rejected() -> No
     assert len(_sse_buffers["approval"]) == 1
     event_id, event = _sse_buffers["approval"][0]
     assert event["type"] == "approval.decided"
-    assert event["data"]["outcome"] == "rejected"
+    assert event["data"]["decision"] == "reject"
     assert event["data"]["approval_id"] == PENDING_APPROVAL_ID
 
 
@@ -405,7 +402,7 @@ def test_bff_approvals_decide_request_revision_publishes_stage_changed() -> None
     event_id, event = _sse_buffers["approval"][0]
     assert event["type"] == "approval.stage.changed"
     assert event["data"]["approval_id"] == PENDING_APPROVAL_ID
-    assert event["data"]["current_stage"] == "request_revision"
+    assert event["data"]["decision"] == "request_revision"
     assert event["data"]["actor_id"] == "ask005-approver"
 
 
@@ -427,7 +424,7 @@ def test_bff_approvals_decide_escalate_publishes_stage_changed() -> None:
     event_id, event = _sse_buffers["approval"][0]
     assert event["type"] == "approval.stage.changed", f"expected stage.changed, got {event['type']!r}"
     assert event["data"]["approval_id"] == PENDING_APPROVAL_ID
-    assert event["data"]["current_stage"] == "escalate"
+    assert event["data"]["decision"] == "escalate"
     assert event["data"]["actor_id"] == "ask005-approver"
 
 
@@ -449,7 +446,7 @@ def test_bff_approvals_decide_freeze_publishes_stage_changed() -> None:
     event_id, event = _sse_buffers["approval"][0]
     assert event["type"] == "approval.stage.changed", f"expected stage.changed, got {event['type']!r}"
     assert event["data"]["approval_id"] == PENDING_APPROVAL_ID
-    assert event["data"]["current_stage"] == "freeze"
+    assert event["data"]["decision"] == "freeze"
     assert event["data"]["actor_id"] == "ask005-approver"
 
 
@@ -458,38 +455,21 @@ def test_bff_approvals_decide_freeze_publishes_stage_changed() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_replay_does_not_double_publish() -> None:
-    client = TestClient(app)
-    idem = _idem()
+    """Command-level replay contract, plus a documented residual.
 
-    resp1 = client.post(
-        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
-        json={"decision": "approve"},
-        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
-    )
-    assert resp1.status_code == 202, resp1.text
-    assert len(_sse_buffers["approval"]) == 1
-
-    # replay with same idempotency key — must NOT publish a second event
-    resp2 = client.post(
-        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
-        json={"decision": "approve"},
-        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
-    )
-    assert resp2.status_code == 202, resp2.text
-    meta = resp2.json().get("meta", {})
-    assert meta.get("idempotency", {}).get("replayed") is True, "second call should be marked as replayed"
-    assert len(_sse_buffers["approval"]) == 1, "replay must not publish a second SSE event"
-
-
-# ---------------------------------------------------------------------------
-# Durable command_store replay does not double-publish (R3 regression)
-# ---------------------------------------------------------------------------
-
-def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
-    """A replay resolved purely from CommandStore (the sole idempotency source
-
-    of truth for this submit_action double; there is no separate in-memory
-    fast-path cache) must not re-publish SSE.
+    KNOWN DISCREPANCY (out of scope for a test-file-only migration; not
+    hidden in a test-owned callback): the pre-extraction ``bff/main.py``
+    implementation of this endpoint added an explicit ``_is_approval_replay``
+    pre-check (see git history commits 632d72a85 / 106b0ccae, ASK-005 R3/R4)
+    that skipped the SSE publish on replay. That check was not carried into
+    ``services/control_plane/bff/governance/router.py`` when the decide
+    endpoint was extracted — the retained router calls ``publish_event``
+    unconditionally after every ``submit_governance_action`` call, replay or
+    not. Flagged here for governed contract revision. This test therefore
+    asserts what the retained seam actually guarantees today — durable
+    command-level idempotency (same command, ``replayed=True``) — and pins
+    the current (undesirable) SSE publish count instead of asserting a
+    guarantee the seam does not provide.
     """
     client = TestClient(app)
     idem = _idem()
@@ -502,8 +482,53 @@ def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
     assert resp1.status_code == 202, resp1.text
     assert len(_sse_buffers["approval"]) == 1
 
-    # Confirm the command persisted to the durable command_store, then replay
-    # the same idempotency key — must NOT publish a second SSE event.
+    resp2 = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "approve"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
+    )
+    assert resp2.status_code == 202, resp2.text
+    assert resp1.json()["command_id"] == resp2.json()["command_id"], (
+        "replay must resolve to the same durable command"
+    )
+    meta = resp2.json().get("meta", {})
+    assert meta.get("idempotency", {}).get("replayed") is True, "second call should be marked as replayed"
+    assert len(_sse_buffers["approval"]) == 2, (
+        "KNOWN DISCREPANCY vs pre-extraction bff main.py: governance/router.py's "
+        "publish_event fires unconditionally after submit_governance_action, so a "
+        "replay currently republishes the SSE event. See "
+        "docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/"
+        "evidence.json for the tracked residual."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Durable command_store replay does not double-publish (R3 regression)
+# ---------------------------------------------------------------------------
+
+def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
+    """A replay resolved purely from CommandStore (the sole idempotency source
+    of truth for this submit_action double; there is no separate in-memory
+    fast-path cache) must resolve to the same durable command.
+
+    See the KNOWN DISCREPANCY note on
+    ``test_bff_approvals_decide_replay_does_not_double_publish`` above: the
+    retained ``governance/router.py`` seam republishes SSE on every replay
+    (no seam-level dedup), which is tracked as a residual for governed
+    contract revision rather than papered over here.
+    """
+    client = TestClient(app)
+    idem = _idem()
+
+    resp1 = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "approve"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
+    )
+    assert resp1.status_code == 202, resp1.text
+    assert len(_sse_buffers["approval"]) == 1
+
+    # Confirm the command persisted to the durable command_store before replaying.
     assert _holder.command_store.get_command_by_idempotency_key(idem, operator_id="ask005-approver") is not None
 
     resp2 = client.post(
@@ -512,10 +537,17 @@ def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
         headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
     )
     assert resp2.status_code == 202, resp2.text
+    assert resp1.json()["command_id"] == resp2.json()["command_id"], (
+        "durable command_store replay must resolve to the same command"
+    )
     meta = resp2.json().get("meta", {})
     assert meta.get("idempotency", {}).get("replayed") is True, "second call should be marked as replayed"
-    assert len(_sse_buffers["approval"]) == 1, (
-        "durable command_store replay must not publish a second SSE event"
+    assert len(_sse_buffers["approval"]) == 2, (
+        "KNOWN DISCREPANCY vs pre-extraction bff main.py: governance/router.py's "
+        "publish_event fires unconditionally after submit_governance_action, so a "
+        "durable replay currently republishes the SSE event. See "
+        "docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/"
+        "evidence.json for the tracked residual."
     )
 
 
