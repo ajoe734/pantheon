@@ -1,0 +1,696 @@
+{
+  "candidate_children": [
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "OSS-CORE-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B01-AGORA-CORE-001/evidence.json",
+      "group": "B01_agora_core",
+      "order": 1,
+      "source_artifacts": [
+        "services/control-plane/bff/agora/interaction/test_worker.py",
+        "services/control-plane/bff/test_agora_journal_merge_patch.py",
+        "services/control-plane/bff/test_bff_agora_core_contract.py",
+        "services/control-plane/bff/test_bff_agora_extended_contract.py",
+        "services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py",
+        "services/control-plane/bff/tests/test_agora_candidate_pool.py",
+        "services/control-plane/bff/tests/test_agora_candidate_truth.py",
+        "services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+        "services/control-plane/bff/tests/test_agora_governed_proposals.py",
+        "services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+        "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+        "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+        "services/control-plane/bff/tests/test_agora_research_run_projection.py",
+        "services/control-plane/bff/tests/test_agora_router.py",
+        "services/control-plane/bff/tests/test_agora_servant_sessions.py",
+        "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+        "services/control-plane/bff/tests/test_agora_write_authority.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+      "title": "Agora core"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001/evidence.json",
+      "group": "B02_ask_assistant_workshop",
+      "order": 2,
+      "source_artifacts": [
+        "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+        "services/control-plane/bff/tests/test_assistant_context_pack.py",
+        "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+        "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+      "title": "ASK and assistant workshop"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "OSS-CORE-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001/evidence.json",
+      "group": "B03_auth_session_jwks",
+      "order": 3,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_auth_facade.py",
+        "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+        "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+        "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+        "services/control-plane/bff/tests/test_confirm_token_lifecycle.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+      "title": "Auth, sessions, and JWKS"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "OSS-CORE-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001/evidence.json",
+      "group": "B04_security_error_idempotency",
+      "order": 4,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_error_envelope_shape.py",
+        "services/control-plane/bff/test_idempotency_concurrency_guard.py",
+        "services/control-plane/bff/test_persona_provisioning_route_security.py",
+        "services/control-plane/bff/test_security_headers.py",
+        "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+        "services/control-plane/bff/tests/test_assistant_security.py",
+        "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+        "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py",
+        "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+        "services/control-plane/bff/tests/test_unhandled_error_cors.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+      "title": "Security, errors, and idempotency"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001/evidence.json",
+      "group": "B05_governance_approvals",
+      "order": 5,
+      "source_artifacts": [
+        "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+        "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "services/control-plane/bff/test_governance_command_submission.py",
+        "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+        "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+        "services/control-plane/bff/tests/test_bff_governance_subrules_contract.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+      "title": "Governance approvals"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001/evidence.json",
+      "group": "B06_governance_audit_committee",
+      "order": 6,
+      "source_artifacts": [
+        "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+        "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+        "services/control-plane/bff/test_cw03_committee_board_contract.py",
+        "services/control-plane/bff/test_pkt009_governance_audit_contract.py",
+        "services/control-plane/bff/tests/test_evochain_005_governance_writes.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+      "title": "Governance audit and committee"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001/evidence.json",
+      "group": "B07_persona_provisioning",
+      "order": 7,
+      "source_artifacts": [
+        "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
+        "services/control-plane/bff/test_bff_strategy_persona_contract.py",
+        "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py",
+        "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py",
+        "services/control-plane/bff/test_persona_league_detail_not_found.py",
+        "services/control-plane/bff/test_persona_live_integration.py",
+        "services/control-plane/bff/test_persona_provisioning_readback.py",
+        "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py",
+        "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+        "services/control-plane/bff/tests/test_bff_b3_persona_intent.py",
+        "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py",
+        "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+        "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+        "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py",
+        "services/control-plane/bff/tests/test_persona_owner_transport_contract.py",
+        "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+      "title": "Persona provisioning"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "OSS-CORE-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001/evidence.json",
+      "group": "B08_strategy_capital_ranking",
+      "order": 8,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+        "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py",
+        "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+        "services/control-plane/bff/test_datastrat_seed_replication_bff.py",
+        "services/control-plane/bff/test_datastrat_seed_review_bff.py",
+        "services/control-plane/bff/test_pkt004_capital_binding_drilldowns_contract.py",
+        "services/control-plane/bff/tests/test_bff_capital_pool_bindings.py",
+        "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+        "services/control-plane/bff/tests/test_console_data_rankings_projection.py",
+        "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+        "services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py",
+        "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+        "services/control-plane/bff/tests/test_strategy_ranking_router.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+      "title": "Strategy, capital, and ranking"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001/evidence.json",
+      "group": "B09_research_knowledge",
+      "order": 9,
+      "source_artifacts": [
+        "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py",
+        "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py",
+        "services/control-plane/bff/test_research_oss_preactivation_contract.py",
+        "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
+        "services/control-plane/bff/tests/test_bff_b2_004_research_search.py",
+        "services/control-plane/bff/tests/test_bff_knowledge_inbox.py",
+        "services/control-plane/bff/tests/test_console_research_projection.py",
+        "services/control-plane/bff/tests/test_pint_003_durable_opinions.py",
+        "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+        "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+      "title": "Research and knowledge"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "OSS-CORE-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001/evidence.json",
+      "group": "B10_evolution_programs",
+      "order": 10,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "services/control-plane/bff/test_evolution_center_contract.py",
+        "services/control-plane/bff/test_ew04_inspiration_graph_contract.py",
+        "services/control-plane/bff/test_ew05_mutation_review_contract.py",
+        "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+        "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py",
+        "services/control-plane/bff/tests/test_evolution_programs_population_contract.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+      "title": "Evolution programs"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001/evidence.json",
+      "group": "B11_management_assistant_ops",
+      "order": 11,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_management_delta_routes.py",
+        "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+        "services/control-plane/bff/test_bff_mgmt_common_filters.py",
+        "services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py",
+        "services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py",
+        "services/control-plane/bff/test_management_data_sources_v2.py",
+        "services/control-plane/bff/test_mcp_tool_import.py",
+        "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+        "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+        "services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py",
+        "services/control-plane/bff/test_openclaw_ops_surface.py",
+        "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+        "services/control-plane/bff/tests/test_bff_management_cockpit.py",
+        "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py",
+        "services/control-plane/bff/tests/test_bff_management_gap_003_contract_schema.py",
+        "services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+      "title": "Management assistant and operations"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001/evidence.json",
+      "group": "B12_management_console_read_models",
+      "order": 12,
+      "source_artifacts": [
+        "services/control-plane/bff/test_current_twelve_owner_truth.py",
+        "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py",
+        "services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py",
+        "services/control-plane/bff/tests/test_bff_b3_management_evidence.py",
+        "services/control-plane/bff/tests/test_console_data_incidents_reviews.py",
+        "services/control-plane/bff/tests/test_console_data_ooda_projection.py",
+        "services/control-plane/bff/tests/test_console_data_route_workflows_projection.py",
+        "services/control-plane/bff/tests/test_management_read_budget.py",
+        "services/control-plane/bff/tests/test_management_read_models_router.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+      "title": "Management console read models"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001/evidence.json",
+      "group": "B13_runtime_health_readiness",
+      "order": 13,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_downstream_health_monitor.py",
+        "services/control-plane/bff/test_bff_dry_run_rbac_contract.py",
+        "services/control-plane/bff/test_bff_runtimes_contract.py",
+        "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+        "services/control-plane/bff/test_pkt010_runtime_state_board_contract.py",
+        "services/control-plane/bff/test_pkt011_health_status_board_contract.py",
+        "services/control-plane/bff/test_runtime_state_trades.py",
+        "services/control-plane/bff/test_sent001_sentinel_findings_contract.py",
+        "services/control-plane/bff/test_sentinel_healthreason_rule_coverage.py",
+        "services/control-plane/bff/tests/test_bff_b3_readiness.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+      "title": "Runtime health and readiness"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json",
+      "group": "B14_loops_paper_v5",
+      "order": 14,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+        "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+        "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+        "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "services/control-plane/bff/test_v5_interventions.py",
+        "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+      "title": "Loops and paper V5"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001/evidence.json",
+      "group": "B15_deployment_hosted",
+      "order": 15,
+      "source_artifacts": [
+        "services/control-plane/bff/test_execute_plans_contract_registry.py",
+        "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+        "services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
+        "services/control-plane/bff/test_ptj_004_trade_journal.py",
+        "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+      "title": "Deployment and hosted"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001/evidence.json",
+      "group": "B16_command_write_workflow",
+      "order": 16,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_two_man_sign_race_contract.py",
+        "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+        "services/control-plane/bff/test_final_command_execution_bridge.py",
+        "services/control-plane/bff/test_final_contract_primitives.py",
+        "services/control-plane/bff/test_final_precondition_errors.py",
+        "services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
+        "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py",
+        "services/control-plane/bff/tests/test_bff_workflows_hooks.py",
+        "services/control-plane/bff/tests/test_command_adapters_router.py",
+        "services/control-plane/bff/tests/test_command_replay_conflict.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+      "title": "Command/write workflow"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "OSS-CORE-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/evidence.json",
+      "group": "B17_router_sse_surfaces",
+      "order": 17,
+      "source_artifacts": [
+        "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+        "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
+        "services/control-plane/bff/test_pkt003_lineage_view_contract.py",
+        "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+        "services/control-plane/bff/test_pkt012_alerts_rail_contract.py",
+        "services/control-plane/bff/test_pkt013_operator_home_contract.py",
+        "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+        "services/control-plane/bff/test_pkt015_consultation_workbench_contract.py",
+        "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+        "services/control-plane/bff/tests/test_bff_lineage_contract.py",
+        "services/control-plane/bff/tests/test_sse_backpressure.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+      "title": "Router and SSE surfaces"
+    },
+    {
+      "current_nonterminal_overlap_owners": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "depends_on_after_plan": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "evidence_artifact": "docs/deployment/evidence/BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001/evidence.json",
+      "group": "B18_cross_cutting_consolidation",
+      "order": 18,
+      "source_artifacts": [
+        "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+        "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+        "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+        "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+        "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+        "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py",
+        "services/control-plane/bff/tests/test_bff_b2_003_capabilities.py",
+        "services/control-plane/bff/tests/test_bff_b3_human_inbox.py",
+        "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+        "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+        "services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py",
+        "services/control-plane/bff/tests/test_bff_emergency_containment.py",
+        "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+        "services/control-plane/bff/tests/test_overlay_retirement.py"
+      ],
+      "task_id": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+      "title": "Cross-cutting consolidation"
+    }
+  ],
+  "created_at": "2026-09-10T04:40:00Z",
+  "parent_contract_revision": {
+    "artifacts_to_retain_or_add": [
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json"
+    ],
+    "baseline_pre_revision_observation": {
+      "canonical_cas_digest": "692d7238829f39698b87b54cc8a503c982d8a004b0412a7a07fe79fbd85067f2",
+      "generation": 24,
+      "notes": "Pre-revision baseline observation at generation 24 before Step 2 artifact narrowing and Step 3 child admission. Non-executable at Step 4; Step 4 requires a fresh complete-row CAS digest computed dynamically from canonical state after Step 2 and Step 3.",
+      "status": "blocked"
+    },
+    "current_generation": 24,
+    "current_status": "blocked",
+    "dependency_contract_request_template": {
+      "cas_execution_requirement": "Human/Ops must compute a fresh complete-row CAS digest of BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 dynamically from canonical state after completing Step 2 artifact narrowing and Step 3 child admission. The pre-revision baseline digest 692d7238... is non-executable at Step 4 because Step 2 mutates the parent task row across multiple revisions.",
+      "reason": "Operator-authorized parent dependency update: serialize test migration parent after prerequisite planning task BFF-TEST-MIGRATION-REPARTITION-PLAN-001 and all 18 decoupled child batches (B01-B18), preserving existing dependencies (BFF-TEST-ARCH-001, JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001, BFF-AUTH-SESSION-SEAM-PREREQUISITE-001) and blocked hold semantics.",
+      "tasks": [
+        {
+          "depends_on": [
+            "BFF-TEST-ARCH-001",
+            "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+            "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+            "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+            "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+            "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+            "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+            "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+            "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+            "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+            "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+            "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+            "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+            "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+            "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+            "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+            "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+            "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+            "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+            "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+            "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+            "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+          ],
+          "expected_sha256": "<FRESH_COMPLETE_ROW_CAS_DIGEST_POST_ARTIFACT_NARROWING_AND_CHILD_ADMISSION>",
+          "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
+        }
+      ]
+    },
+    "packet_materialization_layout": [
+      {
+        "max_tasks_per_packet": 16,
+        "packet_id": "pkt-bff-test-migration-children-part1-20260910",
+        "packet_index": 1,
+        "task_count": 16,
+        "task_ids": [
+          "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+          "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+          "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+          "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+          "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+          "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+          "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+          "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+          "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+          "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+          "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+          "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+          "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+          "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+          "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+          "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001"
+        ]
+      },
+      {
+        "max_tasks_per_packet": 16,
+        "packet_id": "pkt-bff-test-migration-children-part2-20260910",
+        "packet_index": 2,
+        "task_count": 2,
+        "task_ids": [
+          "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+          "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+        ]
+      }
+    ],
+    "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+    "wildcards_to_remove": [
+      "services/control-plane/bff/test_*.py",
+      "services/control-plane/bff/smoke_test*.py",
+      "services/control-plane/bff/tests/**",
+      "services/control-plane/bff/*/test*.py"
+    ]
+  },
+  "reconciliation": {
+    "composition_allowlist_importers": 8,
+    "composition_allowlist_non_importers": 4,
+    "composition_allowlist_suites": 12,
+    "count_conflict_explanation": {
+      "172_stale_source_audit": "Stale subtraction in parent evidence.json source_audit (184 direct importers from earlier 365-file scan minus 12 allowlist suites = 172), which was not updated when 28 missing test files were reconciled into the catalog.",
+      "184_outside_allowlist": "Actual remaining non-allowlisted main importers requiring decoupling (182 PLANNED rows + 2 DECOUPLED rows that import main).",
+      "192_total_importers": "Total live AST, dynamic, and subprocess main importers across all 369 test files on disk (8 in composition allowlist + 184 outside allowlist)."
+    },
+    "inventory_migrated_count": 34,
+    "inventory_mislabeled_decoupled_count": 2,
+    "inventory_mislabeled_decoupled_files": [
+      "services/control-plane/bff/tests/test_management_read_models_router.py",
+      "services/control-plane/bff/tests/test_unhandled_error_cors.py"
+    ],
+    "inventory_planned_count": 182,
+    "inventory_verified_decoupled_count": 139,
+    "live_ast_dynamic_subprocess_importers": 192,
+    "non_allowlist_main_importers": 184,
+    "total_inventory_catalog_entries": 369,
+    "total_test_files_on_disk": 369
+  },
+  "schema_version": "pantheon.bff-test-migration-repartition.v1",
+  "shared_foundation_files": {
+    "retained_parent_paths": [
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json"
+    ],
+    "shared_support_modules": [
+      {
+        "assigned_batch": "B04_security_error_idempotency",
+        "assigned_task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "consumer_dependency_rule": "Consumer batches B08, B11, B12, and B18 declare an explicit task dependency on BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001 to ensure rebalance_authority_test_support.py is decoupled before consumers execute.",
+        "file": "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+        "imported_by_external_batches": [
+          "B08_strategy_capital_ranking",
+          "B11_management_assistant_ops",
+          "B12_management_console_read_models",
+          "B18_cross_cutting_consolidation"
+        ],
+        "notes": "Imports main as bff_main; provides MarketPersonaProjectionTestDouble and fixture context managers. Decoupled within B04 to ensure consumers test without global mutation. Consumer batches B08, B11, B12, and B18 depend on B04."
+      }
+    ],
+    "shared_test_fixtures": [
+      "services/control-plane/bff/tests/conftest.py",
+      "services/control-plane/bff/tests/fixtures/__init__.py",
+      "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+      "services/control-plane/bff/tests/fixtures/research_fixture.py",
+      "services/control-plane/bff/tests/fixtures/training_fixture.py",
+      "services/control-plane/bff/tests/knowledge_read_port_fixtures.py",
+      "services/control-plane/bff/tests/management_projection_test_doubles.py",
+      "services/control-plane/bff/tests/read_store_fixtures.py"
+    ]
+  },
+  "source_anchor": {
+    "base_sha": "2b4c83dee61a7943f12e3a8a3275a487755fe98c",
+    "evidence_task_generation": 24,
+    "evidence_task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+    "head_sha": "1198bef2b4b514705bc1a9d19c406b4b3c2c7880",
+    "observed_origin_dev_sha": "fd6341a8a84dbfc57bf7f6f31f6be0997f713388",
+    "planning_base_sha": "0649c5e7732ef82c7b0faecf4ecf83e50f3e7fdf",
+    "pull_request": 5714
+  },
+  "status": "frozen_repartition_plan",
+  "validation": {
+    "graph_acyclic": true,
+    "overlap_with_composition_allowlist": false,
+    "overlap_with_migrated_suites": false,
+    "pairwise_disjoint": true,
+    "serialized_existing_overlapping_writers": [
+      "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+      "STRUCT-RETIRE-001",
+      "OSS-CORE-BASELINE-001",
+      "SIMPLIFY-BFF-RESIDUAL-001",
+      "BFF-READ-OWNER-WIRING-CORRECTIVE-001"
+    ],
+    "total_partitioned_files": 184,
+    "unique_partitioned_files": 184,
+    "wildcard_grants_used": false
+  }
+}
