@@ -156,34 +156,24 @@
     "enabled": true,
     "owner_fallbacks": {
       "Claude": [
-        "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Claude2": [
-        "Claude",
         "Antigravity",
         "Antigravity2"
       ],
       "Antigravity": [
-        "Antigravity2",
-        "Claude",
-        "Claude2"
+        "Antigravity2"
       ],
       "Antigravity2": [
-        "Antigravity",
-        "Claude",
-        "Claude2"
+        "Antigravity"
       ],
       "Codex": [
-        "Claude",
-        "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
-        "Claude",
-        "Claude2",
         "Antigravity",
         "Antigravity2"
       ]

@@ -176,6 +176,21 @@ def test_task_state_store_mode_drift_is_actionable_by_default() -> None:
     ]
 
 
+def test_owner_fallbacks_do_not_retry_shared_claude_account() -> None:
+    config = json.loads(
+        (Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fallbacks = config["worker_reassignment"]["owner_fallbacks"]
+
+    # Claude and Claude2 share one provider account. Neither identity may be
+    # used as an owner fallback for the other or re-entered from another lane.
+    for candidates in fallbacks.values():
+        assert "Claude" not in candidates
+        assert "Claude2" not in candidates
+
+
 def test_worker_reassignment_drift_is_actionable_by_default() -> None:
     repo = {
         "worker_reassignment": {
