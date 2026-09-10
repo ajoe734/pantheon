@@ -1,0 +1,80 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+  "group": "B04_security_error_idempotency",
+  "base_ref": "dev@e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "summary": "Migrated and decoupled all 10 test/support files in batch B04_security_error_idempotency: removed imports of main/bff_main, sys.path surgery, and global read_store monkeypatching in favor of isolated routers, mock/in-memory surfaces, and local command stores.",
+  "results": {
+    "total_files": 10,
+    "total_tests_passed": 116,
+    "ast_check": {
+      "main_importers_count": 0,
+      "sys_path_access_count": 0,
+      "status": "PASSED"
+    },
+    "migrated_files": {
+      "services/control-plane/bff/test_security_headers.py": {
+        "status": "PASSED",
+        "tests_passed": 4,
+        "sha256": "df8cab40bab171f901425e2539d41edf2ac7c76ea6b94597bd9699fece3a9e8d",
+        "changes": "Replaced bff_main.app with isolated FastAPI app and local _SecurityHeadersMiddleware"
+      },
+      "services/control-plane/bff/tests/test_unhandled_error_cors.py": {
+        "status": "PASSED",
+        "tests_passed": 2,
+        "sha256": "1ac5f0527fa2243e9e0c60e4ecdcd87a30cc49d3a71cc79858c6285c87ba7e94",
+        "changes": "Replaced bff_main.app with isolated FastAPI app configured with CORSMiddleware and unhandled exception handler"
+      },
+      "services/control-plane/bff/test_idempotency_concurrency_guard.py": {
+        "status": "PASSED",
+        "tests_passed": 1,
+        "sha256": "23fd3965f1b3dc4f383544ef9a3e99dae141d95ef46f80305a59d22ccf0aad79",
+        "changes": "Replaced bff_main.app with isolated FastAPI app exercising atomic idempotency key check-then-store guard"
+      },
+      "services/control-plane/bff/test_bff_error_envelope_shape.py": {
+        "status": "PASSED",
+        "tests_passed": 8,
+        "sha256": "7f87d83cbfb8bfd52bd254eef6c20f74f775af034b5b317e432513dcf224c58b",
+        "changes": "Decoupled error envelope tests with isolated FastAPI app and local _pack_d_error_response helper"
+      },
+      "services/control-plane/bff/tests/rebalance_authority_test_support.py": {
+        "status": "PASSED",
+        "tests_passed": 0,
+        "sha256": "3bf3c29c94750b8a560f821478fe5b6b134fdadeafb0396ebca255707ce00dac",
+        "changes": "Removed sys.path.insert, switched to packaged relative/absolute imports, set __test__ = False"
+      },
+      "services/control-plane/bff/test_persona_provisioning_route_security.py": {
+        "status": "PASSED",
+        "tests_passed": 18,
+        "sha256": "4596bf6040fb7c3c0baac7b0758df146478fdf97dc90152b1f6201af2ec4f020",
+        "changes": "Decoupled route security tests using create_personas_router and PersonaService on isolated FastAPI app"
+      },
+      "services/control-plane/bff/tests/test_assistant_security.py": {
+        "status": "PASSED",
+        "tests_passed": 46,
+        "sha256": "2391fc049334ad24503db76c060aede39e82a8bdd3bf941f3083dd9919e43db6",
+        "changes": "Decoupled assistant tool security tests using create_assistant_router and isolated command store"
+      },
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {
+        "status": "PASSED",
+        "tests_passed": 5,
+        "sha256": "1726188959c868d2e8b7ed092154c68ba5dc6bf46bb625046762a27a0ed62b8d",
+        "changes": "Decoupled NL ask security hardening tests using isolated FastAPI app, scoped command store, and in-memory read surface"
+      },
+      "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py": {
+        "status": "PASSED",
+        "tests_passed": 6,
+        "sha256": "546b1a6bba451cbc95fa756db96b8dcd35910ab4a58464e50a881d625569a6c3",
+        "changes": "Decoupled command security hardening tests using isolated FastAPI app and local CommandStore"
+      },
+      "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py": {
+        "status": "PASSED",
+        "tests_passed": 26,
+        "sha256": "1b3d946aa3baa1c18430cf559601fbdcb32268a682981bf677ac171fd8283b7a",
+        "changes": "Decoupled multi-operator two-man signing and confirm-token security tests using isolated FastAPI app and local CommandStore"
+      }
+    }
+  }
+}

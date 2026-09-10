@@ -5,13 +5,26 @@ import json
 from dataclasses import dataclass
 
 import pytest
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 
-import main as bff_main
-from persona_provisioning import MemoryPersonaProvisioningStore
-from ports import ReadSurfacePorts
-from test_loop_prod_per_001_provisioning import _provisioning_read_surface_double
-from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+from services.control_plane.bff.personas import service as personas_service_mod
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.personas.service import PersonaService, _reconcile_persona_provisioning_once
+from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.test_loop_prod_per_001_provisioning import _provisioning_read_surface_double
+from services.control_plane.bff.test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.persona.runtime_profile import build_persona_runtime_profile
 
 
 @dataclass
@@ -19,6 +32,22 @@ class _RouteHarness:
     client: TestClient
     transport: FakeOwnerTransport
     store: MemoryPersonaProvisioningStore
+    read_store: ReadSurfacePorts
+
+
+def _patch_tenant_payload(monkeypatch: pytest.MonkeyPatch, fn):
+    monkeypatch.setattr(personas_service_mod, "_bff_me_tenant_payload", fn)
+    for mod_name in [
+        "services.control_plane.bff.personas.routes.detail",
+        "services.control_plane.bff.personas.routes.lifecycle",
+        "services.control_plane.bff.personas.routes.provisioning",
+        "services.control_plane.bff.personas.routes.collection",
+        "services.control_plane.bff.personas.routes.ranking",
+    ]:
+        try:
+            monkeypatch.setattr(f"{mod_name}._bff_me_tenant_payload", fn)
+        except Exception:
+            pass
 
 
 @pytest.fixture()
@@ -26,28 +55,55 @@ def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
     read_store = _provisioning_read_surface_double()
     transport = FakeOwnerTransport()
     store = MemoryPersonaProvisioningStore()
-    from services.persona.runtime_profile import build_persona_runtime_profile
+    cmd_store = CommandStore(str(tmp_path / "cmd_store.jsonl"))
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", "false")
-    monkeypatch.setattr(bff_main, "read_store", read_store)
-    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", store)
-    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
-    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
+    monkeypatch.setattr(personas_service_mod, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service_mod, "_PersonaOwnerHttpTransport", lambda *args, **kwargs: transport)
+    monkeypatch.setattr(personas_service_mod, "_register_persona_cron_required", _schedule_receipt)
     monkeypatch.setattr(
-        bff_main,
+        personas_service_mod,
         "build_persona_runtime_profile",
         build_persona_runtime_profile,
         raising=False,
     )
-    monkeypatch.setattr(bff_main, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
-    # The fixture double is the single canonical Persona write owner for this
-    # test process: no fallback writer, no process-local overlay. The live
-    # request path resolves the write owner from `main.persona_service`
-    # context binding, so both must point at the same double.
-    monkeypatch.setattr(bff_main.persona_service, "_write_owner", read_store)
-    monkeypatch.setattr(bff_main.persona_service, "_read_store", read_store)
-    return _RouteHarness(TestClient(bff_main.app), transport, store)
+    monkeypatch.setattr(personas_service_mod, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
+
+    service = PersonaService(
+        write_owner=read_store,
+        read_store=read_store,
+        ranking_write_owner=read_store,
+        command_store=cmd_store,
+        provisioning_store=store,
+    )
+
+    app = FastAPI()
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(detail)}},
+        )
+
+    router = create_personas_router(
+        service=service,
+        get_read_store=lambda: read_store,
+        get_command_store=lambda: cmd_store,
+        get_provisioning_store=lambda: store,
+        extract_identity_fn=extract_identity,
+        require_read_role_fn=require_read_role,
+        require_operator_role_fn=require_operator_role,
+        bff_error_fn=bff_error,
+    )
+    app.include_router(router)
+
+    return _RouteHarness(TestClient(app), transport, store, read_store)
 
 
 def _headers(operator: str, key: str) -> dict[str, str]:
@@ -79,7 +135,7 @@ def test_authenticated_actor_replaces_all_client_actor_assertions(
     assert durable.request_payload["requested_by"] == "operator-real"
     assert "operator-evil" not in json.dumps(durable.request_payload, sort_keys=True)
     assert "operator-evil" not in json.dumps(route_harness.transport.calls, sort_keys=True)
-    persona = bff_main.read_store.get_persona(persona_id)
+    persona = route_harness.read_store.get_persona(persona_id)
     assert persona is not None
     assert persona["created_by"] == "operator-real"
     assert persona["metadata"]["owner"] == "operator-real"
@@ -104,7 +160,7 @@ def test_cross_operator_idempotency_replay_conflicts_without_owner_overwrite(
     )
 
     assert replay.status_code == 409, replay.text
-    persona = bff_main.read_store.get_persona(persona_id)
+    persona = route_harness.read_store.get_persona(persona_id)
     assert persona is not None
     assert persona["created_by"] == "operator-a"
     assert persona["metadata"]["owner"] == "operator-a"
@@ -156,7 +212,7 @@ def test_patch_cannot_bypass_server_managed_lifecycle(
     )
 
     assert patched.status_code == 422, patched.text
-    persona = bff_main.read_store.get_persona(persona_id)
+    persona = route_harness.read_store.get_persona(persona_id)
     assert persona is not None
     assert persona["lifecycle_state"] == "provisioning"
     assert persona["metadata"]["owner"] == "operator-a"
@@ -173,15 +229,20 @@ def test_persona_get_and_list_are_pure_reads(
     )
     assert created.status_code == 201, created.text
     persona_id = created.json()["data"]["id"]
-    before = bff_main.read_store.get_persona(persona_id)
+    before = route_harness.read_store.get_persona(persona_id)
 
     def forbidden_reconcile(*_args, **_kwargs):
         raise AssertionError("read route must not reconcile or mutate Persona lifecycle")
 
     monkeypatch.setattr(
-        bff_main,
+        personas_service_mod,
         "_evaluate_persona_provisioning_status",
         forbidden_reconcile,
+    )
+    monkeypatch.setattr(
+        "services.control_plane.bff.personas.routes.provisioning._evaluate_persona_provisioning_status",
+        forbidden_reconcile,
+        raising=False,
     )
     detail = route_harness.client.get(
         f"/bff/personas/{persona_id}",
@@ -194,7 +255,7 @@ def test_persona_get_and_list_are_pure_reads(
 
     assert detail.status_code == 200, detail.text
     assert listed.status_code == 200, listed.text
-    assert bff_main.read_store.get_persona(persona_id) == before
+    assert route_harness.read_store.get_persona(persona_id) == before
 
 
 def test_persona_list_projects_only_requested_page(
@@ -202,21 +263,26 @@ def test_persona_list_projects_only_requested_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for index in range(5):
-        bff_main.read_store.create_persona(
+        route_harness.read_store.create_persona(
             persona_id=f"persona-page-{index}",
             name=f"Page Persona {index}",
             actor_id="operator-a",
             lifecycle_state="provisioning",
             metadata={"tenant_id": "pantheon-dev", "archetype": "generalist"},
         )
-    original = bff_main._project_persona_list_records
+    original = personas_service_mod._project_persona_list_records
     projected_sizes: list[int] = []
 
     def capture(records):
         projected_sizes.append(len(records))
         return original(records)
 
-    monkeypatch.setattr(bff_main, "_project_persona_list_records", capture)
+    monkeypatch.setattr(personas_service_mod, "_project_persona_list_records", capture)
+    monkeypatch.setattr(
+        "services.control_plane.bff.personas.routes.collection._project_persona_list_records",
+        capture,
+        raising=False,
+    )
     response = route_harness.client.get(
         "/bff/personas?page_size=1",
         headers={"Authorization": "Bearer viewer-a:viewer"},
@@ -231,9 +297,8 @@ def test_patch_cache_is_namespaced_after_tenant_authorization(
     route_harness: _RouteHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        bff_main,
-        "_bff_me_tenant_payload",
+    _patch_tenant_payload(
+        monkeypatch,
         lambda identity, requested_tenant=None: {
             "id": "tenant-a" if identity.operator_id == "operator-a" else "tenant-b"
         },
@@ -265,9 +330,8 @@ def test_patch_overlay_and_cached_replay_preserve_tenant_snapshot(
     route_harness: _RouteHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        bff_main,
-        "_bff_me_tenant_payload",
+    _patch_tenant_payload(
+        monkeypatch,
         lambda identity, requested_tenant=None: {"id": "tenant-a"},
     )
     created = route_harness.client.post(
@@ -284,7 +348,7 @@ def test_patch_overlay_and_cached_replay_preserve_tenant_snapshot(
     )
     first_body = first.json()
     assert first_body["data"]["tenantId"] == "tenant-a"
-    assert bff_main.read_store.get_persona(persona_id)["metadata"]["tenant_id"] == "tenant-a"
+    assert route_harness.read_store.get_persona(persona_id)["metadata"]["tenant_id"] == "tenant-a"
 
     replay = route_harness.client.patch(
         f"/bff/personas/{persona_id}",
@@ -306,7 +370,7 @@ def test_patch_preserves_newer_canonical_lifecycle_over_stale_overlay(
     )
     assert created.status_code == 201, created.text
     persona_id = created.json()["data"]["id"]
-    bff_main.read_store.update_persona(
+    route_harness.read_store.update_persona(
         persona_id,
         lifecycle_state="paper_running",
         metadata={"paper_runtime_state": "running"},
@@ -319,7 +383,7 @@ def test_patch_preserves_newer_canonical_lifecycle_over_stale_overlay(
     )
 
     assert patched.status_code == 200, patched.text
-    canonical = bff_main.read_store.get_persona(persona_id)
+    canonical = route_harness.read_store.get_persona(persona_id)
     assert canonical is not None
     assert canonical["lifecycle_state"] == "paper_running"
 
@@ -328,9 +392,8 @@ def test_reconcile_route_requires_operator_and_tenant_scope(
     route_harness: _RouteHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        bff_main,
-        "_bff_me_tenant_payload",
+    _patch_tenant_payload(
+        monkeypatch,
         lambda identity, requested_tenant=None: {
             "id": "tenant-a" if identity.operator_id != "operator-b" else "tenant-b"
         },
@@ -372,7 +435,7 @@ def test_reconcile_route_reports_degraded_owner_dependency(
     assert created.status_code == 201, created.text
     persona_id = created.json()["data"]["id"]
     monkeypatch.setattr(
-        bff_main,
+        personas_service_mod,
         "_get_json",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("deployment unavailable")
@@ -398,9 +461,9 @@ def test_controller_isolates_one_malformed_persona_from_later_records(
         {"persona_id": "persona-good", "lifecycle_state": "provisioning"},
     ]
     evaluated: list[str] = []
-    monkeypatch.setattr(bff_main, "_list_persona_records", lambda: records)
+    monkeypatch.setattr(personas_service_mod, "_list_persona_records", lambda: records)
     monkeypatch.setattr(
-        bff_main,
+        personas_service_mod,
         "_persona_readback_snapshot",
         lambda: ({}, None, []),
     )
@@ -411,7 +474,7 @@ def test_controller_isolates_one_malformed_persona_from_later_records(
             raise ValueError("malformed metadata")
         return "provisioning"
 
-    monkeypatch.setattr(bff_main, "_evaluate_persona_provisioning_status", evaluate)
+    monkeypatch.setattr(personas_service_mod, "_evaluate_persona_provisioning_status", evaluate)
 
-    assert bff_main._reconcile_persona_provisioning_once() == 1
+    assert _reconcile_persona_provisioning_once() == 1
     assert evaluated == ["persona-bad", "persona-good"]
