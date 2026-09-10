@@ -21,12 +21,8 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.tests.fixtures.training_fixture import create_training_test_client
+from services.control_plane.bff.test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -39,13 +35,8 @@ _COMPLETED_SESSION = "trn-20260418-003"  # status=completed
 
 @contextmanager
 def _client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = create_training_read_surface_double()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
+    store = create_training_read_surface_double()
+    yield create_training_test_client(store)
 
 
 # ------------------------------------------------------------------ #

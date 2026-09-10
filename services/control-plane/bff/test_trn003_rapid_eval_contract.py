@@ -13,12 +13,8 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.tests.fixtures.training_fixture import create_training_test_client
+from services.control_plane.bff.test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -32,17 +28,15 @@ _COMPLETED_SESSION = "trn-20260418-003"  # status=completed
 @contextmanager
 def _client(*, service_backed: bool = False) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         orig_env = os.environ.get("PANTHEON_BFF_RAPID_EVAL_STORE")
         if service_backed:
             os.environ["PANTHEON_BFF_RAPID_EVAL_STORE"] = os.path.join(td, "rapid_evals.json")
         else:
             os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
+        store = create_training_read_surface_double()
         try:
-            yield TestClient(bff_main.app)
+            yield create_training_test_client(store)
         finally:
-            bff_main.read_store = original_store
             if orig_env is None:
                 os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
             else:

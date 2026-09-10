@@ -7,10 +7,8 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from test_training_session_service_client import create_training_read_surface_double
+from services.control_plane.bff.tests.fixtures.training_fixture import create_training_test_client
+from services.control_plane.bff.test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -21,9 +19,9 @@ def _seeded_client(
     *,
     allow_local_snapshot_fallback: bool = True,
     service_backed_teaching_sessions: bool = False,
+    store: Any = None,
 ):
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         original_teaching_store = os.environ.get("PANTHEON_BFF_TEACHING_SESSION_STORE")
         if service_backed_teaching_sessions:
             os.environ["PANTHEON_BFF_TEACHING_SESSION_STORE"] = os.path.join(
@@ -32,12 +30,12 @@ def _seeded_client(
             )
         else:
             os.environ.pop("PANTHEON_BFF_TEACHING_SESSION_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        read_store = store if store is not None else create_training_read_surface_double()
+        client = create_training_test_client(read_store)
+        client.read_store = read_store
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             if original_teaching_store is None:
                 os.environ.pop("PANTHEON_BFF_TEACHING_SESSION_STORE", None)
             else:
@@ -238,23 +236,17 @@ def test_tw01_create_and_message_persist_when_service_store_is_configured() -> N
 
 
 def test_tw01_list_route_returns_unavailable_surface_when_store_missing() -> None:
-    with _seeded_client(allow_local_snapshot_fallback=False) as client:
-        original_get_persona = bff_main.read_store.get_persona
-        original_list_sessions = bff_main.read_store.list_trainer_sessions
-        original_dataset_source = bff_main.read_store.dataset_source
-        bff_main.read_store.get_persona = lambda persona_id: {"id": persona_id}
-        bff_main.read_store.list_trainer_sessions = lambda **_: None
-        bff_main.read_store.dataset_source = lambda dataset: "missing" if dataset == "teaching_sessions" else original_dataset_source(dataset)
-        try:
-            response = client.get(
-                "/api/v1/trainer/sessions",
-                params={"persona_id": "persona-alpha"},
-                headers={"Authorization": OPERATOR_AUTH},
-            )
-        finally:
-            bff_main.read_store.get_persona = original_get_persona
-            bff_main.read_store.list_trainer_sessions = original_list_sessions
-            bff_main.read_store.dataset_source = original_dataset_source
+    store = create_training_read_surface_double()
+    store.get_persona = lambda persona_id: {"id": persona_id}
+    store.list_trainer_sessions = lambda **_: None
+    original_dataset_source = store.dataset_source
+    store.dataset_source = lambda dataset: "missing" if dataset == "teaching_sessions" else original_dataset_source(dataset)
+    with _seeded_client(allow_local_snapshot_fallback=False, store=store) as client:
+        response = client.get(
+            "/api/v1/trainer/sessions",
+            params={"persona_id": "persona-alpha"},
+            headers={"Authorization": OPERATOR_AUTH},
+        )
 
         assert response.status_code == 200, response.text
         assert response.json() == {
