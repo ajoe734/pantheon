@@ -1,0 +1,121 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "d85a7117c10e25d34625ef9b0978c31f5be68bb7",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex"
+  },
+  "delivery_nature": {
+    "documentation_only": true,
+    "statement": "Only the two declared documentation/evidence artifacts change. No production source, runtime behavior, or test files are modified in this task. Establishes the canonical architectural decision and operational runbook for resolving the B05 journal context-resolver seam via Qualified Ordered Overlap without DAG cycles."
+  },
+  "changed_files": [
+    "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001/evidence.json"
+  ],
+  "document_proof": {
+    "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md": {
+      "sha256": "239f2a139a0c50f204d71980af6815b9603f37229cb6eb4f376e02b80f16d3e9",
+      "bytes": 27939
+    }
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "seam_analysis": {
+    "source_file": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+    "test_method": "test_main_bff_journal_context_ref_resolution_parity",
+    "line_number": 1650,
+    "composition_import": {
+      "line": 1653,
+      "import_statement": "from services.control_plane.bff.main import _resolve_agora_interaction_context_ref"
+    },
+    "global_monkeypatches": [
+      {
+        "line": 1679,
+        "target": "services.control_plane.bff.main.read_store"
+      },
+      {
+        "line": 1680,
+        "target": "services.control_plane.bff.main._extract_identity"
+      }
+    ],
+    "architectural_invariant_violations": [
+      "test_migrated_suites_do_not_import_main in test_bff_test_architecture.py",
+      "test_no_global_monkeypatching_in_migrated_suites in test_bff_test_architecture.py"
+    ],
+    "regression_guarantee": "Asserts canonical Agora scope resolution and fail-closed private record filtering when Agora interaction sessions resolve journal_entry context references."
+  },
+  "cycle_hazard_analysis": {
+    "downstream_task": "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001",
+    "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+    "blocked_child_task": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+    "hazard_description": "If B05 declares or waits for JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001, a cycle B05 -> JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 -> BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 -> B05 is created because JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 is serialized after the test migration parent.",
+    "resolution": "A standalone upstream task (BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001) is serialized before B05 via Qualified Ordered Overlap, preserving strict topological DAG ordering with zero cycles."
+  },
+  "candidate_evaluations": [
+    {
+      "candidate": "Candidate 1: Upstream Seam Extraction via Qualified Ordered Overlap (BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001)",
+      "status": "SELECTED",
+      "rationale": "Extracts monolithic resolver into modular injectable module services/control-plane/bff/agora/interaction/context_resolver.py. Binds dependencies explicitly. Follows exact precedent of BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001 for B09. Zero cycles."
+    },
+    {
+      "candidate": "Candidate 2: Test Relocation to Existing Allowlist Suite (tests/test_read_surface_caller_migration.py)",
+      "status": "REJECTED",
+      "rationale": "Leaves main.py monolithic and global-dependent; requires editing allowlist file outside B05 grant without root-cause resolution."
+    },
+    {
+      "candidate": "Candidate 3: In-Batch Router Mock Injection in B05",
+      "status": "REJECTED",
+      "rationale": "Stubs out the callback in test without asserting production scoping behavior; destroys regression coverage established by JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001."
+    }
+  ],
+  "target_seam_contract": {
+    "module": "services/control-plane/bff/agora/interaction/context_resolver.py",
+    "callable": "resolve_agora_interaction_context_ref",
+    "injected_parameters": [
+      "read_store",
+      "extract_identity",
+      "require_read_role",
+      "bff_error",
+      "trade_journal_store_name",
+      "persona_directory_snapshot_fn"
+    ],
+    "composition_binding": "services/control-plane/bff/main.py delegates to resolve_agora_interaction_context_ref with composition root globals.",
+    "test_binding": "test_decision_journal_write_owner.py imports resolve_agora_interaction_context_ref directly, passing reader and identity without importing main."
+  },
+  "topological_ordering_proof": [
+    "1. BFF-TEST-MIGRATION-REPARTITION-PLAN-001 (done)",
+    "2. BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001 (done)",
+    "3. BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001 (this task)",
+    "4. BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001 (materialized upstream qualified ordered overlap)",
+    "5. BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001 (unblocked child batch)",
+    "6. BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 (parent test migration task)",
+    "7. JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 (downstream journal runtime task)"
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3",
+      "exit_code": 0,
+      "result": "Provisioned checkout-scoped virtual environment .venv-pantheon verified from foreign cwd with no PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed in 2.04s; architectural classification and composition allowlist gates verified."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+      "exit_code": 0,
+      "result": "38 passed, 3 warnings in 42.10s; verified current behavior and parity test baseline."
+    },
+    {
+      "command": "git status -sb",
+      "exit_code": 0,
+      "result": "Branch task/BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001 tracking origin/dev with only the two declared documentation artifacts."
+    }
+  ]
+}
