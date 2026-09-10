@@ -14094,11 +14094,11 @@ def task_execution_dispatch_candidate(
     ):
         # Approval and cron integration are separate transactions. Closeout
         # starts only after the canonical integrator records this exact landing.
-        # Consume the same repo-scoped predicate evaluate_task_delivery_admission
-        # uses so planning, runtime reservation, and this freshness/candidate
-        # path cannot disagree about whether a receipt is required (normal
-        # unmerged Pantheon finalization stays eligible; a non-default
-        # repository delivery stays gated until its exact receipt lands).
+        # Consume the same predicate evaluate_task_delivery_admission uses so
+        # planning, runtime reservation, and this freshness/candidate path
+        # cannot disagree about whether a receipt is required (any repository,
+        # Pantheon included, with a live review_binding stays gated until its
+        # exact receipt lands; a row with no PR delivery in flight is unaffected).
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.REVIEW_READY

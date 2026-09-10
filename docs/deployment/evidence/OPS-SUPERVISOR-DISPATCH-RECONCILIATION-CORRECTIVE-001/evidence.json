@@ -3,8 +3,8 @@
   "task": {
     "id": "OPS-SUPERVISOR-DISPATCH-RECONCILIATION-CORRECTIVE-001",
     "title": "Unify owner-finalize dispatch eligibility and freshness validation",
-    "owner": "Claude",
-    "reviewer": "Antigravity2",
+    "owner": "Claude2",
+    "reviewer": "Claude",
     "status": "review_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -12,58 +12,57 @@
     "review_file": "docs/deployment/evidence/OPS-SUPERVISOR-DISPATCH-RECONCILIATION-CORRECTIVE-001/evidence.json"
   },
   "scope": {
-    "owned_layer": "Owner-finalize (owned_finalize_dispatch) eligibility predicate consumed by task_execution_dispatch_candidate in .orchestrator/supervisor.py, which backs both the stale-event freshness recheck (stale_dispatch_skip_message -> current_dispatch_event_key) and worker-lease/assignment revalidation (worker_matches_current_assignment, reserve_worker_recovery_replacement).",
+    "owned_layer": "The single owner-finalize (owned_finalize_dispatch) eligibility predicate is_non_default_repository_finalization_pending in .orchestrator/dispatch_policy.py, consumed by both the planner/runtime-reservation predicate evaluate_task_delivery_admission and by task_execution_dispatch_candidate in .orchestrator/supervisor.py (which backs the stale-event freshness recheck stale_dispatch_skip_message -> current_dispatch_event_key and worker-lease/assignment revalidation).",
     "not_changing": [
-      "evaluate_task_delivery_admission / evaluate_dispatch_candidate in .orchestrator/dispatch_policy.py (the planner and runtime-reservation predicate) already called the repo-scoped is_non_default_repository_finalization_pending gate; its logic is unchanged.",
       "The hermetic execution-admission predicate in .orchestrator/rewrite/dispatch_admission.py (evaluate_dispatch_intent) and .orchestrator/rewrite/task_machine.py (dispatch_reason) are unchanged; they never encoded the receipt requirement and are not where the two predicates disagreed.",
       "review-ready, owned-ready, owned-in-progress, dependency, health, global/account/resource capacity, pending review-decision, and operator-hold fences are unchanged.",
-      "The canonical auto-integrator (scripts/git/auto_integrator.py) and integration_receipt module (.orchestrator/rewrite/integration_receipt.py) are unchanged; no second scheduler, queue, task store, projection, or status authority was added."
+      "The canonical auto-integrator (scripts/git/auto_integrator.py) and integration_receipt module (.orchestrator/rewrite/integration_receipt.py) are unchanged; no second scheduler, queue, task store, projection, or status authority was added. The auto-integrator already evaluates every review_approved row regardless of repository (it never special-cased Pantheon) and already writes the canonical integration_receipt once a Pantheon PR is merged into dev."
     ],
     "changed_files": [
+      ".orchestrator/dispatch_policy.py",
       ".orchestrator/supervisor.py",
+      ".orchestrator/test_dispatch_policy.py",
       ".orchestrator/test_supervisor.py",
       "docs/deployment/evidence/OPS-SUPERVISOR-DISPATCH-RECONCILIATION-CORRECTIVE-001/evidence.json"
     ],
     "composes_with": [
-      ".orchestrator/dispatch_policy.py",
       ".orchestrator/rewrite/dispatch_admission.py",
       ".orchestrator/rewrite/task_machine.py",
       ".orchestrator/rewrite/integration_receipt.py"
     ]
   },
   "defect": {
-    "summary": "task_execution_dispatch_candidate (supervisor.py) gated OWNED_FINALIZE on the unconditional, unscoped task_has_current_canonical_integration_receipt predicate, while evaluate_task_delivery_admission (dispatch_policy.py, the planner/runtime-reservation predicate reserve_dispatch_plan and evaluate_dispatch_candidate both call) gated the same decision on the repository-scoped is_non_default_repository_finalization_pending, which deliberately leaves Pantheon-repo (default repository) finalize eligible without a receipt and only requires a receipt for non-default-repository (e.g. execute-plans) deliveries.",
-    "symptom": "For a non-default-repository review_approved task, the planner could still (depending on call path) reach a different verdict than the freshness recheck task_execution_dispatch_candidate performs inside stale_dispatch_skip_message/current_dispatch_event_key, current_dispatch_event_key returning a different or null expected_key than the one the planner used to build the event -- an accepted plan discarded purely because the two predicates disagreed, not because task truth changed.",
-    "fix": "task_execution_dispatch_candidate now gates OWNED_FINALIZE on the exact same is_non_default_repository_finalization_pending(config, task) call evaluate_task_delivery_admission already uses, so planning, runtime reservation (reserve_dispatch_plan), and the stale-event freshness recheck all consume one authoritative predicate and therefore always compute the same event key for the same task/config snapshot."
+    "summary": "PR #5771 (rejected) unified the two disagreeing predicates onto the repository-scoped is_non_default_repository_finalization_pending as it stood, which unconditionally exempted every Pantheon (default-repository) row from the receipt gate regardless of whether it had a live PR review_binding. That exemption is itself the underlying defect: acceptance 1 and the source SA_SD_PLAN.md require the canonical receipt gate to hold for the affected Pantheon path too, and the auto-integrator already treats a Pantheon PR delivery exactly like any other repository's -- it merges the PR and stamps integration_receipt before the row may be considered landed. Dispatching owner-finalize for a Pantheon review_approved row that still has an unmerged PR in flight (a live review_binding, no matching integration_receipt) races the auto-integrator's own merge.",
+    "symptom": "Hermetic reproduction: task_fixture(status=review_approved), target_repo=pantheon, generation=4, an exact review_binding (pr/head_sha/head_branch/base) but no integration_receipt. Before this fix, build_dispatch_plan emitted 1 owned_finalize_dispatch event and reserve_dispatch_plan appended it, because is_non_default_repository_finalization_pending returned False as soon as it saw target_repo == \"pantheon\", independent of whether a receipt-worthy PR delivery was in flight. The original (pre-PR-#5771) freshness predicate (task_has_current_canonical_integration_receipt, unconditional) correctly rejected this exact row; PR #5771 made the freshness recheck agree with the (wrong) planner behavior instead of the reverse.",
+    "fix": "is_non_default_repository_finalization_pending (.orchestrator/dispatch_policy.py) no longer branches on repository identity to decide whether a receipt is required. It now branches on whether the row carries a live review_binding: a row with no review_binding at all (a non-PR closeout) is never receipt-gated, exactly as before; a row with a review_binding -- Pantheon included -- must carry a matching current integration_receipt or owned_finalize_dispatch stays ineligible. Repository-scope validation (multi_repo_registry.validate_task_repository_scope) is still evaluated unconditionally and still fails closed (pending=True) for an unknown/misconfigured repository. Because task_execution_dispatch_candidate (supervisor.py) already called this exact shared function, planner, runtime reservation (reserve_dispatch_plan), and the stale-event freshness recheck now all agree for the Pantheon path without any further supervisor.py change."
   },
   "behavioral_proof": {
-    "reproduction_and_fix": "test_planner_and_freshness_agree_across_integration_receipt_states (.orchestrator/test_supervisor.py) builds a non-default-repository (execute-plans) review_approved task and shows: (1) receipt-less, both the planner (planner_decision/evaluate_dispatch_candidate) and the freshness recheck (task_execution_dispatch_candidate) agree the task is not eligible for owned_finalize_dispatch -- no event is reserved; (2) once an exact canonical integration_receipt lands, the planner reserves exactly one owned_finalize_dispatch event, task_execution_dispatch_candidate independently reaches the identical OWNED_FINALIZE verdict, and both stale_dispatch_skip_message and current_dispatch_event_key confirm the planner's event key is still the exact expected key -- the plan is not discarded.",
-    "unified_predicate": "test_review_approved_waits_for_exact_integration_receipt (.orchestrator/test_supervisor.py) exercises task_execution_dispatch_candidate directly against a non-default-repository delivery and shows it now requires the same exact receipt evaluate_task_delivery_admission requires, instead of an unconditional repo-unaware check.",
-    "default_repository_unaffected": "test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator's existing 'Normal unmerged Pantheon finalization remains eligible' assertion (step 5) is unchanged and still passes: a Pantheon (default-repository) review_approved task remains eligible for owned_finalize_dispatch without an integration receipt, matching is_non_default_repository_finalization_pending's documented contract, which the fix reuses rather than replaces."
+    "pantheon_reproduction_and_fix": "test_pantheon_pr_delivery_waits_for_exact_integration_receipt (.orchestrator/test_supervisor.py) is the actual Pantheon mismatch regression: task_fixture(status=review_approved), target_repo=pantheon, generation=4, an exact review_binding, no integration_receipt. It proves, through the real dispatch path (not just the pure predicate): (1) planner_decision and task_execution_dispatch_candidate agree the row is ineligible; (2) build_dispatch_plan emits zero events and reserve_dispatch_plan reserves nothing, leaving queue_events empty; (3) once the exact matching integration_receipt lands, planner_decision and task_execution_dispatch_candidate agree on OWNED_FINALIZE, build_dispatch_plan emits exactly one event, stale_dispatch_skip_message/current_dispatch_event_key confirm that event is not stale, and reserve_dispatch_plan reserves it (exactly one queued event); (4) a second reserve_dispatch_plan call against the same already-reserved plan is suppressed (duplicate reservation returns False, queue still holds exactly one event).",
+    "dispatch_policy_unit_proof": "test_is_non_default_repository_finalization_pending_cases (.orchestrator/test_dispatch_policy.py) adds the Pantheon-with-review_binding cases directly against the predicate: a Pantheon PR delivery with no receipt is pending=True, and with its exact current receipt is pending=False; the pre-existing no-review_binding Pantheon case (a non-PR closeout) remains pending=False, proving the fix is scoped to PR deliveries only.",
+    "non_default_repository_unaffected": "test_review_approved_waits_for_exact_integration_receipt and test_planner_and_freshness_agree_across_integration_receipt_states (execute-plans deliveries) are unchanged and still pass: the receipt-required behavior for non-default repositories, which already worked correctly, is untouched.",
+    "no_review_binding_pantheon_unaffected": "test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator step 5 (a Pantheon task with no review_binding at all) is unchanged and still passes eligible/OWNED_FINALIZE: a non-PR Pantheon closeout is never receipt-gated.",
+    "worker_recovery_fixture_correction": "test_approved_closeout_recovery_preserves_exact_reviewer_binding (.orchestrator/test_supervisor.py) modeled a Pantheon task with a live review_binding but no receipt and asserted the recovered task's replacement plan still contains 1 owned_finalize_dispatch event; that assumption depended on the exact defect this task repairs. The fixture now carries a matching integration_receipt (task_generation=1, valid across the post-recovery generation bump to 2, per integration_receipt's generation-fence contract), so the test continues to prove worker-lease recovery preserves the exact reviewer binding without relying on the fixed bug.",
+    "dispatch_policy_admission_fixture_correction": "test_evaluate_task_delivery_admission_multirepo_gate step 3 modeled the same unreceipted-Pantheon-PR case as admitted; it now asserts that exact row is blocked (task_not_dispatchable) unreceipted and admitted once an exact matching receipt is attached (step 3b), matching the corrected predicate."
   },
   "validation": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"review_approved_waits_for_exact_integration_receipt or ops_fe_review_proof or planner_and_freshness_agree\"",
-        "result": "3 passed"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"pantheon_pr_delivery or review_approved_waits_for_exact_integration_receipt or planner_and_freshness_agree or planner_ops_fe_review_proof\"",
+        "result": "4 passed"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "result": "324 passed, 76 subtests passed in 113.45s"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/rewrite/test_task_machine.py",
-        "result": "133 passed, 24 subtests passed in 19.25s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py -k \"is_non_default_repository_finalization_pending_cases\"",
+        "result": "1 passed"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/rewrite/test_task_machine.py",
-        "result": "458 passed, 100 subtests passed in 147.59s"
+        "result": "459 passed, 100 subtests passed in 208.98s"
       }
     ]
   },
   "review": {
     "status": "pending_independent_review",
-    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=docs/deployment/evidence/OPS-SUPERVISOR-DISPATCH-RECONCILIATION-CORRECTIVE-001/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Claude REVIEW_FILE=docs/deployment/evidence/OPS-SUPERVISOR-DISPATCH-RECONCILIATION-CORRECTIVE-001/evidence.json through the governed approve command only after independently checking the exact PR head.",
     "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
   }
 }

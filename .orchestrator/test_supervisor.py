@@ -3263,6 +3263,108 @@ class SharedPlannerContractTests(unittest.TestCase):
         bad_config_coord_scalar["coordination"] = 42
         self.assertFalse(planner_decision(bad_config_coord_scalar, task_fe, target="Codex")["eligible"])
 
+    def test_pantheon_pr_delivery_waits_for_exact_integration_receipt(self) -> None:
+        """Reproduce the exact rejected-PR defect: a Pantheon (default-repository)
+        review_approved row with a live PR review_binding but no integration
+        receipt must not reserve owned_finalize_dispatch through build_dispatch_plan
+        or reserve_dispatch_plan, and must not be treated as a stale/current event
+        mismatch by current_dispatch_event_key. Normal_pantheon finalization with
+        no review_binding at all (a non-PR closeout) remains eligible; see
+        test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator
+        step 5.
+        """
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+        task = task_fixture(status="review_approved")
+        task["target_repo"] = "pantheon"
+        task["generation"] = 4
+        task["review_binding"] = {
+            "pr": 5771,
+            "head_sha": head_sha,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        task_map = {"TASK-1": task}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+
+            # Receipt-less: the planner's own predicate, build_dispatch_plan, and
+            # the freshness recheck must all agree the row is not finalize-eligible.
+            unreceipted_plan = planner_decision(config, task, target="Codex")
+            self.assertFalse(unreceipted_plan["eligible"])
+            self.assertIsNone(
+                supervisor.task_execution_dispatch_candidate(
+                    config, task, "Codex", task_map
+                )
+            )
+
+            state = with_healthy_delivery_health(
+                config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+            )
+            status_snapshot = {"tasks": [task]}
+            plan = supervisor.build_dispatch_plan(
+                config, state, status_snapshot, [], live_total=0
+            )
+            self.assertEqual(plan["events"], [])
+            with mock.patch.object(supervisor, "load_status", return_value=status_snapshot):
+                reserved = supervisor.reserve_dispatch_plan(config, state, plan)
+            self.assertFalse(reserved)
+            self.assertEqual(supervisor.queue_events(state), [])
+
+            # Exact current canonical receipt lands: exactly one stable event is
+            # planned, reserved once, and the freshness recheck confirms it is not
+            # stale -- a second reservation attempt must not duplicate it.
+            task["integration_receipt"] = {
+                "version": 1,
+                "result": "landed",
+                "observation": "performed_merge",
+                "task_generation": 4,
+                "repository": "ajoe734/pantheon",
+                "target_branch": "dev",
+                "pr": 5771,
+                "head_sha": head_sha,
+                "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+                "observed_at": "2026-09-10T00:00:00Z",
+                "source": "canonical_auto_integrator",
+            }
+
+            receipted_plan = planner_decision(config, task, target="Codex")
+            self.assertTrue(receipted_plan["eligible"])
+            self.assertEqual(receipted_plan["reason"], supervisor.REASON_OWNED_FINALIZE)
+            self.assertEqual(
+                supervisor.task_execution_dispatch_candidate(
+                    config, task, "Codex", task_map
+                ),
+                (supervisor.REASON_OWNED_FINALIZE, 1),
+            )
+
+            plan = supervisor.build_dispatch_plan(
+                config, state, status_snapshot, [], live_total=0
+            )
+            self.assertEqual(len(plan["events"]), 1)
+            planned_event = plan["events"][0]
+            self.assertIsNone(
+                supervisor.stale_dispatch_skip_message(config, planned_event, task_map)
+            )
+            self.assertEqual(
+                supervisor.current_dispatch_event_key(config, planned_event, task_map),
+                planned_event["key"],
+            )
+
+            with mock.patch.object(supervisor, "load_status", return_value=status_snapshot):
+                reserved = supervisor.reserve_dispatch_plan(config, state, plan)
+            self.assertTrue(reserved)
+            self.assertEqual(len(supervisor.queue_events(state)), 1)
+
+            # Duplicate reservation of the same plan must be suppressed: the event
+            # is already queued/pending, so a second reservation attempt is a no-op.
+            with mock.patch.object(supervisor, "load_status", return_value=status_snapshot):
+                reserved_again = supervisor.reserve_dispatch_plan(config, state, plan)
+            self.assertFalse(reserved_again)
+            self.assertEqual(len(supervisor.queue_events(state)), 1)
+
     def _pending_intent_task_with_recovery_receipt(
         self,
         *,
@@ -6894,6 +6996,19 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     "base": "dev",
                 },
                 "github_review_bridge": {"actor": "Codex2", "pr": 9001},
+                "integration_receipt": {
+                    "version": 1,
+                    "result": "landed",
+                    "observation": "performed_merge",
+                    "task_generation": 1,
+                    "repository": "ajoe734/pantheon",
+                    "target_branch": "dev",
+                    "pr": 9001,
+                    "head_sha": "a" * 40,
+                    "merge_commit_sha": "b" * 40,
+                    "observed_at": "2026-08-11T00:00:00Z",
+                    "source": "canonical_auto_integrator",
+                },
             }
         )
         supervisor.write_status(self.config, self.status, source="test-approved-seed")
