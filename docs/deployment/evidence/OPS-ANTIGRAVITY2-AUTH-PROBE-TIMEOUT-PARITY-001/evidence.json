@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-ANTIGRAVITY2-AUTH-PROBE-TIMEOUT-PARITY-001",
+  "title": "Give Antigravity2 an explicit qualified auth-probe timeout policy",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "source_baseline": "pantheon-origin-dev@b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "reference_precedent": {
+    "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+    "diagnosis": "The primary antigravity provider was previously bounded by the platform-wide 45-second auth-probe subprocess timeout even though its CLI uses a 90-second print timeout, which could cache a transient OAuth startup failure for a full failed-probe interval and leave a quota-healthy lane idle. That task qualified providers.antigravity.auth_probe = {probe_timeout_seconds: 120, failed_probe_interval_seconds: 60}.",
+    "gap": "antigravity2 shares the same antigravity CLI/adapter shape (.orchestrator/provider_permissions.py::_antigravity_auth_probe) but was never given the matching auth_probe block, so it silently fell back to AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS=45 and AUTH_PROBE_FAILED_INTERVAL_SECONDS=60 for the probe timeout, producing the same avoidable retry_after health gating the precedent task fixed for antigravity."
+  },
+  "scope": {
+    "owned": [
+      ".orchestrator/config.json: providers.antigravity2.auth_probe = {probe_timeout_seconds: 120, failed_probe_interval_seconds: 60} (byte-identical to providers.antigravity.auth_probe)",
+      ".orchestrator/test_provider_permissions.py: test_antigravity2_auth_probe_matches_antigravity_qualified_timeout proving the resolved _auth_probe_settings() parity, that an unconfigured provider still resolves the plain 45s global default, and that account/home/retry state stays distinct between the two provider lanes",
+      "docs/deployment/evidence/OPS-ANTIGRAVITY2-AUTH-PROBE-TIMEOUT-PARITY-001/evidence.json"
+    ],
+    "not_changing": [
+      "The global provider_auth default block and AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS/AUTH_PROBE_FAILED_INTERVAL_SECONDS constants in provider_permissions.py",
+      "providers.antigravity.auth_probe (primary provider settings, left byte-identical)",
+      "providers.antigravity2.account, providers.antigravity2.antigravity.home/config_home, providers.antigravity2.retry (credential/profile isolation and retry limits untouched)",
+      "Scheduler planning, dispatch ordering, global capacity limits (workload/concurrency), model rotation ordering, worker retry limits, provider binaries, login state, or queue state",
+      "_antigravity_auth_probe / _auth_probe_settings implementation in provider_permissions.py (config-only change; the generic settings resolver already reads providers.<id>.auth_probe)"
+    ],
+    "composes_with": [
+      "provider_permissions._auth_probe_settings() generic per-provider auth_probe resolution",
+      "The supervisor's periodic provider-capability refresh (.orchestrator/provider_capabilities.json) and dashboard health rendering for antigravity2"
+    ]
+  },
+  "config_diff": {
+    "file": ".orchestrator/config.json",
+    "path": "providers.antigravity2.auth_probe",
+    "before": null,
+    "after": {
+      "probe_timeout_seconds": 120,
+      "failed_probe_interval_seconds": 60
+    },
+    "diff": "--- a/.orchestrator/config.json\n+++ b/.orchestrator/config.json\n@@ -509,6 +509,10 @@\n       },\n       \"retry\": {\n         \"max_attempts\": 5\n+      },\n+      \"auth_probe\": {\n+        \"probe_timeout_seconds\": 120,\n+        \"failed_probe_interval_seconds\": 60\n       }\n     },\n     \"codex\": {"
+  },
+  "local_verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_provider_permissions.py -k antigravity",
+      "result": "15 passed, 113 deselected",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_provider_permissions.py",
+      "result": "128 passed, 18 subtests passed",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py .orchestrator/test_explain_dispatch.py",
+      "result": "81 passed (unaffected, proves scheduler/dispatch ordering untouched)",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -c \"import json; json.load(open('.orchestrator/config.json'))\"",
+      "result": "valid json",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -c \"import sys; sys.path.insert(0,'.orchestrator'); import provider_permissions as pp; c=pp.load_config(); print(pp._auth_probe_settings(c,'antigravity')); print(pp._auth_probe_settings(c,'antigravity2'))\"",
+      "result": "Both resolve probe_timeout_seconds=120, failed_probe_interval_seconds=60; a third, unconfigured provider (codex) still resolves the plain global default probe_timeout_seconds=45",
+      "exit_code": 0
+    }
+  ],
+  "post_merge_health_observation": {
+    "status": "pending_at_handoff",
+    "note": "A frozen review-evidence manifest may not be re-committed after reviewer approval (task-closeout-finalization.md § Review Evidence Manifest Rule), so the actual fresh secondary-provider (antigravity2) health reading is captured live at owner closeout time -- after the supervisor integrator merges this exact approved head into dev -- and recorded in the canonical `ai-status.sh done` checkpoint message and activity log rather than by amending this file post-approval.",
+    "how_to_reproduce": "PANTHEON_COMMAND_ROOT scoped: python3 -c \"import sys; sys.path.insert(0, '.orchestrator'); import provider_permissions as pp; c = pp.load_config(); print(pp._antigravity_auth_probe(c, 'antigravity2', pp.command_exists('agy')))\" -- or inspect the supervisor's periodically refreshed .orchestrator/provider_capabilities.json entry for providers.antigravity2 after the deployed config picks up this change.",
+    "pre_change_baseline_observed": {
+      "source": "live .orchestrator/provider_capabilities.json on the command root, captured before this change merged",
+      "last_auth_probe_at": "2026-09-02T15:08:02Z",
+      "ready": false,
+      "status": "exit_1",
+      "note": "Pre-existing non-readiness on this host is caused by a read-only antigravity2 log directory (~/.gemini-agy2/.gemini/antigravity-cli/log), not by the probe timeout; this confirms antigravity2 already probes as its own distinct credential_group (antigravity_antigravity2) separate from antigravity's, unaffected by this timeout-only change."
+    }
+  },
+  "review_decision": {
+    "status": "pending"
+  }
+}

@@ -1307,6 +1307,47 @@ EOF
             claude2_runtime["env"]["CLAUDE_CONFIG_DIR"],
         )
 
+    def test_antigravity2_auth_probe_matches_antigravity_qualified_timeout(self) -> None:
+        config = json.loads((Path(ROOT) / ".orchestrator" / "config.json").read_text(encoding="utf-8"))
+
+        antigravity_probe_config = config["providers"]["antigravity"]["auth_probe"]
+        antigravity2_probe_config = config["providers"]["antigravity2"]["auth_probe"]
+
+        self.assertEqual(antigravity2_probe_config, antigravity_probe_config)
+        self.assertEqual(antigravity2_probe_config["probe_timeout_seconds"], 120)
+        self.assertEqual(antigravity2_probe_config["failed_probe_interval_seconds"], 60)
+
+        antigravity_settings = provider_permissions._auth_probe_settings(config, "antigravity")
+        antigravity2_settings = provider_permissions._auth_probe_settings(config, "antigravity2")
+
+        self.assertEqual(antigravity2_settings["probe_timeout_seconds"], antigravity_settings["probe_timeout_seconds"])
+        self.assertEqual(
+            antigravity2_settings["failed_probe_interval_seconds"],
+            antigravity_settings["failed_probe_interval_seconds"],
+        )
+        self.assertNotEqual(
+            antigravity2_settings["probe_timeout_seconds"],
+            provider_permissions.AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS,
+        )
+
+        # Untouched providers keep resolving the plain global default.
+        unconfigured_settings = provider_permissions._auth_probe_settings(config, "codex")
+        self.assertEqual(
+            unconfigured_settings["probe_timeout_seconds"],
+            provider_permissions.AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS,
+        )
+
+        # The explicit timeout does not merge credentials, capacity, or retry
+        # state between the two provider lanes.
+        antigravity_provider = config["providers"]["antigravity"]
+        antigravity2_provider = config["providers"]["antigravity2"]
+        self.assertNotEqual(antigravity_provider["account"], antigravity2_provider["account"])
+        self.assertNotEqual(
+            antigravity_provider["antigravity"].get("home"),
+            antigravity2_provider["antigravity"].get("home"),
+        )
+        self.assertEqual(antigravity_provider["retry"], antigravity2_provider["retry"])
+
     def test_configured_claude_probes_use_their_isolated_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
