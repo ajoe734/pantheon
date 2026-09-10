@@ -15,21 +15,19 @@ import json
 import os
 import sys
 import time
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
-BFF_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BFF_DIR)
-
-import main as bff_main  # noqa: E402
-import trade_journeys as tj  # noqa: E402
-from trade_journey_projection_store import (  # noqa: E402
+from services.control_plane.bff import trade_journeys as tj
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.trade_journey_projection_store import (
     InvalidPageToken,
     PageTokenCodec,
     ProjectionPage,
     TradeJourneyProjectionStore,
     UnavailableProjectionReader,
 )
-from fastapi.testclient import TestClient  # noqa: E402
-from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
+from services.trade_journey.materializer import JourneyMaterializer
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-tj-005:operator,reviewer"}
@@ -310,17 +308,14 @@ class _StubIdentity:
 
 def _client_with(events, *, raw_events=None, controller=None):
     reader = InMemoryPostgresProjectionReader(events, controller=controller)
-    bff_main.read_store._trade_journey_projection_reader_override = reader
-    return TestClient(bff_main.app), reader
+    client, _ = _direct_client(events, projection_reader=reader)
+    return client, reader
 
 
 def _direct_client(events, *, projection_reader=None):
     """Isolated app wired straight to `create_trade_journeys_router` with a
     test-double identity extractor.
     """
-    from fastapi import FastAPI, HTTPException
-    from models import OperatorIdentity
-
     if projection_reader is None:
         projection_reader = InMemoryPostgresProjectionReader(events)
 
@@ -361,11 +356,7 @@ _BASE_EVENTS = [
 
 
 def _run(fn):
-    original_reader = getattr(bff_main.read_store, "_trade_journey_projection_reader_override", None)
-    try:
-        fn()
-    finally:
-        bff_main.read_store._trade_journey_projection_reader_override = original_reader
+    fn()
 
 
 # --------------------------------------------------------------------------- #
@@ -394,8 +385,8 @@ def _response_schema_ref(schema: dict, path: str) -> str:
 
 
 def test_tj_e2e_005_openapi_publishes_typed_envelopes_for_every_endpoint() -> None:
-    bff_main.app.openapi_schema = None
-    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    client, _ = _client_with(_BASE_EVENTS)
+    schema = client.get("/openapi.json").json()
 
     components = schema["components"]["schemas"]
     for component_name in ("TradeJourneyListEnvelope", "TradeJourneyDetailEnvelope", "TradeJourneyMeta", "TradeJourneyFreshness"):
@@ -407,8 +398,8 @@ def test_tj_e2e_005_openapi_publishes_typed_envelopes_for_every_endpoint() -> No
 
 
 def test_tj_e2e_005_meta_schema_requires_read_state_enum() -> None:
-    bff_main.app.openapi_schema = None
-    schema = bff_main.app.openapi()
+    client, _ = _client_with(_BASE_EVENTS)
+    schema = client.app.openapi()
     meta_schema = schema["components"]["schemas"]["TradeJourneyMeta"]
     assert set(meta_schema["properties"]["read_state"]["enum"]) == {"formal", "partial", "degraded", "unavailable"}
     freshness_schema = schema["components"]["schemas"]["TradeJourneyFreshness"]
@@ -428,6 +419,8 @@ def test_tj_e2e_005_meta_schema_requires_read_state_enum() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_tj_e2e_005_static_siblings_are_registered_before_journey_id_param_route() -> None:
+    client, _ = _client_with(_BASE_EVENTS)
+
     def _collect_route_paths(routes) -> list[str]:
         paths = []
         for r in routes:
@@ -440,7 +433,7 @@ def test_tj_e2e_005_static_siblings_are_registered_before_journey_id_param_route
         return paths
 
     paths_in_order = [
-        path for path in _collect_route_paths(bff_main.app.routes)
+        path for path in _collect_route_paths(client.app.routes)
         if path.startswith("/bff/management/trade-journeys")
     ]
     resolve_idx = paths_in_order.index("/bff/management/trade-journeys/resolve")
@@ -819,8 +812,7 @@ def test_tj_e2e_005_out_of_scope_tenant_detail_returns_identical_404() -> None:
 
 def test_tj_e2e_005_unavailable_store_returns_200_with_explicit_unavailable_state() -> None:
     def scenario():
-        bff_main.read_store._trade_journey_projection_reader_override = UnavailableProjectionReader("reader unavailable")
-        client = TestClient(bff_main.app)
+        client, _ = _direct_client([], projection_reader=UnavailableProjectionReader("reader unavailable"))
         resp = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
             headers=OPERATOR_HEADERS,
@@ -1137,7 +1129,7 @@ def test_tj_e2e_005_list_pagination_handles_many_journeys_within_budget() -> Non
 
 
 def test_tj_e2e_005_publish_events_route_is_retired_and_cannot_write_json() -> None:
-    client = TestClient(bff_main.app)
+    client, _ = _client_with(_BASE_EVENTS)
     new_event = {
         "event_id": "test-evt-123",
         "journey_id": "tj-123",

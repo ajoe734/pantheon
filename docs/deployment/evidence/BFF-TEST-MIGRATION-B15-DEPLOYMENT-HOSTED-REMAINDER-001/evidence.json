@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+  "base_sha": "6f00d0eb38e57946fe784de493df4606a55169b3",
+  "head_sha": "PENDING_COMMIT",
+  "branch": "task/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+  "owner": "Claude2",
+  "reviewer": "Codex",
+  "parent_task": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+  "delivery_state": "ready_for_review",
+  "depends_on": [
+    "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+    "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001"
+  ],
+  "dependency_satisfied": {
+    "BFF-TEST-MIGRATION-REPARTITION-PLAN-001": true,
+    "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001": true
+  },
+  "scope": {
+    "changed_files": [
+      "services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
+      "services/control-plane/bff/test_ptj_004_trade_journal.py",
+      "services/control-plane/bff/test_srclive_overlay_contract.py",
+      "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001/evidence.json"
+    ],
+    "two_allowed_whole_app_suites_untouched": [
+      "services/control-plane/bff/test_execute_plans_contract_registry.py",
+      "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py"
+    ],
+    "retained_parent_foundation_untouched": [
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ],
+    "main_py_untouched": true
+  },
+  "decoupling_approach": {
+    "test_pkt007_deployment_diff_contract": "Removed sys.path surgery and `import main as bff_main`. Builds an isolated FastAPI app per fixture mounting create_deployment_router(queries=DeploymentReadSurfaceAdapter(store), ...) with stub auth callables from services.control_plane.bff.auth.policy, eliminating global read_store monkeypatching.",
+    "test_ptj_004_trade_journal": "Removed `import main as bff_main`. Builds an isolated FastAPI app mounting trade_journal.create_trade_journal_router with identity/role callables from services.control_plane.bff.personas.service.",
+    "test_srclive_overlay_contract": "Removed sys.path surgery and `import main as bff_main`. Imports and monkeypatches _overlay_source_health_truth / _source_ingest_truth_by_connector directly from services.control_plane.bff.personas.service (the module main.py delegates to), with no TestClient/app needed for these pure-function tests.",
+    "test_tj_e2e_005_trade_journeys_read_api": "Removed sys.path surgery and `import main as bff_main`. Generalized the existing router-only `_direct_client` helper (create_trade_journeys_router) so every scenario, including `_client_with`, routes through it; no global read_store override remains."
+  },
+  "importer_disposition": {
+    "main_imports_before": 4,
+    "main_imports_after": 0,
+    "sys_path_mutations_before": 3,
+    "sys_path_mutations_after": 0,
+    "global_read_store_or_command_store_monkeypatches_before": 3,
+    "global_read_store_or_command_store_monkeypatches_after": 0
+  },
+  "verification": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "provisioned .venv-pantheon interpreter"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_pkt007_deployment_diff_contract.py services/control-plane/bff/test_ptj_004_trade_journal.py services/control-plane/bff/test_srclive_overlay_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "exit_code": 0,
+      "result": "52 passed, 1 warning in 17.66s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed in 1.52s"
+    },
+    {
+      "command": "AST static scan of the four changed files for `import main`/`from ... import main`, sys.path.insert mutations, and main.read_store/command_store monkeypatches",
+      "exit_code": 0,
+      "result": "0 main imports, 0 sys.path mutations across all four files"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Clean (no whitespace or syntax issues)"
+    }
+  ],
+  "prior_art": {
+    "note": "The exact decoupling diff for these four files was previously produced mid-task on branch task/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001 (anchor commit 17cd2ebb5c35e2e6ff01054d07fb1727a14bdd53) before that task's delivery blocked on the whole-app allowlist contract discrepancy (recorded in docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001/evidence.json). This task verified the pre-image of all four files was byte-identical to that commit's parent, reapplied the identical diff cleanly onto the current dev-derived branch (now that the dependency BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001 has resolved the blocker and merged), and re-ran full verification against the current head.",
+    "reused_commit": "17cd2ebb5c35e2e6ff01054d07fb1727a14bdd53"
+  },
+  "review": {
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "ready_for_review"
+  }
+}
