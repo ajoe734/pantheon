@@ -21,7 +21,8 @@ from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import local
 from typing import Any, Mapping, Generator, Callable, Iterable
@@ -1357,6 +1358,36 @@ def _claude_oauth_refresh_serialization(account_lock_key: str | None) -> Generat
         handle.close()
 
 
+class ClaudeAuthRetry(RuntimeError):
+    """Auth is unproven after a temporary failure, not rejected or capacity-proven.
+
+    Both the probe and launcher forward this observation to existing health
+    admission. No credential, provider body or independent retry loop is kept.
+    """
+
+    def __init__(self, message: str, *, retry_after: str | None = None) -> None:
+        super().__init__(message)
+        self.retry_at: str | None = None
+        if retry_after:
+            try:
+                now = datetime.now(timezone.utc)
+                value = retry_after.strip()
+                deadline = (
+                    now + timedelta(seconds=int(value))
+                    if value.isdigit() else parsedate_to_datetime(value)
+                )
+                if deadline.tzinfo is not None and deadline > now:
+                    self.retry_at = deadline.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            except (ValueError, TypeError, OverflowError):
+                pass  # Existing health policy supplies its normal retry interval.
+
+    def as_probe(self) -> dict[str, Any]:
+        return {
+            "source": "live", "ready": False, "status": "auth_retry_after",
+            "error": str(self), "retry_at": self.retry_at, "checked_at": utc_now(),
+        }
+
+
 def refresh_claude_oauth_tokens(
     env: dict[str, str] | None = None,
     *,
@@ -1388,11 +1419,25 @@ def refresh_claude_oauth_tokens(
         with _claude_oauth_refresh_serialization(account_lock_key):
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429 or 500 <= exc.code < 600:
+            raise ClaudeAuthRetry(
+                f"Claude OAuth refresh temporarily unavailable (HTTP {exc.code}).",
+                retry_after=exc.headers.get("Retry-After") if exc.headers else None,
+            ) from None
         return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        raise ClaudeAuthRetry("Claude OAuth refresh temporarily unavailable (transport or response error).") from None
+
+    if (
+        not isinstance(response_payload, dict)
+        or not isinstance(response_payload.get("access_token"), str)
+        or not response_payload["access_token"].strip()
+    ):
+        raise ClaudeAuthRetry("Claude OAuth refresh returned no usable access token.")
 
     updated = deepcopy(oauth)
-    updated["accessToken"] = response_payload.get("access_token") or updated.get("accessToken") or ""
+    updated["accessToken"] = response_payload["access_token"]
     updated["refreshToken"] = response_payload.get("refresh_token") or refresh_token
     expires_in = response_payload.get("expires_in")
     if expires_in is not None:
@@ -1417,6 +1462,10 @@ def claude_auth_ready(
     refresh_if_needed: bool = True,
     account_lock_key: str | None = None,
 ) -> bool:
+    """One auth decision: ready, rejected/unavailable, or ClaudeAuthRetry.
+
+    Temporary errors must reach health admission, never be flattened to False.
+    """
     if not binary:
         return False
     env_token = claude_oauth_token_from_env(env)
@@ -1442,13 +1491,18 @@ def claude_auth_ready(
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = refreshed_token
             return True
         return False
-    status = run_command([binary, "auth", "status"], env=env)
+    try:
+        status = run_command([binary, "auth", "status"], env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
     if status.returncode != 0 or not status.stdout:
         return False
     try:
         payload = json.loads(status.stdout)
     except json.JSONDecodeError:
-        return False
+        raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
+    if not isinstance(payload, dict):
+        raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
     if not payload.get("loggedIn"):
         return False
     loaded = load_claude_oauth_tokens(env)

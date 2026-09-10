@@ -569,31 +569,74 @@ async def retrieve_memory(
     ranked_hits = []
     if scope in {"institutional", "both"}:
         institutional_store = _store()
-        for hit in institutional_store.retrieve(
-            query=query,
-            knowledge_type=knowledge_type,
-            scope_filter=scope_filter,
-            tags=tag_values,
-            limit=limit,
-        ):
-            ranked_hits.append(
-                ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-            )
-
-    if scope in {"persona", "both"}:
+        backend = None
         try:
-            persona_store = _persona_store()
-            for hit in persona_store.retrieve(
-                persona_id=persona_id or "",
+            from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_institutional_with_backend
+            backend = get_search_retrieval_backend()
+        except Exception:
+            backend = None
+
+        if backend is not None:
+            for hit in retrieve_institutional_with_backend(
+                institutional_store,
+                backend=backend,
                 query=query,
-                memory_type=memory_type,
-                relevance_scope=persona_relevance_scope,
+                knowledge_type=knowledge_type,
+                scope_filter=scope_filter,
                 tags=tag_values,
                 limit=limit,
             ):
                 ranked_hits.append(
-                    ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
                 )
+        else:
+            for hit in institutional_store.retrieve(
+                query=query,
+                knowledge_type=knowledge_type,
+                scope_filter=scope_filter,
+                tags=tag_values,
+                limit=limit,
+            ):
+                ranked_hits.append(
+                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
+                )
+
+    if scope in {"persona", "both"}:
+        try:
+            persona_store = _persona_store()
+            backend = None
+            try:
+                from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_persona_with_backend
+                backend = get_search_retrieval_backend()
+            except Exception:
+                backend = None
+
+            if backend is not None:
+                for hit in retrieve_persona_with_backend(
+                    persona_store,
+                    persona_id=persona_id or "",
+                    backend=backend,
+                    query=query,
+                    memory_type=memory_type,
+                    relevance_scope=persona_relevance_scope,
+                    tags=tag_values,
+                    limit=limit,
+                ):
+                    ranked_hits.append(
+                        ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                    )
+            else:
+                for hit in persona_store.retrieve(
+                    persona_id=persona_id or "",
+                    query=query,
+                    memory_type=memory_type,
+                    relevance_scope=persona_relevance_scope,
+                    tags=tag_values,
+                    limit=limit,
+                ):
+                    ranked_hits.append(
+                        ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                    )
         except PersonaMemoryError as exc:
             raise HTTPException(
                 status_code=422,

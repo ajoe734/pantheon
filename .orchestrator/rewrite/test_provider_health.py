@@ -88,6 +88,23 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             DeliveryHealthState.RETRY_AFTER,
         )
 
+    def test_refresh_retry_is_endpoint_local_and_does_not_prove_credentials(self) -> None:
+        original = provider_health.apply_probe(None, endpoint_id="claude", account_id="shared",
+            probe={"source": "live", "ready": True}, observed_at=self.now)
+        retry_at = (self.now + timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+        result = provider_health.apply_probe(original, endpoint_id="claude", account_id="shared",
+            probe={"source": "live", "ready": False, "status": "auth_retry_after", "retry_at": retry_at}, observed_at=self.now)
+        self.assertEqual(result["accounts"], original["accounts"])
+        self.assertEqual(provider_health.endpoint_state(result, "claude", now=self.now), DeliveryHealthState.RETRY_AFTER)
+        self.assertEqual(result["endpoints"]["claude"]["retry_at"], retry_at)
+        self.assertIsNone(result["endpoints"]["claude"]["valid_until"])
+        self.assertEqual(provider_health.endpoint_state(result, "claude", now=self.now + timedelta(seconds=121)), DeliveryHealthState.UNKNOWN)
+        self.assertEqual(original["endpoints"]["claude"]["state"], "healthy")
+        default_retry = provider_health.apply_probe(None, endpoint_id="claude", account_id="shared",
+            probe={"source": "live", "ready": False, "status": "auth_retry_after"}, observed_at=self.now)
+        self.assertEqual(default_retry["accounts"], {})
+        self.assertEqual(default_retry["endpoints"]["claude"]["retry_at"], (self.now + timedelta(seconds=60)).isoformat().replace("+00:00", "Z"))
+
     def test_expired_or_missing_evidence_demands_one_fresh_observation(self) -> None:
         snapshot = provider_health.apply_probe(
             provider_health.empty_delivery_health(),

@@ -264,6 +264,15 @@ def health_gate_for_endpoint(
         now=now,
     )
     if account_gate is not None:
+        if account_refresh is not None:
+            endpoint_gate, endpoint_refresh = _health_gate(
+                _health_record(endpoint_health, endpoint_id),
+                scope=HealthScope.ENDPOINT, identifier=endpoint_id, now=now,
+            )
+            if endpoint_gate is not None and endpoint_refresh is None:
+                # Account evidence expiring cannot authorize a probe while
+                # that exact endpoint is still inside its refresh cooldown.
+                return endpoint_gate, None
         refresh = (
             HealthRefreshTarget(HealthScope.ENDPOINT, endpoint_id)
             if account_refresh is not None
