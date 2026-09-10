@@ -275,14 +275,15 @@ def apply_probe(
     if failure_kind is None:
         return normalize_delivery_health(snapshot)
     if failure_kind == "auth":
+        retryable = probe.get("status") == "auth_retry_after"
         return _write_entry(
             snapshot,
             bucket="endpoints",
             identity=endpoint_id,
-            state=DeliveryHealthState.UNAVAILABLE,
+            state=DeliveryHealthState.RETRY_AFTER if retryable else DeliveryHealthState.UNAVAILABLE,
             observed_at=now,
-            retry_at=_retry_time(None, now=now, default_retry_seconds=retry_after_seconds),
-            reason_kind="auth",
+            retry_at=_retry_time(probe.get("retry_at"), now=now, default_retry_seconds=retry_after_seconds),
+            reason_kind="auth_retryable" if retryable else "auth",
             source="live_probe",
             evidence_endpoint=endpoint_id,
             detail=detail,

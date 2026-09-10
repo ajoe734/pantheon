@@ -9,6 +9,7 @@ from common import (
     agent_config_for,
     apply_claude_oauth_token_file,
     claude_auth_ready as shared_claude_auth_ready,
+    ClaudeAuthRetry,
     config_path,
     delivery_runtime_env,
     delivery_workspace_root,
@@ -123,7 +124,15 @@ class ClaudeCLIAdapter(BaseAdapter):
     def capability(self, agent_id: str) -> DeliveryCapability:
         provider_id = _provider_key(self.config, agent_id=agent_id)
         cli = _configured_claude_cli(self.config, provider_id)
-        auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id), refresh_if_needed=False)
+        try:
+            auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id), refresh_if_needed=False)
+        except ClaudeAuthRetry as exc:
+            return DeliveryCapability(
+                adapter=self.name, supported=bool(cli), requires_manual_confirmation=False,
+                can_auto_deliver=False, can_auto_approve_edits=False,
+                delivery_mode="claude_cli", verified="partial", host="Claude Code CLI",
+                notes=str(exc),
+            )
         if cli and auth_ready:
             return DeliveryCapability(
                 adapter=self.name,
@@ -153,7 +162,14 @@ class ClaudeCLIAdapter(BaseAdapter):
         provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
         cli = _configured_claude_cli(self.config, provider_id)
         env = _spawn_env(self.config, provider_id)
-        auth_ready = _claude_auth_ready(cli, env=env, config=self.config, provider_id=provider_id)
+        try:
+            auth_ready = _claude_auth_ready(cli, env=env, config=self.config, provider_id=provider_id)
+        except ClaudeAuthRetry as exc:
+            return DeliveryResult(
+                ok=False, adapter=self.name, mode="claude_cli", target=request.agent_id,
+                auto_delivered=False, manual_confirmation_required=False,
+                error=str(exc), notes=str(exc), metadata={"auth_probe": exc.as_probe()},
+            )
         if not cli or not auth_ready:
             reason = (
                 "Claude CLI is unavailable."
