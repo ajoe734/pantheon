@@ -509,6 +509,10 @@
       },
       "retry": {
         "max_attempts": 5
+      },
+      "auth_probe": {
+        "probe_timeout_seconds": 120,
+        "failed_probe_interval_seconds": 60
       }
     },
     "codex": {

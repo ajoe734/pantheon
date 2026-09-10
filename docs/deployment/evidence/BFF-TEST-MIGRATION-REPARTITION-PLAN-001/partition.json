@@ -417,8 +417,6 @@
       "group": "B15_deployment_hosted",
       "order": 15,
       "source_artifacts": [
-        "services/control-plane/bff/test_execute_plans_contract_registry.py",
-        "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
         "services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
         "services/control-plane/bff/test_ptj_004_trade_journal.py",
         "services/control-plane/bff/test_srclive_overlay_contract.py",
@@ -613,13 +611,13 @@
     ]
   },
   "reconciliation": {
-    "composition_allowlist_importers": 8,
+    "composition_allowlist_importers": 10,
     "composition_allowlist_non_importers": 4,
-    "composition_allowlist_suites": 12,
+    "composition_allowlist_suites": 14,
     "count_conflict_explanation": {
       "172_stale_source_audit": "Stale subtraction in parent evidence.json source_audit (184 direct importers from earlier 365-file scan minus 12 allowlist suites = 172), which was not updated when 28 missing test files were reconciled into the catalog.",
-      "184_outside_allowlist": "Actual remaining non-allowlisted main importers requiring decoupling (182 PLANNED rows + 2 DECOUPLED rows that import main).",
-      "192_total_importers": "Total live AST, dynamic, and subprocess main importers across all 369 test files on disk (8 in composition allowlist + 184 outside allowlist)."
+      "182_outside_allowlist": "Actual remaining non-allowlisted main importers requiring decoupling (180 PLANNED rows + 2 DECOUPLED rows that import main after reclassifying 2 whole-app execute-plans contract suites to composition allowlist).",
+      "192_total_importers": "Total live AST, dynamic, and subprocess main importers across all 369 test files on disk (10 in composition allowlist + 182 outside allowlist)."
     },
     "inventory_migrated_count": 34,
     "inventory_mislabeled_decoupled_count": 2,
@@ -627,10 +625,10 @@
       "services/control-plane/bff/tests/test_management_read_models_router.py",
       "services/control-plane/bff/tests/test_unhandled_error_cors.py"
     ],
-    "inventory_planned_count": 182,
+    "inventory_planned_count": 180,
     "inventory_verified_decoupled_count": 139,
     "live_ast_dynamic_subprocess_importers": 192,
-    "non_allowlist_main_importers": 184,
+    "non_allowlist_main_importers": 182,
     "total_inventory_catalog_entries": 369,
     "total_test_files_on_disk": 369
   },
@@ -685,8 +683,8 @@
       "SIMPLIFY-BFF-RESIDUAL-001",
       "BFF-READ-OWNER-WIRING-CORRECTIVE-001"
     ],
-    "total_partitioned_files": 184,
-    "unique_partitioned_files": 184,
+    "total_partitioned_files": 182,
+    "unique_partitioned_files": 182,
     "wildcard_grants_used": false
   }
 }
