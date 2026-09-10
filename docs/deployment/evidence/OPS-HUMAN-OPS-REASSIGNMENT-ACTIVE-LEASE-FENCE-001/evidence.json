@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-HUMAN-OPS-REASSIGNMENT-ACTIVE-LEASE-FENCE-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "scope": "Development tooling: atomic operator reassignment admission against worker, queue and detached launch authority.",
+  "source": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/OPS-HUMAN-OPS-REASSIGNMENT-ACTIVE-LEASE-FENCE-001",
+    "base_ref": "origin/dev",
+    "base_sha": "63f85bfddc4d4100bb806ad5b8532760808dadb9",
+    "implementation_commit": "c8143e362b487bbcfb19a6e6268a1add5b5e769a",
+    "validated_before_document_only_rebase": "ad0711db3eac32992e6f32354caeb1b73f4344e4",
+    "rebase_verification": "git diff --exit-code between validated source and implementation_commit for all three source/test files: exit 0; intervening dev change contains only unrelated task evidence.",
+    "dispatch_command_runtime_sha": "b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+    "files": {
+      "scripts/ai_status.py": {
+        "blob_sha": "470a18c45aba0d72df201dbaf5dd0debec59cc4b",
+        "sha256": "b4d90b7d688fe0ffd6c78b5434594b3d3d86c09af983b89c1cdcc33fcdc5f137"
+      },
+      "scripts/test_ai_status.py": {
+        "blob_sha": "0dd513b653ee4fa44f3589d3075903abd6c5a36a",
+        "sha256": "8eda7d3c4d324374d9c46988ccf6b8387517b2ebea7f30aa5960f2591ed915d0"
+      },
+      ".orchestrator/test_supervisor.py": {
+        "blob_sha": "9cda6315f183f72175d6cb9dfca9ed82227bd16b",
+        "sha256": "27a1dc7c3af228a4ef25d719a86256bd49f38f5aeffd599138da745dbede88ac"
+      }
+    },
+    "manifest_binding": "Owner handoff binds the subsequent exact PR head and this committed manifest blob; implementation_commit identifies the complete code/test source before adding this evidence."
+  },
+  "changed_files": [
+    "scripts/ai_status.py",
+    "scripts/test_ai_status.py",
+    ".orchestrator/test_supervisor.py",
+    "docs/deployment/evidence/OPS-HUMAN-OPS-REASSIGNMENT-ACTIVE-LEASE-FENCE-001/evidence.json"
+  ],
+  "admission": {
+    "transaction": "Existing main() runtime(shared) -> canonical task(exclusive) -> TaskStore/audit ordering remains held through commit. command_assign reads raw runtime admission state in that transaction before changing roles, generation or emitting assignment audit.",
+    "rejects": [
+      "Nonterminal task worker, including expired or missing-PID leases awaiting settlement",
+      "Nonterminal task queue intent, including queued, processing, launching and retry states",
+      "Unsettled task launch_intent or launch_receipt (receipt worker is nested under worker)",
+      "Unavailable, malformed or unattributable admission evidence"
+    ],
+    "settlement": "Retained worker completed/failed/superseded and queue completed/failed records allow reassignment once launch reservations have settled. Retained worktree allocation metadata alone is not an active worker lease. Older unsettled generations are conservatively fenced too.",
+    "unchanged": [
+      "Existing active worker recovery guard",
+      "Existing assignment CAS and generation increment",
+      "Supervisor pre-spawn, receipt and worker generation fences",
+      "Scheduler ordering/capacity, queue format, retry policy, providers and authentication"
+    ]
+  },
+  "race_orderings": {
+    "lease_first": {
+      "test": "ReassignmentLaunchAdmissionRaceTests.test_lease_committed_first_rejects_reassignment",
+      "result": "passed",
+      "proof": "Forked launcher uses production start_worker_for_request under the real runtime admission lock. A local test adapter spawns a real bounded child process; production code persists a generation-1 worker lease. The separate operator process calls main() after the lease barrier and is rejected. TaskStore snapshot and assignment audit stay unchanged. The child is collected with terminal exit 0."
+    },
+    "assignment_first": {
+      "test": "ReassignmentLaunchAdmissionRaceTests.test_reassignment_committed_first_settles_old_queue_without_launch",
+      "result": "passed",
+      "proof": "Before main() commits reassignment, a second process attempts exclusive runtime admission and gets BlockingIOError, proving the lock remains held through the commit boundary. After generation 2 commits, the old detached generation-1 plan is queued. Production process_queue marks it completed/stale_dispatch_event, never builds an adapter, and creates no worker."
+    },
+    "test_boundaries": "These isolated process tests mock identity/config bootstrap and use a local adapter, with real locks, runtime files, main(), TaskStore and audit writes. They do not activate a live runtime or use production provider credentials. Existing real CLI assignment/reopen regressions also pass."
+  },
+  "validation": [
+    {
+      "command": "timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest --import-mode=prepend -q .orchestrator/test_supervisor.py scripts/test_ai_status.py -k 'not test_ai_status or TaskMetadataTests or SupervisorReassignmentEventIdCompatibilityTests or DevBridgeMaterializeBatchTests or DependencyContractBatchTests or SupervisorDispatchBatchTests'",
+      "exit_code": 0,
+      "result": "448 passed, 388 deselected, 239 subtests passed in 151.70s; includes the entire 328-test supervisor suite and focused status admission/dependency/dispatch/materialization/audit suites",
+      "local_log": "/tmp/assignment-regression-final.log",
+      "sha256": "456bfc4449f32fb99d977b9d954d8da657bb633cd90bcd75232b411add335de5"
+    },
+    {
+      "command": "timeout 90 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py -k 'ReassignmentLaunchAdmissionRaceTests or assignment_stage_preserves_leased_generation or reassignment_fences_stale_reopen'",
+      "exit_code": 0,
+      "result": "4 passed, 324 deselected in 9.28s",
+      "local_log": "/tmp/assignment-race.log",
+      "sha256": "52ca11d9c0b83e9b152e47a42e660ad6a8d131db30a3abc2b1ffd3f58b936a4e"
+    },
+    {
+      "command": "git diff --check origin/dev...HEAD",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    },
+    {
+      "command": "scripts/run-acceptance.sh smoke (isolated /tmp/pantheon-assignment-smoke-venv)",
+      "exit_code": 1,
+      "result": "Stage0 validation, baseline and 20 dev-paper diagnostics tests passed; wrapper stopped at missing firebase_admin. This wrapper attempt is not claimed passed. Installed declared issuer requirements in the isolated venv and ran all remaining smoke components below.",
+      "local_log": "/tmp/assignment-smoke-final.log",
+      "sha256": "0efe69091d7e951ec5df61207f4b4cf9160fea5c0d62f25fb24d83b041786599"
+    },
+    {
+      "command": "timeout 90 /tmp/pantheon-assignment-smoke-venv/bin/python -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py' && timeout 45 /tmp/pantheon-assignment-smoke-venv/bin/python -m unittest deploy/execution-grant-issuer/test_run_server.py && timeout 45 /tmp/pantheon-assignment-smoke-venv/bin/python -m unittest scripts/test_request_execution_grant.py",
+      "exit_code": 0,
+      "result": "All remaining smoke components passed: 67 issuer, 16 server, 22 request-grant tests",
+      "local_log": "/tmp/assignment-smoke-issuer.log",
+      "sha256": "e33feaa30bcb17202b14113a1ca3e0877f41495affe292c42bf4a08d95e770be"
+    }
+  ],
+  "non_passing_exploratory_batches": [
+    {
+      "command": "python3 -m pytest -q scripts/test_ai_status.py -k TaskMetadataTests",
+      "result": "System Python lacks pytest; rerun using existing project venv."
+    },
+    {
+      "command": "timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_ai_status.py",
+      "exit_code": 124,
+      "result": "Not passed: time limit and same-name test_supervisor module import collision; switched focused regression to explicit prepend import order."
+    },
+    {
+      "command": "timeout 420 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest --import-mode=prepend -q .orchestrator/test_supervisor.py scripts/test_ai_status.py",
+      "exit_code": 2,
+      "result": "Not passed: interrupted near bound with 820 passed and two failures (lease-first race and missing runtime fixture in retired-wave assignment). That run overlapped a rebase; it is not exact-source evidence. Added the missing fixture, held source fixed and reran the complete supervisor and relevant status suites successfully above. No claim that the entire 836-test combined collection passed.",
+      "local_log": "/tmp/assignment-combined.log",
+      "sha256": "0bbdebdf9520348e4ca58605c5fa50e428810a806349842852411ea28d7a744b"
+    }
+  ],
+  "delivery": {
+    "independent_review": "Required from Claude on the owner-handoff frozen PR/head/manifest; not yet claimed.",
+    "ci_and_merge": "Required GitHub checks and governed supervisor merge must complete before owner done.",
+    "activation": "Source delivery only. No live command-runtime promotion, runtime-state edits or product deployment performed."
+  }
+}
