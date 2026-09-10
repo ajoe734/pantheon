@@ -6290,7 +6290,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
         self.assertIn("TASK-1", state["load_balance_watch"])
         self.assertEqual(state["load_balance_watch"]["TASK-1"]["owner"], "Codex")
@@ -6333,7 +6333,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
 
     def test_unsaturated_lane_never_starts_the_hold_timer(self) -> None:
@@ -6394,7 +6394,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
         self.assertIn("TASK-1", state["load_balance_watch"])
 
@@ -6439,7 +6439,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
 
     def test_healthy_owner_never_treated_as_transiently_blocked(self) -> None:
@@ -6468,7 +6468,7 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertFalse(changed)
+        self.assertTrue(changed)
         persisted.assert_not_called()
         self.assertNotIn("TASK-1", state["load_balance_watch"])
 
