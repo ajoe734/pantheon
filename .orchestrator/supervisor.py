@@ -31,7 +31,9 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
+from functools import wraps
 import model_rotation
+import runtime_state as promotion_state
 import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
@@ -3219,6 +3221,44 @@ def reserve_execution_authorization_for_launch(
         write_status(config, status, source="supervisor-execution-authorization-reserve")
 
 
+def promotion_launch_guard(operation):
+    @wraps(operation)
+    def guarded(config, state, *args, **kwargs):
+        # The final fresh admission read and adapter process creation share the
+        # promotion lock. Detached runtime-phase snapshots cannot bypass it.
+        with runtime_state_lock(config):
+            current = (
+                load_runtime_state(config)
+                if config.get("paths", {}).get("state_file")
+                else state
+            )
+            runtime = (
+                status_command_runtime_record_from_env(status_command_runtime_env(config))
+                if current.get("promotion")
+                else {}
+            )
+            request = args[0] if args else kwargs.get("request")
+            if getattr(promotion_state, "promotion_launch_allowed", None) and not promotion_state.promotion_launch_allowed(
+                current, runtime, request.task_id if request is not None else None
+            ):
+                return False, "runtime_promotion_fenced", None
+            result = operation(config, state, *args, **kwargs)
+        # The recovery projection child acquires runtime admission itself.
+        # Its canonical receipt is already durable; run projection after unlock.
+        if (
+            isinstance(result, tuple)
+            and len(result) > 0
+            and result[0]
+            and request is not None
+            and getattr(request, "metadata", {}).get("recovery_receipt_id")
+            and config.get("paths", {}).get("status_file")
+        ):
+            sync_status_pipeline(config)
+        return result
+    return guarded
+
+
+@promotion_launch_guard
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3505,6 +3545,7 @@ def start_worker_for_request(
             task_generation=int(request.metadata.get("task_generation") or 0),
             queue_event_id=str(queue_event_id or ""),
             worker_run_id=str(worker_run_id),
+            sync_projection=False,
         )
     write_activity_log(
         config,
@@ -9918,6 +9959,7 @@ def mark_worker_recovery_materialized(
     task_generation: int,
     queue_event_id: str,
     worker_run_id: str,
+    sync_projection: bool = True,
 ) -> bool:
     if not all((receipt_id, task_id, queue_event_id, worker_run_id)):
         return False
@@ -9937,7 +9979,8 @@ def mark_worker_recovery_materialized(
         )
     if not applied:
         return False
-    sync_status_pipeline(config)
+    if sync_projection:
+        sync_status_pipeline(config)
     return True
 
 
@@ -10383,9 +10426,10 @@ def reconcile_unavailable_assignments(
     )
     agent_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
     load_balance_watch = state.setdefault("load_balance_watch", {})
+    changed = False
     for stale_task_id in [tid for tid in load_balance_watch if tid not in task_map]:
         load_balance_watch.pop(stale_task_id, None)
-    changed = False
+        changed = True
     actions: list[dict[str, Any]] = []
 
     for task in tasks:
@@ -10448,7 +10492,9 @@ def reconcile_unavailable_assignments(
                     fallback_candidates=fallback_candidates,
                 )
                 if saturation_reason is None:
-                    load_balance_watch.pop(task_id, None)
+                    if task_id in load_balance_watch:
+                        load_balance_watch.pop(task_id, None)
+                        changed = True
                 else:
                     watch_entry = load_balance_watch.get(task_id) or {}
                     first_seen_at = _parse_iso_utc(str(watch_entry.get("first_seen_at") or ""))
@@ -10458,6 +10504,7 @@ def reconcile_unavailable_assignments(
                             "first_seen_at": utc_now(),
                             "owner": owner,
                         }
+                        changed = True
                     elif (
                         now_at is not None
                         and (now_at - first_seen_at).total_seconds()
