@@ -11,6 +11,14 @@ from task_machine import DispatchReason, TaskAction, TaskState, TransitionError
 
 
 class DispatchReasonTests(unittest.TestCase):
+    def test_collision_disposition_requires_and_preserves_blocked_lifecycle(self):
+        for status in TaskState:
+            if status == TaskState.BLOCKED:
+                self.assertEqual(task_machine.transition(status.value, "reconcile_collision"), TaskState.BLOCKED)
+            else:
+                with self.assertRaises(TransitionError):
+                    task_machine.transition(status.value, "reconcile_collision")
+
     def test_review_by_reviewer(self) -> None:
         self.assertEqual(
             task_machine.dispatch_reason("review", is_owner=False, is_reviewer=True, deps_satisfied=True),

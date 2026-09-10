@@ -1994,6 +1994,7 @@ def record_terminal_fact(
 
     normalize_terminal_facts(state)
     task_id = str(task.get("id") or "").strip()
+    _guard_collision_fact_admission(state, task_id)
     candidate = _terminal_fact_for_task(task, recorded_at=recorded_at)
     facts = state[TERMINAL_FACTS_KEY]
     existing = facts.get(task_id)
@@ -8542,6 +8543,7 @@ EXTERNAL_MUTATION_COMMANDS = frozenset(
         "reopen",
         "done",
         "reconcile_merged_done",
+        "archive_reconcile",
     }
 )
 
@@ -8736,6 +8738,10 @@ def prepare_external_mutation_preflight(
         "task_id": task_id,
         "task_digest": digest,
     }
+
+    if command == "archive_reconcile":
+        payload.update(_prepare_archive_collision(task, args))
+        return payload
 
     if command == "handoff":
         to_agent = canonical_agent_name(args[1])
@@ -9972,6 +9978,230 @@ def _snapshot_matches_terminal_fact(
     )
 
 
+def _archive_scope_digest(task: Mapping[str, Any]) -> str:
+    # Hash the actual fields, never a cached dev_bridge spec hash.
+    return _canonical_json_sha256({key: task.get(key) for key in (
+        "id", "title", "phase", "depends_on", "dependency_tracks", "artifacts",
+        "acceptance", "target_repo", "task_class", "source_ref",
+    )})
+
+
+def _is_archive_collision(task: Mapping[str, Any], snapshot: Mapping[str, Any]) -> bool:
+    historical = snapshot["task"]
+    return (task_assignment_generation(task) != task_assignment_generation(historical)
+            or _archive_scope_digest(task) != _archive_scope_digest(historical))
+
+
+def _guard_collision_fact_admission(state: Mapping[str, Any], task_id: str) -> None:
+    """The old single-fact primitive must not bypass a parent's collision gate."""
+    for parent in state.get("tasks", []):
+        if parent.get("status") == "done":
+            continue
+        parent_id = str(parent.get("id") or "")
+        if task_id != parent_id and task_id not in (parent.get("depends_on") or []):
+            continue
+        marker = parent.get(task_state_store.ARCHIVE_COLLISION_KEY)
+        if marker is not None:
+            if (parent.get("status") != "blocked"
+                    or marker.get("parent_sha256") != task_state_store.collision_parent_digest(parent)
+                    or task_id not in marker.get("qualified_facts", {})):
+                raise RuntimeError(f"archive collision fact admission rejected: {task_id}")
+            continue
+        snapshot = load_archived_snapshot(parent_id)
+        if snapshot is not None and _is_archive_collision(parent, snapshot):
+            raise RuntimeError(
+                f"archive collision {parent_id} requires explicit disposition before fact {task_id}"
+            )
+
+
+def _collision_archive_identity(task_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", task_id):
+        raise SystemExit("Unsafe archive collision task id")
+    snapshot = _validate_status_archive_snapshot(load_archived_snapshot(task_id))
+    raw = load_archived_raw_bytes(task_id)
+    if raw is None or json.loads(raw) != snapshot or snapshot.get("task_id") != task_id:
+        raise RuntimeError(f"Archive collision readback mismatch: {task_id}")
+    if snapshot.get("terminal_outcome") != "completed":
+        raise SystemExit(f"Archive collision requires completed historical archive: {task_id}")
+    return snapshot, {
+        "task_id": task_id,
+        "generation": task_assignment_generation(snapshot["task"]),
+        "snapshot_sha256": _canonical_json_sha256(snapshot),
+        "archive_file_sha256": hashlib.sha256(raw).hexdigest(),
+        "scope_sha256": _archive_scope_digest(snapshot["task"]),
+    }
+
+
+def _collision_merged_json(commit: str, path: str) -> dict[str, Any]:
+    if (not re.fullmatch(r"[0-9a-f]{40}", commit) or not path
+            or Path(path).is_absolute() or ".." in Path(path).parts):
+        raise SystemExit("Collision evidence requires full commit and repository-relative path")
+    _merged_commit(ROOT, commit, "origin/dev", label="collision evidence")
+    text = run_git_command(["show", f"{commit}:{path}"], cwd=ROOT,
+                           failure_message="Merged collision evidence file is unavailable")
+    try:
+        evidence = json.loads(text)
+    except ValueError as exc:
+        raise SystemExit("Collision evidence must be JSON") from exc
+    if not isinstance(evidence, dict):
+        raise SystemExit("Collision evidence must be an object")
+    return evidence
+
+
+def _collision_review(reference: Mapping[str, Any], subject: Mapping[str, Any]) -> None:
+    """Require a separately merged, independently authored qualification record.
+
+    This is historical acceptance of the exact subject, never hosted readiness.
+    A reviewer must explicitly qualify legacy evidence before this record exists.
+    """
+    if not isinstance(reference, Mapping):
+        raise SystemExit("Missing independent collision review evidence")
+    review = _collision_merged_json(str(reference.get("commit") or ""),
+                                    str(reference.get("file") or ""))
+    owner = canonical_agent_name(review.get("owner"))
+    reviewer = canonical_agent_name(review.get("reviewer"))
+    if (review.get("schema") != "pantheon.archive-collision-review.v1"
+            or review.get("decision") != "approved" or not owner or not reviewer
+            or owner == reviewer or review.get("subject_sha256") != _canonical_json_sha256(subject)
+            or not str(review.get("rationale") or "").strip()):
+        raise SystemExit("Missing or mismatched independent collision review evidence")
+
+
+def _prepare_archive_collision(task: dict[str, Any], args: list[str]) -> dict[str, Any]:
+    if current_actor() != "Human/Ops" or not local_human_ops_requested():
+        raise SystemExit("Only explicit local Human/Ops may reconcile an archive collision")
+    if len(args) != 3:
+        raise SystemExit("Usage: archive_reconcile <parent-id> <merged-evidence-file> <evidence-commit>")
+    validate_task_lifecycle_transition(task, "reconcile_collision")
+    evidence = _collision_merged_json(args[2], args[1])
+    if evidence.get("schema") != "pantheon.archive-collision.v1":
+        raise SystemExit("Unknown archive collision evidence schema")
+    parent_archive, identity = _collision_archive_identity(args[0])
+    if not _is_archive_collision(task, parent_archive):
+        raise SystemExit("Matching archive must use same-delivery reconciliation")
+    expected_parent = {
+        **identity,
+        "active_generation": task_assignment_generation(task),
+        "active_sha256": task_state_store.collision_parent_digest(task),
+        "active_scope_sha256": _archive_scope_digest(task),
+        "disposition": "retain_blocked",
+    }
+    if evidence.get("parent") != expected_parent:
+        raise SystemExit("Stale collision parent CAS, generation, scope or archive identity")
+    rows = evidence.get("dependencies")
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit("Collision evidence requires independent dependency classification")
+    ids = [row.get("task_id") for row in rows if isinstance(row, dict)]
+    if len(ids) != len(rows) or len(set(ids)) != len(ids) or set(ids) != set(task.get("depends_on") or []):
+        raise SystemExit("Collision evidence dependency coverage is incomplete or duplicated")
+    snapshots = []
+    raw_shas = {}
+    qualified_facts = {}
+    withheld = []
+    for row in rows:
+        dep_id = row["task_id"]
+        snapshot, dep_identity = _collision_archive_identity(dep_id)
+        if any(row.get(key) != value for key, value in dep_identity.items()):
+            raise SystemExit(f"Collision dependency archive identity changed: {dep_id}")
+        if row.get("disposition") == "withheld":
+            if not str(row.get("reason") or "").strip():
+                raise SystemExit(f"Withheld dependency needs a reason: {dep_id}")
+            withheld.append(dep_id)
+            continue
+        if row.get("disposition") != "qualified":
+            raise SystemExit(f"Unknown dependency disposition: {dep_id}")
+        deliveries = row.get("deliveries")
+        if not isinstance(deliveries, list) or not deliveries:
+            raise SystemExit(f"Missing merged delivery lineage: {dep_id}")
+        historical_delivery = snapshot["task"].get("delivery") or {}
+        if not any(isinstance(d, dict) and d.get("commit") == historical_delivery.get("commit")
+                   and d.get("repository") == historical_delivery.get("repository_slug") for d in deliveries):
+            raise SystemExit(f"Delivery lineage does not bind the historical archive: {dep_id}")
+        for delivery in deliveries:
+            if (not isinstance(delivery, dict) or not re.fullmatch(r"[0-9a-f]{40}", str(delivery.get("commit") or ""))
+                    or delivery.get("repository") not in {"ajoe734/pantheon", "ajoe734/execute-plans"}):
+                raise SystemExit(f"Invalid delivery lineage: {dep_id}")
+            root = _validated_git_root(str(delivery.get("root") or ""), label="collision delivery root")
+            remote = run_git_command(["remote", "get-url", "origin"], cwd=root,
+                                     failure_message="Collision delivery origin unavailable")
+            if normalize_github_repo_slug(remote) != delivery["repository"]:
+                raise SystemExit(f"Collision delivery repository mismatch: {dep_id}")
+            _merged_commit(root, delivery["commit"], "origin/dev", label=dep_id)
+        _collision_review(row.get("review"), {key: value for key, value in row.items() if key != "review"})
+        snapshots.append(snapshot)
+        raw_shas[dep_id] = dep_identity["archive_file_sha256"]
+        qualified_facts[dep_id] = _terminal_fact_for_task(snapshot["task"], recorded_at=snapshot["archived_at"])
+    _collision_review(evidence.get("review"), {key: value for key, value in evidence.items() if key != "review"})
+    return {
+        "collision_evidence": evidence,
+        "collision_snapshots": snapshots,
+        "collision_raw_sha256s": raw_shas,
+        "collision_qualified_facts": qualified_facts,
+        "collision_withheld": withheld,
+        "bound_archive_file_sha256": identity["archive_file_sha256"],
+    }
+
+
+def _reconcile_archive_collision(state: dict[str, Any], args: list[str]) -> None:
+    if current_actor() != "Human/Ops" or not local_human_ops_requested():
+        raise SystemExit("Only explicit local Human/Ops may reconcile an archive collision")
+    parent = get_task(state, args[0])
+    if parent is None:
+        raise SystemExit("Unknown collision parent")
+    prepared = consume_external_mutation_preflight("archive_reconcile", parent)
+    evidence = prepared["collision_evidence"]
+    # Runtime shared lock excludes planner launches; canonical transaction
+    # excludes parent/dependency changes between this readback and commit.
+    _assert_no_active_execution(args[0], active_task=parent)
+    for row in evidence["dependencies"]:
+        dep_id = row["task_id"]
+        if get_task(state, dep_id) is not None:
+            raise SystemExit(f"Collision dependency is active: {dep_id}")
+        _assert_no_active_execution(dep_id)
+        _, identity = _collision_archive_identity(dep_id)
+        if any(row.get(key) != value for key, value in identity.items()):
+            raise SystemExit(f"Collision dependency changed after preflight: {dep_id}")
+        existing = (state.get(TERMINAL_FACTS_KEY) or {}).get(dep_id)
+        if existing is not None and existing != prepared["collision_qualified_facts"].get(dep_id):
+            raise SystemExit(f"Collision dependency terminal fact conflicts: {dep_id}")
+    if has_terminal_fact(state, args[0]):
+        raise SystemExit("Collision parent already has a terminal fact")
+    marker = {
+        "disposition": "retain_blocked", "actor": "Human/Ops",
+        "parent_sha256": evidence["parent"]["active_sha256"],
+        "evidence_sha256": _canonical_json_sha256(evidence),
+        "evidence_file": args[1], "evidence_commit": args[2],
+        "qualified_facts": prepared["collision_qualified_facts"],
+        "withheld_task_ids": prepared["collision_withheld"],
+        "parent_archive": evidence["parent"],
+    }
+    previous = parent.get(task_state_store.ARCHIVE_COLLISION_KEY)
+    if previous is not None:
+        if previous != marker:
+            raise SystemExit("Collision replay differs from committed disposition")
+        # Facts/receipts are recovered by the existing durable outbox before
+        # command execution. A replay cannot synthesize missing recovery work.
+        for dep_id, fact in marker["qualified_facts"].items():
+            if (state.get(TERMINAL_FACTS_KEY) or {}).get(dep_id) != fact or not (state.get(ARCHIVE_RECEIPTS_KEY) or {}).get(dep_id):
+                raise SystemExit("Collision replay requires archive outbox recovery")
+        return
+    before = deepcopy(state)
+    apply_task_lifecycle_transition(parent, "reconcile_collision")
+    parent[task_state_store.ARCHIVE_COLLISION_KEY] = marker
+    task_state_store.validate_archive_collision_fences(state, before)
+    snapshots = prepared["collision_snapshots"]
+    if snapshots:
+        state[STATUS_ARCHIVE_OUTBOX_KEY] = task_archive_module.status_archive_outbox_payload(
+            snapshots, archive_root=_archive_root_identity(),
+            archive_file_sha256s=prepared["collision_raw_sha256s"],
+        )
+    append_log({
+        "ts": iso_now(), "agent": current_actor(), "type": "archive_collision_reconciled",
+        "task_id": args[0], "message": "Retained nonmatching parent blocked; qualified historical archive recovery only.",
+        "disposition": deepcopy(marker), **local_human_ops_audit_fields(),
+    })
+
+
 def command_archive_reconcile(state: dict[str, Any], args: list[str]) -> None:
     """Reconcile rich snapshots only for already-canonical terminal facts.
 
@@ -9983,6 +10213,9 @@ def command_archive_reconcile(state: dict[str, Any], args: list[str]) -> None:
 
     if current_actor() != "Human/Ops":
         raise SystemExit("Only local Human/Ops may reconcile a terminal archive")
+    if len(args) == 3:
+        _reconcile_archive_collision(state, args)
+        return
     if len(args) != 1:
         raise SystemExit("Usage: archive_reconcile <absolute-source-archive-tasks-dir>")
     raw_source = Path(os.path.expanduser(str(args[0] or "").strip()))
@@ -11106,7 +11339,7 @@ def main(argv: list[str]) -> int:
 
     external_preflight = (
         canonical_external_mutation_preflight(command, args)
-        if command in EXTERNAL_MUTATION_COMMANDS
+        if command in EXTERNAL_MUTATION_COMMANDS and (command != "archive_reconcile" or len(args) == 3)
         else None
     )
 

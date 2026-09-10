@@ -46,6 +46,178 @@ def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
     )
 
 
+class ArchiveCollisionContractTests(unittest.TestCase):
+    def setUp(self):
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        subprocess.run(["git", "init", "-q"], cwd=str(self._test_root), check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self._test_root), check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self._test_root), check=True)
+        dummy_file = self._test_root / "dummy.txt"
+        dummy_file.write_text("dummy", encoding="utf-8")
+        subprocess.run(["git", "add", "dummy.txt"], cwd=str(self._test_root), check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit", "-q"], cwd=str(self._test_root), check=True)
+        self.env = mock.patch.dict(os.environ, {
+            "AI_NAME": "Human/Ops", "ORCH_RUN_ID": "",
+            ai_status.LOCAL_HUMAN_OPS_ENV: "1",
+        })
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.parent = {"id": "PARENT", "status": "blocked", "generation": 9,
+                       "title": "Later scope", "owner": "Codex", "reviewer": "Claude",
+                       "depends_on": ["CHILD", "WEAK"], "waiting_for": "Human/Ops"}
+        self.state = {"tasks": [self.parent], "handoffs": [], "blockers": [],
+                      "terminal_facts": {}, "archive_receipts": {}}
+        self.archive_bytes = {}
+        for task_id in ["PARENT", "CHILD", "WEAK"]:
+            task = {"id": task_id, "status": "done", "generation": 1,
+                    "title": "Historical scope", "terminal_outcome": "completed",
+                    "owner": "Codex", "reviewer": "Claude",
+                    "delivery": {"repository_slug": "ajoe734/pantheon", "commit": "a" * 40}}
+            snapshot = {"version": 1, "task_id": task_id, "task": task,
+                        "terminal_status": "done", "terminal_outcome": "completed",
+                        "archived_at": "2026-07-12T00:00:00Z", "handoffs": [], "blockers": []}
+            raw = json.dumps(snapshot, indent=3).encode() + b"\n"
+            task_archive.archive_task_path(task_id).write_bytes(raw)
+            self.archive_bytes[task_id] = raw
+        self.args = ["PARENT", "collision.json", "b" * 40]
+        _, identity = ai_status._collision_archive_identity("PARENT")
+        self.evidence = {"schema": "pantheon.archive-collision.v1", "parent": {
+            **identity, "active_generation": 9,
+            "active_sha256": task_state_store.collision_parent_digest(self.parent),
+            "active_scope_sha256": ai_status._archive_scope_digest(self.parent),
+            "disposition": "retain_blocked"}, "dependencies": []}
+        self.files = {"collision.json": self.evidence}
+        for task_id in ["CHILD", "WEAK"]:
+            _, row = ai_status._collision_archive_identity(task_id)
+            row["disposition"] = "qualified" if task_id == "CHILD" else "withheld"
+            if task_id == "CHILD":
+                row["deliveries"] = [{"root": str(self._test_root), "repository": "ajoe734/pantheon", "commit": "a" * 40}]
+                self._review(row, "child-review.json")
+            else:
+                row["reason"] = "Independent approval is not qualified"
+            self.evidence["dependencies"].append(row)
+        self._review(self.evidence, "parent-review.json")
+        for patcher in [
+            mock.patch.object(ai_status, "_collision_merged_json", side_effect=lambda commit, path: deepcopy(self.files[path])),
+            mock.patch.object(ai_status, "_validated_git_root", return_value=self._test_root),
+            mock.patch.object(ai_status, "_merged_commit", return_value=("a" * 40, "b" * 40)),
+            mock.patch.object(ai_status, "run_git_command", return_value="https://github.com/ajoe734/pantheon.git"),
+        ]:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _review(self, subject, path):
+        subject.pop("review", None)
+        self.files[path] = {"schema": "pantheon.archive-collision-review.v1",
+                            "owner": "Codex", "reviewer": "Claude", "decision": "approved",
+                            "rationale": "Independently qualified historical scope and lineage",
+                            "subject_sha256": ai_status._canonical_json_sha256(subject)}
+        subject["review"] = {"commit": "b" * 40, "file": path}
+
+    def _prepare(self):
+        return ai_status.prepare_external_mutation_preflight("archive_reconcile", self.parent, self.args)
+
+    def _apply(self, prepared=None):
+        with ai_status.bound_external_mutation_preflight(prepared or self._prepare()):
+            with ai_status.buffer_activity_events() as events:
+                ai_status.command_archive_reconcile(self.state, self.args)
+        return events
+
+    def test_durable_disposition_then_outbox_recovery_and_idempotent_replay(self):
+        journal = self._test_root / "events.jsonl"
+        task_state_store.append_state_commit(journal, self.state, source="blocked-parent")
+        events = self._apply()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(self.state["terminal_facts"], {})
+        self.assertEqual(self.parent["status"], "blocked")
+        task_state_store.append_state_commit(journal, self.state, source="collision-disposition")
+        committed = task_state_store.load_snapshot(journal)["state"]
+        self.assertIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, committed)
+        self.state = deepcopy(committed)
+        self.parent = self.state["tasks"][0]
+        with mock.patch.object(ai_status, "save_state"):
+            self.assertTrue(ai_status.recover_status_archive_outbox(self.state))
+        task_state_store.append_state_commit(journal, self.state, source="archive-recovery")
+        readback = task_state_store.load_snapshot(journal)["state"]
+        self.assertEqual(set(readback["terminal_facts"]), {"CHILD"})
+        self.assertIn("CHILD", readback["archive_receipts"])
+        self.assertNotIn("PARENT", readback["archive_receipts"])
+        self.assertIsNone(task_machine.dispatch_reason(readback["tasks"][0]["status"],
+            is_owner=True, is_reviewer=True, deps_satisfied=True))
+        before = deepcopy(self.state)
+        self.assertEqual(self._apply(), [])
+        self.assertEqual(before, self.state)
+        for task_id, raw in self.archive_bytes.items():
+            self.assertEqual(task_archive.archive_task_path(task_id).read_bytes(), raw)
+
+    def test_fact_first_counterexample_is_rejected_even_if_parent_is_blocked(self):
+        self.parent["status"] = "todo"
+        self.assertEqual(task_machine.dispatch_reason("todo", is_owner=True,
+            is_reviewer=False, deps_satisfied=True), task_machine.DispatchReason.OWNED_READY)
+        for status in ["todo", "blocked"]:
+            self.parent["status"] = status
+            before = deepcopy(self.state)
+            with self.assertRaisesRegex(RuntimeError, "requires explicit disposition"):
+                ai_status.command_record_terminal_fact(self.state, ["CHILD", "1", "completed"])
+            self.assertEqual(self.state, before)
+
+    def test_missing_or_self_approval_rejects_without_mutation(self):
+        for changes in [{"decision": "pending"}, {"reviewer": "Codex"}, {"subject_sha256": "0" * 64}]:
+            original = deepcopy(self.files["child-review.json"])
+            self.files["child-review.json"].update(changes)
+            before = deepcopy(self.state)
+            with self.assertRaisesRegex(SystemExit, "independent collision review"):
+                self._prepare()
+            self.assertEqual(self.state, before)
+            self.files["child-review.json"] = original
+
+    def test_stale_cas_and_archive_byte_race_reject(self):
+        prepared = self._prepare()
+        self.parent["title"] = "Concurrent scope mutation"
+        with self.assertRaisesRegex(SystemExit, "changed after external"):
+            self._apply(prepared)
+        self.parent["title"] = "Later scope"
+        path = task_archive.archive_task_path("CHILD")
+        path.write_bytes(path.read_bytes() + b"\n")
+        with self.assertRaisesRegex(SystemExit, "changed after preflight"):
+            self._apply(prepared)
+        self.assertEqual(self.state["terminal_facts"], {})
+
+    def test_generation_scope_and_operator_gate(self):
+        for key, value in [("generation", 10), ("title", "Changed scope"), ("status", "todo")]:
+            old = self.parent[key]
+            self.parent[key] = value
+            with self.assertRaises((SystemExit, RuntimeError)):
+                self._prepare()
+            self.parent[key] = old
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex", ai_status.LOCAL_HUMAN_OPS_ENV: ""}):
+            with self.assertRaisesRegex(SystemExit, "Human/Ops"):
+                self._prepare()
+
+    def test_missing_coverage_and_lineage_fail_closed(self):
+        row = self.evidence["dependencies"][0]
+        row["deliveries"] = []
+        with self.assertRaisesRegex(SystemExit, "Missing merged delivery"):
+            self._prepare()
+        self.evidence["dependencies"].pop()
+        with self.assertRaisesRegex(SystemExit, "coverage"):
+            self._prepare()
+
+    def test_recovery_byte_mismatch_and_withheld_fact_are_rejected(self):
+        self._apply()
+        before = deepcopy(self.state)
+        path = task_archive.archive_task_path("CHILD")
+        path.write_bytes(path.read_bytes() + b"\n")
+        with self.assertRaisesRegex(RuntimeError, "byte readback mismatch"):
+            ai_status.recover_status_archive_outbox(self.state)
+        self.assertEqual(self.state["terminal_facts"], {})
+        self.assertEqual(self.parent["status"], "blocked")
+        with self.assertRaisesRegex(RuntimeError, "fact admission rejected"):
+            ai_status.command_record_terminal_fact(self.state, ["WEAK", "1", "completed"])
+        self.assertEqual(before, self.state)
+
+
 class DependencyContractBatchTests(unittest.TestCase):
     def setUp(self):
         _setup_test_isolation(self)
