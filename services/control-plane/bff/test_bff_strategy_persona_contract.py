@@ -419,7 +419,6 @@ def _fresh_client(td: str) -> TestClient:
         ranking_write_owner=_PROXY_READ_STORE,
         command_store=cmd_store,
     )
-    personas_service._current_persona_service.set(service)
 
     app = FastAPI()
 

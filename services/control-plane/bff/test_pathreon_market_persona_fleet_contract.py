@@ -1201,22 +1201,25 @@ def test_pm12_authoritative_runtime_id_avoids_stale_alias_probe_and_reuses_summa
         ranking_write_owner=_TelemetryStore(),
         command_store=_FakeCommandStore(),
     )
-    personas_service._current_persona_service.set(svc)
-    row = {
-        "binding_summary": {"runtime_ids": ["runtime-authoritative"]},
-        "session_summary": {
-            "runtime_ids": [],
-            "runtime_binding_ids": ["rb-stale-session-alias"],
-        },
-    }
+    token = personas_service._current_persona_service.set(svc)
+    try:
+        row = {
+            "binding_summary": {"runtime_ids": ["runtime-authoritative"]},
+            "session_summary": {
+                "runtime_ids": [],
+                "runtime_binding_ids": ["rb-stale-session-alias"],
+            },
+        }
 
-    metrics = _pm12_persona_telemetry_metrics(row)
+        metrics = _pm12_persona_telemetry_metrics(row)
 
-    assert calls == ["runtime-authoritative"]
-    assert metrics["runtime_ids"] == ["runtime-authoritative"]
-    assert metrics["pnl"] == 0.0
-    assert metrics["drawdown"] == 0.0
-    assert metrics["total_trades"] == 0
+        assert calls == ["runtime-authoritative"]
+        assert metrics["runtime_ids"] == ["runtime-authoritative"]
+        assert metrics["pnl"] == 0.0
+        assert metrics["drawdown"] == 0.0
+        assert metrics["total_trades"] == 0
+    finally:
+        personas_service._current_persona_service.reset(token)
 
 
 def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
