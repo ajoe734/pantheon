@@ -5,7 +5,7 @@
   "total_test_files": 341,
   "audited_baseline_main_importers": 218,
   "current_main_importers": 201,
-  "migrated_in_task_count": 11,
+  "migrated_in_task_count": 15,
   "composition_allowlist": [
     "tests/test_bff_main_composition.py",
     "test_action_catalog.py",
@@ -47,14 +47,14 @@
   "main_by_layer": {
     "composition": 7,
     "router": 75,
-    "application": 113,
+    "application": 109,
     "adapter": 4,
     "hosted": 6
   },
   "disposition_summary": {
     "ALLOWLIST": 11,
-    "MIGRATED": 5,
-    "PLANNED": 204,
+    "MIGRATED": 15,
+    "PLANNED": 194,
     "DECOUPLED": 121
   },
   "tests": [
