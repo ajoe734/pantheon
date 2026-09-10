@@ -469,7 +469,7 @@ class PostgresRetrievalBackend:
 
         tsquery_sql = "plainto_tsquery('simple', %(lexical_query)s)"
 
-        if mode in ("keyword", "full_text") or (mode == "hybrid" and not self.embedding_engine.is_ready()):
+        if mode in ("keyword", "full_text"):
             sql = f"""
             WITH raw_lex AS (
                 SELECT id, record_kind, title, search_text, content_ref, citation_label,
@@ -487,6 +487,10 @@ class PostgresRetrievalBackend:
             FROM raw_lex;
             """
         elif mode == "semantic":
+            if not self.embedding_engine.is_ready():
+                raise SearchCapabilityUnavailableError(
+                    "Local embedding engine is unavailable or model integrity check failed"
+                )
             query_vec = self.embedding_engine.embed_query(query)
             params["query_vector"] = query_vec
             sql = f"""
@@ -506,6 +510,10 @@ class PostgresRetrievalBackend:
             FROM raw_sem;
             """
         else:
+            if not self.embedding_engine.is_ready():
+                raise SearchCapabilityUnavailableError(
+                    "Local embedding engine is unavailable for hybrid retrieval"
+                )
             query_vec = self.embedding_engine.embed_query(query)
             params["query_vector"] = query_vec
             params["rrf_k"] = 60
@@ -580,15 +588,11 @@ class PostgresRetrievalBackend:
             upd = row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else str(row["updated_at"] or "")
 
             comp_scores: dict[str, Any] = {}
-            if mode in ("keyword", "full_text") or (mode == "hybrid" and "raw_rrf" not in row):
+            if mode in ("keyword", "full_text"):
                 lex_score = float(row.get("lex_score") or 0.0)
                 norm_score = round(min(0.999, max(0.01, 0.5 + lex_score * 0.1)), 4)
                 comp_scores = {"full_text_score": lex_score, "rank": row.get("lex_rank")}
-                if mode == "hybrid":
-                    comp_scores["rrf_score"] = norm_score
-                    ranker_ver = "postgres-rrf-v1"
-                else:
-                    ranker_ver = "postgres-fts-v1"
+                ranker_ver = "postgres-fts-v1"
             elif mode == "semantic":
                 sem_score = float(row.get("sem_score") or 0.0)
                 norm_score = round(max(0.0, min(1.0, (sem_score + 1.0) / 2.0)), 4)

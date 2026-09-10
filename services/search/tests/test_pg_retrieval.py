@@ -267,6 +267,21 @@ class TestPostgresRetrievalBackend(unittest.TestCase):
         # Hard delete
         self.backend.delete_document(doc_id, hard=True)
 
+    def test_hybrid_and_semantic_fail_closed_when_embedding_unavailable(self):
+        from unittest.mock import MagicMock
+        from services.search.filters import SearchCapabilityUnavailableError
+
+        unready_engine = MagicMock()
+        unready_engine.is_ready.return_value = False
+        unready_backend = PostgresRetrievalBackend(dsn=POSTGRES_TEST_DSN, embedding_engine=unready_engine)
+        context = SearchAccessContext(environment="paper", access_scopes=["public"], license_scopes=["open"])
+
+        with self.assertRaises(SearchCapabilityUnavailableError):
+            unready_backend.search(query="test fail closed", mode="semantic", access_context=context)
+
+        with self.assertRaises(SearchCapabilityUnavailableError):
+            unready_backend.search(query="test fail closed", mode="hybrid", access_context=context)
+
 
 if __name__ == "__main__":
     unittest.main()
