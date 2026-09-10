@@ -2987,12 +2987,26 @@ class SharedPlannerContractTests(unittest.TestCase):
         )
 
     def test_review_approved_waits_for_exact_integration_receipt(self) -> None:
+        # Non-default-repository delivery: owner finalize must wait for the
+        # sole auto-integrator's exact canonical receipt. task_execution_
+        # dispatch_candidate is the same function stale_dispatch_skip_message
+        # uses to revalidate a queued event's freshness, and it must reach the
+        # identical is_non_default_repository_finalization_pending verdict
+        # evaluate_task_delivery_admission (the planner/runtime-reservation
+        # predicate) already reaches -- otherwise the planner could reserve an
+        # owned_finalize_dispatch event that this exact freshness check then
+        # discards as stale. Normal Pantheon (default-repository) finalize
+        # remains eligible without a receipt; see
+        # test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator.
         task = task_fixture(status="review_approved")
-        binding = review_admission_binding()
+        task["target_repo"] = "execute-plans"
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
         task["generation"] = 4
         task["review_binding"] = {
-            key: binding[key]
-            for key in ("pr", "head_sha", "head_branch", "base")
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
         }
 
         self.assertIsNone(
@@ -3006,10 +3020,10 @@ class SharedPlannerContractTests(unittest.TestCase):
             "result": "landed",
             "observation": "performed_merge",
             "task_generation": 4,
-            "repository": "ajoe734/pantheon",
-            "target_branch": binding["base"],
-            "pr": binding["pr"],
-            "head_sha": binding["head_sha"],
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
             "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
             "observed_at": "2026-09-04T00:00:00Z",
             "source": "canonical_auto_integrator",
@@ -3020,6 +3034,75 @@ class SharedPlannerContractTests(unittest.TestCase):
                 self.config, task, "Codex", {"TASK-1": task}
             ),
             (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+
+    def test_planner_and_freshness_agree_across_integration_receipt_states(self) -> None:
+        """Reproduce, then prove fixed, the planner-versus-freshness mismatch:
+        the planner (evaluate_dispatch_candidate/evaluate_task_delivery_admission)
+        and the stale-event freshness recheck (task_execution_dispatch_candidate,
+        consulted by stale_dispatch_skip_message/current_dispatch_event_key) must
+        reach the identical owner-finalize verdict, or the planner could reserve
+        an owned_finalize_dispatch event this exact freshness check then discards
+        as stale. A receipt-less row must not reserve the event; once a current
+        canonical integration receipt lands, exactly one stable event exists.
+        """
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+        task = task_fixture(status="review_approved")
+        task["target_repo"] = "execute-plans"
+        task["generation"] = 4
+        task["review_binding"] = {
+            "pr": 747,
+            "head_sha": head_sha,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        task_map = {"TASK-1": task}
+
+        # Receipt-less: neither the planner nor the freshness recheck may
+        # reserve/keep an owned_finalize_dispatch event.
+        unreceipted_plan = planner_decision(self.config, task, target="Codex")
+        self.assertFalse(unreceipted_plan["eligible"])
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", task_map
+            )
+        )
+
+        task["integration_receipt"] = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 4,
+            "repository": "ajoe734/execute-plans",
+            "target_branch": "dev",
+            "pr": 747,
+            "head_sha": head_sha,
+            "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+            "observed_at": "2026-09-04T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        }
+
+        # Once the exact canonical receipt lands, the planner reserves exactly
+        # one owned_finalize_dispatch event, and building that event and
+        # immediately revalidating it through the freshness path must not
+        # discard it as stale -- the event key the planner computed and the
+        # key the freshness recheck recomputes must match.
+        receipted_plan = planner_decision(self.config, task, target="Codex")
+        self.assertTrue(receipted_plan["eligible"])
+        self.assertEqual(receipted_plan["reason"], supervisor.REASON_OWNED_FINALIZE)
+        planned_event = receipted_plan["event"]
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", task_map
+            ),
+            (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+        self.assertIsNone(
+            supervisor.stale_dispatch_skip_message(self.config, planned_event, task_map)
+        )
+        self.assertEqual(
+            supervisor.current_dispatch_event_key(self.config, planned_event, task_map),
+            planned_event["key"],
         )
 
     def test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator(self) -> None:
@@ -3179,6 +3262,108 @@ class SharedPlannerContractTests(unittest.TestCase):
         bad_config_coord_scalar = copy.deepcopy(self.config)
         bad_config_coord_scalar["coordination"] = 42
         self.assertFalse(planner_decision(bad_config_coord_scalar, task_fe, target="Codex")["eligible"])
+
+    def test_pantheon_pr_delivery_waits_for_exact_integration_receipt(self) -> None:
+        """Reproduce the exact rejected-PR defect: a Pantheon (default-repository)
+        review_approved row with a live PR review_binding but no integration
+        receipt must not reserve owned_finalize_dispatch through build_dispatch_plan
+        or reserve_dispatch_plan, and must not be treated as a stale/current event
+        mismatch by current_dispatch_event_key. Normal_pantheon finalization with
+        no review_binding at all (a non-PR closeout) remains eligible; see
+        test_planner_ops_fe_review_proof_unreceipted_does_not_starve_auto_integrator
+        step 5.
+        """
+        head_sha = "598101a2b62395d4c39c19df619ebb4207ea8458"
+        task = task_fixture(status="review_approved")
+        task["target_repo"] = "pantheon"
+        task["generation"] = 4
+        task["review_binding"] = {
+            "pr": 5771,
+            "head_sha": head_sha,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        task_map = {"TASK-1": task}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+
+            # Receipt-less: the planner's own predicate, build_dispatch_plan, and
+            # the freshness recheck must all agree the row is not finalize-eligible.
+            unreceipted_plan = planner_decision(config, task, target="Codex")
+            self.assertFalse(unreceipted_plan["eligible"])
+            self.assertIsNone(
+                supervisor.task_execution_dispatch_candidate(
+                    config, task, "Codex", task_map
+                )
+            )
+
+            state = with_healthy_delivery_health(
+                config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+            )
+            status_snapshot = {"tasks": [task]}
+            plan = supervisor.build_dispatch_plan(
+                config, state, status_snapshot, [], live_total=0
+            )
+            self.assertEqual(plan["events"], [])
+            with mock.patch.object(supervisor, "load_status", return_value=status_snapshot):
+                reserved = supervisor.reserve_dispatch_plan(config, state, plan)
+            self.assertFalse(reserved)
+            self.assertEqual(supervisor.queue_events(state), [])
+
+            # Exact current canonical receipt lands: exactly one stable event is
+            # planned, reserved once, and the freshness recheck confirms it is not
+            # stale -- a second reservation attempt must not duplicate it.
+            task["integration_receipt"] = {
+                "version": 1,
+                "result": "landed",
+                "observation": "performed_merge",
+                "task_generation": 4,
+                "repository": "ajoe734/pantheon",
+                "target_branch": "dev",
+                "pr": 5771,
+                "head_sha": head_sha,
+                "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+                "observed_at": "2026-09-10T00:00:00Z",
+                "source": "canonical_auto_integrator",
+            }
+
+            receipted_plan = planner_decision(config, task, target="Codex")
+            self.assertTrue(receipted_plan["eligible"])
+            self.assertEqual(receipted_plan["reason"], supervisor.REASON_OWNED_FINALIZE)
+            self.assertEqual(
+                supervisor.task_execution_dispatch_candidate(
+                    config, task, "Codex", task_map
+                ),
+                (supervisor.REASON_OWNED_FINALIZE, 1),
+            )
+
+            plan = supervisor.build_dispatch_plan(
+                config, state, status_snapshot, [], live_total=0
+            )
+            self.assertEqual(len(plan["events"]), 1)
+            planned_event = plan["events"][0]
+            self.assertIsNone(
+                supervisor.stale_dispatch_skip_message(config, planned_event, task_map)
+            )
+            self.assertEqual(
+                supervisor.current_dispatch_event_key(config, planned_event, task_map),
+                planned_event["key"],
+            )
+
+            with mock.patch.object(supervisor, "load_status", return_value=status_snapshot):
+                reserved = supervisor.reserve_dispatch_plan(config, state, plan)
+            self.assertTrue(reserved)
+            self.assertEqual(len(supervisor.queue_events(state)), 1)
+
+            # Duplicate reservation of the same plan must be suppressed: the event
+            # is already queued/pending, so a second reservation attempt is a no-op.
+            with mock.patch.object(supervisor, "load_status", return_value=status_snapshot):
+                reserved_again = supervisor.reserve_dispatch_plan(config, state, plan)
+            self.assertFalse(reserved_again)
+            self.assertEqual(len(supervisor.queue_events(state)), 1)
 
     def _pending_intent_task_with_recovery_receipt(
         self,
@@ -6811,6 +6996,19 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     "base": "dev",
                 },
                 "github_review_bridge": {"actor": "Codex2", "pr": 9001},
+                "integration_receipt": {
+                    "version": 1,
+                    "result": "landed",
+                    "observation": "performed_merge",
+                    "task_generation": 1,
+                    "repository": "ajoe734/pantheon",
+                    "target_branch": "dev",
+                    "pr": 9001,
+                    "head_sha": "a" * 40,
+                    "merge_commit_sha": "b" * 40,
+                    "observed_at": "2026-08-11T00:00:00Z",
+                    "source": "canonical_auto_integrator",
+                },
             }
         )
         supervisor.write_status(self.config, self.status, source="test-approved-seed")
@@ -13594,6 +13792,163 @@ def _child_assignment_stage_worker(
         result_queue.put({"error": str(exc), "status": worker.get("status")})
         raise
 
+class ReassignmentLaunchAdmissionRaceTests(unittest.TestCase):
+    """Real admission locks and TaskStore commits, with a local test adapter."""
+
+    def _race(self, *, lease_first: bool) -> None:
+        ctx = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory(prefix="assignment-launch-race-") as directory:
+            root = Path(directory) / "status"
+            (root / ".orchestrator").mkdir(parents=True)
+            config = config_fixture(root)
+            journal = Path(directory) / "events.jsonl"
+            config["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+            task = task_fixture("ASSIGN-RACE")
+            state = ai_status.default_state()
+            state["tasks"] = [task]
+            rewrite_task_state_store.append_state_commit(journal, state, source="isolated race fixture")
+            Path(config["paths"]["status_file"]).write_text(json.dumps(state))
+            Path(config["paths"]["activity_log"]).write_text("")
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+            before = rewrite_task_state_store.load_snapshot(journal)
+            first_committed, second_finished = ctx.Event(), ctx.Event()
+            assignment_precommit, launch_contended = ctx.Event(), ctx.Event()
+            results = ctx.Queue()
+            event = {"event_id": "evt-assign-race", "task_id": task["id"],
+                     "task_generation": 1, "target_agent": "codex", "delivery_endpoint_id": "codex",
+                     "reason": "owned_ready_dispatch", "created_at": supervisor.utc_now(), "message": "test"}
+
+            def reassign():
+                try:
+                    if lease_first:
+                        assert first_committed.wait(15)
+                    # Isolate identity/config bootstrap only. main(), admission
+                    # locks, raw runtime read, command, journal and audit are real.
+                    env = {key: value for key, value in os.environ.items()
+                           if not key.startswith(("ORCH_", "PANTHEON_", "TASK_")) and key != "AI_NAME"}
+                    env.update({"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                                "PANTHEON_TASK_STATE_EVENT_LOG": str(journal),
+                                "PANTHEON_STATUS_ROOT": str(root),
+                                common.CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
+                                    common.canonical_task_state_identity_for_paths(status_root=root, event_log=journal))})
+                    ai_status.configure_status_root_paths(root)
+                    real_sync = ai_status.sync_all
+
+                    def sync_with_launch_contender(*args, **kwargs):
+                        if not lease_first:
+                            assignment_precommit.set()
+                            assert launch_contended.wait(15)
+                        return real_sync(*args, **kwargs)
+
+                    with mock.patch.dict(os.environ, env, clear=True), \
+                         mock.patch.object(ai_status, "load_config", return_value=config), \
+                         mock.patch.object(ai_status, "validate_status_command_runtime_binding"), \
+                         mock.patch.object(ai_status, "validate_status_root_binding"), \
+                         mock.patch.object(ai_status, "validate_active_status_command_lease"), \
+                         mock.patch.object(ai_status, "sync_all", side_effect=sync_with_launch_contender), \
+                         mock.patch.object(ai_status, "refresh_derived_status_views_if_current"):
+                        try:
+                            code = ai_status.main(["ai_status.py", "assign", task["id"], "Claude", "Codex2"])
+                            results.put(("assign", code, ""))
+                        except SystemExit as exc:
+                            results.put(("assign", 1, str(exc)))
+                    if not lease_first:
+                        first_committed.set()
+                finally:
+                    second_finished.set()
+
+            def launch():
+                child = None
+                try:
+                    if not lease_first:
+                        assert assignment_precommit.wait(15)
+                        try:
+                            with runtime_state.runtime_state_lock(config, nonblocking=True):
+                                raise AssertionError("launch crossed assignment's precommit admission lock")
+                        except BlockingIOError:
+                            launch_contended.set()
+                        assert first_committed.wait(15)
+                    with runtime_state.runtime_state_lock(config):
+                        current = runtime_state.load_runtime_state(config)
+                        # This is an old plan, published only after the ordering
+                        # barrier when reassignment wins. The real consumer must
+                        # settle it as stale, never invoke the adapter.
+                        runtime_state.store_queue_event(current, event)
+                        if lease_first:
+                            def deliver(request):
+                                nonlocal child
+                                child = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                return DeliveryResult(ok=True, adapter="test", mode="test", target="Codex",
+                                                      auto_delivered=True, manual_confirmation_required=False,
+                                                      run_id="run-assign-race", pid=child.pid)
+                            request = supervisor.DeliveryRequest(
+                                agent_id="codex", provider="codex", delivery_mode="test", message="test",
+                                task_id=task["id"], reason=event["reason"], metadata={"task_generation": 1})
+                            with mock.patch.object(supervisor, "build_adapter") as adapter, \
+                                 mock.patch.object(supervisor, "status_command_runtime_env", return_value={}):
+                                adapter.return_value.deliver.side_effect = deliver
+                                ok, run_id, _ = supervisor.start_worker_for_request(
+                                    config, current, request, dispatch_event=event,
+                                    queue_event_id=event["event_id"], attempt_count=1, event_id_for_log=event["event_id"])
+                                assert ok and run_id == "run-assign-race"
+                            first_committed.set()
+                        else:
+                            with mock.patch.object(supervisor, "build_adapter") as adapter:
+                                assert supervisor.process_queue(config, current)
+                                adapter.assert_not_called()
+                            runtime_state.save_runtime_state(config, current)
+                    if lease_first:
+                        assert second_finished.wait(15)
+                    results.put(("launch", 0, ""))
+                finally:
+                    if child is not None:
+                        child.communicate(timeout=5)
+                        assert child.returncode == 0
+
+            processes = [ctx.Process(target=reassign), ctx.Process(target=launch)]
+            for process in processes:
+                process.start()
+            try:
+                for process in processes:
+                    process.join(timeout=25)
+                for process in processes:
+                    self.assertFalse(process.is_alive(), "race process did not terminate")
+                    self.assertEqual(process.exitcode, 0)
+                outcomes = {name: (code, message) for name, code, message in (results.get(timeout=2), results.get(timeout=2))}
+            finally:
+                for process in processes:
+                    if process.is_alive():
+                        process.kill()
+                    process.join(timeout=5)
+            after = rewrite_task_state_store.load_snapshot(journal)
+            runtime = runtime_state.load_runtime_state(config)
+            self.assertEqual(outcomes["launch"], (0, ""))
+            if lease_first:
+                self.assertEqual(outcomes["assign"][0], 1)
+                self.assertIn("active worker lease", outcomes["assign"][1])
+                self.assertEqual(after, before)
+                self.assertEqual(runtime["workers"]["run-assign-race"]["task_generation"], 1)
+                self.assertTrue(runtime["workers"]["run-assign-race"]["lease_acquired_at"])
+                audit = Path(config["paths"]["activity_log"]).read_text()
+                self.assertNotIn('"task_reassigned"', audit)
+            else:
+                self.assertEqual(outcomes["assign"], (0, ""))
+                self.assertEqual(after["state"]["tasks"][0]["generation"], 2)
+                self.assertEqual(after["state"]["tasks"][0]["owner"], "Claude")
+                record = runtime["queue"]["events"][event["event_id"]]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(runtime["workers"], {})
+
+    def test_lease_committed_first_rejects_reassignment(self) -> None:
+        self._race(lease_first=True)
+
+    def test_reassignment_committed_first_settles_old_queue_without_launch(self) -> None:
+        self._race(lease_first=False)
+
+
 class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
 
@@ -15771,8 +16126,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             archived = json.loads(archive_file.read_text(encoding="utf-8"))
             self.assertEqual(archived["task"]["status"], "done")
 
-    def test_two_process_ordering_assignment_stage_revalidation_fences_concurrent_reassign(self) -> None:
-        """Two-process race ordering: Concurrent reassignment bumps generation 1 -> 2; assignment stage poll fences worker superseded under lock."""
+    def test_two_process_ordering_assignment_stage_preserves_leased_generation(self) -> None:
+        """Operator reassignment is rejected while the original lease is active."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -15956,15 +16311,16 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             p_reassign.join(timeout=5)
             p_stage.join(timeout=5)
 
-            self.assertTrue(res_reassign["success"], f"Reassignment failed: {res_reassign}")
-            self.assertEqual(res_stage["status"], "superseded", f"Worker not superseded: {res_stage}")
+            self.assertFalse(res_reassign["success"], res_reassign)
+            self.assertIn("active worker lease", res_reassign["stderr"])
+            self.assertEqual(res_stage["status"], "running", res_stage)
 
             task_now = supervisor.load_status(config)["tasks"][0]
-            self.assertEqual(task_now["owner"], "Antigravity2")
-            self.assertEqual(task_now["generation"], 2)
+            self.assertEqual(task_now["owner"], "Antigravity")
+            self.assertEqual(task_now["generation"], 1)
 
     def test_two_process_ordering_reassignment_fences_stale_reopen(self) -> None:
-        """Two-process race ordering: Reassignment bumps generation 1 -> 2; concurrent stale reopen refused by CAS."""
+        """After settlement, reassignment advances and the old worker cannot reopen."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -16079,6 +16435,10 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "worker_worktrees": {"leases": {"TASK-RACE-004": {"task_id": "TASK-RACE-004", "workspace_task_id": "TASK-RACE-004", "branch": "task/TASK-RACE-004", "path": str(worktree), "repository_id": "pantheon", "status_root": str(central), "last_queue_event_id": queue_event_id, "last_target_agent": "Codex2", "last_used_at": "2026-09-06T17:00:00Z"}}},
                 "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-RACE-004", "task_generation": 1, "target_agent": "codex2_1"}}}},
             }
+            # Reassignment now requires the prior worker and queue to have
+            # settled. The stale process retains its original command env.
+            st_data["workers"][run_id]["status"] = "completed"
+            st_data["queue"]["events"][queue_event_id]["status"] = "completed"
             (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
             (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(st_data, indent=2) + "\n")
 
@@ -16141,7 +16501,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             self.assertTrue(res_reassign["success"], f"Reassignment failed: {res_reassign}")
             self.assertNotEqual(res_stale["returncode"], 0)
-            self.assertIn("active status command task generation mismatch", res_stale["stderr"])
+            self.assertIn("is not running: completed", res_stale["stderr"])
             task_now = supervisor.load_status(config)["tasks"][0]
             self.assertEqual(task_now["owner"], "Antigravity2")
             self.assertEqual(task_now["generation"], 2)

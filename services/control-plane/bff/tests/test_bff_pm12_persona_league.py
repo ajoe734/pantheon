@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import ast
+from datetime import datetime, timezone, timedelta
+import json
 import os
-import sys
+from pathlib import Path
 import tempfile
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.params import Param as FastAPIParam
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.service import PersonaService
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.management_read_models.ranking_router import create_performance_attribution_router
 
-import main as bff_main
-from persona_provisioning import MemoryPersonaProvisioningStore
-from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+from services.control_plane.bff.test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 
 from pathlib import Path
@@ -134,14 +147,17 @@ HEADERS = {"Authorization": "Bearer op-pm12:operator,reviewer"}
 @pytest.fixture(autouse=True)
 def _canonical_persona_owner_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = FakeOwnerTransport()
-    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
-    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
-    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
+    store = MemoryPersonaProvisioningStore()
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: store)
+    monkeypatch.setattr(personas_service, "_PersonaOwnerHttpTransport", lambda *a, **kw: transport)
+    monkeypatch.setattr(personas_service, "_register_persona_cron_required", _schedule_receipt)
     try:
         from services.persona.runtime_profile import build_persona_runtime_profile
-        monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
+        monkeypatch.setattr(personas_service, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
     except ImportError:
-        monkeypatch.setattr(bff_main, "build_persona_runtime_profile", lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})(), raising=False)
+        monkeypatch.setattr(personas_service, "build_persona_runtime_profile", lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})(), raising=False)
 
 
 class _Pm12LeagueTestStore:
@@ -185,7 +201,9 @@ class _Pm12LeagueTestStore:
                 if isinstance(p, dict):
                     pid = p.get("persona_id") or p.get("id")
                     if pid not in existing_ids:
-                        res.append(dict(p))
+                        rec = dict(p)
+                        rec.setdefault("tenant_id", "pantheon-dev")
+                        res.append(rec)
         return res
 
     def get_persona(self, persona_id: str) -> dict[str, Any] | None:
@@ -201,6 +219,7 @@ class _Pm12LeagueTestStore:
         meta = dict(kwargs.get("metadata") or {})
         if "archetype" in kwargs and "archetype" not in meta:
             meta["archetype"] = kwargs["archetype"]
+        kwargs.setdefault("tenant_id", "pantheon-dev")
         rec = {"id": pid, "persona_id": pid, **kwargs, "metadata": meta}
         self.personas[pid] = rec
         return rec
@@ -324,6 +343,16 @@ class _Pm12LeagueTestStore:
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
         return []
 
+    def write_ranking_snapshot(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def update_persona(self, **kwargs: Any) -> dict[str, Any]:
+        pid = kwargs.get("persona_id") or kwargs.get("id")
+        if pid in self.personas:
+            self.personas[pid].update(kwargs)
+            return self.personas[pid]
+        return kwargs
+
     def get_persona_allowed_actions(self, persona_id: str) -> dict[str, bool]:
         return {"paper_deploy": True, "kill_switch": True}
 
@@ -335,12 +364,138 @@ class _Pm12LeagueTestStore:
         raise AttributeError(f"'_Pm12LeagueTestStore' has no attribute '{name}'")
 
 
+
+_PM12_FUNCS = None
+
+def _compile_pm12_namespace(store):
+    global _PM12_FUNCS
+    if _PM12_FUNCS is None:
+        tree = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
+        target_names = {
+            "_management_record_id",
+            "_management_as_float",
+            "_management_first_non_empty",
+            "_management_dict_value",
+            "_management_nested_dict",
+            "_management_position_records",
+            "_management_nested_value",
+            "_management_first_float",
+            "_management_latest_timestamp",
+            "_management_telemetry_rollup",
+            "_management_link",
+            "_filter_by_common_identifiers",
+            "_extract_ids_from_item",
+            "_performance_ranking_source_surface",
+            "_list_strategy_summaries",
+            "_resolve_param",
+        }
+        _PM12_FUNCS = [
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and (
+                n.name.startswith("_pm12_")
+                or (n.name.startswith("_management_") and not n.name.startswith("_management_ai_"))
+                or n.name in target_names
+            )
+        ]
+
+    def _page_slice(items, page_token, page_size):
+        start = int(page_token) if page_token else 0
+        end = start + page_size
+        next_page_token = str(end) if end < len(items) else None
+        return items[start:end], next_page_token
+
+    def _aggregate_group_surface(surface_key, source_surfaces, *, snapshot_at, unavailable_message, degraded_message):
+        return {"status": "ok", "snapshot_at": snapshot_at, "source": "bff_composed", "available": True}
+
+    ns = dict(__import__("typing").__dict__)
+    ns.update({
+        "datetime": datetime,
+        "date": datetime.date,
+        "timezone": timezone,
+        "timedelta": timedelta,
+        "read_store": store,
+        "_list_persona_records": personas_service._list_persona_records,
+        "utc_now": getattr(personas_service, "utc_now", lambda: datetime.now(timezone.utc).isoformat()),
+        "_dataset_surface_status": getattr(personas_service, "_dataset_surface_status", lambda *a, **kw: {"status": "ok"}),
+        "_PM12_ATTRIBUTION_DIMENSIONS": ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+        "ops_read_model_sanitize_metric": lambda v: v,
+        "FastAPIParam": FastAPIParam,
+        "_page_slice": _page_slice,
+        "_aggregate_group_surface": _aggregate_group_surface,
+        "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
+    })
+    exec(compile(ast.Module(body=_PM12_FUNCS, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    return ns
+
+
+_ACTIVE_PM12_NS = {}
+
 def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
-    bff_main.read_store = _Pm12LeagueTestStore(fallback=fallback)
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._PERSONA_BFF_OVERLAY.clear()
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    global _ACTIVE_PM12_NS
+    store = _Pm12LeagueTestStore(fallback=fallback)
+    cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+    service = PersonaService(
+        read_store=store,
+        write_owner=store,
+        ranking_write_owner=store,
+        command_store=cmd_store,
+    )
+    personas_service._current_persona_service.set(service)
+
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+            return JSONResponse(status_code=exc.status_code, content=detail)
+
+        field = None
+        message = "Validation failed" if exc.status_code == 422 else "Error"
+        code = "VALIDATION_FAILED" if exc.status_code == 422 else "ERROR"
+        if isinstance(detail, dict):
+            field = detail.get("field")
+            message = detail.get("message") or str(detail.get("error") or "")
+            if exc.status_code == 422:
+                code = "VALIDATION_FAILED"
+            elif detail.get("error"):
+                code = str(detail["error"])
+        elif isinstance(detail, str):
+            message = detail
+
+        content = {
+            "error": {
+                "code": code,
+                "message": message,
+            }
+        }
+        if field is not None:
+            content["field"] = field
+        return JSONResponse(status_code=exc.status_code, content=content)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "VALIDATION_FAILED",
+                    "message": "Request validation failed",
+                    "details": {"errors": exc.errors()},
+                }
+            }
+        )
+
+    app.include_router(create_personas_router(service=service))
+    pm12_ns = _compile_pm12_namespace(store)
+    _ACTIVE_PM12_NS = pm12_ns
+    app.include_router(create_performance_attribution_router(
+        bff_me_tenant_payload=lambda ident, requested_tenant=None: {"id": "pantheon-dev"},
+        pm12_performance_attribution_response=lambda *a, **kw: _ACTIVE_PM12_NS["_pm12_performance_attribution_response"](*a, **kw),
+    ))
+    return TestClient(app, raise_server_exceptions=True)
+
 
 
 def _create_persona(client: TestClient, name: str, *, archetype: str, key: str) -> str:
@@ -355,9 +510,9 @@ def _create_persona(client: TestClient, name: str, *, archetype: str, key: str) 
 
 def test_pm12_persona_league_returns_composed_table() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get("/bff/management/persona-league", headers=HEADERS)
 
             assert response.status_code == 200, response.text
@@ -387,12 +542,11 @@ def test_pm12_persona_league_returns_composed_table() -> None:
             assert "capabilities" not in row
             assert "allowedActions" not in row
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_persona_league_filters_searches_and_paginates() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td, fallback=False)
             macro_id = _create_persona(client, "Macro PM12", archetype="macro", key="pm12-macro")
@@ -411,14 +565,14 @@ def test_pm12_persona_league_filters_searches_and_paginates() -> None:
             assert body["data"]["items"][0]["id"] == macro_id
             assert body["data"]["items"][0]["archetype"] == "macro"
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_persona_league_rankings_returns_computed_blocks() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/persona-league/rankings",
                 headers=HEADERS,
@@ -446,14 +600,14 @@ def test_pm12_persona_league_rankings_returns_computed_blocks() -> None:
             assert body["meta"]["surfaces"]["persona_league_rankings"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_persona_league_movers_returns_current_snapshot_movers() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/persona-league/movers",
                 headers=HEADERS,
@@ -493,14 +647,14 @@ def test_pm12_persona_league_movers_returns_current_snapshot_movers() -> None:
             assert body["meta"]["surfaces"]["persona_league_movers"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league/rankings" in body["meta"]["composition_sources"]
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_persona_league_movers_rejects_invalid_direction() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/persona-league/movers",
                 headers=HEADERS,
@@ -513,14 +667,14 @@ def test_pm12_persona_league_movers_rejects_invalid_direction() -> None:
             assert body["error"]["code"] == "VALIDATION_FAILED"
             assert body["field"] == "direction"
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_persona_league_tiers_returns_config_and_current_assignments() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get("/bff/management/persona-league/tiers", headers=HEADERS)
 
             assert response.status_code == 200, response.text
@@ -545,14 +699,14 @@ def test_pm12_persona_league_tiers_returns_config_and_current_assignments() -> N
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["persona_league_tiers"]["status"] in {"ok", "degraded"}
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_persona_league_heatmap_uses_snake_case_rows() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/persona-league/heatmap",
                 headers=HEADERS,
@@ -599,14 +753,14 @@ def test_pm12_persona_league_heatmap_uses_snake_case_rows() -> None:
             assert "formulaVersion" not in cell
             assert "observedTelemetryCount" not in cell
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/quarterly-ranking",
                 headers=HEADERS,
@@ -645,14 +799,14 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
             assert "GET /api/v1/knowledge/evidence" in body["meta"]["composition_sources"]
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/quarterly-ranking/formula",
                 headers=HEADERS,
@@ -682,14 +836,14 @@ def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -
             assert body["meta"]["version_policy"] == "formula_version_changes_require_governance_evidence"
             assert body["meta"]["surfaces"]["quarterly_ranking_formula"]["status"] == "ok"
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_quarterly_ranking_drilldown_uses_snake_case_lightweight_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/quarterly-ranking/drilldown",
                 headers=HEADERS,
@@ -736,14 +890,14 @@ def test_pm12_quarterly_ranking_drilldown_uses_snake_case_lightweight_sources() 
             assert "memory" not in data["source_breakdown"]
             assert "allowedActions" not in data["source_breakdown"]
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/quarterly-ranking/recommendations",
                 headers=HEADERS,
@@ -798,14 +952,14 @@ def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
                 assert "liveCapitalMutation" not in recommendation
                 assert "liveCapitalMutation" not in recommendation["governance"]
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get(
                 "/bff/management/quarterly-ranking",
                 headers=HEADERS,
@@ -830,22 +984,21 @@ def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
             assert recommendations_body["error"]["code"] == "VALIDATION_FAILED"
             assert recommendations_body["field"] == "quarter"
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_pm12_performance_attribution_pages_before_projection_and_uses_snake_case() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_projector = bff_main._pm12_performance_attribution_rows
+        client = _fresh_client(td)
+        client.raise_server_exceptions = True
+        original_projector = _ACTIVE_PM12_NS["_pm12_performance_attribution_rows"]
         projected_entry_counts: list[int] = []
         try:
-            client = _fresh_client(td)
-
             def recording_projector(entries, *args, **kwargs):
                 projected_entry_counts.append(len(entries))
                 return original_projector(entries, *args, **kwargs)
 
-            bff_main._pm12_performance_attribution_rows = recording_projector
+            _ACTIVE_PM12_NS["_pm12_performance_attribution_rows"] = recording_projector
             response = client.get(
                 "/bff/management/performance-attribution",
                 headers=HEADERS,
@@ -898,15 +1051,14 @@ def test_pm12_performance_attribution_pages_before_projection_and_uses_snake_cas
             assert "runtimeCount" not in metrics
             assert "pnlContributionPct" not in metrics
         finally:
-            bff_main._pm12_performance_attribution_rows = original_projector
-            bff_main.read_store = original_store
+            _ACTIVE_PM12_NS["_pm12_performance_attribution_rows"] = original_projector
 
 
 def test_pm12_persona_league_requires_auth() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            client.raise_server_exceptions = True
             response = client.get("/bff/management/persona-league")
 
             assert response.status_code == 401, response.text
@@ -932,4 +1084,4 @@ def test_pm12_persona_league_requires_auth() -> None:
             formula = client.get("/bff/management/quarterly-ranking/formula")
             assert formula.status_code == 401, formula.text
         finally:
-            bff_main.read_store = original
+            pass

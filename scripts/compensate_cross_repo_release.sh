@@ -3,10 +3,11 @@
 #
 # The frontend deploy workflow owns its atomic symlink switch and rollback.
 # This helper proves that it returned to the pre-release frontend commit, then
-# restores the prior BFF commit under a fresh shared environment lease. It
-# never edits the runtime Compose manifest or deploy_nonprod_vm.sh.
+# restores the retained prior BFF images under a fresh shared environment lease.
+# Equal source commits never substitute for exact artifact readback.
 
 set -euo pipefail
+umask 077
 
 PINNED_LEASE_CONTROLLER_SHA="9e564718da8c39199a4c311f1a667b74226e3428"
 LEASE_CLI_SHA256="52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048"
@@ -67,11 +68,13 @@ release_root="$(realpath "${PANTHEON_RELEASE_REPO_ROOT}")"
 lease_cli="${lease_controller}/scripts/dev_environment_lease.py"
 lease_wrapper="${lease_controller}/scripts/run_with_dev_environment_lease.sh"
 deploy_script="${release_root}/scripts/deploy_nonprod_vm.sh"
+evidence_helper="${release_root}/scripts/dev_artifact_compensation_evidence.py"
 [[ "$(git -C "${lease_controller}" rev-parse HEAD)" == "${PINNED_LEASE_CONTROLLER_SHA}" ]] \
   || die "lease controller is not the pinned trust root"
 [[ -f "${lease_cli}" && ! -L "${lease_cli}" ]] || die "lease CLI is unsafe"
 [[ -f "${lease_wrapper}" && ! -L "${lease_wrapper}" ]] || die "lease wrapper is unsafe"
 [[ -f "${deploy_script}" && ! -L "${deploy_script}" ]] || die "deploy script is unsafe"
+[[ -f "${evidence_helper}" && ! -L "${evidence_helper}" ]] || die "artifact evidence helper is unsafe"
 printf '%s  %s\n' \
   "${LEASE_CLI_SHA256}" "${lease_cli}" \
   "${LEASE_WRAPPER_SHA256}" "${lease_wrapper}" \
@@ -83,6 +86,14 @@ export -n lease_token 2>/dev/null || true
 
 lease_dir="$(mktemp -d "${RUNNER_TEMP%/}/pantheon-release-rollback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
 chmod 0700 "${lease_dir}"
+export TARGET_ENV=dev
+artifact_env="${lease_dir}/artifact-compensation.env"
+artifact_readback="${lease_dir}/artifact-readback.json"
+# Inputs were fetched by exact Actions IDs and externally sealed ZIP digests.
+# Validate the complete admission before acquiring a compensation lease.
+python3 "${evidence_helper}" prepare --provenance actions-download --output-env "${artifact_env}"
+# Only the helper's fixed-schema, shell-quoted nonsecret exports are executable.
+source "${artifact_env}"
 state_file="${lease_dir}/state.json"
 acquisition_file="${lease_dir}/acquisition.json"
 pid_file="${lease_dir}/heartbeat.pid"
@@ -224,71 +235,27 @@ PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
       --environment dev \
       --component bff \
       --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
-      --project-id "${GCP_DEPLOY_PROJECT_ID}"
-
-curl --fail-with-body --silent --show-error \
-  --retry 5 --retry-all-errors --connect-timeout 10 --max-time 30 \
-  "${DEV_BFF_URL%/}/health" >/dev/null
-bff_version="${lease_dir}/bff-version-after-rollback.json"
-fe_deployment="${lease_dir}/frontend-deployment-after-rollback.json"
-curl --fail-with-body --silent --show-error \
-  --retry 5 --retry-all-errors --connect-timeout 10 --max-time 30 \
-  "${DEV_BFF_URL%/}/bff/version" > "${bff_version}"
-curl --fail-with-body --silent --show-error \
-  --retry 5 --retry-all-errors --connect-timeout 10 --max-time 30 \
-  "${DEV_FE_URL%/}/deployment.json" > "${fe_deployment}"
+      --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+      "--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}" \
+      --artifact-readback-out "${artifact_readback}"
 
 python3 - \
-  "${bff_version}" \
-  "${fe_deployment}" \
+  "${release_root}" \
+  "${artifact_readback}" \
   "${PANTHEON_ROLLBACK_EVIDENCE_OUT}" \
   "${PANTHEON_RELEASE_CONTROLLER_LOG}" <<'PY'
-import hashlib
-import json
 import os
-import pathlib
+from pathlib import Path
 import sys
 
-bff = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-frontend = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
-actual_bff = bff.get("source_commit_sha") or ""
-actual_frontend = frontend.get("frontendSha") or frontend.get("commit") or ""
-if actual_bff != os.environ["PANTHEON_ROLLBACK_BACKEND_SHA"]:
-    raise SystemExit(
-        f"hosted BFF rollback mismatch: {actual_bff} != "
-        f"{os.environ['PANTHEON_ROLLBACK_BACKEND_SHA']}"
-    )
-if actual_frontend != os.environ["PANTHEON_ROLLBACK_FRONTEND_SHA"]:
-    raise SystemExit(
-        f"hosted frontend rollback mismatch: {actual_frontend} != "
-        f"{os.environ['PANTHEON_ROLLBACK_FRONTEND_SHA']}"
-    )
-controller_log = pathlib.Path(sys.argv[4]).read_bytes()
-evidence = {
-    "schema_version": "pantheon.cross-repo-release-compensation.v1",
-    "release_candidate_id": os.environ["PANTHEON_RELEASE_CANDIDATE_ID"],
-    "outcome": "compensated",
-    "rejected_pair": {
-        "backend_sha": os.environ["PANTHEON_FAILED_BACKEND_SHA"],
-        "frontend_sha": os.environ["PANTHEON_FAILED_FRONTEND_SHA"],
-    },
-    "restored_pair": {
-        "backend_sha": actual_bff,
-        "frontend_sha": actual_frontend,
-    },
-    "controller_failure_log_sha256": hashlib.sha256(controller_log).hexdigest(),
-    "workflow": {
-        "repository": os.environ["GITHUB_REPOSITORY"],
-        "run_id": os.environ["GITHUB_RUN_ID"],
-        "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-    },
-}
-output = pathlib.Path(sys.argv[3])
-output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text(
-    json.dumps(evidence, indent=2, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+import dev_artifact_compensation_evidence as artifact
+
+try:
+    evidence = artifact.compensation_evidence(dict(os.environ), "actions-download", Path(sys.argv[2]), Path(sys.argv[4]))
+    artifact.private_write(Path(sys.argv[3]), artifact.capture.encoded(evidence))
+except (artifact.capture.CaptureError, OSError, ValueError, TypeError, AttributeError, KeyError):
+    raise SystemExit("artifact compensation evidence rejected") from None
 PY
 
 rollback_succeeded=true

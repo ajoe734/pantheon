@@ -219,13 +219,14 @@ def is_non_default_repository_finalization_pending(
     config: Mapping[str, Any] | None,
     task: Mapping[str, Any] | None,
 ) -> bool:
-    """Return whether owner-finalization dispatch must be suppressed for unreceipted multirepo work.
+    """Return whether owner-finalization dispatch must be suppressed for an unreceipted PR delivery.
 
-    For every configured non-default registry repository, an exact review_approved delivery
-    with no current canonical integration receipt must not reserve owned_finalize_dispatch.
-    It remains visible to the existing sole auto-integrator; once that existing receipt is
-    current, normal owner closeout remains eligible.
-    Normal unmerged Pantheon finalization remains eligible.
+    Any exact review_approved row with a live ``review_binding`` (a PR the sole
+    auto-integrator must merge and stamp with a canonical integration receipt,
+    Pantheon included) must not reserve owned_finalize_dispatch until that exact
+    receipt is current. It remains visible to the auto-integrator meanwhile; once
+    the receipt lands, normal owner closeout is eligible.
+    A row with no ``review_binding`` at all (a non-PR closeout) is never receipt-gated.
     Unknown or misconfigured repositories fail closed (treated as pending / not reconciled).
     """
     if not isinstance(task, Mapping):
@@ -238,11 +239,11 @@ def is_non_default_repository_finalization_pending(
     import multi_repo_registry
 
     try:
-        repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, task)
+        multi_repo_registry.validate_task_repository_scope(config_dict, task)
     except (ValueError, TypeError, AttributeError):
         return True
 
-    if repo_id == "pantheon":
+    if not isinstance(task.get("review_binding"), Mapping):
         return False
 
     return not task_has_current_canonical_integration_receipt(config_dict, task)
