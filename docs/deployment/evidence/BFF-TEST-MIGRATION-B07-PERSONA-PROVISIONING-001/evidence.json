@@ -7,7 +7,7 @@
   "reviewer": "Claude",
   "target_repo": "pantheon",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "fd828d17511580a97634008d6086cf4a8d9433f6",
+  "base_sha": "b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
   "scope": {
     "batch_source_files": [
       "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
