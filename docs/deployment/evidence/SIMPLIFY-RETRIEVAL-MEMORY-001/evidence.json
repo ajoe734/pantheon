@@ -459,7 +459,7 @@
     "owner": "Antigravity",
     "reviewer": "Antigravity2",
     "dev_base_sha": "fd6341a8a84dbfc57bf7f6f31f6be0997f713388",
-    "current_dev_rebase_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
+    "current_dev_rebase_sha": "6e47504746b3acd02bbce537440778095ea905e0",
     "changes": [
       "Completed full benchmark evaluation (run_retrieval_eval.py) against 10,000 real embeddings with 210 queries; all 8 quality gates passed (Recall@10 = 1.0, nDCG@10 = 0.9978, citation identity = 100%, exact negative recall = 100%, semantic warning recall = 100%, isolation leakage = 0%, warm p95 = 756.07ms <= 1.0s, zero external inference) and generated services/search/evaluation/retrieval_manifest.json.",
       "Accepted PostgreSQL (native FTS + pgvector) as the single production search and retrieval backend in services/search/backend-contract.json (accepted=true, chosen_backend='postgres_pgvector', delivery_state='accepted_single_production_backend', activation_allowed=true, validation_exit_status=0).",
