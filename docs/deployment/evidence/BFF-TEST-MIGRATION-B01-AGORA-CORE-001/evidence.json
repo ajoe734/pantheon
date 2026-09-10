@@ -6,8 +6,8 @@
   "owner": "Antigravity",
   "reviewer": "Claude",
   "delivery_state": "ready_for_review",
-  "base_ref": "origin/dev@d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
-  "base_sha": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
+  "base_ref": "origin/dev@428bd0aa69b1a8d5167b18ca0a70c8ae981b6362",
+  "base_sha": "428bd0aa69b1a8d5167b18ca0a70c8ae981b6362",
   "delivery_nature": {
     "test_suite_decoupling": true,
     "statement": "Decoupled all 17 test and support files in the Agora Core partition from the composition root (services/control-plane/bff/main.py), global monkeypatching (read_store, command_store), and sys.path surgery while preserving full test contracts, error schemas, and invariants."
@@ -215,7 +215,7 @@
     "total_passed": 242,
     "total_skipped": 2,
     "total_failed": 0,
-    "duration_seconds": 361.6,
+    "duration_seconds": 375.2,
     "file_breakdown": {
       "services/control-plane/bff/test_agora_journal_merge_patch.py": {
         "passed": 4,
