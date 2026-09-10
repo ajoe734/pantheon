@@ -9,17 +9,16 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
+from pathlib import Path
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from typing import Any
-from pathlib import Path
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 # Local re-implementation of read_store._load_default_fixture_pack_datasets:
 # merges the same static, committed fixture-pack JSON files directly off
@@ -186,7 +185,21 @@ class _PersonaIntentTestStore:
         raise AttributeError(f"'_PersonaIntentTestStore' has no attribute '{name}'")
 
 
+class _FakeOwner:
+    pass
+
+
+class _FakeCommandStore:
+    def get_all(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    def record(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
 def _fresh_client(td: str) -> TestClient:
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     snapshot_path = os.path.join(td, "read_surfaces.json")
     if os.path.exists(snapshot_path):
         try:
@@ -204,95 +217,105 @@ def _fresh_client(td: str) -> TestClient:
                 data = _load_default_fixture_pack_datasets()
         else:
             data = _load_default_fixture_pack_datasets()
-    bff_main.read_store = _PersonaIntentTestStore(data)
-    return TestClient(bff_main.app)
+
+    for p in data.get("personas", {}).values() if isinstance(data.get("personas"), dict) else data.get("personas", []):
+        if isinstance(p, dict):
+            p.setdefault("tenant_id", "pantheon-dev")
+
+    store = _PersonaIntentTestStore(data)
+    service = PersonaService(
+        read_store=store,
+        write_owner=_FakeOwner(),
+        ranking_write_owner=_FakeOwner(),
+        command_store=_FakeCommandStore(),
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": detail})
+
+    app.include_router(create_personas_router(service=service))
+    return TestClient(app)
 
 
 def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        client = _fresh_client(td)
 
-            resp = client.get("/bff/management/persona-intent", headers=OPERATOR_HEADERS)
+        resp = client.get("/bff/management/persona-intent", headers=OPERATOR_HEADERS)
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert set(body.keys()) == {"data", "page_info", "meta"}
-            assert set(body["data"].keys()) == {"id", "items", "summary"}
-            items = body["data"]["items"]
-            summary = body["data"]["summary"]
-            assert summary["persona_trace_count"] >= 1
-            assert summary["trainer_session_count"] >= 1
-            assert summary["agora_session_count"] >= 1
-            assert summary["redacted_item_count"] == summary["total_items"]
-            assert "bySourceType" not in summary
-            assert "byStatus" not in summary
-            assert "byIntent" not in summary
-            assert body["meta"]["surfaces"]["management_persona_intent"]["source"] == "bff_composed"
-            for surface in [
-                "persona_traces",
-                "persona_sessions",
-                "capability_snapshots",
-                "teaching_sessions",
-                "agora_sessions",
-            ]:
-                assert surface in body["meta"]["surfaces"]
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body.keys()) == {"data", "page_info", "meta"}
+        assert set(body["data"].keys()) == {"id", "items", "summary"}
+        items = body["data"]["items"]
+        summary = body["data"]["summary"]
+        assert summary["persona_trace_count"] >= 1
+        assert summary["trainer_session_count"] >= 1
+        assert summary["agora_session_count"] >= 1
+        assert summary["redacted_item_count"] == summary["total_items"]
+        assert "bySourceType" not in summary
+        assert "byStatus" not in summary
+        assert "byIntent" not in summary
+        assert body["meta"]["surfaces"]["management_persona_intent"]["source"] == "bff_composed"
+        for surface in [
+            "persona_traces",
+            "persona_sessions",
+            "capability_snapshots",
+            "teaching_sessions",
+            "agora_sessions",
+        ]:
+            assert surface in body["meta"]["surfaces"]
 
-            by_type = {item["source_type"]: item for item in items}
-            assert by_type["persona_trace"]["trace"]["trace_id"]
-            assert by_type["persona_trace"]["trace"]["capability_summary"]["effective_tool_count"] >= 1
-            assert by_type["trainer_session"]["trainer"]["outcome_count"] >= 1
-            assert by_type["agora_session"]["agora"]["message_count"] >= 1
-            assert "sourceType" not in by_type["persona_trace"]
-            assert "personaId" not in by_type["persona_trace"]
-            assert "sessionId" not in by_type["agora_session"]["agora"]
+        by_type = {item["source_type"]: item for item in items}
+        assert by_type["persona_trace"]["trace"]["trace_id"]
+        assert by_type["persona_trace"]["trace"]["capability_summary"]["effective_tool_count"] >= 1
+        assert by_type["trainer_session"]["trainer"]["outcome_count"] >= 1
+        assert by_type["agora_session"]["agora"]["message_count"] >= 1
+        assert "sourceType" not in by_type["persona_trace"]
+        assert "personaId" not in by_type["persona_trace"]
+        assert "sessionId" not in by_type["agora_session"]["agora"]
 
-            encoded = json.dumps(body)
-            assert '"tools_enabled":' not in encoded
-            assert '"effective_tools":' not in encoded
-            assert '"message_body":' not in encoded
-            assert '"messages":' not in encoded
-            assert '"content":' not in encoded
-        finally:
-            bff_main.read_store = original_store
+        encoded = json.dumps(body)
+        assert '"tools_enabled":' not in encoded
+        assert '"effective_tools":' not in encoded
+        assert '"message_body":' not in encoded
+        assert '"messages":' not in encoded
+        assert '"content":' not in encoded
 
 
 def test_persona_intent_supports_filters_and_pagination() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
+        client = _fresh_client(td)
 
-            resp = client.get(
-                "/bff/management/persona-intent"
-                "?source_type=persona_trace&persona_id=persona-alpha&status=active&page_size=1",
-                headers=OPERATOR_HEADERS,
-            )
+        resp = client.get(
+            "/bff/management/persona-intent"
+            "?source_type=persona_trace&persona_id=persona-alpha&status=active&page_size=1",
+            headers=OPERATOR_HEADERS,
+        )
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["page_size"] == 1
-            assert body["page_info"]["total"] == 1
-            items = body["data"]["items"]
-            assert len(items) == 1
-            item = items[0]
-            assert item["source_type"] == "persona_trace"
-            assert item["persona_id"] == "persona-alpha"
-            assert item["status"] == "active"
-            assert item["redaction"]["policy"] == "management_persona_intent_public_summary"
-        finally:
-            bff_main.read_store = original_store
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["page_size"] == 1
+        assert body["page_info"]["total"] == 1
+        items = body["data"]["items"]
+        assert len(items) == 1
+        item = items[0]
+        assert item["source_type"] == "persona_trace"
+        assert item["persona_id"] == "persona-alpha"
+        assert item["status"] == "active"
+        assert item["redaction"]["policy"] == "management_persona_intent_public_summary"
 
 
 def test_persona_intent_requires_read_authentication() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/management/persona-intent")
+        client = _fresh_client(td)
+        resp = client.get("/bff/management/persona-intent")
 
-            assert resp.status_code == 401, resp.text
-            assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
-        finally:
-            bff_main.read_store = original_store
+        assert resp.status_code == 401, resp.text
+        assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
+
