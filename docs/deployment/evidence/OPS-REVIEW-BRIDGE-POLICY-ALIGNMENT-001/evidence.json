@@ -1,10 +1,10 @@
 {
   "task_id": "OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001",
   "title": "Align declared review-bridge policy with enforced task PR checks",
-  "owner": "Codex",
+  "owner": "Antigravity",
   "reviewer": "Antigravity2",
   "phase": "development-tooling-review-bridge-policy-alignment-20260910",
-  "generated_at": "2026-09-10T03:57:58.469695+00:00",
+  "generated_at": "2026-09-10T04:27:00.000000+00:00",
   "identities": {
     "source_base": "pantheon-origin-dev@53309a9aaaf354db1c510cf7c284aa0ad38de944",
     "command_runtime_sha": "41f08d9f28f4f5f68a4fa99c993f9d24939ede0f",
@@ -105,7 +105,8 @@
     "docs/deployment/evidence/OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001/evidence.json",
     ".orchestrator/auto_integrator_unblock_contract.py",
     ".orchestrator/test_supervisor_watchdog.py",
-    ".orchestrator/test_supervisor_recovery_process_e2e.py"
+    ".orchestrator/test_supervisor_recovery_process_e2e.py",
+    "scripts/git/test_task_review_merge_gate.py"
   ],
   "prior_delivery_verification": {
     "python_environment": ".venv-pantheon/bin/python3 (provisioned via PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3)",
@@ -252,6 +253,46 @@
           "exit_code": 1
         }
       }
+    },
+    "integration_gate_fixture_repair": {
+      "scope": "Repair only scripts/git/test_task_review_merge_gate.py open_pr required-check rollup to include Commit trailers, Runtime mirror guard, and Smoke acceptance. Strict production policy and shared config fixtures remain unchanged.",
+      "test_results": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
+          "exit_code": 0,
+          "summary": "119 passed, 8 subtests passed in 25.23s"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py",
+          "exit_code": 0,
+          "summary": "236 passed, 66 subtests passed in 74.79s (0:01:14)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
+          "exit_code": 0,
+          "summary": "150 passed, 25 subtests passed in 23.58s"
+        },
+        {
+          "command": "env -i HOME=$HOME PATH=$PATH USER=$USER .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_recovery_process_e2e.py",
+          "exit_code": 0,
+          "summary": "5 passed in 39.84s (clean subprocess environment)"
+        },
+        {
+          "command": "env -i HOME=$HOME PATH=$PATH USER=$USER .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
+          "exit_code": 0,
+          "summary": "64 passed, 20 subtests passed in 12.18s (clean subprocess environment)"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 scripts/check_config_drift.py --repo-config .orchestrator/config.json --live-config /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --json",
+          "exit_code": 1,
+          "expected_exit_code": 1,
+          "summary": "Read-only drift probe reports required_status_checks source/live mismatch and contradictory live review-bridge policy; no fix requested."
+        },
+        {
+          "command": "git diff --check origin/dev...HEAD",
+          "exit_code": 0
+        }
+      ]
     }
   },
   "delivery": {
