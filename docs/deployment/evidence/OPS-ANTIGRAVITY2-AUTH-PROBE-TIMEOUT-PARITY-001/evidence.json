@@ -7,8 +7,9 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "development_tooling",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "base_sha": "6f00d0eb38e57946fe784de493df4606a55169b3",
   "source_baseline": "pantheon-origin-dev@b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "base_sha_note": "base_sha is the exact parent of this task's committed head (PR #5775, task/OPS-ANTIGRAVITY2-AUTH-PROBE-TIMEOUT-PARITY-001 branched from dev tip 6f00d0eb38e57946fe784de493df4606a55169b3). source_baseline records the earlier diagnostic/source dev tip b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a that the SOURCE_REVIEW/EXECUTION_PLAN audit evidence was originally captured against; the two differ because dev advanced linearly between diagnosis and task branch creation.",
   "reference_precedent": {
     "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
     "diagnosis": "The primary antigravity provider was previously bounded by the platform-wide 45-second auth-probe subprocess timeout even though its CLI uses a 90-second print timeout, which could cache a transient OAuth startup failure for a full failed-probe interval and leave a quota-healthy lane idle. That task qualified providers.antigravity.auth_probe = {probe_timeout_seconds: 120, failed_probe_interval_seconds: 60}.",
