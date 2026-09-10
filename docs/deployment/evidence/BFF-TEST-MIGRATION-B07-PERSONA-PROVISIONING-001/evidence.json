@@ -1,0 +1,211 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+  "batch_id": "B07_persona_provisioning",
+  "title": "Persona provisioning",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "scope": {
+    "batch_source_files": [
+      "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
+      "services/control-plane/bff/test_bff_strategy_persona_contract.py",
+      "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py",
+      "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+      "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py",
+      "services/control-plane/bff/test_persona_league_detail_not_found.py",
+      "services/control-plane/bff/test_persona_live_integration.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py",
+      "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+      "services/control-plane/bff/tests/test_bff_b3_persona_intent.py",
+      "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py",
+      "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+      "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+      "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py",
+      "services/control-plane/bff/tests/test_persona_owner_transport_contract.py",
+      "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py"
+    ],
+    "exact_file_count": 17,
+    "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py": {
+      "bytes": 9394,
+      "sha256": "a10a64d91e22d2c2d6a1e284badf88eb484306f4c32f4ce14c2d8350456e29e4",
+      "lines": 236
+    },
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py": {
+      "bytes": 47640,
+      "sha256": "97dd596bf04141e74bd1158c01d190ae994ae678ac07102647fca370fb2c490f",
+      "lines": 1111
+    },
+    "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py": {
+      "bytes": 13221,
+      "sha256": "efd2e898ccb5de401f923d889f83c1a261ee0a0f2d2edf00a5bd0c802c28edcb",
+      "lines": 360
+    },
+    "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py": {
+      "bytes": 82771,
+      "sha256": "1877525dfb1fba5bcdef9620ead163256e6d05ab80f5bacbc240a77676755d9f",
+      "lines": 2010
+    },
+    "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py": {
+      "bytes": 11878,
+      "sha256": "33ea3233b37a566398aea8cec50d943fccda9ce1ad9ad9fb77116d74866c464f",
+      "lines": 302
+    },
+    "services/control-plane/bff/test_persona_league_detail_not_found.py": {
+      "bytes": 3024,
+      "sha256": "b37098aced5aea2f9efdac44d57dead6df4b54ad2265e62c3f624fa7142adbba",
+      "lines": 86
+    },
+    "services/control-plane/bff/test_persona_live_integration.py": {
+      "bytes": 8551,
+      "sha256": "4a28e52a38458cc03f61e4dbc0a2279ef8499c729ed109d3ebed47836cb090c5",
+      "lines": 230
+    },
+    "services/control-plane/bff/test_persona_provisioning_readback.py": {
+      "bytes": 41354,
+      "sha256": "5aff58334594aca236f0d8325047502f1774e9990950688ae4fa9ca2080109e1",
+      "lines": 1215
+    },
+    "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py": {
+      "bytes": 5603,
+      "sha256": "9ddf5cd939ddae75e0ba3017a8f78f0d73df02ee821a50f668042b39002fc4b8",
+      "lines": 161
+    },
+    "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py": {
+      "bytes": 45264,
+      "sha256": "06ad10575951d1ac4850cf294a6fa5eecf8150b290d90fdde2c3344bd8010440",
+      "lines": 1050
+    },
+    "services/control-plane/bff/tests/test_bff_b3_persona_intent.py": {
+      "bytes": 13096,
+      "sha256": "b8fca8110b7cc549d23884f2179024c275215667ad6c8c55a09bcca2f00910df",
+      "lines": 321
+    },
+    "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py": {
+      "bytes": 8638,
+      "sha256": "6c4aeec643369f952001eb6d5174665dd756ad0151f9c948acd905752a777e86",
+      "lines": 223
+    },
+    "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py": {
+      "bytes": 55855,
+      "sha256": "50636d0a2b9cfbe65103ba4b3c0427bb9e9d312c394dd46025b0f62a67087e59",
+      "lines": 1204
+    },
+    "services/control-plane/bff/tests/test_bff_pm12_persona_league.py": {
+      "bytes": 47404,
+      "sha256": "8e14b11bb9d787df062014cf825c6006b3902fb0dc8ff85ea220549a23b6d7a3",
+      "lines": 1087
+    },
+    "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py": {
+      "bytes": 8885,
+      "sha256": "bb775fa2315bd426525e1b8a791c61a962ea0636cf3150a94967f481181c40d1",
+      "lines": 239
+    },
+    "services/control-plane/bff/tests/test_persona_owner_transport_contract.py": {
+      "bytes": 25769,
+      "sha256": "51986c32ec945e13d89349b94f75e9d055fb1de7d731da9a13fc1722a9a594a8",
+      "lines": 689
+    },
+    "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py": {
+      "bytes": 5519,
+      "sha256": "881a4601e8db1fb891a5679d41c05cded7d3f2b999ee067cdaf6d38f31532d9d",
+      "lines": 154
+    }
+  },
+  "suite_results": {
+    "total_suites": 17,
+    "total_tests_passed": 214,
+    "total_tests_failed": 0,
+    "details_by_file": {
+      "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py": {
+        "tests_passed": 19,
+        "decoupling_approach": "Extracted _MockBffMain context collector using AST-compiled fleet context helpers and isolated ManagementService, removing import main as bff_main and sys.path manipulation."
+      },
+      "services/control-plane/bff/test_bff_strategy_persona_contract.py": {
+        "tests_passed": 19,
+        "decoupling_approach": "Mounted create_strategy_personas_router on isolated FastAPI application with in-memory store and explicit error/exception handlers, decoupling from composition main and avoiding leaked ContextVar state."
+      },
+      "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Mounted create_strategy_personas_router directly on clean FastAPI app with scoped mocks, removing global main import and path mutation."
+      },
+      "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py": {
+        "tests_passed": 16,
+        "decoupling_approach": "Mounted isolated FastAPI test app with direct routing and _project_market_persona_item projection helpers, removing global main import and sys.path manipulation; wrapped ContextVar token set with try/finally to prevent service leakage into downstream test suites."
+      },
+      "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py": {
+        "tests_passed": 18,
+        "decoupling_approach": "Mounted create_personas_router on clean FastAPI instance with MemoryPersonaProvisioningStore, eliminating global main import."
+      },
+      "services/control-plane/bff/test_persona_league_detail_not_found.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Mounted create_personas_router on isolated FastAPI app with empty mock store, testing 404 behavior without composition root."
+      },
+      "services/control-plane/bff/test_persona_live_integration.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Mounted persona and provisioning routers with explicit dependency injection and PersonaProvisioningCoordinator, avoiding global main import."
+      },
+      "services/control-plane/bff/test_persona_provisioning_readback.py": {
+        "tests_passed": 52,
+        "decoupling_approach": "Mounted create_persona_provisioning_router with MemoryPersonaProvisioningStore on test FastAPI instance, removing composition dependency."
+      },
+      "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Direct instantiation and execution of PersonaProvisioningCoordinator reconciliation with isolated memory stores, removing sys.path and main imports."
+      },
+      "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py": {
+        "tests_passed": 12,
+        "decoupling_approach": "Decoupled persona fleet router and contract tests using isolated FastAPI app, scoped dependency overrides, and direct service projection helpers."
+      },
+      "services/control-plane/bff/tests/test_bff_b3_persona_intent.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Mounted persona intent router on clean FastAPI app with mock stores and explicit dependency overrides."
+      },
+      "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Direct testing of persona provisioning bundle creation using isolated MemoryPersonaProvisioningStore and router mounting on clean test app."
+      },
+      "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py": {
+        "tests_passed": 22,
+        "decoupling_approach": "Mounted provisioning router with failing mock stores on clean test app to verify error handling without global main imports."
+      },
+      "services/control-plane/bff/tests/test_bff_pm12_persona_league.py": {
+        "tests_passed": 14,
+        "decoupling_approach": "Mounted create_personas_router on isolated FastAPI app with mocked league stores, removing sys.path mutation and main imports."
+      },
+      "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Decoupled fleet collector and owner observations using AST-extracted context collector, isolated ManagementService, and clean store state."
+      },
+      "services/control-plane/bff/tests/test_persona_owner_transport_contract.py": {
+        "tests_passed": 18,
+        "decoupling_approach": "Pre-existing cleanly decoupled contract suite against isolated Capital FastAPI test app with MemoryPersonaProvisioningStore and zero main imports."
+      },
+      "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Direct execution of persona provisioning read-surface mutations against isolated memory stores without global main dependencies."
+      }
+    }
+  },
+  "architecture_invariants": {
+    "zero_main_imports": true,
+    "zero_sys_path_mutations": true,
+    "zero_global_monkeypatching": true,
+    "test_bff_test_architecture_passed": 8
+  },
+  "verification_commands": [
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py services/control-plane/bff/test_bff_strategy_persona_contract.py services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py services/control-plane/bff/test_persona_league_detail_not_found.py services/control-plane/bff/test_persona_live_integration.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_bff_b3_persona_intent.py services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_persona_owner_transport_contract.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py (214 passed)",
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
+  ]
+}

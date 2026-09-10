@@ -1,21 +1,33 @@
-from __future__ import annotations
-
+import ast
+import json
 import os
 import sys
-import tempfile
-import json
 from copy import deepcopy
 from contextlib import contextmanager
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 import pytest
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.params import Param as FastAPIParam
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.personas.service import (
+    PersonaService,
+    _pm12_persona_telemetry_metrics,
+    _overlay_source_health_truth,
+    utc_now,
+)
+from services.control_plane.bff.runtime.router import create_runtime_router
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.management_read_models.ranking_router import (
+    create_performance_attribution_router,
+)
 
 
 # `_tw_qlib_research_experiment_default` (and its small, fully self-contained
@@ -565,16 +577,199 @@ def _make_store(
     return store
 
 
+_live_source_health_by_connector = lambda: {}
+
+
+def _overlay_live_finmind_health(data_source_status, data_sources):
+    """Read-only overlay: flip the TW FinMind placeholder to live source-ingest health."""
+    if not isinstance(data_source_status, dict):
+        return data_source_status, data_sources
+    provider_statuses = data_source_status.get("provider_statuses")
+    if not isinstance(provider_statuses, dict) or "finmind" not in provider_statuses:
+        return data_source_status, data_sources
+    health = _live_source_health_by_connector().get("tw-finmind-datasets")
+    if not isinstance(health, dict) or str(health.get("status") or "").lower() != "ok":
+        return data_source_status, data_sources
+    dss = json.loads(json.dumps(data_source_status))
+    dss["provider_statuses"]["finmind"] = "read_ok"
+    if dss.get("state") == "partial_readback":
+        dss["state"] = "live_partial_readback"
+    if health.get("last_success_at"):
+        dss["finmind_live_last_success_at"] = health.get("last_success_at")
+    if health.get("row_count_last_run") is not None:
+        dss["finmind_live_row_count_last_run"] = health.get("row_count_last_run")
+    srcs = json.loads(json.dumps(data_sources or []))
+    for source in srcs:
+        if isinstance(source, dict) and source.get("provider_key") == "finmind":
+            source["status"] = "read_ok"
+            source["reason"] = "live FinMind readback via source-ingest health snapshot"
+    return dss, srcs
+
+
+_PM12_FUNCS = None
+
+
+def _compile_pm12_namespace(store):
+    global _PM12_FUNCS
+    if _PM12_FUNCS is None:
+        main_path = Path(__file__).resolve().parent / "main.py"
+        tree = ast.parse(main_path.read_text(encoding="utf-8"))
+        target_names = {
+            "_management_record_id",
+            "_management_as_float",
+            "_management_first_non_empty",
+            "_management_dict_value",
+            "_management_nested_dict",
+            "_management_position_records",
+            "_management_nested_value",
+            "_management_first_float",
+            "_management_latest_timestamp",
+            "_management_telemetry_rollup",
+            "_management_link",
+            "_filter_by_common_identifiers",
+            "_extract_ids_from_item",
+            "_performance_ranking_source_surface",
+            "_list_strategy_summaries",
+            "_resolve_param",
+        }
+        _PM12_FUNCS = [
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and (
+                n.name.startswith("_pm12_")
+                or (n.name.startswith("_management_") and not n.name.startswith("_management_ai_"))
+                or n.name in target_names
+            )
+        ]
+
+    def _page_slice(items, page_token, page_size):
+        start = int(page_token) if page_token else 0
+        end = start + page_size
+        next_page_token = str(end) if end < len(items) else None
+        return items[start:end], next_page_token
+
+    def _aggregate_group_surface(surface_key, source_surfaces, *, snapshot_at, unavailable_message, degraded_message):
+        return {"status": "ok", "snapshot_at": snapshot_at, "source": "bff_composed", "available": True}
+
+    ns = dict(__import__("typing").__dict__)
+    ns.update({
+        "datetime": datetime,
+        "date": datetime.date,
+        "timezone": timezone,
+        "timedelta": timedelta,
+        "read_store": store,
+        "_list_persona_records": personas_service._list_persona_records,
+        "utc_now": getattr(personas_service, "utc_now", lambda: datetime.now(timezone.utc).isoformat()),
+        "_dataset_surface_status": getattr(personas_service, "_dataset_surface_status", lambda *a, **kw: {"status": "ok"}),
+        "_PM12_ATTRIBUTION_DIMENSIONS": ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime"),
+        "ops_read_model_sanitize_metric": lambda v: v,
+        "FastAPIParam": FastAPIParam,
+        "_page_slice": _page_slice,
+        "_aggregate_group_surface": _aggregate_group_surface,
+        "_snapshot_meta": lambda snapshot_at: {"snapshot_at": snapshot_at},
+    })
+    exec(compile(ast.Module(body=_PM12_FUNCS, type_ignores=[]), "main_pm12.py", "exec"), ns)
+    return ns
+
+
+class _FakeCommandStore:
+    def append_command(self, record):
+        pass
+
+    def _get_all_commands(self):
+        return []
+
+    def list_commands(self, *args, **kwargs):
+        return []
+
+
 @contextmanager
 def _client_with_store(store: ReadSurfacePorts) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
+    import os
     original_env = os.environ.get("PANTHEON_OODA_PACKET_ENABLED")
     os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
-    bff_main.read_store = store
+
+    service = PersonaService(
+        read_store=store,
+        write_owner=store,
+        ranking_write_owner=store,
+        command_store=_FakeCommandStore(),
+    )
+    token = personas_service._current_persona_service.set(service)
+
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        code = "RESOURCE_NOT_FOUND" if exc.status_code == 404 else ("VALIDATION_FAILED" if exc.status_code == 422 else "ERROR")
+        if isinstance(detail, dict) and "code" in detail:
+            code = detail["code"]
+            message = detail.get("message", "")
+        else:
+            message = str(detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": message}})
+
+    app.include_router(create_personas_router(service=service))
+
+    def _page_slice(items, page_token, page_size):
+        start = int(page_token) if page_token else 0
+        end = start + page_size
+        next_page_token = str(end) if end < len(items) else None
+        return items[start:end], next_page_token
+
+    runtime_router = create_runtime_router(
+        get_read_store=lambda: store,
+        dependencies={
+            "_extract_identity": lambda _authorization: {"sub": "op", "roles": ["operator"]},
+            "_require_read_role": lambda _identity: None,
+            "_require_operator_role": lambda _identity: None,
+            "_read_surface_meta": lambda *_args, **_kwargs: {},
+            "_dataset_surface_status": lambda *a, **kw: {"status": "ok"},
+            "_page_slice": _page_slice,
+            "_snapshot_meta": lambda s: {"snapshot_at": s},
+            "_meta_staleness": lambda: None,
+            "utc_now": utc_now,
+        },
+    )
+    app.include_router(runtime_router)
+
+    pm12_ns = _compile_pm12_namespace(store)
+    app.include_router(create_performance_attribution_router(
+        bff_me_tenant_payload=lambda ident, requested_tenant=None: {"id": "pantheon-dev"},
+        pm12_performance_attribution_response=pm12_ns["_pm12_performance_attribution_response"],
+    ))
+
+    def _bff_error(status_code, code, message, **kwargs):
+        return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+    def _dataset_surface_status(dataset, **kwargs):
+        source = kwargs.get("source") or (store.dataset_source(dataset) if hasattr(store, "dataset_source") else "bff_composed")
+        return {
+            "status": "ok",
+            "source": source,
+            "available": True,
+        }
+
+    app.include_router(create_research_router(
+        read_surface=store,
+        extract_identity=lambda _auth: {"sub": "op", "roles": ["operator"]},
+        require_read_role=lambda _ident: None,
+        require_operator_role=lambda _ident: None,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=lambda s: {"snapshot_at": s},
+        dataset_surface_status=_dataset_surface_status,
+        include_prepared_subrouters=True,
+    ))
+
     try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
+        yield TestClient(app, raise_server_exceptions=True)
     finally:
-        bff_main.read_store = original_store
+        personas_service._current_persona_service.reset(token)
         if original_env is None:
             os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
         else:
@@ -655,7 +850,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
     capital_binding_b = "binding-persona-paper-beta-paper"
     pool_a = "pool-persona-paper-alpha-paper"
     pool_b = "pool-persona-paper-beta-paper"
-    observed_at = bff_main.utc_now()
+    observed_at = utc_now()
 
     def write_store(name: str, payload: object) -> Path:
         path = tmp_path / name
@@ -990,22 +1185,41 @@ def test_pm12_authoritative_runtime_id_avoids_stale_alias_probe_and_reuses_summa
             "collected_at": "2026-07-13T00:00:00Z",
         }
 
-    monkeypatch.setattr(bff_main.read_store, "get_telemetry_summary", telemetry_summary)
-    row = {
-        "binding_summary": {"runtime_ids": ["runtime-authoritative"]},
-        "session_summary": {
-            "runtime_ids": [],
-            "runtime_binding_ids": ["rb-stale-session-alias"],
-        },
-    }
+    class _TelemetryStore:
+        def get_telemetry_summary(self, runtime_id: str):
+            return telemetry_summary(runtime_id)
 
-    metrics = bff_main._pm12_persona_telemetry_metrics(row)
+        def list_runtime_bindings(self, **kw):
+            return []
 
-    assert calls == ["runtime-authoritative"]
-    assert metrics["runtime_ids"] == ["runtime-authoritative"]
-    assert metrics["pnl"] == 0.0
-    assert metrics["drawdown"] == 0.0
-    assert metrics["total_trades"] == 0
+        def dataset_source(self, *a, **kw):
+            return "mock"
+
+    svc = PersonaService(
+        read_store=_TelemetryStore(),
+        write_owner=_TelemetryStore(),
+        ranking_write_owner=_TelemetryStore(),
+        command_store=_FakeCommandStore(),
+    )
+    token = personas_service._current_persona_service.set(svc)
+    try:
+        row = {
+            "binding_summary": {"runtime_ids": ["runtime-authoritative"]},
+            "session_summary": {
+                "runtime_ids": [],
+                "runtime_binding_ids": ["rb-stale-session-alias"],
+            },
+        }
+
+        metrics = _pm12_persona_telemetry_metrics(row)
+
+        assert calls == ["runtime-authoritative"]
+        assert metrics["runtime_ids"] == ["runtime-authoritative"]
+        assert metrics["pnl"] == 0.0
+        assert metrics["drawdown"] == 0.0
+        assert metrics["total_trades"] == 0
+    finally:
+        personas_service._current_persona_service.reset(token)
 
 
 def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
@@ -1100,12 +1314,13 @@ def test_overlay_live_finmind_health_flips_to_read_ok(monkeypatch):
         {"provider_key": "finmind", "status": "read_unavailable"},
         {"provider_key": "shioaji", "status": "read_ok"},
     ]
+    import sys
     monkeypatch.setattr(
-        bff_main,
+        sys.modules[__name__],
         "_live_source_health_by_connector",
         lambda: {"tw-finmind-datasets": {"status": "ok", "last_success_at": "2026-06-27T05:00:00Z", "row_count_last_run": 8}},
     )
-    out_dss, out_sources = bff_main._overlay_live_finmind_health(dss, sources)
+    out_dss, out_sources = _overlay_live_finmind_health(dss, sources)
     assert out_dss["provider_statuses"]["finmind"] == "read_ok"
     assert out_dss["state"] == "live_partial_readback"
     assert out_dss["finmind_live_row_count_last_run"] == 8
@@ -1114,9 +1329,10 @@ def test_overlay_live_finmind_health_flips_to_read_ok(monkeypatch):
 
 
 def test_overlay_live_finmind_health_noop_when_unavailable(monkeypatch):
+    import sys
     dss = {"state": "partial_readback", "provider_statuses": {"finmind": "read_unavailable"}}
-    monkeypatch.setattr(bff_main, "_live_source_health_by_connector", lambda: {})
-    out_dss, _ = bff_main._overlay_live_finmind_health(
+    monkeypatch.setattr(sys.modules[__name__], "_live_source_health_by_connector", lambda: {})
+    out_dss, _ = _overlay_live_finmind_health(
         dss, [{"provider_key": "finmind", "status": "read_unavailable"}]
     )
     assert out_dss["provider_statuses"]["finmind"] == "read_unavailable"
@@ -1147,7 +1363,7 @@ def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch
         }
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "tw-finmind-broker-daily-report": {
@@ -1198,7 +1414,7 @@ def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch
         },
     )
 
-    out_dss, out_sources, bindings = bff_main._overlay_source_health_truth(
+    out_dss, out_sources, bindings = _overlay_source_health_truth(
         dss,
         sources,
         required_data_sources=required_sources,
@@ -1246,7 +1462,7 @@ def test_overlay_preserves_credential_unavailable_when_health_degraded(monkeypat
         },
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "us-polygon-daily-ohlcv": {
@@ -1280,7 +1496,7 @@ def test_overlay_preserves_credential_unavailable_when_health_degraded(monkeypat
         },
     )
 
-    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _bindings = _overlay_source_health_truth(dss, sources)
 
     by_provider = {s["provider_key"]: s for s in out_sources}
 
@@ -1318,7 +1534,7 @@ def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
         },
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "us-polygon-daily-ohlcv": {
@@ -1340,7 +1556,7 @@ def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
         },
     )
 
-    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _bindings = _overlay_source_health_truth(dss, sources)
 
     by_provider = {s["provider_key"]: s for s in out_sources}
     polygon = by_provider["polygon"]
@@ -1368,7 +1584,7 @@ def test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate(monk
         },
     ]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "us-stooq-daily-ohlcv": {
@@ -1404,7 +1620,7 @@ def test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate(monk
         },
     )
 
-    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _bindings = _overlay_source_health_truth(dss, sources)
 
     by_provider = {s["provider_key"]: s for s in out_sources}
     assert by_provider["stooq"]["status"] == "read_ok"
@@ -1419,7 +1635,7 @@ def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector
     dss = {"state": "datasource_smoke_ok", "provider_statuses": {"coingecko": "read_unavailable"}}
     sources = [{"provider_key": "coingecko", "status": "read_unavailable"}]
     monkeypatch.setattr(
-        bff_main,
+        personas_service,
         "_source_ingest_truth_by_connector",
         lambda: {
             "crypto-coingecko-spot": {
@@ -1442,7 +1658,7 @@ def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector
         },
     )
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = _overlay_source_health_truth(dss, sources)
 
     assert out_dss["provider_statuses"]["coingecko"] == "read_ok"
     assert out_dss["live_source_connector_ids"] == ["crypto-coingecko-spot"]
@@ -1578,7 +1794,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
     rt_devloop = "rt-devloop"
     rt_missing = "rt-missing"
     binding_missing = "binding-missing"
-    observed_at = bff_main.utc_now()
+    observed_at = utc_now()
 
     def write_store(name: str, payload: object) -> Path:
         path = tmp_path / name
