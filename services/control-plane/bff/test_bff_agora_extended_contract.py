@@ -2,20 +2,32 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandType
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
 
-import main as bff_main
-from command_queue import CommandStore
-from models import CommandType
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 OPERATOR_TOKEN = "Bearer op-agora-extended:operator"
@@ -384,36 +396,48 @@ def _empty_read_store() -> AgoraExtendedTestReadPorts:
     return AgoraExtendedTestReadPorts({}, fallback_degraded=False)
 
 
+def _build_agora_extended_client(store: AgoraExtendedTestReadPorts, command_store_path: str) -> TestClient:
+    command_store = CommandStore(command_store_path)
+    idempotency_store: dict[str, Any] = {}
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_operator_role,
+        require_agora_bulk_feedback_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now_rfc3339,
+        read_surface=store,
+        journal_write_owner=store,
+        command_store=command_store,
+        idempotency_store=idempotency_store,
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    return TestClient(app)
+
+
 @contextmanager
 def _isolated_agora_extended_bff() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        bff_main.read_store = _seed_read_store()
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        yield _build_agora_extended_client(_seed_read_store(), os.path.join(td, "commands.jsonl"))
 
 
 @contextmanager
 def _isolated_empty_agora_extended_bff() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        bff_main.read_store = _empty_read_store()
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        yield _build_agora_extended_client(_empty_read_store(), os.path.join(td, "commands.jsonl"))
 
 
 def _has_item(items: list[dict], field: str, expected: str) -> bool:
@@ -496,33 +520,25 @@ def test_agora_extended_routes_use_service_backed_dataset_adapters(monkeypatch) 
         monkeypatch.setenv("PANTHEON_BFF_INSIGHT_CARD_STORE", str(inbox_store))
         monkeypatch.setenv("PANTHEON_BFF_AGORA_SKILL_COACHING_SESSION_STORE", str(skill_store))
 
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        bff_main.read_store = _empty_read_store()
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        try:
-            client = TestClient(bff_main.app)
-            cases = [
-                ("/bff/agora/inbox", "agora_inbox", "id", "ins-env-001"),
-                (
-                    "/bff/agora/skill-coaching/sessions",
-                    "agora_skill_coaching_sessions",
-                    "sessionId",
-                    "skill-env-001",
-                ),
-            ]
-            for path, surface_key, id_field, expected_id in cases:
-                response = client.get(path, headers=HEADERS)
+        client = _build_agora_extended_client(_empty_read_store(), os.path.join(td, "commands.jsonl"))
+        cases = [
+            ("/bff/agora/inbox", "agora_inbox", "id", "ins-env-001"),
+            (
+                "/bff/agora/skill-coaching/sessions",
+                "agora_skill_coaching_sessions",
+                "sessionId",
+                "skill-env-001",
+            ),
+        ]
+        for path, surface_key, id_field, expected_id in cases:
+            response = client.get(path, headers=HEADERS)
 
-                assert response.status_code == 200, response.text
-                payload = response.json()
-                assert _has_item(payload["items"], id_field, expected_id)
-                surface = payload["meta"]["surfaces"][surface_key]
-                assert surface["source"] == "service_store"
-                assert surface["status"] == "ok"
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert _has_item(payload["items"], id_field, expected_id)
+            surface = payload["meta"]["surfaces"][surface_key]
+            assert surface["source"] == "service_store"
+            assert surface["status"] == "ok"
 
 
 def test_agora_ask_submission_creates_session_message_and_command_receipt() -> None:

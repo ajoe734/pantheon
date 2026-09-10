@@ -9,19 +9,31 @@ viewer evidence redaction, stable pagination, and explicit score semantics.
 from __future__ import annotations
 
 import json
-import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-BFF_DIR = Path(__file__).resolve().parents[1]
+from services.control_plane.bff.agora.research import router as research_router
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-import agora.research.router as research_router  # noqa: E402
-
 
 _OPERATOR_AUTH = "Bearer agora-truth-user:operator"
 _VIEWER_AUTH = "Bearer agora-truth-viewer:viewer"
@@ -34,6 +46,8 @@ _TRUTH_SCHEMA = (
 _FIELD_NAMES = ("rationale", "concerns", "next_event", "evidence", "details")
 _DEFAULT_REGISTRY_CANDIDATES = research_router._default_registry_candidates
 
+
+from services.control_plane.bff.agora.research.routes import common as research_common
 
 def _enable_governed_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     """Attach persisted evidence refs to the test registry candidates."""
@@ -53,6 +67,20 @@ def _enable_governed_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
         "_default_registry_candidates",
         candidates_with_evidence,
     )
+    monkeypatch.setattr(
+        research_common,
+        "_default_registry_candidates",
+        candidates_with_evidence,
+    )
+    try:
+        import agora.research.router as legacy_r_router
+        monkeypatch.setattr(
+            legacy_r_router,
+            "_default_registry_candidates",
+            candidates_with_evidence,
+        )
+    except ImportError:
+        pass
 
 
 def _assert_private_score_explanations_absent(
@@ -85,7 +113,30 @@ def _assert_private_score_explanations_absent(
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_operator_role,
+        require_agora_bulk_feedback_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now_rfc3339,
+        read_surface=create_in_memory_read_surface_ports(),
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def _headers(

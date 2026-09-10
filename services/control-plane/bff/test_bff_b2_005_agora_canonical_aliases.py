@@ -2,18 +2,29 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
 
-import main as bff_main
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 HEADERS = {"Authorization": "Bearer op-bff-b2-005:operator"}
@@ -170,6 +181,8 @@ def _seed_read_store() -> AgoraAliasesTestReadPorts:
                 "body": "Decision journal alias coverage.",
                 "created_at": "2026-05-23T06:00:00Z",
                 "updated_at": "2026-05-23T06:00:00Z",
+                "tenant_id": "pantheon-dev",
+                "tenantId": "pantheon-dev",
             }
         },
         "postmortems": {
@@ -211,13 +224,32 @@ def _seed_read_store() -> AgoraAliasesTestReadPorts:
 
 @contextmanager
 def _isolated_bff() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _seed_read_store()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
+    store = _seed_read_store()
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_operator_role,
+        require_agora_bulk_feedback_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now_rfc3339,
+        read_surface=store,
+        journal_write_owner=store,
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    yield TestClient(app)
 
 
 def _records(payload: dict) -> list[dict]:

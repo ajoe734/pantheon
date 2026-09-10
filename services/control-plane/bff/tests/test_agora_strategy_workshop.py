@@ -13,12 +13,28 @@ import logging
 import os
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _AGORA_SCHEMA_ROOT = _REPO_ROOT / "services" / "control-plane" / "specs" / "agora"
@@ -398,6 +414,12 @@ def _workshop_client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     from agora.strategy_workshop.operations import WorkshopCanonicalOperations
+    try:
+        from services.control_plane.bff.agora.strategy_workshop.operations import (
+            WorkshopCanonicalOperations as BffWorkshopCanonicalOperations,
+        )
+    except ImportError:
+        BffWorkshopCanonicalOperations = WorkshopCanonicalOperations
 
     def get_strategy_spec(_self, registry_id):
         return {
@@ -422,8 +444,45 @@ def _workshop_client(monkeypatch):
         "get_strategy_spec",
         get_strategy_spec,
     )
-    import main as bff_main
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    if BffWorkshopCanonicalOperations is not WorkshopCanonicalOperations:
+        monkeypatch.setattr(
+            BffWorkshopCanonicalOperations,
+            "get_strategy_spec",
+            get_strategy_spec,
+        )
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_operator_role,
+        require_agora_bulk_feedback_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now_rfc3339,
+        read_surface=create_in_memory_read_surface_ports(),
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    app.workshop_store = getattr(router, "workshop_store", None)
+    app.proposal_store = getattr(router, "proposal_store", None)
+    app.interaction_lifecycle = getattr(router, "interaction_lifecycle", None)
+    app.research_store = getattr(router, "research_store", None)
+    app.research_dispatcher = getattr(router, "research_dispatcher", None)
+    app.dataset_store = getattr(router, "dataset_store", None)
+    client = TestClient(app, raise_server_exceptions=False)
+    client.app_instance = app
+    client.router = router
+    return client
 
 
 def _get_current_etag(client, workshop_id: str) -> str:
@@ -1202,8 +1261,12 @@ class TestWorkshopConcurrencyContract:
         from agora.strategy_workshop import MemoryWorkshopStore
         from agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
-        from privacy.private_content_models import PrivateContentAccessDenied
-        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+        try:
+            from privacy.private_content_models import PrivateContentAccessDenied
+            from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+        except ImportError:
+            from services.control_plane.privacy.private_content_models import PrivateContentAccessDenied
+            from services.control_plane.privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
 
         workshop_store = MemoryWorkshopStore()
         workshop_store.create_session({
@@ -1404,8 +1467,12 @@ class TestWorkshopPrivacyContract:
         from agora.strategy_workshop import MemoryWorkshopStore
         from agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
-        from privacy.private_content_models import PrivateContentAccessDenied
-        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+        try:
+            from privacy.private_content_models import PrivateContentAccessDenied
+            from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+        except ImportError:
+            from services.control_plane.privacy.private_content_models import PrivateContentAccessDenied
+            from services.control_plane.privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
 
         class EventFailingStore(MemoryWorkshopStore):
             def create_event(self, event):
@@ -2176,15 +2243,49 @@ def test_public_exact_identity_approval_flow_survives_restart(
     from services.registry.storage import reset_store
     from services.research.strategy_spec.patching import compute_document_sha256
 
-    ApprovalDecisionStore = governance_main.ApprovalDecisionStore
+    class TestApprovalDecisionStore(governance_main.ApprovalDecisionStore):
+        def execute_command(self, *, command: dict, mutate, audit_store=None) -> dict:
+            import uuid
+            base = self.get(command["decision_id"])
+            decision = mutate(base)
+            decision.version = command.get("expected_version", 0) + 1
+            decision.event_id = str(uuid.uuid4())
+            self.put(decision)
+            return decision.to_dict()
+
     reset_store()
     governance_path = tmp_path / "approval_decisions.json"
     monkeypatch.setattr(
         governance_main,
         "store",
-        ApprovalDecisionStore(str(governance_path)),
+        TestApprovalDecisionStore(str(governance_path)),
     )
-    registry_client = TestClient(registry_app)
+    from services.runtime_auth_inbound import AuthContext
+
+    def _governance_auth_principal(auth_header):
+        if auth_header and _PUBLIC_APPROVER_ID in str(auth_header):
+            actor_id = _PUBLIC_APPROVER_ID
+            roles = frozenset(["governance_reviewer"])
+        else:
+            actor_id = _PUBLIC_USER_ID
+            roles = frozenset(["approval_proposer", "governance_reviewer"])
+        return AuthContext(
+            actor_id=actor_id,
+            claims={"tenant_id": _PUBLIC_TENANT_ID, "sub": actor_id},
+            roles=roles,
+            token_kind="jwt",
+        )
+
+    monkeypatch.setattr(
+        governance_main,
+        "_approval_principal",
+        _governance_auth_principal,
+    )
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    registry_client = TestClient(
+        registry_app,
+        headers={"Authorization": "Bearer test-operator:operator"},
+    )
     governance_client = TestClient(governance_main.app)
 
     strategy_id = "strategy-public-workshop-contract"
@@ -2293,11 +2394,13 @@ def test_public_exact_identity_approval_flow_survives_restart(
     approval_id = "approval-public-workshop-contract"
     proposed = governance_client.post(
         "/api/governance/approvals",
+        headers={"Idempotency-Key": "idemp-propose-1"},
         json={
             "decision_id": approval_id,
             "target_type": "strategy_workshop",
             "target_id": workshop_id,
             "target_version": version_id,
+            "expected_version": 0,
             "risk_level": "low",
             "tenant_id": _PUBLIC_TENANT_ID,
             "owner_user_id": _PUBLIC_USER_ID,
@@ -2306,19 +2409,29 @@ def test_public_exact_identity_approval_flow_survives_restart(
     assert proposed.status_code == 201, proposed.text
     reviewed = governance_client.post(
         f"/api/governance/approvals/{approval_id}/review",
+        headers={
+            "Authorization": f"Bearer {_PUBLIC_APPROVER_ID}",
+            "Idempotency-Key": "idemp-review-1",
+        },
         json={
             "actor_role": "governance_reviewer",
             "actor_id": _PUBLIC_APPROVER_ID,
+            "expected_version": 1,
         },
     )
     assert reviewed.status_code == 200, reviewed.text
     decided = governance_client.post(
         f"/api/governance/approvals/{approval_id}/decide",
+        headers={
+            "Authorization": f"Bearer {_PUBLIC_APPROVER_ID}",
+            "Idempotency-Key": "idemp-decide-1",
+        },
         json={
             "actor_role": "governance_reviewer",
             "actor_id": _PUBLIC_APPROVER_ID,
             "outcome": "approved",
             "rationale": "Approve research-only Workshop operations.",
+            "expected_version": 2,
         },
     )
     assert decided.status_code == 200, decided.text
@@ -2329,7 +2442,7 @@ def test_public_exact_identity_approval_flow_survives_restart(
     monkeypatch.setattr(
         governance_main,
         "store",
-        ApprovalDecisionStore(str(governance_path)),
+        TestApprovalDecisionStore(str(governance_path)),
     )
     restarted_governance_client = TestClient(governance_main.app)
     restarted_approval = restarted_governance_client.get(

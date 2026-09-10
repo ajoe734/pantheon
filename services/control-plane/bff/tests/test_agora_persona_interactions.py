@@ -1,15 +1,29 @@
 from __future__ import annotations
 
 import os
-import sys
 import uuid
+from datetime import datetime, timezone
 
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import main as bff_main
-from agora.interaction.worker import AgoraInteractionWorker
-from agora.strategy_workshop.store import MemoryWorkshopStore
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
+
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-1"}
 
@@ -73,11 +87,58 @@ class FakeReadStore:
         return [{"id": "entry-7", "tenant_id": "pantheon-dev", "owner_user_id": "interaction-user"}]
 
 
+read_store = FakeReadStore()
+router = create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    require_operator_role=_require_operator_role,
+    require_journal_write_role=_require_operator_role,
+    require_agora_signal_write_role=_require_operator_role,
+    require_agora_bulk_feedback_role=_require_operator_role,
+    bff_error=_bff_error,
+    utc_now=_utc_now_rfc3339,
+    get_read_store=lambda: read_store,
+    read_surface=lambda: read_store,
+    sync_servant_agent=lambda p: {},
+)
+interaction_lifecycle = router.interaction_lifecycle
+workshop_store = router.workshop_store
+
+app = FastAPI()
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+app.include_router(router)
+
+
 def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    monkeypatch.setattr(bff_main, "read_store", FakeReadStore())
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    global read_store
+    read_store = FakeReadStore()
+    if interaction_lifecycle.backend == "memory":
+        with interaction_lifecycle._lock:
+            interaction_lifecycle._requests.clear()
+            interaction_lifecycle._idempotency.clear()
+            interaction_lifecycle._invocations.clear()
+            interaction_lifecycle._syntheses.clear()
+            interaction_lifecycle._outbox.clear()
+            interaction_lifecycle._candidate_links.clear()
+            interaction_lifecycle._audits.clear()
+            interaction_lifecycle._retry_commands.clear()
+            interaction_lifecycle._context_bindings.clear()
+            interaction_lifecycle._context_binding_latest.clear()
+    if hasattr(workshop_store, "_sessions"):
+        workshop_store._sessions.clear()
+        workshop_store._events.clear()
+        workshop_store._cards.clear()
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def context_payload(version="v1"):
@@ -231,9 +292,9 @@ def test_typed_submission_is_idempotent_and_has_no_write_authority(monkeypatch):
     assert first.json()["data"] == second.json()["data"]
     assert first.json()["data"]["execution_authority"] == "none"
     AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     ).run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     cards = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/cards", headers=AUTH).json()["data"]
@@ -255,9 +316,9 @@ def test_submission_same_key_different_body_conflicts_without_duplicate_side_eff
     changed = {**body, "topic": "Different request"}
     assert c.post("/bff/agora/interactions", headers={**AUTH, "Idempotency-Key": key}, json=changed).status_code == 409
     AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     ).run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     assert [event["event_type"] for event in events] == [
@@ -289,9 +350,9 @@ def test_partial_side_effect_failure_replays_to_exactly_one_event_set(monkeypatc
     headers = {**AUTH, "Idempotency-Key": key}
     assert c.post("/bff/agora/interactions", headers=headers, json=body).status_code == 202
     worker = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     )
     worker.run_once()
     assert c.post("/bff/agora/interactions:recover", headers=AUTH).status_code == 202
@@ -323,9 +384,9 @@ def test_explicit_interaction_id_cannot_be_reused_for_different_content(monkeypa
     )
     assert collision.status_code == 409
     AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     ).run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     assert len(events) == 3
@@ -362,9 +423,9 @@ def test_propose_action_collision_does_not_create_a_dangling_second_proposal(mon
     assert revisions.status_code == 200
     assert len(revisions.json()["data"]) == 1
     AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     ).run_once()
     cards = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/cards", headers=AUTH).json()["data"]
     assert len([card for card in cards if card["card_type"] == "governed_proposal"]) == 1
@@ -372,7 +433,7 @@ def test_propose_action_collision_does_not_create_a_dangling_second_proposal(mon
 
 def test_propose_action_creates_canonical_governed_proposal_and_card(monkeypatch):
     c = client(monkeypatch)
-    bff_main.read_store.list_approval_decisions = lambda: [
+    read_store.list_approval_decisions = lambda: [
         {
             "decision_id": "approval-risk-valid",
             "state": "decided",
@@ -450,9 +511,9 @@ def test_propose_action_creates_canonical_governed_proposal_and_card(monkeypatch
     assert readback.json()["data"]["available_approval_decision_refs"] == []
 
     AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     ).run_once()
 
     cards = c.get(
