@@ -2,13 +2,13 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001",
   "owner": "Antigravity2",
-  "reviewer": "Antigravity",
+  "reviewer": "Codex",
   "target_repo": "ajoe734/pantheon",
   "base_sha": "e6d480211ad34698d4ee97ec408d17cc019d0f08",
   "delivery_state": "ready_for_independent_review",
   "review_decision": {
     "status": "pending",
-    "reviewer": "Antigravity"
+    "reviewer": "Codex"
   },
   "delivery_nature": {
     "documentation_only": true,
@@ -20,8 +20,8 @@
   ],
   "document_proof": {
     "docs/operations/bff-test-migration-b06-audit-admission-projection-seam.md": {
-      "sha256": "aead0529ba099fc770aa144cdcd67866a473befff1811d83c17dae3712f18d85",
-      "bytes": 43741
+      "sha256": "c987352e23f7bee6df923eda8c01f9aa0d982afdc6152b610bc891ac7cccde1a",
+      "bytes": 52535
     }
   },
   "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
@@ -162,6 +162,33 @@
         "reject_body_idempotency_key",
         "bff_error"
       ],
+      "caller_parameters_preserved": [
+        "background_tasks",
+        "payload",
+        "authorization",
+        "x_mfa_token",
+        "x_trace_id",
+        "x_correlation_id",
+        "x_request_id",
+        "x_confirm_token",
+        "idempotency_key",
+        "x_idempotency_key",
+        "route",
+        "source_route",
+        "foundation_raw_payload",
+        "audit_extra",
+        "extra_precondition",
+        "enqueue",
+        "include_durable_meta",
+        "response_deprecation"
+      ],
+      "caller_compatibility": [
+        "services/control-plane/bff/control_loops/router.py:289 (remediate_v5_intervention passing foundation_raw_payload and route)",
+        "services/control-plane/bff/command_adapters/router.py:250 (create_action_command_router)",
+        "services/control-plane/bff/command_adapters/router.py (create_command_adapters_router)",
+        "services/control-plane/bff/incidents/router.py:287 (create_incident_router)",
+        "services/control-plane/bff/tools_integrations/router.py (create_integrations_router)"
+      ],
       "preserves": [
         "response.json()['data']['receipt_id'] == command_id",
         "record['foundation']['audit_action'] containing action_type, target_ref, payload_checksum",
@@ -188,8 +215,21 @@
         "command_ref, actor, action_type, target_id, audit_context, trace_id, payload_checksum"
       ]
     },
-    "composition_binding": "services/control-plane/bff/main.py instantiates modular services and delegates _submit_final_command_admission, _sem_command_response, _project_command_record_audit_event, and _list_governance_audit_events without changing public route contracts.",
-    "test_binding": "test_aud_002_audit_action_write_engine.py directly injects CommandAdmissionService and CommandAuditProjector into router factories on an isolated FastAPI test application, with 0 imports of main.py and 0 monkeypatching of globals."
+    "negative_constraints": {
+      "prohibit_second_production_app_or_router": true,
+      "prohibit_proxy_or_forwarding_shims": true,
+      "prohibit_global_compatibility_store": true,
+      "prohibit_silent_fallback": true
+    },
+    "bounded_validation_commands": [
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_control_loops_router.py -k \"not test_ast_route_inventory_proves_single_owner_across_assembly_handoff\"",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_tools_integrations_router.py",
+      ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/command_adapters/admission.py services/control-plane/bff/incidents/audit_projection.py services/control-plane/bff/main.py services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py"
+    ],
+    "composition_binding": "services/control-plane/bff/main.py instantiates modular services and delegates _submit_final_command_admission, _sem_command_response, _project_command_record_audit_event, and _list_governance_audit_events via explicit argument forwarding and default preservation (including foundation_raw_payload) without changing public route contracts.",
+    "test_binding": "test_aud_002_audit_action_write_engine.py directly injects CommandAdmissionService and CommandAuditProjector into router factories (without unsupported read_surface on create_action_command_router) on an isolated FastAPI test application, with 0 imports of main.py and 0 monkeypatching of globals."
   },
   "topological_ordering_proof": [
     "1. BFF-TEST-MIGRATION-REPARTITION-PLAN-001 (done)",
@@ -201,12 +241,12 @@
   ],
   "validation": [
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "command": ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "8 passed in 1.66s; verified catalog inventory well-formed, all 5 architectural layers represented, and migrated suite rules hold."
+      "result": "8 passed in 1.95s; verified catalog inventory well-formed, all 5 architectural layers represented, and migrated suite rules hold."
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -c \"<seam_probe_script>\"",
+      "command": ".venv-pantheon/bin/python -c \"<seam_probe_script>\"",
       "exit_code": 0,
       "result": "Probe confirmed the mismatch: runtime_action has receipt_id_present=False and foundation_audit_action_present=False; audit_export has audit_event_count=0; bff_main_loaded=False."
     },

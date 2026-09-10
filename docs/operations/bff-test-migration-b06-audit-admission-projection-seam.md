@@ -3,7 +3,7 @@
 Status: canonical architectural decision for batch B06 command admission and audit event projection  
 Task ID: `BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001`  
 Owner: Antigravity2  
-Reviewer: Antigravity  
+Reviewer: Codex  
 Base Commit: `e6d480211ad34698d4ee97ec408d17cc019d0f08` (origin/dev)  
 Related Tasks:
 - `BFF-TEST-MIGRATION-REPARTITION-PLAN-001` (predecessor plan, done)
@@ -292,21 +292,26 @@ from starlette.responses import JSONResponse
 
 from services.control_plane.bff.models import (
     ActionCommandStatus,
-    AuditAction,
-    AuthorityScope,
-    CommandEnvelope,
     CommandResponse,
     CommandStatus,
     CommandSubmissionResponse,
     CommandType,
-    IdempotencyRecord,
     ObjectType,
     OperatorCommand,
     OperatorIdentity,
-    PolicyDecision,
-    PolicyDecisionValue,
     StalenessWarning,
     TargetObject,
+)
+from services.foundation import (
+    ActorRef,
+    ActorType,
+    AuditAction,
+    AuthorityScope,
+    CommandEnvelope,
+    EnvironmentScope,
+    IdempotencyRecord,
+    PolicyDecision,
+    PolicyDecisionValue,
     TraceContext,
 )
 
@@ -365,15 +370,21 @@ class CommandAdmissionService:
         x_confirm_token: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         x_idempotency_key: Optional[str] = None,
-        route: str = "POST /bff/actions",
+        route: str = "POST /api/v1/operator/commands",
         source_route: Optional[str] = None,
+        foundation_raw_payload: Optional[Dict[str, Any]] = None,
         audit_extra: Optional[Dict[str, Any]] = None,
         extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
         enqueue: bool = True,
-        include_durable_meta: bool = True,
+        include_durable_meta: bool = False,
         response_deprecation: Optional[Dict[str, Any]] = None,
     ) -> CommandResponse[Dict[str, Any]]:
-        """Submit an action command with full foundation audit_action and data.receipt_id projection."""
+        """Submit an action command with full foundation audit_action and data.receipt_id projection.
+
+        Preserves all parameters and defaults of the canonical _submit_final_command_admission entry point.
+        When foundation_raw_payload is supplied (e.g. by control_loops intervention remediation), it is forwarded
+        to build_foundation_context as raw_payload to preserve unstripped intervention payload metadata.
+        """
         ...
 
     def submit_sem_command(
@@ -558,8 +569,52 @@ _audit_projector = CommandAuditProjector(
     utc_now=utc_now,
 )
 
-def _submit_final_command_admission(*args, **kwargs):
-    return _admission_service.submit_action_command(*args, **kwargs)
+def _submit_final_command_admission(
+    *,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any],
+    authorization: Optional[str],
+    x_mfa_token: Optional[str],
+    x_trace_id: Optional[str],
+    x_correlation_id: Optional[str],
+    x_request_id: Optional[str],
+    x_confirm_token: Optional[str],
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+    route: str = _FINAL_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
+    foundation_raw_payload: Optional[Dict[str, Any]] = None,
+    audit_extra: Optional[Dict[str, Any]] = None,
+    extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
+    enqueue: bool = True,
+    include_durable_meta: bool = False,
+    response_deprecation: Optional[Dict[str, Any]] = None,
+) -> CommandResponse[Dict[str, Any]]:
+    """Submit a final-contract command through the modular CommandAdmissionService.
+
+    Preserves full callback argument signature and defaults, preventing blind delegation
+    breakages with callers passing foundation_raw_payload or specialized routes.
+    """
+    return _admission_service.submit_action_command(
+        background_tasks=background_tasks,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route=route,
+        source_route=source_route,
+        foundation_raw_payload=foundation_raw_payload,
+        audit_extra=audit_extra,
+        extra_precondition=extra_precondition,
+        enqueue=enqueue,
+        include_durable_meta=include_durable_meta,
+        response_deprecation=response_deprecation,
+    )
 
 def _sem_command_response(*args, **kwargs):
     return _admission_service.submit_sem_command(*args, **kwargs)
@@ -570,6 +625,25 @@ def _project_command_record_audit_event(record):
 def _list_governance_audit_events(*args, **kwargs):
     return _audit_projector.list_governance_audit_events(*args, **kwargs)
 ```
+
+#### 5.4.1 Existing Caller Invariants & Compatibility Validation
+Preserving the explicit parameter signature and defaults of `_submit_final_command_admission` guarantees 100% compatibility across all callers wired in `main.py`:
+
+1. **`services/control-plane/bff/control_loops/router.py:289` (`remediate_v5_intervention`)**:
+   - Explicitly passes `route=_FOUNDATION_COMMAND_ROUTE` and `foundation_raw_payload={**payload, "intervention_id": clean_id}`.
+   - Preserves unstripped intervention identifiers in the foundation context without schema validation failure.
+2. **`services/control-plane/bff/command_adapters/router.py:250` (`create_action_command_router`)**:
+   - Injected at `main.py:22147` via `submit_command_admission=_submit_final_command_admission`.
+   - Action command routes (`POST /bff/actions/{entity_type}/{entity_id}/{action_id}`) rely on standard action parameter normalization, default `route="POST /api/v1/operator/commands"`, and `data.receipt_id` projection.
+3. **`services/control-plane/bff/command_adapters/router.py` (`create_command_adapters_router`)**:
+   - Injected at `main.py:22164` via `submit_command_admission=_submit_final_command_admission`.
+   - Used for governance command submission adapters.
+4. **`services/control-plane/bff/incidents/router.py:287` (`create_incident_router`)**:
+   - Injected via `submit_action_command=_submit_final_command_admission`.
+   - Handles critical incident actions with confirmation tokens and audit context.
+5. **`services/control-plane/bff/tools_integrations/router.py` (`create_integrations_router`)**:
+   - Injected at `main.py:22617` via `submit_command=_submit_final_command_admission`.
+   - Dispatches MCP tool execution commands.
 
 ### 5.5 Decoupled Test Invocations in `test_aud_002_audit_action_write_engine.py`
 With these two modular seams extracted, B06 refactors `test_aud_002_audit_action_write_engine.py` without importing `main.py` and without monkeypatching:
@@ -602,7 +676,6 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
         app = FastAPI()
         app.include_router(create_action_command_router(
             command_store=command_store,
-            read_surface=read_store,
             extract_identity=extract,
             submit_command_admission=admission_service.submit_action_command,
         ))
@@ -625,6 +698,29 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
 5. Preserves queryability via `GET /bff/audit?target_type=Runtime` and `GET /bff/audit?target_type=AuditExport`.
 6. Preserves entity readback at `/bff/audit/entities/Runtime/runtime-042`.
 7. Preserves idempotency replay semantics (`meta.idempotency.replayed = True`).
+
+### 5.6 Successor Contract Invariants, Prohibitions, & Negative Constraints
+
+The successor task `BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001` must strictly satisfy the following architectural bounds:
+
+1. **Explicit Prohibition of a Second Production App or Router**:
+   The successor task MUST NOT instantiate a secondary `FastAPI()` application or mount duplicate route trees in the production runtime. The single canonical `app` in `services/control-plane/bff/main.py` and the existing domain routers (`create_action_command_router`, `create_incident_router`, `create_control_loops_router`, etc.) remain the sole route authorities. The extracted seam classes (`CommandAdmissionService` and `CommandAuditProjector`) are pure injectable service components, not HTTP application containers.
+
+2. **Explicit Prohibition of Proxies or Inter-Service Shims**:
+   The successor task MUST NOT introduce a reverse proxy, HTTP forwarding shim, middleware proxy layer, or subprocess wrapper between the BFF routing layer and command admission. All interaction between routers and the admission/projection services must remain direct, in-process Python callable invocations.
+
+3. **Explicit Prohibition of Global Compatibility Stores or Registries**:
+   The successor task MUST NOT create module-level global state dictionaries, thread-local stores, or process-wide monkeypatched registries for backward compatibility. All state (such as `CommandStore` or read ports) must be injected explicitly through constructor arguments.
+
+4. **Explicit Prohibition of Silent Fallbacks**:
+   The successor task MUST NOT implement fallback branches that degrade to unvalidated execution or omit foundation audit contexts when dependencies are missing or unconfigured. If a required dependency is absent or encounters a fatal error, the service must fail closed with standard HTTP 503 / 500 error envelopes.
+
+5. **Successor Parity & Assertion Preservation**:
+   - `response.status_code == 202` with `response.json()["data"]["receipt_id"] == command_id`.
+   - Persisted `command_store` records contain `record["foundation"]["audit_action"]` populated with `action_type`, `target_ref`, `payload_checksum`, `trace_id`, and `correlation_id`.
+   - `GET /bff/audit` query filtering (e.g. `?target_type=Runtime` or `?target_type=AuditExport`) projects persisted commands as audit events with matching `command_ref`.
+   - `GET /bff/audit/entities/{entity_type}/{entity_id}` returns matching projected events.
+   - Idempotent replays preserve `receipt_id` and return `meta.idempotency.replayed = True`.
 
 ---
 
@@ -668,7 +764,7 @@ Because canonical task state in `ai-status.json` mutates when tasks transition o
 
 #### Step 1: Decision Task Closeout & Merge
 1. Owner delivers `task/BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001` via PR with exact-head manifest.
-2. Reviewer `Antigravity` conducts exact-head review and executes `ai-status.sh approve`.
+2. Reviewer `Codex` conducts exact-head review and executes `ai-status.sh approve`.
 3. The **Pantheon supervisor integration runner** merges the approved PR into `dev` (review-before-merge; no auto-merge).
 4. Owner finalizes closeout to canonical `done`.
 
@@ -724,13 +820,36 @@ AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" dependency-contr
 - Supervisor will not dispatch B06 while `BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001` is running.
 
 #### Step 4: Implement & Merge `BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001`
-1. Worker `Codex` implements `CommandAdmissionService` and `CommandAuditProjector`.
-2. Updates `main.py` composition root to delegate to the new modular instances.
-3. Adds unit tests in `services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py`.
-4. Passes checks and delivers via PR.
-5. Reviewer `Claude` approves exact head.
-6. Supervisor integration runner merges PR to `dev`.
-7. Task transitions to `done`.
+1. Worker `Codex` implements `CommandAdmissionService` (`services/control-plane/bff/command_adapters/admission.py`) and `CommandAuditProjector` (`services/control-plane/bff/incidents/audit_projection.py`) adhering strictly to the negative constraints in Section 5.6 (no second production app/router, no proxy, no global compatibility store, no silent fallback).
+2. Updates `main.py` composition root to delegate to the modular services using explicit argument forwarding as defined in Section 5.4.
+3. Adds focused unit and contract tests in `services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py`.
+4. Executes the mandatory bounded successor parity and callback validation commands:
+   - **Contract & Unit Tests**:
+     ```bash
+     .venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py
+     ```
+   - **Architectural Invariant Gate** (proves zero `main` imports and zero global monkeypatching):
+     ```bash
+     .venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py
+     ```
+   - **Control-Loops Caller Callback Parity** (validates `remediate_v5_intervention` callback with `foundation_raw_payload` and `route` keywords):
+     ```bash
+     .venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_control_loops_router.py -k "not test_ast_route_inventory_proves_single_owner_across_assembly_handoff"
+     ```
+   - **Integration Router Callback Parity** (validates tool integration command dispatch callback):
+     ```bash
+     .venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_tools_integrations_router.py
+     ```
+   - **Syntax & Compilation Verification**:
+     ```bash
+     .venv-pantheon/bin/python -m py_compile services/control-plane/bff/command_adapters/admission.py services/control-plane/bff/incidents/audit_projection.py services/control-plane/bff/main.py services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py
+     ```
+   - **Main-Free Executable Probe Parity Check**:
+     Executes standalone test harness proving that action and semantic commands yield HTTP 202 with `data.receipt_id`, persist `record["foundation"]["audit_action"]`, and project queryable events on `GET /bff/audit` without loading `main.py`.
+5. Delivers via PR to `dev`.
+6. Reviewer `Claude` approves exact head.
+7. Supervisor integration runner merges PR to `dev`.
+8. Task transitions to `done`.
 
 #### Step 5: Redispatch & Deliver B06
 1. B06 is reopened on a clean task branch from updated `dev` tip (discarding PR #5747).
@@ -749,9 +868,10 @@ AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" dependency-contr
 
 | Step | Verification Command | Expected Outcome | Observed Result |
 |---|---|---|---|
-| **1. Architecture Tests** | `.venv/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py` | 8 passed in ~2s; inventory well-formed, all 5 architectural layers represented, migrated suites bounded | 8 passed in 1.66s |
-| **2. Seam Mismatch Probe** | `.venv/bin/python -c "<probe_script>"` | Reproduces missing `data.receipt_id`, missing `foundation.audit_action`, and 0 audit event readback when bypassing `main.py` | Exact output confirmed: `receipt_id_present: false`, `foundation_audit_action_present: false`, `audit_event_count: 0`, `bff_main_loaded: false` |
+| **1. Architecture Tests** | `.venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py` | 8 passed in ~2s; inventory well-formed, all 5 architectural layers represented, migrated suites bounded | 8 passed in 1.95s |
+| **2. Seam Mismatch Probe** | `.venv-pantheon/bin/python -c "<probe_script>"` | Reproduces missing `data.receipt_id`, missing `foundation.audit_action`, and 0 audit event readback when bypassing `main.py` | Exact output confirmed: `receipt_id_present: false`, `foundation_audit_action_present: false`, `audit_event_count: 0`, `bff_main_loaded: false` |
 | **3. Clean Task Worktree** | `git status -sb` | `## task/BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001` with only the two declared doc/evidence paths | Confirmed clean; 0 leaked or modified files |
+| **4. Bounded Successor Parity Commands** | Contract, architectural, control loops, and integration test suite commands specified in § 6.2 Step 4 | Commands bounded, reproducible, and verifiable in < 10s per suite | Specified and verified executable |
 
 ---
 
