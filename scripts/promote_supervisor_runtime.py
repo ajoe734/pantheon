@@ -1204,6 +1204,22 @@ def qualify_and_drain_incumbent_writers(
                 raise RuntimeError(
                     f"cannot promote runtime: active worker {run_id} has unknown or reused process identity (PID {pid})"
                 )
+            marker_path = worker.get("runner_status_path") or (worker.get("metadata") or {}).get("runner_status_path")
+            if not marker_path:
+                raise RuntimeError(f"worker {run_id} has no runner readiness marker")
+            readiness_deadline = time.monotonic() + timeout_seconds
+            while True:
+                marker = _load_json(Path(marker_path), label="runner readiness marker") if Path(marker_path).exists() else {}
+                if (marker.get("run_id") == run_id and marker.get("pid") == pid
+                        and marker.get("status_command_runtime") == worker.get("status_command_runtime")
+                        and marker.get("status") in {"admission_wait", "starting", "running"}
+                        and not marker.get("finished_at")):
+                    break
+                if time.monotonic() >= readiness_deadline or not _pid_alive(pid):
+                    raise RuntimeError(f"worker {run_id} did not publish promotion signal readiness")
+                time.sleep(0.05)
+            if _worker_pid_start_ticks(pid) != identity["pid_start_ticks"]:
+                raise RuntimeError(f"worker {run_id} process generation changed before drain")
             with runtime_state.runtime_state_update(dict(incumbent)) as drain_state:
                 receipt = runtime_state.prepare_promotion_drain(drain_state, worker)
             # The durable intent precedes the signal; a failed kill is not a drain.
@@ -1220,7 +1236,6 @@ def qualify_and_drain_incumbent_writers(
                 raise RuntimeError(
                     f"worker process {pid} ({run_id}) did not stop within {timeout_seconds:g}s"
                 )
-            marker_path = worker.get("runner_status_path") or (worker.get("metadata") or {}).get("runner_status_path")
             marker = _load_json(Path(marker_path), label="planned drain terminal marker") if marker_path else {}
             with runtime_state.runtime_state_update(dict(incumbent)) as drain_state:
                 current = drain_state["promotion"]["receipts"].get(str(run_id), {})
@@ -1488,13 +1503,16 @@ def stop_unaccepted_candidate(pid: int, *, timeout_seconds: float) -> None:
 def verify_incumbent_drain_capability(incumbent: Mapping[str, Any], identity: Mapping[str, str]) -> None:
     """A first installation cannot manufacture terminal evidence for old runners."""
     state = runtime_state.load_runtime_state(dict(incumbent))
-    if not any(w.get("status") in runtime_state.RUNTIME_ADMISSION_CONFLICT_STATUSES for w in state["workers"].values()):
+    active_workers = any(w.get("status") in runtime_state.RUNTIME_ADMISSION_CONFLICT_STATUSES
+                         for w in state["workers"].values())
+    reservations = state.get("supervisor", {}).get("runtime_phase_reservations", {})
+    if not active_workers and not reservations:
         return
     root = Path(identity["root"])
     for path, marker in ((".orchestrator/worker_runner.py", "def planned_drain_digest("),
                          (".orchestrator/supervisor.py", "def promotion_launch_guard(")):
         if marker not in (root / path).read_text():
-            raise RuntimeError("incumbent active workers lack promotion drain capability; let them finish before first activation")
+            raise RuntimeError("incumbent workers or reservations lack promotion drain capability; let them finish before first activation")
 
 
 def _replace_supervisor_locked(
@@ -1603,6 +1621,8 @@ def _replace_supervisor_locked(
             incumbent_identity = None
 
         if incumbent:
+            if runtime_state.runtime_admission_lock_path(dict(incumbent)) != runtime_state.runtime_admission_lock_path(rendered):
+                raise RuntimeError("promotion cannot change canonical runtime admission root")
             verify_incumbent_drain_capability(incumbent, incumbent_identity)
         fence_config = dict(incumbent) if incumbent else rendered
         with runtime_state.runtime_state_update(fence_config) as fence_state:

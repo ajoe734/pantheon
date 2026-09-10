@@ -265,6 +265,8 @@ def validate_lost_lease_receipt(receipt: Mapping[str, Any]) -> bool:
         return False
     if receipt.get("type") not in {"worker_lost_lease", "worker_promotion_drained"}:
         return False
+    if receipt.get("reason_kind") == "promotion_drained" and receipt.get("type") != "worker_promotion_drained":
+        return False
     if receipt.get("type") == "worker_promotion_drained":
         import runtime_state
         drain = receipt.get("promotion_drain")
@@ -273,6 +275,12 @@ def validate_lost_lease_receipt(receipt: Mapping[str, Any]) -> bool:
                 or drain.get("status") != "drained"
                 or drain.get("worker", {}).get("run_id") != receipt.get("worker_run_id")
                 or drain.get("worker", {}).get("task_generation") != receipt.get("task_generation")):
+            return False
+        worker = drain["worker"]
+        evidence_state = {"promotion": {"epoch": drain.get("epoch"),
+            "incumbent": drain.get("incumbent"), "candidate": drain.get("candidate"),
+            "receipts": {str(worker.get("run_id") or ""): drain}}}
+        if runtime_state.valid_promotion_drain(evidence_state, worker) is None:
             return False
     if str(receipt.get("status") or "") not in {
         "pending",

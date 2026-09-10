@@ -77,6 +77,12 @@ def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             os.chmod(current, mode | stat.S_IWUSR | stat.S_IXUSR, follow_symlinks=False)
 
 
+def _v2_incumbent_state() -> str:
+    state = promotion.runtime_state.default_state()
+    state["auto_commit_archive"]["pending_token"] = "old"
+    return json.dumps(state)
+
+
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
@@ -535,7 +541,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
     lock_events: list[str] = []
 
     @contextmanager
-    def runtime_admission_lock(_config: dict[str, object]):
+    def runtime_admission_lock(_config: dict[str, object], **_kwargs):
         lock_events.append("entered")
         try:
             yield None
@@ -548,7 +554,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
         *,
         runtime_admission_locked: bool = False,
     ) -> bool:
-        assert lock_events == ["entered"]
+        assert lock_events.count("entered") > lock_events.count("exited")
         assert runtime_admission_locked is True
         return True
 
@@ -581,7 +587,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
     )
 
     assert result["outcome"] == "launched", result.get("error", result)
-    assert lock_events == ["entered", "exited"]
+    assert lock_events.count("entered") == lock_events.count("exited")
 
 
 def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
@@ -685,7 +691,7 @@ def test_replace_rejects_missing_verifier_before_stopping_incumbent(
     assert not live_config.exists()
 
 
-def test_status_root_replacement_stops_pid_from_installed_config(
+def test_status_root_replacement_fails_before_changing_admission_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     candidate, status_root = _candidate(tmp_path)
@@ -748,8 +754,9 @@ def test_status_root_replacement_stops_pid_from_installed_config(
         termination_timeout=1,
     )
 
-    assert result["outcome"] == "launched", result.get("error", result)
-    assert stopped == [old_pid]
+    assert result["outcome"] == "failed"
+    assert "cannot change canonical runtime admission root" in result["error"]
+    assert stopped == []
 
 
 def test_launch_failure_is_reported_without_a_rollback_path(
@@ -1293,7 +1300,7 @@ def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
     (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
 
     old_state = status_root / ".orchestrator" / "state.json"
-    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_state.write_text(_v2_incumbent_state(), encoding="utf-8")
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
@@ -1360,7 +1367,7 @@ def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
     assert old_log.read_text(encoding="utf-8") == "old events\n"
     assert (tmp_path / "runtime" / f"{old_log.name}.head.json").exists()
     assert old_state.exists()
-    assert old_state.read_text(encoding="utf-8") == '{"old": true}\n'
+    assert json.loads(old_state.read_text())["auto_commit_archive"]["pending_token"] == "old"
     assert old_queue.exists()
     assert json.loads(old_queue.read_text(encoding="utf-8")) == {"version": 2, "pending": [], "history": []}
     # Live config should be restored to incumbent
@@ -1535,7 +1542,7 @@ def test_replace_supervisor_restarts_incumbent_with_incumbent_identity_on_launch
     (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
 
     old_state = status_root / ".orchestrator" / "state.json"
-    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_state.write_text(_v2_incumbent_state(), encoding="utf-8")
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
@@ -1621,7 +1628,7 @@ def test_replace_supervisor_reports_rollback_failure_on_restart_crash(
     (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
 
     old_state = status_root / ".orchestrator" / "state.json"
-    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_state.write_text(_v2_incumbent_state(), encoding="utf-8")
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
@@ -1822,7 +1829,7 @@ def test_replace_supervisor_refuses_incumbent_restart_on_incomplete_restoration(
     (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
 
     old_state = status_root / ".orchestrator" / "state.json"
-    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_state.write_text(_v2_incumbent_state(), encoding="utf-8")
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
@@ -1980,7 +1987,7 @@ def test_post_rename_config_directory_fsync_failure_restores_and_verifies_incumb
     (tmp_path / "runtime" / f"{old_log.name}.lock").touch()
 
     old_state = status_root / ".orchestrator" / "state.json"
-    old_state.write_text('{"old": true}\n', encoding="utf-8")
+    old_state.write_text(_v2_incumbent_state(), encoding="utf-8")
     old_queue = status_root / ".orchestrator" / "approval-queue.json"
     old_queue.write_text('{"version": 2, "pending": [], "history": []}\n', encoding="utf-8")
 
@@ -2220,7 +2227,7 @@ def test_partial_rollback_preserves_already_restored_head_and_idempotent(
     old_lock.touch()
     state = status / ".orchestrator" / "state.json"
     queue = status / ".orchestrator" / "approval-queue.json"
-    state.write_text("{}", encoding="utf-8")
+    state.write_text(_v2_incumbent_state(), encoding="utf-8")
     queue.write_text('{"version":2,"pending":[],"history":[]}', encoding="utf-8")
     incumbent = {
         "command_root": str(candidate),
@@ -2273,7 +2280,7 @@ def test_replace_supervisor_mixed_restored_unrestored_files_and_durability_error
 
     state = status / ".orchestrator" / "state.json"
     queue = status / ".orchestrator" / "approval-queue.json"
-    state.write_text('{"state": 1}', encoding="utf-8")
+    state.write_text(_v2_incumbent_state(), encoding="utf-8")
     queue.write_text('{"version": 2, "pending": [], "history": []}', encoding="utf-8")
 
     incumbent = {
@@ -2466,49 +2473,64 @@ def test_drain_fails_closed_on_unverified_or_reused_active_worker_pid(tmp_path: 
     assert sent == [], f"signalled unverified active worker PID: {sent}"
 
 
-def test_drain_signals_and_drains_verified_active_worker(tmp_path: Path) -> None:
+def _seed_bound_drain_worker(tmp_path):
     import common
-    state = tmp_path / "state.json"
-    gen_id = common.worker_process_generation_id(
-        task_id="TASK-1",
-        worker_run_id="run-1",
-        queue_event_id="Q-1",
-        pid=77777,
-        pid_start_ticks=33333,
-    )
-    state.write_text(json.dumps({
-        "workers": {
-            "run-1": {
-                "status": "running",
-                "pid": 77777,
-                "pid_start_ticks": 33333,
-                "process_generation": gen_id,
-                "task_id": "TASK-1",
-                "queue_event_id": "Q-1",
-            }
-        }
-    }))
+    rs = promotion.runtime_state
+    config = {"paths": {"state_file": str(tmp_path / "state.json")}}
+    state = rs.default_state()
+    worker = {"run_id": "run-1", "status": "running", "pid": 77777,
+              "pid_start_ticks": 33333, "task_id": "TASK-1", "task_generation": 1,
+              "queue_event_id": "Q-1", "lease_acquired_at": "now",
+              "runner_status_path": str(tmp_path / "terminal.json"),
+              "status_command_runtime": {"command_root": "/old", "source_sha": "a" * 40}}
+    worker["process_generation"] = common.worker_process_generation_id(
+        task_id="TASK-1", worker_run_id="run-1", queue_event_id="Q-1", pid=77777, pid_start_ticks=33333)
+    state["workers"]["run-1"] = worker
+    state["queue"]["events"]["Q-1"] = {"intent": {"event_id": "Q-1"}, "status": "started", "run_id": "run-1"}
+    rs.begin_promotion(state, worker["status_command_runtime"], {"root": "/new", "head": "b" * 40})
+    rs.save_runtime_state(config, state)
+    promotion.write_json_atomic(Path(worker["runner_status_path"]), {
+        "run_id": worker["run_id"], "pid": worker["pid"], "status": "running",
+        "status_command_runtime": worker["status_command_runtime"],
+    })
+    return config, worker
+
+
+@pytest.mark.parametrize("terminal_signal", [15, 9, None])
+def test_drain_requires_bound_terminal_receipt_after_signal(tmp_path, terminal_signal):
+    config, worker = _seed_bound_drain_worker(tmp_path)
     sent = []
-    alive_states = [True, True, False]
-    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda pid: alive_states.pop(0) if alive_states else False), \
-         mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=33333), \
-         mock.patch.object(promotion.os, "kill", side_effect=lambda pid, sig: sent.append((pid, sig))):
-        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
-    assert sent == [(77777, signal.SIGTERM)]
-    assert result["workers_drained"] == [77777]
-
-
-def test_drain_allows_only_inflight_queue_event_owned_by_drained_worker(tmp_path: Path) -> None:
-    import common
-    state = tmp_path / "state.json"
-    generation = common.worker_process_generation_id(
-        task_id="TASK-1", worker_run_id="run-1", queue_event_id="Q-1", pid=77777, pid_start_ticks=33333
-    )
-    state.write_text(json.dumps({"workers": {"run-1": {"status": "running", "pid": 77777, "pid_start_ticks": 33333, "process_generation": generation, "task_id": "TASK-1", "queue_event_id": "Q-1"}}, "queue": {"events": {"Q-1": {"status": "started", "run_id": "run-1"}}}}))
+    def signal_worker(pid, sig):
+        state = promotion.runtime_state.load_runtime_state(config)
+        receipt = state["promotion"]["receipts"]["run-1"]
+        assert receipt["status"] == "prepared"  # fsynced before the signal
+        sent.append((pid, sig))
+        promotion.write_json_atomic(Path(worker["runner_status_path"]), {
+            "run_id": "run-1", "pid": pid, "signal": terminal_signal,
+            "exit_code": 143, "finished_at": "later",
+            "status_command_runtime": worker["status_command_runtime"],
+            "promotion_drain_digest": receipt["digest"],
+        })
     alive = [True, True, False]
-    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda _pid: alive.pop(0) if alive else False), mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=33333), mock.patch.object(promotion.os, "kill"):
-        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
-    assert result["drained_run_ids"] == ["run-1"]
+    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda pid: alive.pop(0) if alive else False), mock.patch.object(promotion, "_worker_pid_start_ticks", return_value=33333), mock.patch.object(promotion.os, "kill", side_effect=signal_worker):
+        if terminal_signal == 15:
+            result = promotion.qualify_and_drain_incumbent_writers(config)
+            assert result["drained_run_ids"] == ["run-1"]
+            assert result["workers_drained"] == [77777]
+        else:
+            with pytest.raises(RuntimeError, match="matching planned SIGTERM"):
+                promotion.qualify_and_drain_incumbent_writers(config)
+            state = promotion.runtime_state.load_runtime_state(config)
+            assert state["promotion"]["receipts"]["run-1"]["status"] == "prepared"
+    assert sent == [(77777, signal.SIGTERM)]
+
+
+def test_drain_rejects_inflight_event_without_drained_worker(tmp_path):
+    config, worker = _seed_bound_drain_worker(tmp_path)
+    with promotion.runtime_state.runtime_state_update(config) as state:
+        state["workers"]["run-1"]["status"] = "completed"
+    with pytest.raises(RuntimeError, match="in-flight queue events"):
+        promotion.qualify_and_drain_incumbent_writers(config)
 
 
 def test_drain_waits_for_active_task_state_store_lock_writer(tmp_path: Path) -> None:
@@ -2560,3 +2582,111 @@ common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-w
     assert new_log.read_bytes() == before
     assert result.returncode != 0
     assert not old_log.exists()
+
+
+def test_health_requires_exact_pid_runtime_and_fresh_canonical_readback(tmp_path, monkeypatch):
+    from copy import deepcopy
+    rs = promotion.runtime_state
+    config = {"paths": {"state_file": str(tmp_path / "state.json")}}
+    state = rs.default_state()
+    old = {"root": "/old", "head": "a" * 40}
+    candidate = {"root": "/new", "head": "b" * 40}
+    rs.begin_promotion(state, old, candidate)
+    state["promotion"]["started_at"] = "2026-01-01T00:00:00Z"
+    state["supervisor"].update({
+        "pid": 123, "lifecycle": "running",
+        "command_runtime_health": {"healthy": True, "runtime": rs.promotion_runtime(candidate),
+                                   "checked_at": "2026-01-02T00:00:00Z"},
+        "task_state_projection": {"ok": True, "caught_up": True, "last_checked_at": "2026-01-02T00:00:00Z"},
+    })
+    monkeypatch.setattr(promotion, "_pid_alive", lambda pid: True)
+    rs.save_runtime_state(config, state)
+    assert _REAL_VERIFY_PROMOTION_HEALTH(config, candidate, 123, timeout_seconds=.1)["pid"] == 123
+    for field, key, value in (
+        ("command_runtime_health", "healthy", False),
+        ("command_runtime_health", "runtime", rs.promotion_runtime(old)),
+        ("command_runtime_health", "checked_at", "2025-01-01T00:00:00Z"),
+        ("task_state_projection", "ok", False),
+        ("task_state_projection", "caught_up", False),
+        ("task_state_projection", "last_checked_at", "2025-01-01T00:00:00Z"),
+    ):
+        changed = deepcopy(state)
+        changed["supervisor"][field][key] = value
+        rs.save_runtime_state(config, changed)
+        with pytest.raises(RuntimeError, match="timed out"):
+            _REAL_VERIFY_PROMOTION_HEALTH(config, candidate, 123, timeout_seconds=.01)
+    rs.save_runtime_state(config, state)
+    with pytest.raises(RuntimeError, match="timed out"):
+        _REAL_VERIFY_PROMOTION_HEALTH(config, candidate, 456, timeout_seconds=.01)
+
+
+def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_path, monkeypatch):
+    candidate, status_root = _candidate(tmp_path)
+    live = tmp_path / "runtime/live.json"
+    incumbent, identity = promotion.render_v2_config(candidate, status_root=status_root,
+        live_config_path=live, python_executable=Path(sys.executable))
+    old_identity = {**identity, "head": "a" * 40}
+    promotion.write_json_atomic(live, incumbent)
+    monkeypatch.setattr(promotion, "qualify_incumbent_identity", lambda *a, **k: old_identity)
+    events = []
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: events.append("stop-old") or 41)
+    def launch(config, *, identity, **kwargs):
+        old = identity == old_identity
+        events.append("restart-old" if old else "launch-new")
+        return 43 if old else 42
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", launch)
+    def health(config, identity, pid, **kwargs):
+        events.append("health-old" if pid == 43 else "health-new")
+        if pid == 42:
+            raise RuntimeError("candidate canonical readback failed")
+        return {"pid": pid, "verified": True}
+    monkeypatch.setattr(promotion, "verify_promotion_health", health)
+    monkeypatch.setattr(promotion, "stop_unaccepted_candidate", lambda *a, **k: events.append("stop-new"))
+    result = promotion.replace_supervisor(candidate, status_root=status_root, live_config_path=live,
+        python_executable=Path(sys.executable), termination_timeout=1)
+    assert result["outcome"] == "failed"
+    assert "canonical readback failed" in result["error"]
+    assert events == ["stop-old", "launch-new", "health-new", "stop-new", "restart-old", "health-old"]
+    state = promotion.runtime_state.load_runtime_state(incumbent)
+    assert state["promotion"]["phase"] == "rolled_back"
+    assert promotion.runtime_state.promotion_launch_allowed(state, old_identity)
+    assert not promotion.runtime_state.promotion_launch_allowed(state, identity)
+    assert json.loads(live.read_text()) == incumbent
+
+
+def test_stop_failure_restores_prior_admission_without_signalling_workers(tmp_path, monkeypatch):
+    candidate, status_root = _candidate(tmp_path)
+    live = tmp_path / "runtime/live.json"
+    config, identity = promotion.render_v2_config(candidate, status_root=status_root,
+        live_config_path=live, python_executable=Path(sys.executable))
+    promotion.write_json_atomic(live, config)
+    monkeypatch.setattr(promotion, "qualify_incumbent_identity", lambda *a, **k: identity)
+    def stop(*a, **k):
+        assert promotion.runtime_state.load_runtime_state(config)["promotion"]["phase"] == "draining"
+        raise RuntimeError("stop timed out")
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", stop)
+    with mock.patch.object(promotion, "qualify_and_drain_incumbent_writers") as drain:
+        result = promotion.replace_supervisor(candidate, status_root=status_root, live_config_path=live,
+            python_executable=Path(sys.executable), termination_timeout=1)
+    assert result["outcome"] == "failed"
+    drain.assert_not_called()
+    assert promotion.runtime_state.promotion_launch_allowed(promotion.runtime_state.load_runtime_state(config), identity)
+
+
+def test_first_activation_requires_quiescent_legacy_workers_and_reservations(tmp_path):
+    config, worker = _seed_bound_drain_worker(tmp_path)
+    root = tmp_path / "legacy"
+    (root / ".orchestrator").mkdir(parents=True)
+    (root / ".orchestrator/worker_runner.py").write_text("# legacy runner\n")
+    (root / ".orchestrator/supervisor.py").write_text("# legacy supervisor\n")
+    identity = {"root": str(root), "head": "a" * 40}
+    with pytest.raises(RuntimeError, match="lack promotion drain capability"):
+        _REAL_VERIFY_DRAIN_CAPABILITY(config, identity)
+    with promotion.runtime_state.runtime_state_update(config) as state:
+        state["workers"] = {}
+        state["supervisor"]["runtime_phase_reservations"] = {"process_queue": {"token": "reserved"}}
+    with pytest.raises(RuntimeError, match="lack promotion drain capability"):
+        _REAL_VERIFY_DRAIN_CAPABILITY(config, identity)
+    with promotion.runtime_state.runtime_state_update(config) as state:
+        state["supervisor"]["runtime_phase_reservations"] = {}
+    _REAL_VERIFY_DRAIN_CAPABILITY(config, identity)

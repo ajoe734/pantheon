@@ -836,9 +836,9 @@ def worker_runtime_config(coordination_root: Path) -> dict[str, Any]:
     }}
 
 
-def validate_promotion_admission(coordination_root: Path, command_runtime: dict[str, str]) -> None:
+def validate_promotion_admission(coordination_root: Path, command_runtime: dict[str, str], task_id: str | None = None) -> None:
     state = promotion_state.load_runtime_state(worker_runtime_config(coordination_root))
-    if not promotion_state.promotion_launch_allowed(state, command_runtime):
+    if not promotion_state.promotion_launch_allowed(state, command_runtime, task_id):
         raise RuntimeError("worker_runner: runtime promotion admission fenced")
 
 
@@ -1186,6 +1186,10 @@ def main(argv: list[str] | None = None) -> int:
             terminating_signal = signum
             signal_received_at = time.monotonic()
         status["signal"] = signum
+        if child is None:
+            # A promotion may stop an admitted wrapper while it waits on the
+            # admission lock. Interrupt that wait; there is no provider group.
+            raise SystemExit(128 + signum)
         if child is not None and child.poll() is None:
             try:
                 os.killpg(child.pid, signum)
@@ -1202,8 +1206,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         assert coordination_root is not None
+        validate_worker_entry_binding(coordination_root, **entry_arguments)
+        publish("admission_wait")
         with promotion_state.runtime_state_lock(worker_runtime_config(coordination_root)), canonical_task_state_lock_file(coordination_root / "ai-status.json", shared=True):
-            validate_promotion_admission(coordination_root, command_runtime)
+            validate_promotion_admission(coordination_root, command_runtime, task_id)
             validate_worker_entry_binding(coordination_root, **entry_arguments)
             if terminating_signal is not None:
                 raise RuntimeError("worker_runner: terminated before child launch")
@@ -1319,6 +1325,11 @@ def main(argv: list[str] | None = None) -> int:
                 next_heartbeat = time.monotonic() + interval
             time.sleep(min(1.0, interval))
     except BaseException as exc:
+        if child is None and terminating_signal is not None:
+            status["exit_code"] = 128 + terminating_signal
+            status["finished_at"] = utc_now()
+            publish("failed")
+            return int(status["exit_code"])
         status["status"] = "failed"
         status["finished_at"] = utc_now()
         status["error"] = f"{type(exc).__name__}: {exc}"

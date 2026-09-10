@@ -6744,6 +6744,38 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     self.assertEqual(stale_runtime["promotion"]["receipts"][worker["run_id"]]["status"], "consumed")
                     self.assertFalse(any(call.args[1].get("type") == "worker_lost_lease" for call in activity.call_args_list))
 
+    def test_invalid_drain_uses_ordinary_recovery_without_stranding_admission(self):
+        state = self._state()
+        worker = self._worker()
+        self._store_started(state, worker)
+        self._planned_drain(state, worker)
+        state["promotion"]["receipts"][worker["run_id"]]["terminal"]["promotion_drain_digest"] = "wrong"
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox):
+            self.assertTrue(supervisor.recover_lost_worker_lease(
+                self.config, state, worker, reason_kind="worker_process_missing", reason="unverified disappearance"))
+        status = supervisor.load_status(self.config)
+        receipt_id = status["tasks"][0][supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        receipt = status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+        self.assertEqual(receipt["type"], "worker_lost_lease")
+        self.assertEqual(receipt["reason_kind"], "worker_process_missing")
+        rejected = state["promotion"]["receipts"][worker["run_id"]]
+        self.assertEqual(rejected["status"], "consumed")
+        self.assertEqual(rejected["resolution"], "rejected_unverified_drain_ordinary_recovery")
+
+    def test_stale_task_generation_consumes_drain_without_replacement(self):
+        state = self._state()
+        worker = self._worker()
+        self._store_started(state, worker)
+        environment = self._planned_drain(state, worker)
+        status = supervisor.load_status(self.config)
+        status["tasks"][0]["generation"] = 9
+        supervisor.write_status(self.config, status, source="test-concurrent-generation")
+        with mock.patch.object(supervisor, "status_command_runtime_env", return_value=environment):
+            self.assertTrue(supervisor.recover_lost_worker_lease(
+                self.config, state, worker, reason_kind="promotion_drained", reason="stale"))
+        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, supervisor.load_status(self.config)["tasks"][0])
+        self.assertEqual(state["promotion"]["receipts"][worker["run_id"]]["status"], "consumed")
+
     def test_promotion_pending_health_blocks_queue_launch_and_boot_recovery(self):
         state = self._state()
         runtime_state.begin_promotion(state, {"root": "/old", "head": "a" * 40},

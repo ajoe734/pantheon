@@ -3229,7 +3229,8 @@ def promotion_launch_guard(operation):
         with runtime_state_lock(config):
             current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
             runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
-            if not promotion_state.promotion_launch_allowed(current, runtime):
+            request = args[0] if args else kwargs.get("request")
+            if not promotion_state.promotion_launch_allowed(current, runtime, request.task_id if request is not None else None):
                 return False, "runtime_promotion_fenced", None
             return operation(config, state, *args, **kwargs)
     return guarded
@@ -3630,7 +3631,7 @@ def process_queue(
     with runtime_state_lock(config):
         current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
         runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
-        if not promotion_state.promotion_launch_allowed(current, runtime):
+        if not promotion_state.promotion_admission_allowed(current, runtime):
             return False
     if not bool(ready_dispatch_settings(config).get("enabled", False)):
         return False
@@ -3641,6 +3642,8 @@ def process_queue(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     queued_events = sorted(queue_events(state), key=queue_event_sort_key)
     for event in queued_events:
+        if not promotion_state.promotion_launch_allowed(current, runtime, str(event.get("task_id") or "")):
+            continue
         event_id = event.get("event_id")
         if not event_id:
             continue
@@ -12799,6 +12802,9 @@ def recover_lost_worker_lease(
         )
         if decision.get("action") != "terminate":
             return False
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12818,6 +12824,9 @@ def recover_lost_worker_lease(
         # without poisoning unrelated validated cleanup in the same CAS batch.
         return False
     if canonical_agent_name(config, actor).casefold() != canonical_agent_name(config, expected_actor).casefold():
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12826,6 +12835,9 @@ def recover_lost_worker_lease(
         # A pending review decision intent has its own typed recovery mechanism
         # (reconcile_review_decision_intent_lease_recovery). Fencing a generic lost
         # lease must not mutate generation, next, or last_update on this task.
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12870,13 +12882,19 @@ def recover_lost_worker_lease(
         # A competing detector may have won the canonical receipt+generation
         # CAS. This lease is stale either way; fence it immediately and let
         # the winning receipt remain the sole recovery authority.
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
         return True
-    if drain:
-        drain["status"] = "consumed"
-        drain["recovery_receipt_id"] = canonical["receipt_id"]
+    runtime_drain = state.get("promotion", {}).get("receipts", {}).get(str(worker.get("run_id") or ""))
+    if isinstance(runtime_drain, dict):
+        runtime_drain["status"] = "consumed"
+        runtime_drain["recovery_receipt_id"] = canonical["receipt_id"]
+        if not drain:
+            runtime_drain["resolution"] = "rejected_unverified_drain_ordinary_recovery"
     _fence_lost_worker_runtime(config, state, worker, canonical)
     write_activity_log(
         config,

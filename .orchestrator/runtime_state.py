@@ -710,11 +710,12 @@ def promotion_admission_allowed(state: Mapping[str, Any], runtime: Mapping[str, 
     return promotion_runtime(runtime) == fence.get("admitted_runtime")
 
 
-def promotion_launch_allowed(state: Mapping[str, Any], runtime: Mapping[str, Any]) -> bool:
+def promotion_launch_allowed(state: Mapping[str, Any], runtime: Mapping[str, Any], task_id: str | None = None) -> bool:
     if not promotion_admission_allowed(state, runtime):
         return False
     return all(receipt.get("status") == "consumed"
-               for receipt in state.get("promotion", {}).get("receipts", {}).values())
+               for receipt in state.get("promotion", {}).get("receipts", {}).values()
+               if task_id is None or receipt.get("worker", {}).get("task_id") == task_id)
 
 
 def begin_promotion(state: dict[str, Any], incumbent: Mapping[str, Any], candidate: Mapping[str, Any]) -> str:
