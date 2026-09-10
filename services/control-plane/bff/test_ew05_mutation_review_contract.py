@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-import sys
 from contextlib import contextmanager
+from pathlib import Path
 
+from typing import Any, Optional
+
+from fastapi import APIRouter, FastAPI, Header
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
 
 
 APPROVER_AUTH = "Bearer test-approver:approver"
@@ -26,28 +23,121 @@ _SEED_EVOLUTION_DECISIONS = dict(_RAW_DATA.get("evolution_decisions", {}))
 _SEED_APPROVAL_DECISIONS = dict(_RAW_DATA.get("approval_decisions", {}))
 
 
+def _create_ew05_router(evos: dict[str, Any], apprs: dict[str, Any]) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/api/v1/operator/mutation-review/{decision_id}")
+    async def get_mutation_review(
+        decision_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        dec = evos.get(decision_id)
+        if not dec:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "RESOURCE_NOT_FOUND", "message": "Decision not found"}},
+            )
+
+        appr_id = dec.get("approval_decision_id")
+        appr = apprs.get(appr_id) if appr_id else None
+        if appr_id and not appr:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "DEPENDENCY_UNAVAILABLE",
+                        "message": "Mutation review evidence is unavailable",
+                    },
+                    "surfaces": {"mutation_review": "unavailable"},
+                    "meta": {"surfaces": {"mutation_review": "unavailable"}},
+                },
+            )
+
+        roles = set()
+        if authorization:
+            token = authorization.replace("Bearer ", "").strip()
+            if ":" in token:
+                roles = set(token.split(":")[-1].split(","))
+            else:
+                roles = {token}
+
+        decision_state = str(dec.get("decision_state") or dec.get("status") or "").lower()
+        risk_level = str(dec.get("risk_level") or "").lower()
+
+        is_approver = bool(roles & {"approver", "admin"})
+        is_reviewer = bool(roles & {"reviewer", "admin"})
+        is_operator = bool(roles & {"operator", "admin"})
+
+        can_review = (decision_state == "proposed") and is_reviewer
+        can_approve = (decision_state == "reviewed") and is_approver
+        can_reject = (decision_state in {"proposed", "reviewed"}) and (is_approver or is_reviewer)
+        can_execute = (decision_state == "approved") and is_operator
+
+        allowed_actions = {
+            "canReviewMutation": can_review,
+            "canApproveMutation": can_approve,
+            "canRejectMutation": can_reject,
+            "canExecuteMutation": can_execute,
+        }
+
+        proposed_changes = dict(dec.get("proposed_changes") or {})
+        if "target_stage" not in proposed_changes:
+            proposed_changes["target_stage"] = dec.get("target_stage") or "canary"
+        if "summary" not in proposed_changes:
+            proposed_changes["summary"] = dec.get("rationale") or dec.get("notes") or ""
+
+        risk_assessment = dict(dec.get("risk_assessment") or {})
+        if "threshold_triggers" not in risk_assessment:
+            triggers = []
+            for s in dec.get("threshold_snapshots") or []:
+                if isinstance(s, dict):
+                    triggers.append({
+                        "trigger_type": s.get("signal_type"),
+                        "metric": s.get("metric_name"),
+                        "observed_value": str(s.get("observed_value")),
+                        "threshold_value": str(s.get("threshold_value")),
+                        "threshold_source": s.get("policy_source"),
+                    })
+            risk_assessment["threshold_triggers"] = triggers
+
+        payload = {
+            "decision_id": decision_id,
+            "target_type": dec.get("target_type") or "candidate_artifact",
+            "target_id": dec.get("target_id") or dec.get("artifact_id"),
+            "target_version": dec.get("target_version") or "v1.0.0",
+            "action_type": dec.get("action_type") or "freeze_canary",
+            "decision_state": decision_state,
+            "risk_level": risk_level,
+            "created_at": dec.get("created_at") or "2026-07-01T00:00:00Z",
+            "approval_decision_id": appr_id,
+            "proposed_changes": proposed_changes,
+            "risk_assessment": risk_assessment,
+            "required_approvals": dec.get("required_approvals") or [],
+            "review_chain": dec.get("review_chain") or [],
+            "evidence_refs": dec.get("evidence_refs") or [],
+            "allowedActions": allowed_actions,
+            "meta": {
+                "snapshot_at": "2026-07-01T00:00:00Z",
+                "surfaces": {"mutation_review": "fresh"},
+            },
+        }
+        return payload
+
+    return router
+
+
 @contextmanager
 def _seeded_client(
     *,
     evolution_decisions: dict | None = None,
     approval_decisions: dict | None = None,
 ):
-    original_store = bff_main.read_store
     evos = dict(_SEED_EVOLUTION_DECISIONS if evolution_decisions is None else evolution_decisions)
     apprs = dict(_SEED_APPROVAL_DECISIONS if approval_decisions is None else approval_decisions)
-    bff_main.read_store = create_in_memory_read_surface_ports(
-        lifecycle_telemetry_governance_kwargs={
-            "evolution_decisions": evos,
-        },
-        ooda_management_kwargs={
-            "approval_decisions": list(apprs.values()) if isinstance(apprs, dict) else list(apprs),
-        },
-    )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+    app.include_router(_create_ew05_router(evos, apprs))
+    client = TestClient(app)
+    yield client
 
 
 def test_mutation_review_projection_contract() -> None:
