@@ -18,6 +18,7 @@
       "fake projection callback as migration proof"
     ]
   },
+  "decision_document_sha256": "3b3308cec834d4ff4b5b5b5e8d15d416d33ba3d93a11facdccf3cf9f142c3fe6",
   "decision_status": "proposed_for_independent_exact_head_review",
   "future_packet": {
     "artifacts": [
@@ -1075,6 +1076,21 @@
       "exit_code": 0,
       "reproduction": "Python block between B14_AUDIT_BEGIN and B14_AUDIT_END in the decision document",
       "result": "619 Python files parsed; 83 references; 10 exact duplicate bodies; one read-port-only difference; three equal-valued constants; complete builder free-name inventory"
+    },
+    {
+      "command": "python3 /tmp/b14-doc-replay.py (extracted verbatim from documented Python block), JSON equality comparison, git diff --name-only origin/dev...HEAD scope comparison",
+      "exit_code": 0,
+      "result": "Embedded audit reproduces source_audit exactly; all 19 reusable builder helpers match after explicit read-port normalization; only two declared artifacts changed."
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+      "exit_code": 0,
+      "result": "Anchor commit 1a4f60b78 has required task/agent/reviewer trailers."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
     }
   ],
   "writer_gates": {
