@@ -1397,6 +1397,68 @@ def apply_claude_oauth_token_file(env: dict[str, str], runtime: dict[str, Any]) 
     return env
 
 
+def _claude_status_first_value(payload: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:
+    """Read one non-empty scalar from Claude auth-status data without exposing it."""
+
+    queue: list[Mapping[str, Any]] = [payload]
+    seen: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for key in keys:
+            value = current.get(key)
+            if value in (None, "", [], {}):
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+        for value in current.values():
+            if isinstance(value, Mapping):
+                queue.append(value)
+    return None
+
+
+def claude_oauth_refresh_lock_key(
+    auth_status_payload: Mapping[str, Any] | None,
+    *,
+    fallback: str | None = None,
+) -> str | None:
+    """Return an opaque mutex key for one Claude OAuth account.
+
+    ``providers.*.account`` governs scheduler capacity and can intentionally be
+    distinct for separate worker lanes.  OAuth refreshes instead need to
+    serialize profiles that authenticate to the same Claude account.  A live
+    auth-status response supplies that identity; only its digest reaches the
+    lock filename.  The configured account remains the backwards-compatible
+    fallback when status does not identify an account.
+    """
+
+    if isinstance(auth_status_payload, Mapping) and auth_status_payload.get("loggedIn") is not False:
+        identity = _claude_status_first_value(
+            auth_status_payload,
+            (
+                "orgId",
+                "organizationId",
+                "organizationUUID",
+                "organizationUuid",
+                "orgUUID",
+                "orgUuid",
+            ),
+        ) or _claude_status_first_value(
+            auth_status_payload,
+            ("email", "userEmail", "accountEmail", "username"),
+        )
+        if identity:
+            digest = hashlib.sha256(
+                f"claude-oauth-refresh:{identity.casefold()}".encode("utf-8")
+            ).hexdigest()[:32]
+            return f"claude-oauth-{digest}"
+    normalized_fallback = str(fallback or "").strip()
+    return normalized_fallback or None
+
+
 @contextmanager
 def _claude_oauth_refresh_serialization(account_lock_key: str | None) -> Generator[None, None, None]:
     """Serialize outbound OAuth refresh calls sharing one Claude account.
@@ -1534,6 +1596,7 @@ def claude_auth_ready(
     env: dict[str, str] | None = None,
     refresh_if_needed: bool = True,
     account_lock_key: str | None = None,
+    auth_status_payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """One auth decision: ready, rejected/unavailable, or ClaudeAuthRetry.
 
@@ -1557,25 +1620,31 @@ def claude_auth_ready(
             return True
         if not refresh_if_needed:
             return False
-        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
+        refresh_lock_key = claude_oauth_refresh_lock_key(
+            auth_status_payload, fallback=account_lock_key
+        )
+        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=refresh_lock_key)
         if refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0):
             refreshed_token = str(refreshed.get("accessToken") or "").strip()
             if refreshed_token.startswith("sk-ant-") and env is not None:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = refreshed_token
             return True
         return False
-    try:
-        status = run_command([binary, "auth", "status"], env=env)
-    except (OSError, subprocess.TimeoutExpired):
-        raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
-    if status.returncode != 0 or not status.stdout:
-        return False
-    try:
-        payload = json.loads(status.stdout)
-    except json.JSONDecodeError:
-        raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
-    if not isinstance(payload, dict):
-        raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
+    payload: Mapping[str, Any] | None = auth_status_payload
+    if payload is None:
+        try:
+            status = run_command([binary, "auth", "status"], env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ClaudeAuthRetry("Claude auth status temporarily unavailable.") from None
+        if status.returncode != 0 or not status.stdout:
+            return False
+        try:
+            parsed_payload = json.loads(status.stdout)
+        except json.JSONDecodeError:
+            raise ClaudeAuthRetry("Claude auth status returned an invalid response.") from None
+        if not isinstance(parsed_payload, Mapping):
+            raise ClaudeAuthRetry("Claude auth status returned an invalid response.")
+        payload = parsed_payload
     if not payload.get("loggedIn"):
         return False
     loaded = load_claude_oauth_tokens(env)
@@ -1586,7 +1655,10 @@ def claude_auth_ready(
         return True
     if not refresh_if_needed:
         return False
-    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
+    refresh_lock_key = claude_oauth_refresh_lock_key(
+        payload, fallback=account_lock_key
+    )
+    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=refresh_lock_key)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
 
