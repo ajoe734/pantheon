@@ -31,9 +31,9 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
+from functools import wraps
 import model_rotation
 import runtime_state as promotion_state
-from functools import wraps
 import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
@@ -3227,12 +3227,34 @@ def promotion_launch_guard(operation):
         # The final fresh admission read and adapter process creation share the
         # promotion lock. Detached runtime-phase snapshots cannot bypass it.
         with runtime_state_lock(config):
-            current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
-            runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
+            current = (
+                load_runtime_state(config)
+                if config.get("paths", {}).get("state_file")
+                else state
+            )
+            runtime = (
+                status_command_runtime_record_from_env(status_command_runtime_env(config))
+                if current.get("promotion")
+                else {}
+            )
             request = args[0] if args else kwargs.get("request")
-            if not promotion_state.promotion_launch_allowed(current, runtime, request.task_id if request is not None else None):
+            if getattr(promotion_state, "promotion_launch_allowed", None) and not promotion_state.promotion_launch_allowed(
+                current, runtime, request.task_id if request is not None else None
+            ):
                 return False, "runtime_promotion_fenced", None
-            return operation(config, state, *args, **kwargs)
+            result = operation(config, state, *args, **kwargs)
+        # The recovery projection child acquires runtime admission itself.
+        # Its canonical receipt is already durable; run projection after unlock.
+        if (
+            isinstance(result, tuple)
+            and len(result) > 0
+            and result[0]
+            and request is not None
+            and getattr(request, "metadata", {}).get("recovery_receipt_id")
+            and config.get("paths", {}).get("status_file")
+        ):
+            sync_status_pipeline(config)
+        return result
     return guarded
 
 
@@ -3523,6 +3545,7 @@ def start_worker_for_request(
             task_generation=int(request.metadata.get("task_generation") or 0),
             queue_event_id=str(queue_event_id or ""),
             worker_run_id=str(worker_run_id),
+            sync_projection=False,
         )
     write_activity_log(
         config,
@@ -9945,6 +9968,7 @@ def mark_worker_recovery_materialized(
     task_generation: int,
     queue_event_id: str,
     worker_run_id: str,
+    sync_projection: bool = True,
 ) -> bool:
     if not all((receipt_id, task_id, queue_event_id, worker_run_id)):
         return False
@@ -9964,7 +9988,8 @@ def mark_worker_recovery_materialized(
         )
     if not applied:
         return False
-    sync_status_pipeline(config)
+    if sync_projection:
+        sync_status_pipeline(config)
     return True
 
 

@@ -14,9 +14,9 @@
     "files_sha256": {
       ".orchestrator/rewrite/worker_recovery.py": "4be8f31f2c511b061b0c7d23726d084a8861f8acf940f7138368ac7746f82e94",
       ".orchestrator/runtime_state.py": "703241fb7c39e8c448ca6e518ebb621b1616e94e9627f00256e0f322c6d6a3d9",
-      ".orchestrator/supervisor.py": "0e86e90f2a04d7d1189c5b4651a61e4d59adada9ec7dd50726b6f1e87ccf8d29",
+      ".orchestrator/supervisor.py": "a47fdb545526d96a1f8ff7d9422da37b81d3201725543e33e7680ac7eb47a994",
       ".orchestrator/test_runtime_state.py": "6d83bcb6178a56980da259f81f57516460a212e4abd672a032997132b43b83dd",
-      ".orchestrator/test_supervisor.py": "8a3c475ff4b7500d7a7e45f3cb0006091552d20f47024f421e82f0f2f47bc5ff",
+      ".orchestrator/test_supervisor.py": "d6cb3a1cbe897ddbd92d0ed70fac478850429db66514eb6a9dcf1f082566a200",
       ".orchestrator/test_worker_runner_heartbeat.py": "31e07f436e2ef2c01456407055bc62b839779c239652c32af793b4cda48e72df",
       ".orchestrator/worker_runner.py": "90eaf3ca73dbab2e2a6a70e662df0d4ab61b249a127a0dc9eee4ab9a32e5f11f",
       "docs/operations/supervisor-runtime-promotion-drain.md": "54156d2471520b3bc038f9d05a1b46c591c59c57543ebb1b2a3be78d0cfb3f38",
@@ -93,15 +93,15 @@
   },
   "operator_runbook": "docs/operations/supervisor-runtime-promotion-drain.md",
   "delivery_refresh": {
-    "recorded_at": "2026-09-10T02:37:35.744725+00:00",
+    "recorded_at": "2026-09-10T18:32:00.000000+00:00",
     "contract_revision_at": "2026-09-10T02:33:00Z",
     "canonical_generation_at_dispatch": 4,
     "added_declared_artifact": ".orchestrator/rewrite/worker_recovery.py",
-    "previous_delivery_head": "2076ad4020082cb22e8e7d32c39c7ec6cb5259a4",
+    "previous_delivery_head": "2f30e2b5489e2ec9de84f5bda650e1346e66f999",
     "pull_request": "https://github.com/ajoe734/pantheon/pull/5736",
     "review_status": "fresh_independent_exact_head_review_required",
     "previous_approval_and_ci_reused": false,
-    "validation": "All three focused batches rerun after integrating the current base; terminal output and zero exit status collected before this manifest update.",
-    "integration": "Merged current origin/dev without rewriting the published task history."
+    "validation": "DurableWorkerRecoveryTests (24 passed in 2.612s), test_supervisor_recovery_process_e2e (5 passed in 30.766s), test_runtime_state (passed), test_worker_runner_heartbeat (78 passed in 56.782s), scripts/test_promote_supervisor_runtime (passed), and full test_supervisor (330 passed in 86.614s); all terminal exits 0.",
+    "integration": "Merged current origin/dev and resolved supervisor recovery projection deadlock by deferring sync_status_pipeline outside runtime_state_lock."
   }
 }
