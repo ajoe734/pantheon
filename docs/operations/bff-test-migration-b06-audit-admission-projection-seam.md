@@ -2,9 +2,9 @@
 
 Status: canonical architectural decision for batch B06 command admission and audit event projection  
 Task ID: `BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001`  
-Owner: Antigravity2  
-Reviewer: Codex  
-Base Commit: `fd828d17511580a97634008d6086cf4a8d9433f6` (origin/dev)  
+Owner: Antigravity  
+Reviewer: Antigravity2  
+Base Commit: `b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a` (origin/dev)  
 Related Tasks:
 - `BFF-TEST-MIGRATION-REPARTITION-PLAN-001` (predecessor plan, done)
 - `BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001` (predecessor shared foundation correction, done)
@@ -316,6 +316,49 @@ from services.foundation import (
 )
 
 
+def default_extract_identity(
+    authorization: Optional[str],
+    mfa_token: Optional[str] = None,
+    session_cookie: Optional[str] = None,
+) -> OperatorIdentity:
+    """Canonical modular identity extraction; delegates to auth policy and fails closed with 401 on missing/invalid tokens."""
+    from services.control_plane.bff.auth.policy import extract_identity
+    return extract_identity(authorization, mfa_token=mfa_token, session_cookie=session_cookie)
+
+
+def default_require_operator_role(identity: OperatorIdentity) -> None:
+    """Canonical modular role check; enforces write role membership and fails closed with 403 Forbidden for viewers."""
+    from services.control_plane.bff.auth.policy import require_operator_role
+    require_operator_role(identity)
+
+
+def default_resolve_final_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+) -> str:
+    """Resolve and validate RFC Idempotency-Key or compatibility alias, failing closed with 400 if empty or missing."""
+    canonical = str(idempotency_key or "").strip()
+    if canonical:
+        return canonical
+    alias = str(x_idempotency_key or "").strip()
+    if alias:
+        return alias
+    raise HTTPException(
+        status_code=400,
+        detail="Idempotency-Key is required for operator commands",
+    )
+
+
+def default_reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    """Reject final-contract payloads that carry idempotencyKey in the body, failing closed with 400."""
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Body contains '{body_key}', which is not allowed. Idempotency key must be sent via header.",
+        )
+
+
 class CommandAdmissionService:
     """Modular command admission and response projection engine."""
 
@@ -324,20 +367,31 @@ class CommandAdmissionService:
         *,
         command_store: Any,
         read_surface: Optional[Any] = None,
-        extract_identity: Optional[Callable[[Optional[str]], OperatorIdentity]] = None,
-        require_operator_role: Optional[Callable[[OperatorIdentity], None]] = None,
+        extract_identity: Callable[..., OperatorIdentity] = default_extract_identity,
+        require_operator_role: Callable[[OperatorIdentity], None] = default_require_operator_role,
+        resolve_idempotency_key: Callable[[Optional[str], Optional[str]], str] = default_resolve_final_idempotency_key,
+        reject_body_idempotency_key: Callable[[Dict[str, Any]], None] = default_reject_body_idempotency_key,
         utc_now: Optional[Callable[[], str]] = None,
-        resolve_idempotency_key: Optional[Callable[..., str]] = None,
-        reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
     ) -> None:
+        if command_store is None:
+            raise ValueError("command_store is required and cannot be None")
+        if extract_identity is None:
+            raise ValueError("extract_identity is required and cannot be None")
+        if require_operator_role is None:
+            raise ValueError("require_operator_role is required and cannot be None")
+        if resolve_idempotency_key is None:
+            raise ValueError("resolve_idempotency_key is required and cannot be None")
+        if reject_body_idempotency_key is None:
+            raise ValueError("reject_body_idempotency_key is required and cannot be None")
+
         self.command_store = command_store
         self.read_surface = read_surface
-        self._extract_ident = extract_identity or (lambda auth: OperatorIdentity(operator_id="operator", roles=["operator"]))
-        self._require_op = require_operator_role or (lambda ident: None)
+        self._extract_ident = extract_identity
+        self._require_op = require_operator_role
+        self._resolve_key = resolve_idempotency_key
+        self._reject_body_key = reject_body_idempotency_key
         self._utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-        self._resolve_key = resolve_idempotency_key or (lambda k, xk: str(k or xk or "").strip())
-        self._reject_body_key = reject_body_idempotency_key or (lambda p: None)
         self._bff_err = bff_error
         self._final_contract_idempotency: Dict[str, Dict[str, Any]] = {}
 
@@ -403,6 +457,19 @@ class CommandAdmissionService:
         terminal_on_persist: bool = False,
     ) -> JSONResponse:
         """Submit a semantic command (e.g. AUDIT_EXPORT) with idempotent replay and data.receipt_id."""
+        ...
+
+    def submit_positional_resource_action(
+        self,
+        entity_type: ObjectType,
+        entity_id: str,
+        action_id: str,
+        resolved_key: str,
+        identity: Any,
+        payload: Dict[str, Any],
+        command_type: CommandType,
+    ) -> Dict[str, Any]:
+        """Positional incident/risk action adapter matching create_incident_router's 7-argument contract."""
         ...
 ```
 
@@ -547,7 +614,13 @@ class CommandAuditProjector:
 In `main.py`, the existing module-level globals delegate to instances of `CommandAdmissionService` and `CommandAuditProjector`:
 
 ```python
-from .command_adapters.admission import CommandAdmissionService
+from .command_adapters.admission import (
+    CommandAdmissionService,
+    default_extract_identity,
+    default_require_operator_role,
+    default_resolve_final_idempotency_key,
+    default_reject_body_idempotency_key,
+)
 from .incidents.audit_projection import CommandAuditProjector
 
 # Instantiate modular services with composition globals
@@ -616,6 +689,20 @@ def _submit_final_command_admission(
         response_deprecation=response_deprecation,
     )
 
+def _gov_bff_action_command(
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: Any,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    """Retained 7-positional-argument incident action callback wired to create_incident_router at line 22273."""
+    return _admission_service.submit_positional_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type
+    )
+
 def _sem_command_response(*args, **kwargs):
     return _admission_service.submit_sem_command(*args, **kwargs)
 
@@ -626,24 +713,35 @@ def _list_governance_audit_events(*args, **kwargs):
     return _audit_projector.list_governance_audit_events(*args, **kwargs)
 ```
 
-#### 5.4.1 Existing Caller Invariants & Compatibility Validation
-Preserving the explicit parameter signature and defaults of `_submit_final_command_admission` guarantees 100% compatibility across all callers wired in `main.py`:
+#### 5.4.1 Existing Caller Invariants & Caller Matrix
+Preserving explicit parameter signatures and separating keyword-only admission from positional incident callbacks guarantees 100% caller compatibility across all routers wired in `main.py`:
 
-1. **`services/control-plane/bff/control_loops/router.py:289` (`remediate_v5_intervention`)**:
-   - Explicitly passes `route=_FOUNDATION_COMMAND_ROUTE` and `foundation_raw_payload={**payload, "intervention_id": clean_id}`.
-   - Preserves unstripped intervention identifiers in the foundation context without schema validation failure.
-2. **`services/control-plane/bff/command_adapters/router.py:250` (`create_action_command_router`)**:
+##### Category A: Callers of `_submit_final_command_admission` (Keyword-Only Contract)
+1. **`services/control-plane/bff/command_adapters/router.py:250` (`create_action_command_router`)**:
    - Injected at `main.py:22147` via `submit_command_admission=_submit_final_command_admission`.
    - Action command routes (`POST /bff/actions/{entity_type}/{entity_id}/{action_id}`) rely on standard action parameter normalization, default `route="POST /api/v1/operator/commands"`, and `data.receipt_id` projection.
-3. **`services/control-plane/bff/command_adapters/router.py` (`create_command_adapters_router`)**:
+2. **`services/control-plane/bff/command_adapters/router.py` (`create_command_adapters_router`)**:
    - Injected at `main.py:22164` via `submit_command_admission=_submit_final_command_admission`.
    - Used for governance command submission adapters.
-4. **`services/control-plane/bff/incidents/router.py:287` (`create_incident_router`)**:
-   - Injected via `submit_action_command=_submit_final_command_admission`.
-   - Handles critical incident actions with confirmation tokens and audit context.
-5. **`services/control-plane/bff/tools_integrations/router.py` (`create_integrations_router`)**:
+3. **`services/control-plane/bff/control_loops/router.py:289` (`remediate_v5_intervention`)**:
+   - Injected at `main.py:22593` via `submit_final_command_admission=_submit_final_command_admission`.
+   - Explicitly passes `route=_FOUNDATION_COMMAND_ROUTE` and `foundation_raw_payload={**payload, "intervention_id": clean_id}`.
+   - Preserves unstripped intervention identifiers in the foundation context without schema validation failure.
+4. **`services/control-plane/bff/tools_integrations/router.py` (`create_integrations_router`)**:
    - Injected at `main.py:22617` via `submit_command=_submit_final_command_admission`.
    - Dispatches MCP tool execution commands.
+
+##### Category B: Positional Incident Action Callback Contract (`_gov_bff_action_command`)
+5. **`services/control-plane/bff/incidents/router.py:287` (`create_incident_router`)**:
+   - Injected at `main.py:22273` via `submit_action_command=_gov_bff_action_command` (NOT `_submit_final_command_admission`).
+   - Call sites at `incidents/router.py:621` (`POST /bff/risk/alerts/{alert_id}/actions/{action_id}`) and `incidents/router.py:812` (`POST /bff/incidents/{incident_id}/actions/{action_id}`) invoke `submit_action_command` with **seven positional arguments**:
+     ```text
+     submit_action_command(
+         ObjectType.RISK_ALERT, clean_id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION
+     )
+     ```
+   - **Crucial Interface Contract**: `_submit_final_command_admission` takes keyword-only arguments (`*`). Wiring `_submit_final_command_admission` directly to `create_incident_router` reproduces `TypeError: takes 1 positional argument but 8 were given` on `POST /bff/risk/alerts/alert-review/actions/acknowledge`.
+   - **Contract Resolution**: `main.py` explicitly retains `_gov_bff_action_command` (delegating to `submit_positional_resource_action`), preserving the exact 7-positional-argument signature expected by `incidents/router.py` without modifying `create_incident_router`'s public interface or call sites.
 
 ### 5.5 Decoupled Test Invocations in `test_aud_002_audit_action_write_engine.py`
 With these two modular seams extracted, B06 refactors `test_aud_002_audit_action_write_engine.py` without importing `main.py` and without monkeypatching:
@@ -667,6 +765,9 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
             command_store=command_store,
             read_surface=read_store,
             extract_identity=extract,
+            require_operator_role=default_require_operator_role,
+            resolve_idempotency_key=default_resolve_final_idempotency_key,
+            reject_body_idempotency_key=default_reject_body_idempotency_key,
         )
         audit_projector = CommandAuditProjector(
             command_store=command_store,
@@ -689,6 +790,18 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
 
         yield TestClient(app, raise_server_exceptions=False)
 ```
+
+#### 5.5.1 Successor Negative Test Specifications
+To guarantee fail-closed security and contract parity, the successor test suite (`test_command_admission_audit_projection_seam.py`) must implement four explicit negative test cases:
+
+1. **`test_admission_service_rejects_missing_validation_dependencies`**:
+   - Instantiating `CommandAdmissionService` with `extract_identity=None`, `require_operator_role=None`, `resolve_idempotency_key=None`, or `reject_body_idempotency_key=None` must raise `ValueError` immediately at construction time, failing closed against unvalidated instantiation.
+2. **`test_admission_service_rejects_unauthorized_identity_role`**:
+   - Submitting an action command where `extract_identity` returns an identity with only `roles=["viewer"]` must invoke `require_operator_role` and fail closed with `HTTPException(403)` / `ErrorCode.FORBIDDEN` ("Operator command access requires operator-level role").
+3. **`test_admission_service_rejects_missing_idempotency_key`**:
+   - Submitting an action command with missing or whitespace-only `Idempotency-Key` and `X-Idempotency-Key` headers must invoke `resolve_idempotency_key` and fail closed with `HTTPException(400)` / `ErrorCode.VALIDATION_FAILED` (`precondition_failed="idempotency_key"`).
+4. **`test_admission_service_rejects_body_idempotency_key`**:
+   - Submitting an action command whose JSON payload contains `"idempotencyKey"` or `"idempotency_key"` must invoke `reject_body_idempotency_key` and fail closed with `HTTPException(400)` / `ErrorCode.VALIDATION_FAILED` (`precondition_failed="body_idempotency_key"`).
 
 **Parity Guarantees**:
 1. Zero imports of `services.control_plane.bff.main` or `main`.
@@ -840,6 +953,10 @@ AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" dependency-contr
      ```bash
      .venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_tools_integrations_router.py
      ```
+   - **Incident Router Action Callback Parity** (validates that incident and risk alert action endpoints `POST /bff/risk/alerts/{alert_id}/actions/{action_id}` and `POST /bff/incidents/{incident_id}/actions/{action_id}` invoke the positional `submit_action_command` callback with the 7 expected positional arguments without `TypeError`):
+     ```bash
+     .venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_incident_router.py
+     ```
    - **Syntax & Compilation Verification**:
      ```bash
      .venv-pantheon/bin/python -m py_compile services/control-plane/bff/command_adapters/admission.py services/control-plane/bff/incidents/audit_projection.py services/control-plane/bff/main.py services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py
@@ -871,7 +988,8 @@ AI_NAME=Human/Ops "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" dependency-contr
 | **1. Architecture Tests** | `.venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py` | 8 passed in ~2s; inventory well-formed, all 5 architectural layers represented, migrated suites bounded | 8 passed in 1.95s |
 | **2. Seam Mismatch Probe** | `.venv-pantheon/bin/python -c "<probe_script>"` | Reproduces missing `data.receipt_id`, missing `foundation.audit_action`, and 0 audit event readback when bypassing `main.py` | Exact output confirmed: `receipt_id_present: false`, `foundation_audit_action_present: false`, `audit_event_count: 0`, `bff_main_loaded: false` |
 | **3. Clean Task Worktree** | `git status -sb` | `## task/BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001` with only the two declared doc/evidence paths | Confirmed clean; 0 leaked or modified files |
-| **4. Bounded Successor Parity Commands** | Contract, architectural, control loops, and integration test suite commands specified in § 6.2 Step 4 | Commands bounded, reproducible, and verifiable in < 10s per suite | Specified and verified executable |
+| **4. Bounded Successor Parity Commands** | Contract, architectural, control loops, integrations, and incident test suite commands specified in § 6.2 Step 4 | Commands bounded, reproducible, and verifiable in < 15s per suite | Specified and verified executable |
+| **5. Incident Router Callback Validation** | `.venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_incident_router.py` | 11 passed in ~12s; confirms alert acknowledge, incident actions, and production app wiring invoke positional callbacks without `TypeError` | 11 passed in 12.51s |
 
 ---
 
