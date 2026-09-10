@@ -509,3 +509,52 @@ print(json.dumps(dict(source_files=[dict(path=str(p), sha256=hashlib.sha256(p.re
                       builder_free_names=closure, scanned_python_files=scanned, references=references), indent=2, sort_keys=True))
 ```
 <!-- B14_AUDIT_END -->
+
+### Reproduce the P1 consumer contract checks
+
+Run this read-only block from the same checkout. It validates the proposed
+transfers against the accepted partition, the complete inventoried consumer
+set, and the proposed dependency graph. It does not validate or modify live
+canonical admission, and it does not run the future product tests.
+
+<!-- B14_CONSUMER_CHECK_BEGIN -->
+```python
+import hashlib
+import json
+from graphlib import TopologicalSorter
+from pathlib import Path
+
+manifest = Path('docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001/evidence.json')
+d = json.loads(manifest.read_text())
+m = d['consumer_migration']
+p = Path(m['partition_path'])
+assert hashlib.sha256(p.read_bytes()).hexdigest() == m['partition_sha256']
+partition = json.loads(p.read_text())['candidate_children']
+rows = m['transfers']
+paths = {r['path'] for r in rows}
+assert len(rows) == len(paths) == 5
+references = {r['path'] for r in d['source_audit']['references'] if '/test_' in r['path']}
+references.remove('services/control-plane/bff/tests/test_bff_main_composition.py')
+assert paths == references
+seam = d['future_packet']['id']
+graph = m['proposed_dependency_graph']
+order = list(TopologicalSorter(graph).static_order())
+for r in rows:
+    batch, = [b for b in partition if r['path'] in b['source_artifacts']]
+    assert batch['task_id'] == r['partition_task'] == r['restore_to_task']
+    assert r['temporary_owner_task'] == seam
+    assert r['path'] in d['future_packet']['artifacts']
+    assert seam in graph[r['partition_task']]
+    assert order.index(seam) < order.index(r['partition_task'])
+for batch in partition:
+    assert set(batch['depends_on_after_plan']) <= set(graph[batch['task_id']])
+def ancestors(node):
+    return {p for p in graph.get(node, [])} | {
+        a for p in graph.get(node, []) for a in ancestors(p)}
+assert not ancestors(seam).intersection(m['no_reverse_dependency'])
+assert sum(len(b['source_artifacts']) for b in partition) == 184
+assert len(next(b for b in partition if b['group'] == 'B14_loops_paper_v5')['source_artifacts']) == 11
+assert hashlib.sha256(Path(d['future_packet']['specification']).read_bytes()).hexdigest() == d['decision_document_sha256']
+print('PASS: five explicit consumer transfers, partition ownership, preserved prerequisites, proposed DAG, 184/11 acceptance counts, document hash')
+```
+<!-- B14_CONSUMER_CHECK_END -->
