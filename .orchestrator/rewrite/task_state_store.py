@@ -47,6 +47,57 @@ DRAIN_MARKER_AUDIT_FIELDS = ("reason", "actor", "approved_at")
 DRAIN_MARKER_TIMESTAMP_FIELD = "approved_at"
 NONTERMINAL_DROP_REJECTION = "task-state nonterminal drop rejected"
 REJECTION_ID_SAMPLE = 5
+ARCHIVE_COLLISION_KEY = "archive_collision_disposition"
+
+
+def collision_parent_digest(task: Mapping[str, Any]) -> str:
+    """Bind the retained row, excluding only the disposition and derived UI counters."""
+    return sha256_json({key: value for key, value in task.items() if key not in {
+        ARCHIVE_COLLISION_KEY, "status_write_pending", "status_write_pending_count",
+    }})
+
+
+def validate_archive_collision_fences(new_state: dict, previous_state: dict | None) -> None:
+    """Keep a reconciled collision blocked through commits, recovery and replay.
+
+    The command proves archive/review bytes. The store prevents later writers
+    from bypassing that disposition or admitting an explicitly withheld fact.
+    """
+    old_rows = {row.get("id"): row for row in (previous_state or {}).get("tasks", [])}
+    rows = {row.get("id"): row for row in new_state.get("tasks", [])}
+    facts = new_state.get("terminal_facts") or {}
+    old_facts = (previous_state or {}).get("terminal_facts") or {}
+    for task_id in set(old_rows) | set(rows):
+        old = old_rows.get(task_id, {})
+        row = rows.get(task_id, {})
+        marker = row.get(ARCHIVE_COLLISION_KEY)
+        old_marker = old.get(ARCHIVE_COLLISION_KEY)
+        if old_marker is not None and marker != old_marker:
+            raise TaskStateStoreError("archive collision disposition cannot be removed or replaced")
+        if marker is None:
+            continue
+        if (not isinstance(marker, dict) or marker.get("disposition") != "retain_blocked"
+                or marker.get("actor") != "Human/Ops" or row.get("status") != "blocked"
+                or marker.get("parent_sha256") != collision_parent_digest(row)):
+            raise TaskStateStoreError("archive collision parent fence changed")
+        if task_id in facts:
+            raise TaskStateStoreError("archive collision parent cannot receive a terminal fact")
+        qualified = marker.get("qualified_facts")
+        withheld = marker.get("withheld_task_ids")
+        if not isinstance(qualified, dict) or not isinstance(withheld, list):
+            raise TaskStateStoreError("archive collision dependency disposition is invalid")
+        if set(qualified) & set(withheld) or set(qualified) | set(withheld) != set(row.get("depends_on") or []):
+            raise TaskStateStoreError("archive collision dependency coverage is incomplete")
+        if any(dep in facts for dep in withheld):
+            raise TaskStateStoreError("archive collision withheld dependency cannot receive a fact")
+        for dep, expected in qualified.items():
+            if dep in facts and facts[dep] != expected:
+                raise TaskStateStoreError("archive collision terminal fact differs from qualified evidence")
+            if dep in facts and dep not in old_facts and previous_state is not None and old_marker != marker:
+                raise TaskStateStoreError("archive collision facts require a previously committed disposition")
+        if previous_state is not None and old_marker is None:
+            if old.get("status") != "blocked" or collision_parent_digest(old) != marker["parent_sha256"]:
+                raise TaskStateStoreError("archive collision requires a previously committed blocked parent")
 
 
 class TaskStateStoreError(RuntimeError):
@@ -382,6 +433,7 @@ def validate_state_transition(
 
     if not isinstance(new_state, dict):
         raise TaskStateStoreError("task-state commit must contain an object state")
+    validate_archive_collision_fences(new_state, previous_state)
     if previous_state is None:
         return
     previous = _task_census(previous_state)
@@ -1418,4 +1470,3 @@ def find_exact_prior_task_state_from_journal(
     res.pop("worker_recovery", None)
     res.pop("review_decision_intent_recovery", None)
     return res
-

@@ -53,6 +53,66 @@ def journal_rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def collision_board():
+    before = state("blocked")
+    before["tasks"][0]["depends_on"] = ["QUALIFIED", "WITHHELD"]
+    after = copy.deepcopy(before)
+    fact = {"status": "done", "terminal_outcome": "completed", "generation": 1, "recorded_at": "2026-07-12T00:00:00Z"}
+    after["tasks"][0][store.ARCHIVE_COLLISION_KEY] = {
+        "disposition": "retain_blocked", "actor": "Human/Ops",
+        "parent_sha256": store.collision_parent_digest(before["tasks"][0]),
+        "qualified_facts": {"QUALIFIED": fact}, "withheld_task_ids": ["WITHHELD"],
+    }
+    return before, after, fact
+
+
+def test_collision_requires_prior_durable_block_and_disposition():
+    before, after, fact = collision_board()
+    store.validate_state_transition(after, before)
+    with_fact = copy.deepcopy(after)
+    with_fact["terminal_facts"] = {"QUALIFIED": fact}
+    with pytest.raises(store.TaskStateStoreError, match="previously committed disposition"):
+        store.validate_state_transition(with_fact, before)
+    store.validate_state_transition(with_fact, after)
+    before["tasks"][0]["status"] = "todo"
+    with pytest.raises(store.TaskStateStoreError, match="previously committed blocked"):
+        store.validate_state_transition(after, before)
+
+
+@pytest.mark.parametrize("mutation", ["unblock", "drop", "remove_marker", "scope", "withheld", "parent_fact", "wrong_generation"])
+def test_collision_rejects_later_bypass(mutation):
+    _, before, fact = collision_board()
+    after = copy.deepcopy(before)
+    if mutation == "unblock":
+        after["tasks"][0]["status"] = "todo"
+    elif mutation == "drop":
+        after["tasks"] = []
+        after[store.DRAIN_MARKER_KEY] = drain_marker("T1")
+    elif mutation == "remove_marker":
+        del after["tasks"][0][store.ARCHIVE_COLLISION_KEY]
+    elif mutation == "scope":
+        after["tasks"][0]["acceptance"] = ["changed"]
+    elif mutation == "withheld":
+        after["terminal_facts"] = {"WITHHELD": fact}
+    elif mutation == "parent_fact":
+        after["terminal_facts"] = {"T1": fact}
+    else:
+        after["terminal_facts"] = {"QUALIFIED": {**fact, "generation": 9}}
+    with pytest.raises(store.TaskStateStoreError, match="archive collision"):
+        store.validate_state_transition(after, before)
+
+
+def test_collision_fence_survives_headless_journal_replay(tmp_path):
+    before, fenced, fact = collision_board()
+    recovered = copy.deepcopy(fenced)
+    recovered["terminal_facts"] = {"QUALIFIED": fact}
+    path = tmp_path / "events.jsonl"
+    for value in [before, fenced, recovered]:
+        store.append_state_commit(path, value, source="collision-test")
+    path.with_name(path.name + store.HEAD_SUFFIX).unlink()
+    assert store.load_snapshot(path)["state"] == recovered
+
+
 def test_append_writes_delta_journal_and_atomic_current_head(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     first = state("todo", note="first")
@@ -425,5 +485,4 @@ def test_find_exact_prior_task_state_from_journal_ambiguous_fails_closed(
     # find_exact_prior_task_state_from_journal must detect ambiguity and return None.
     monkeypatch.setattr(store, "review_decision_task_digest", lambda task: "colliding-digest")
     assert store.find_exact_prior_task_state_from_journal(path, "T1", "colliding-digest") is None
-
 

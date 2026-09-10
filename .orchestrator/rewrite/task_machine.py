@@ -36,6 +36,7 @@ class TaskAction(enum.Enum):
     BLOCK = "block"
     SUPERSEDE = "supersede"
     RECONCILE_DONE = "reconcile_done"
+    RECONCILE_COLLISION = "reconcile_collision"
 
 
 class DispatchReason(enum.Enum):
@@ -421,6 +422,8 @@ _COMMAND_TRANSITIONS: dict[tuple[TaskState, TaskAction], TaskState] = {
     (TaskState.REVIEW, TaskAction.REOPEN): TaskState.IN_PROGRESS,
     (TaskState.REVIEW_APPROVED, TaskAction.REOPEN): TaskState.IN_PROGRESS,
     (TaskState.BLOCKED, TaskAction.REOPEN): TaskState.IN_PROGRESS,
+    # Historical facts never constitute completion of a reused active scope.
+    (TaskState.BLOCKED, TaskAction.RECONCILE_COLLISION): TaskState.BLOCKED,
     # A reviewed PR can be blocked by the integration environment itself
     # (for example, a read-only worker mount that cannot take the serialized
     # integrator lock). This deliberately does not reopen implementation: it
