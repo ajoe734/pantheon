@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "BFF-MANAGEMENT-SESSION-ROUTE-HARNESS-CORRECTIVE-001",
-  "base_ref": "dev@b356d5ee2c20c0746e6281a4cc859a4ef33e7c3a",
+  "base_ref": "dev@f89d998b9355b4485865385e7f9b7fbb63a5663f",
   "artifacts": [
     "services/control-plane/bff/tests/management_session_harness.py",
     "services/control-plane/bff/tests/test_management_session_harness.py",
