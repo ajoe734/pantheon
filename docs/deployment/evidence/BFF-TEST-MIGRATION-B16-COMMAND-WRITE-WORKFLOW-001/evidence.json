@@ -1,0 +1,258 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+  "batch_id": "B16_command_write_workflow",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "e6d480211ad34698d4ee97ec408d17cc019d0f08",
+  "audited_source_head_sha": "task/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+  "delivery_state": "blocked_contract_discrepancy",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex"
+  },
+  "delivery_nature": {
+    "partial_decoupling_with_contract_discrepancy": true,
+    "statement": "Batch B16 (10 test suites) decouples 4 test suites using existing production router seams without importing main.py (29/29 tests pass). The remaining 6 test suites test command admission, precondition enforcement, approval checks, two-man signature gates, and cross-domain command execution bridges whose implementations are private to services/control-plane/bff/main.py. Because PR #5757 rejected synthetic test-owned route doubles (P1 coverage loss) and modifying main.py or creating new production modules is forbidden under the B16 contract grant, those 6 suites are retained at clean origin/dev baseline and reported as a contract discrepancy requiring an upstream seam extraction task."
+  },
+  "scope_definition": {
+    "total_source_files": 10,
+    "files": [
+      "services/control-plane/bff/test_bff_two_man_sign_race_contract.py",
+      "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+      "services/control-plane/bff/test_final_command_execution_bridge.py",
+      "services/control-plane/bff/test_final_contract_primitives.py",
+      "services/control-plane/bff/test_final_precondition_errors.py",
+      "services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
+      "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py",
+      "services/control-plane/bff/tests/test_bff_workflows_hooks.py",
+      "services/control-plane/bff/tests/test_command_adapters_router.py",
+      "services/control-plane/bff/tests/test_command_replay_conflict.py"
+    ],
+    "evidence_file": "docs/deployment/evidence/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/test_bff_two_man_sign_race_contract.py": {
+      "bytes": 5486,
+      "sha256": "3f61f3a55815f15422e775e1431038daddaed379441842f84a61667681d64349",
+      "lines": 153,
+      "disposition": "DECOUPLED"
+    },
+    "services/control-plane/bff/tests/test_actions_to_commands_adapter.py": {
+      "bytes": 13697,
+      "sha256": "e419a136af725b5894083bfb82d03a0fb8195eeb6d3212bd33ecb7168bf6558e",
+      "lines": 320,
+      "disposition": "DECOUPLED"
+    },
+    "services/control-plane/bff/tests/test_bff_workflows_hooks.py": {
+      "bytes": 7913,
+      "sha256": "695dc516c6e60f4e4f7900b6eaf8e0c9d7160110a69c1fcb4b0de875041d1368",
+      "lines": 205,
+      "disposition": "DECOUPLED"
+    },
+    "services/control-plane/bff/tests/test_command_adapters_router.py": {
+      "bytes": 37920,
+      "sha256": "de88c61b10dfb8be9a750e2ae8fb2fffa6ae6de082844c579e338e290f10ed48",
+      "lines": 828,
+      "disposition": "DECOUPLED"
+    },
+    "services/control-plane/bff/test_final_precondition_errors.py": {
+      "bytes": 5623,
+      "sha256": "a6469fc189ae42d3d58e166953c519e32f81d4b91b16b0c0747b753a76cc682c",
+      "lines": 163,
+      "disposition": "BLOCKED_MISSING_PRODUCTION_SEAM"
+    },
+    "services/control-plane/bff/test_final_contract_primitives.py": {
+      "bytes": 5140,
+      "sha256": "6bfd255b315569a1ab6a1ad180996262d3878437c05e004c424ca073fb0bcb2b",
+      "lines": 150,
+      "disposition": "BLOCKED_MISSING_PRODUCTION_SEAM"
+    },
+    "services/control-plane/bff/test_final_command_execution_bridge.py": {
+      "bytes": 15402,
+      "sha256": "f16f56a555bdf6a87b5fb9a7c0c14a28ca862ceea4d7e2f42631a2bc8f3fcdac",
+      "lines": 337,
+      "disposition": "BLOCKED_MISSING_PRODUCTION_SEAM"
+    },
+    "services/control-plane/bff/tests/test_command_replay_conflict.py": {
+      "bytes": 10887,
+      "sha256": "4624835e6c2d760588867f6c329f80b32c2adce98425fc69dfe92fb8ad137c2c",
+      "lines": 243,
+      "disposition": "BLOCKED_MISSING_PRODUCTION_SEAM"
+    },
+    "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py": {
+      "bytes": 12233,
+      "sha256": "1e124592bf58603c0122f93e0368bf8164210f3faf2b306b364320eebdb245fc",
+      "lines": 292,
+      "disposition": "BLOCKED_MISSING_PRODUCTION_SEAM"
+    },
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py": {
+      "bytes": 75064,
+      "sha256": "597f4bdd13fd743119458862ce0a7980592b9276a14b0634115b5b99ec7c0723",
+      "lines": 1876,
+      "disposition": "BLOCKED_MISSING_PRODUCTION_SEAM"
+    }
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "suite_disposition": {
+    "decoupled_suites": {
+      "count": 4,
+      "tests_passed": 29,
+      "details": {
+        "services/control-plane/bff/tests/test_command_adapters_router.py": {
+          "tests_passed": 14,
+          "production_seams": [
+            "services.control_plane.bff.command_adapters.router.create_command_adapters_router",
+            "services.control_plane.bff.command_adapters.service.CommandAdapterService",
+            "services.control_plane.bff.command_queue.CommandStore"
+          ],
+          "decoupling_details": "Replaced sys.path mutation and top-level relative imports with canonical package imports. Tested typed domain command dispatch, confirm-token lifecycle, and degraded read surface staleness projections against production router."
+        },
+        "services/control-plane/bff/tests/test_actions_to_commands_adapter.py": {
+          "tests_passed": 9,
+          "production_seams": [
+            "services.control_plane.bff.command_adapters.router.create_action_command_router",
+            "services.control_plane.bff.command_adapters.base.ActionUnavailableError"
+          ],
+          "decoupling_details": "Replaced sys.path mutation with canonical package imports. Tested action-to-command adaptation, idempotency header validation, and OpenAPI schema generation against production action command router."
+        },
+        "services/control-plane/bff/tests/test_bff_workflows_hooks.py": {
+          "tests_passed": 5,
+          "production_seams": [
+            "services.control_plane.bff.console_gap.workflows_hooks.create_workflows_hooks_router",
+            "services.control_plane.bff.ports.create_read_surface_ports"
+          ],
+          "decoupling_details": "Removed sys.path mutation and bff_main.read_store monkeypatching. Mounted production create_workflows_hooks_router on isolated FastAPI test app with explicit store provider and auth helpers."
+        },
+        "services/control-plane/bff/test_bff_two_man_sign_race_contract.py": {
+          "tests_passed": 1,
+          "production_seams": [
+            "services.control_plane.bff.control_loops.router.create_control_loops_router",
+            "services.control_plane.bff.command_queue.CommandStore"
+          ],
+          "decoupling_details": "Removed sys.path mutation. Mounted production create_control_loops_router on isolated FastAPI test app. Validated concurrent operator signature recording and two-man sign race conditions against isolated CommandStore."
+        }
+      }
+    },
+    "blocked_suites": {
+      "count": 6,
+      "baseline_preserved": true,
+      "details": {
+        "services/control-plane/bff/test_final_precondition_errors.py": {
+          "rejection_point": "PR #5757 P1: Registered synthetic test-owned endpoint and hardcoded 428/409 errors; unused store argument made empty-store assertion vacuous.",
+          "missing_seam": "_require_final_command_preconditions and _foundation_bff_error are private to main.py (lines 2471, 1183) and unextracted to a production command router/service."
+        },
+        "services/control-plane/bff/test_final_contract_primitives.py": {
+          "rejection_point": "PR #5757 P1: Copied _project_final_command_response into test file and redirected assertions to test-owned copy.",
+          "missing_seam": "_project_final_command_response is private to main.py (line 6974) and unexported."
+        },
+        "services/control-plane/bff/test_final_command_execution_bridge.py": {
+          "rejection_point": "PR #5757 P1: Replaced production command execution bridge with test-owned mock routes for deployments, confirm tokens, and sentinel routes.",
+          "missing_seam": "Endpoints /bff/deployments, /bff/capital-pools, /bff/governance/proposals, /bff/v1/commands connect to CommandStore via main.py composition closures; no standalone domain router exists."
+        },
+        "services/control-plane/bff/tests/test_command_replay_conflict.py": {
+          "rejection_point": "PR #5757 P1: Locally implemented command replay conflict handlers replaced production handlers.",
+          "missing_seam": "Dual-write command idempotency conflict detection and receipt replay are embedded in main.py _submit_final_command_admission (line 7233)."
+        },
+        "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py": {
+          "rejection_point": "PR #5757 P1: Replaced HumanGate production command routes with test-owned normalization routes.",
+          "missing_seam": "HumanGate command admission (/bff/humangate/commands/*) and recommendation endpoints are bound in main.py without an exportable router factory."
+        },
+        "services/control-plane/bff/test_bff_write_gap_2026_05_28.py": {
+          "rejection_point": "PR #5757 P1: 6 isolation contexts implemented synthetic route stubs duplicating main.py business logic.",
+          "missing_seam": "Comprehensive command write admission flow across Agora, Runtime, Deployments, Confirm Tokens, Personas, and Approvals is concentrated in main.py without modular router exports."
+        }
+      }
+    }
+  },
+  "seam_analysis": {
+    "architectural_blocker": "Composition root main.py contains private functions implementing core command write admission, precondition validation, and canonical error generation that have not yet been extracted into modular production seams.",
+    "private_functions_in_main": [
+      {
+        "symbol": "_submit_final_command_admission",
+        "location": "services/control-plane/bff/main.py:7233",
+        "role": "Central command write admission coordinator enforcing preconditions, confirm-token redemption, approval checks, two-man signature gates, HumanGate normalization, and dual-write command receipts."
+      },
+      {
+        "symbol": "_require_final_command_preconditions",
+        "location": "services/control-plane/bff/main.py:2471",
+        "role": "Enforces 428 CONFIRMATION_REQUIRED, 409 APPROVAL_REQUIRED, and 409 TWO_MAN_REQUIRED preconditions."
+      },
+      {
+        "symbol": "_foundation_bff_error",
+        "location": "services/control-plane/bff/main.py:1183",
+        "role": "Generates structured foundation_error, policy_decision, and audit_action error payloads for command admission rejections."
+      },
+      {
+        "symbol": "_project_final_command_response",
+        "location": "services/control-plane/bff/main.py:6974",
+        "role": "Projects CommandSubmissionResponse from command store receipts and execution results."
+      }
+    ],
+    "governed_precedent": "Follows precedent established by B03, B05 (BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001), B06, and B14. When production seams are unextracted, workers must not modify main.py (outside grant) nor create synthetic test-owned routes (P1 coverage loss). Workers must record an anchor commit with exact missing-seam evidence and request governed contract revision / prerequisite seam extraction.",
+    "recommended_upstream_task": {
+      "proposed_title": "BFF-COMMAND-ADMISSION-SEAM-CORRECTIVE-001",
+      "target_module": "services/control-plane/bff/command_adapters/admission.py",
+      "objective": "Extract _submit_final_command_admission, _require_final_command_preconditions, _foundation_bff_error, and command write routers from main.py into an exportable, injectable router/service module, enabling downstream test suites to mount production routes without importing main.py."
+    }
+  },
+  "static_and_dynamic_ast_scans": {
+    "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -c \"<scan_script>\"",
+    "target_files": [
+      "services/control-plane/bff/tests/test_command_adapters_router.py",
+      "services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
+      "services/control-plane/bff/tests/test_bff_workflows_hooks.py",
+      "services/control-plane/bff/test_bff_two_man_sign_race_contract.py"
+    ],
+    "checks": {
+      "main_imports": {
+        "status": "PASS",
+        "violations": 0
+      },
+      "sys_path_mutations": {
+        "status": "PASS",
+        "violations": 0
+      },
+      "dynamic_imports": {
+        "status": "PASS",
+        "violations": 0
+      },
+      "subprocess_calls": {
+        "status": "PASS",
+        "violations": 0
+      },
+      "global_monkeypatching": {
+        "status": "PASS",
+        "violations": 0
+      }
+    }
+  },
+  "validation": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -v services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/tests/test_bff_workflows_hooks.py services/control-plane/bff/test_bff_two_man_sign_race_contract.py",
+      "exit_code": 0,
+      "terminal_output": "29 passed, 5 warnings in 12.58s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "terminal_output": "8 passed in 1.28s"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "terminal_output": ""
+    },
+    {
+      "command": "git diff e6d480211ad34698d4ee97ec408d17cc019d0f08 --name-status",
+      "exit_code": 0,
+      "terminal_output": "A docs/deployment/evidence/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001/evidence.json\nM services/control-plane/bff/test_bff_two_man_sign_race_contract.py\nM services/control-plane/bff/tests/test_actions_to_commands_adapter.py\nM services/control-plane/bff/tests/test_bff_workflows_hooks.py\nM services/control-plane/bff/tests/test_command_adapters_router.py"
+    }
+  ]
+}
