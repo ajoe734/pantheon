@@ -1,6 +1,6 @@
 {
   "task_id": "INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-MISSING-PR-396684243EB9",
-  "recorded_at": "2026-09-10T03:44:00Z",
+  "recorded_at": "2026-09-10T03:40:10Z",
   "owner": "Codex",
   "reviewer": "Antigravity2",
   "scope": "Restore discovery of the original promotion-drain PR and document the missing-pr integration blocker.",
