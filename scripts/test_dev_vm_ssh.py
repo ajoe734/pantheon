@@ -119,7 +119,10 @@ def test_copy_from_uses_same_pinned_transport(tmp_path: Path) -> None:
     assert args[-1] == str(tmp_path / "evidence.json")
 
 
-def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path) -> None:
+def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path, monkeypatch) -> None:
+    # Earlier CI transport setup may export a key path. This case explicitly
+    # tests an absent input, independently of that job-wide environment.
+    monkeypatch.setenv("DEV_DEPLOY_SSH_KEY_FILE", str(tmp_path / "ambient-ci-key"))
     missing = subprocess.run(
         [str(TRANSPORT), "exec", "true"],
         check=False,
@@ -129,6 +132,7 @@ def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path) -> None:
             **os.environ,
             "DEV_DEPLOY_SSH_HOST": "203.0.113.12",
             "DEV_DEPLOY_SSH_USER": "deploy-user",
+            "DEV_DEPLOY_SSH_KEY_FILE": "",
         },
     )
     assert missing.returncode == 2
