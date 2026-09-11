@@ -8,12 +8,12 @@
   "source": {
     "repository": "ajoe734/pantheon",
     "branch": "task/OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001",
-    "base_sha": "ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
-    "implementation_commit": "181eac0bfb103796d531e95269bf9762566b2f69",
-    "implementation_tree": "29f8ecbe78c6de73f6071ebc04d2eff65622b100",
+    "base_sha": "48f4b35440e8ac2af7b8adc36b5ba7f403af3fc5",
+    "implementation_commit": "7d8bb4a57ee1f157842759da85d5fef705d4ce5a",
+    "implementation_tree": "c4417f090c49326b915440f4ee5248688816ac1e",
     "files_sha256": {
-      ".orchestrator/supervisor.py": "dca033662da1456e2c2c69c09f1391f67bed3745ad262fba64173ce15f66e8e0",
-      ".orchestrator/test_supervisor.py": "02bd8ba6787fbd61475ab21c9b5109c88d4d89b0d2e8672effd7995da81ec476"
+      ".orchestrator/supervisor.py": "73249bec6e3ff292af8f306ebc3634030da850c6f9dbcc6031d33834b687f341",
+      ".orchestrator/test_supervisor.py": "77d4d9146b3fc5b14f94625099385b2bc41e52724192bdf718c9d98e2c64c07a"
     },
     "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
   },
@@ -23,12 +23,14 @@
   },
   "problem": {
     "summary": "Double-audited runtime evidence showed that two supervisor blocker helpers (_prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked) passed an enum object (rewrite_task_machine.TaskAction.BLOCK) to rewrite_task_machine.transition. In rewrite_task_machine, coerce_action(action) executes TaskAction(str(action).strip().lower()). When passed an enum object, str(action) produces 'TaskAction.BLOCK', which lowers to 'taskaction.block' and raises ValueError in TaskAction(), returning None. This caused transition to fail closed with TransitionError before persisting task holds, leaving tasks in an unheld state despite blocker events or exhausting reassignment budgets. In addition, the blocker write paths lacked an exact task snapshot fence (expected_owner, expected_reviewer, expected_status, expected_generation), which could allow stale worker observations or failure-loop evaluations to block a reassigned successor task generation.",
-    "independent_review_rejection_20260911": "A subsequent independent review rejected PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9 for two further defects in the missing-handoff generation fence itself: (P1) supervisor.py's poll_worker_completion_stage caller (previously ~11704-11716) and _prepare_missing_handoff_blocker_locked's own internal fallback (previously ~9181-9192) both substituted task_generation(task) -- the task's *current* generation -- whenever the worker snapshot carried no task_generation, silently defeating the fence for any worker missing that field, including a same-owner worker racing a successor generation. (P2) the caller's int(raw_worker_gen) raised an uncaught ValueError for a malformed (non-numeric) worker_generation instead of failing closed to a no-op."
+    "independent_review_rejection_20260911": "A subsequent independent review rejected PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9 for two further defects in the missing-handoff generation fence itself: (P1) supervisor.py's poll_worker_completion_stage caller (previously ~11704-11716) and _prepare_missing_handoff_blocker_locked's own internal fallback (previously ~9181-9192) both substituted task_generation(task) -- the task's *current* generation -- whenever the worker snapshot carried no task_generation, silently defeating the fence for any worker missing that field, including a same-owner worker racing a successor generation. (P2) the caller's int(raw_worker_gen) raised an uncaught ValueError for a malformed (non-numeric) worker_generation instead of failing closed to a no-op.",
+    "independent_review_rejection_20260911_round2": "A second independent review rejected PR #5784 frozen head 48f4b35440e8ac2af7b8adc36b5ba7f403af3fc5 (manifest blob 8d681cde6e80cf350ceaffbcd0f85a700b7f0b38) for two remaining defects in the same generation-extraction functions at .orchestrator/supervisor.py:9149-9171: (P1) _coerce_observed_worker_task_generation's int(raw_gen) truncated a fractional task_generation (e.g. 2.9) to 2 instead of rejecting it, and observed_worker_task_generation's priority-fallback read order let a disagreeing top-level generation (e.g. 2) win over consistent request_snapshot.task_generation and request_snapshot.metadata.task_generation copies (both 1) instead of refusing the conflicting observation. Independently reproduced through poll_worker_completion_stage using SupervisorBlockerTransitionCorrectiveTests._setup_env against a real isolated authoritative TaskStore, owner Codex/reviewer Codex2/in_progress task generation=2: both calls returned changed=True, persisted status=blocked with one missing_handoff blocker plus a status-outbox entry, and set worker status=failed, even though worker_matches_current_task_generation would reject that same binding. (P2) the same extractor still raised rather than failing closed: task_generation=float('inf') raised OverflowError inside int(raw_gen); a worker with no top-level task_generation and request_snapshot='invalid' raised AttributeError from calling .get('metadata') on a plain string. Both independently reproduced through the real poll_worker_completion_stage caller in isolated roots."
   },
   "fix": {
     "coercion": "Both _prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked now pass rewrite_task_machine.TaskAction.BLOCK.value ('block'), which coerce_action cleanly accepts and transitions tasks from todo or in_progress to blocked.",
     "snapshot_fence": "Both blocker write paths now accept and enforce exact task snapshot fences: expected_owner, expected_reviewer, expected_status, and expected_generation. If any field does not match the latest task state (such as when a task was reassigned, transitioned, or bumped to a new generation), the blocker creation is safely aborted as a no-op.",
     "generation_fence_hardening_20260911": "Added supervisor.observed_worker_task_generation() as the single strict extraction point for a worker's dispatched task generation (checked in order: worker.task_generation, worker.request_snapshot.task_generation, worker.request_snapshot.metadata.task_generation). It returns None -- never raises, never substitutes the task's current generation -- for an absent, non-numeric, boolean, or non-positive value. poll_worker_completion_stage's missing-handoff call site and _prepare_missing_handoff_blocker_locked's own internal fallback both now use this helper and refuse the write entirely (no task, journal, blocker, outbox, worker, or lease change) when it returns None, instead of skipping the generation check or guessing a value.",
+    "generation_fence_strict_typing_and_consistency_20260911_round2": "_coerce_observed_worker_task_generation() no longer runs every input through a bare int(): an int is accepted directly; a float is accepted only when math.isfinite() and float.is_integer() both hold (so 2.9 and float('inf')/float('nan') are all rejected, never truncated or raised through OverflowError); any other type still falls through the original try/except int() path but now also catches OverflowError. observed_worker_task_generation() no longer uses first-match priority fallback: it validates request_snapshot and request_snapshot.metadata are Mapping (or absent) before ever calling .get on them -- rejecting a non-mapping value such as the string 'invalid' without raising AttributeError -- then collects every copy of task_generation that is actually present (worker top-level, request_snapshot, metadata), coerces each independently, and returns the shared value only if every present copy coerced to a valid generation and all of them are equal; any missing/invalid coercion or any disagreement between present copies returns None.",
     "failure_loop_budget": "reconcile_failure_loops now forwards the task snapshot (owner, reviewer, status, generation) to record_failure_loop_blocker and correctly holds the task upon failure budget exhaustion.",
     "worker_poll_lease": "poll_worker_completion_stage forwards the worker's snapshot to record_missing_handoff_blocker and safely leaves worker lease untouched when blocker creation is rejected or fails closed.",
     "fail_closed_guards": "Preserved and verified all fail-closed guards: absent status path, nonempty activity outbox, missing task, mismatched owner identity, mismatched reviewer, mismatched lifecycle status, mismatched generation, existing waiting target, duplicate open blocker, invalid transition, pending active worker recovery, active review decision intent, and storage write errors.",
@@ -68,25 +70,25 @@
       "summary": "validated immutable supervisor command root: root=/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ee318eebcb1654a0ffb9e4809a51b3a20164a10a head=ee318eebcb1654a0ffb9e4809a51b3a20164a10a"
     },
     {
-      "name": "supervisor_suite_pytest",
-      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "name": "supervisor_and_watchdog_suite_pytest_round2",
+      "command": "timeout 280 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_supervisor_watchdog.py",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "352 passed, 78 subtests passed in 97.41s (rerun: 103.96s)"
+      "summary": "421 passed, 98 subtests passed in 147.93s -- 5 new regressions added this round: test_coerce_observed_worker_task_generation_rejects_lossy_and_nonfinite, test_observed_worker_task_generation_rejects_conflicting_copies, test_observed_worker_task_generation_rejects_malformed_snapshot_shapes, test_missing_handoff_blocker_fractional_generation_is_noop_byte_identical, test_missing_handoff_blocker_malformed_snapshot_is_noop_no_raise"
     },
     {
-      "name": "supervisor_watchdog_suite_pytest",
-      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
-      "exit_code": 0,
-      "outcome": "passed",
-      "summary": "64 passed, 20 subtests passed in 7.17s (rerun: 7.38s)"
-    },
-    {
-      "name": "focused_blocker_regressions",
+      "name": "focused_blocker_regressions_round2",
       "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k SupervisorBlockerTransitionCorrective",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "13 passed in 3.14s-5.32s across reruns (8 pre-existing + 5 new: test_observed_worker_task_generation_never_substitutes_or_raises, test_missing_handoff_blocker_absent_generation_is_noop, test_missing_handoff_blocker_malformed_generation_is_noop, test_missing_handoff_blocker_same_owner_successor_generation_is_noop, test_missing_handoff_blocker_valid_generation_still_persists)"
+      "summary": "18 passed (13 from the prior round + 5 new round-2 defect/caller-path regressions)"
+    },
+    {
+      "name": "checkout_provisioning_check_only_round2",
+      "command": "PANTHEON_DEPENDENCY_PYTHON=<main-checkout-venv-python> python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "verified the checkout-scoped .venv-pantheon interpreter imports services/scripts/integrations and pytest from a foreign cwd with no PYTHONPATH"
     },
     {
       "name": "isolated_defect_probe_p1_absent_generation_pre_fix",
@@ -115,14 +117,43 @@
       "exit_code": 0,
       "outcome": "confirmed fix",
       "summary": "poll_worker_completion_stage returns {'changed': False, 'stop': True} cleanly; no exception, no state mutation."
+    },
+    {
+      "name": "isolated_defect_probe_round2_p1_fractional_and_conflicting_pre_fix",
+      "command": "git show 48f4b35440e8ac2af7b8adc36b5ba7f403af3fc5:.orchestrator/supervisor.py > /tmp/prefix_supervisor_round2.py, then evaluate the exact rejected _coerce_observed_worker_task_generation/observed_worker_task_generation source against raw_gen=2.9 and a worker with task_generation=2 plus request_snapshot.task_generation=1 and request_snapshot.metadata.task_generation=1",
+      "exit_code": 0,
+      "outcome": "reproduced defect (fail case)",
+      "summary": "_coerce_observed_worker_task_generation(2.9) returned 2 (silent truncation via int()); observed_worker_task_generation returned 2 for the conflicting-copy worker even though the two snapshot copies agreed on 1 -- the top-level value silently won over a real conflict."
+    },
+    {
+      "name": "isolated_defect_probe_round2_p1_fractional_and_conflicting_post_fix",
+      "command": "python3 -c \"import importlib.util; spec = importlib.util.spec_from_file_location('supervisor', '.orchestrator/supervisor.py'); supervisor = importlib.util.module_from_spec(spec); spec.loader.exec_module(supervisor); print(supervisor._coerce_observed_worker_task_generation(2.9)); print(supervisor.observed_worker_task_generation({'task_generation': 2, 'request_snapshot': {'task_generation': 1, 'metadata': {'task_generation': 1}}}))\" against this task's fixed supervisor.py (commit 7d8bb4a57ee1f157842759da85d5fef705d4ce5a)",
+      "exit_code": 0,
+      "outcome": "confirmed fix",
+      "summary": "Both calls now return None: the fractional value is rejected outright (no truncation) and the conflicting top-level/snapshot copies are rejected outright (no silent trust of the top-level copy)."
+    },
+    {
+      "name": "isolated_defect_probe_round2_p2_overflow_and_attributeerror_pre_fix",
+      "command": "evaluate the same rejected pre-fix source against _coerce_observed_worker_task_generation(float('inf')) and observed_worker_task_generation({'request_snapshot': 'invalid'})",
+      "exit_code": 0,
+      "outcome": "reproduced defect (fail case)",
+      "summary": "_coerce_observed_worker_task_generation(float('inf')) raised OverflowError('cannot convert float infinity to integer') from int(raw_gen); observed_worker_task_generation({'request_snapshot': 'invalid'}) raised AttributeError(\"'str' object has no attribute 'get'\") from calling .get('metadata') on the non-mapping request_snapshot value."
+    },
+    {
+      "name": "isolated_defect_probe_round2_p2_overflow_and_attributeerror_post_fix",
+      "command": "python3 -c \"import importlib.util; spec = importlib.util.spec_from_file_location('supervisor', '.orchestrator/supervisor.py'); supervisor = importlib.util.module_from_spec(spec); spec.loader.exec_module(supervisor); print(supervisor._coerce_observed_worker_task_generation(float('inf'))); print(supervisor.observed_worker_task_generation({'request_snapshot': 'invalid'}))\" against this task's fixed supervisor.py (commit 7d8bb4a57ee1f157842759da85d5fef705d4ce5a)",
+      "exit_code": 0,
+      "outcome": "confirmed fix",
+      "summary": "Both calls now return None cleanly with no exception: math.isfinite() rejects the non-finite float before int() is ever called, and the isinstance(request_snapshot, Mapping) guard rejects the string snapshot before .get is ever called on it."
     }
   ],
   "acceptance_evidence": {
     "transition_coercion": "Both _prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked pass TaskAction.BLOCK.value ('block') instead of the enum instance, allowing coerce_action to return TaskAction.BLOCK and rewrite_task_machine.transition to cleanly transition task states from todo or in_progress to blocked.",
     "fenced_snapshot_holds": "Exact snapshot fences (expected_owner, expected_reviewer, expected_status, expected_generation) prevent stale worker or failure-loop observations from persisting holds against a reassigned or bumped successor task generation.",
     "generation_fence_never_substitutes_20260911": "observed_worker_task_generation() is the sole point that extracts a worker's dispatched generation and returns None (never a fallback value, never raises) for absent, non-numeric, boolean, or non-positive input. Both the caller in poll_worker_completion_stage and _prepare_missing_handoff_blocker_locked's own internal derivation now require this valid observation and refuse the write when it is None, closing the fence-bypass the independent reviewer found in PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9.",
-    "focused_regressions": "test_independent_reproduction_raw_task_action_enum_fails_closed confirms the raw enum failure and fix; test_missing_handoff_blocker_persists_fenced_hold_real_isolated_write_path confirms missing-handoff hold persistence and deduplication; test_failure_loop_blocker_persists_fenced_hold_real_isolated_write_path confirms failure-loop hold persistence and deduplication; test_failure_loop_reconciler_invokes_real_hold_path_after_budget_exhausted confirms real hold invocation on budget exhaustion; test_stale_worker_observation_against_successor_generation_is_noop and test_stale_failure_loop_observation_against_successor_generation_is_noop confirm stale observations are no-ops and leave worker lease untouched; test_missing_handoff_fail_closed_guards and test_failure_loop_fail_closed_guards verify all 13 fail-closed guards; test_observed_worker_task_generation_never_substitutes_or_raises unit-tests every absent/malformed/boolean/non-positive/valid input to the new extraction helper; test_missing_handoff_blocker_absent_generation_is_noop and test_missing_handoff_blocker_malformed_generation_is_noop reproduce P1/P2 through both the direct helper call and the real poll_worker_completion_stage caller path and assert zero task/blocker/lease mutation; test_missing_handoff_blocker_same_owner_successor_generation_is_noop covers the exact same-owner generation-2 scenario the reviewer named; test_missing_handoff_blocker_valid_generation_still_persists is a positive-path sanity check that the fix did not turn the fence into an always-reject.",
-    "preserved_behavior": "Full test_supervisor.py (352 tests, 78 subtests) and test_supervisor_watchdog.py (64 tests, 20 subtests) pass cleanly without regressions.",
+    "generation_fence_strict_and_consistent_20260911_round2": "_coerce_observed_worker_task_generation() only accepts an int, or a finite integral float (math.isfinite and float.is_integer), and catches OverflowError alongside TypeError/ValueError -- a fractional generation (2.9) or a non-finite float (inf/-inf/nan) now returns None instead of silently truncating or raising. observed_worker_task_generation() validates request_snapshot and its metadata are Mapping (or absent) before any .get call, so a non-mapping snapshot (e.g. the string 'invalid') fails closed instead of raising AttributeError, and it now requires every present copy of task_generation (worker top-level, request_snapshot, metadata) to coerce to the same valid value -- a conflicting top-level observation can no longer silently win over disagreeing snapshot copies, closing the exact fence-bypass the second independent review reproduced against PR #5784 frozen head 48f4b35440e8ac2af7b8adc36b5ba7f403af3fc5.",
+    "focused_regressions": "test_independent_reproduction_raw_task_action_enum_fails_closed confirms the raw enum failure and fix; test_missing_handoff_blocker_persists_fenced_hold_real_isolated_write_path confirms missing-handoff hold persistence and deduplication; test_failure_loop_blocker_persists_fenced_hold_real_isolated_write_path confirms failure-loop hold persistence and deduplication; test_failure_loop_reconciler_invokes_real_hold_path_after_budget_exhausted confirms real hold invocation on budget exhaustion; test_stale_worker_observation_against_successor_generation_is_noop and test_stale_failure_loop_observation_against_successor_generation_is_noop confirm stale observations are no-ops and leave worker lease untouched; test_missing_handoff_fail_closed_guards and test_failure_loop_fail_closed_guards verify all 13 fail-closed guards; test_observed_worker_task_generation_never_substitutes_or_raises unit-tests every absent/malformed/boolean/non-positive/valid input to the extraction helper; test_missing_handoff_blocker_absent_generation_is_noop and test_missing_handoff_blocker_malformed_generation_is_noop reproduce the first-round P1/P2 through both the direct helper call and the real poll_worker_completion_stage caller path and assert zero task/blocker/lease mutation; test_missing_handoff_blocker_same_owner_successor_generation_is_noop covers the exact same-owner generation-2 scenario the reviewer named; test_missing_handoff_blocker_valid_generation_still_persists is a positive-path sanity check that the fix did not turn the fence into an always-reject; test_coerce_observed_worker_task_generation_rejects_lossy_and_nonfinite (round 2) unit-tests fractional/non-finite rejection and the integral-float accept path at the coercion helper; test_observed_worker_task_generation_rejects_conflicting_copies (round 2) unit-tests the disagreeing-top-level-vs-snapshot scenario the second review named, a majority-agreement-is-not-enough variant, a fully-agreeing valid-path control, and a standalone fractional top-level rejection; test_observed_worker_task_generation_rejects_malformed_snapshot_shapes (round 2) unit-tests non-mapping request_snapshot/metadata shapes including the exact 'invalid' string reproduction, with and without a top-level generation present, plus a non-mapping/non-string request_snapshot (list); test_missing_handoff_blocker_fractional_generation_is_noop_byte_identical and test_missing_handoff_blocker_malformed_snapshot_is_noop_no_raise (round 2) reproduce both round-2 defects through the real poll_worker_completion_stage caller path, assert byte-identical on-disk status before and after, and assert the worker lease is left untouched.",
+    "preserved_behavior": "Full test_supervisor.py and test_supervisor_watchdog.py (421 tests, 98 subtests combined) pass cleanly without regressions.",
     "delivery_scope": "Only the declared tooling files (.orchestrator/supervisor.py, .orchestrator/test_supervisor.py, docs/deployment/evidence/OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001/evidence.json) are modified; no product runtime behavior, hosted deployment, external branch protection, task state, or unrelated worktree was touched."
   },
   "runtime_observation": {
