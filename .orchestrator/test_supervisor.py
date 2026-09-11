@@ -19032,6 +19032,179 @@ class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
             self.assertEqual(len(persisted.get("blockers") or []), 1)
             self.assertEqual(persisted["blockers"][0]["blocker_kind"], "missing_handoff")
 
+    def test_coerce_observed_worker_task_generation_rejects_lossy_and_nonfinite(self) -> None:
+        # P1 reproduction: a fractional generation must never silently
+        # truncate through int(); it must be rejected outright.
+        self.assertIsNone(supervisor._coerce_observed_worker_task_generation(2.9))
+        self.assertIsNone(supervisor._coerce_observed_worker_task_generation(1.0000001))
+        # An integral float is unambiguous and may still be accepted.
+        self.assertEqual(supervisor._coerce_observed_worker_task_generation(3.0), 3)
+        # P2 reproduction: a non-finite float must fail closed, not raise
+        # OverflowError from int(float('inf')).
+        self.assertIsNone(supervisor._coerce_observed_worker_task_generation(float("inf")))
+        self.assertIsNone(supervisor._coerce_observed_worker_task_generation(float("-inf")))
+        self.assertIsNone(supervisor._coerce_observed_worker_task_generation(float("nan")))
+
+    def test_observed_worker_task_generation_rejects_conflicting_copies(self) -> None:
+        # P1 reproduction: top-level generation=2 conflicts with
+        # request_snapshot.task_generation=1 and metadata.task_generation=1;
+        # the extractor must refuse rather than trust the top-level copy.
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation(
+                {
+                    "task_generation": 2,
+                    "request_snapshot": {
+                        "task_generation": 1,
+                        "metadata": {"task_generation": 1},
+                    },
+                }
+            )
+        )
+        # Two agreeing copies with a third disagreeing copy must still
+        # refuse -- majority agreement is not a substitute for consistency.
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation(
+                {
+                    "task_generation": 1,
+                    "request_snapshot": {
+                        "task_generation": 1,
+                        "metadata": {"task_generation": 2},
+                    },
+                }
+            )
+        )
+        # Valid-path control: every present copy agrees.
+        self.assertEqual(
+            supervisor.observed_worker_task_generation(
+                {
+                    "task_generation": 3,
+                    "request_snapshot": {
+                        "task_generation": 3,
+                        "metadata": {"task_generation": 3},
+                    },
+                }
+            ),
+            3,
+        )
+        # A fractional top-level copy must reject even when other copies
+        # would otherwise be absent.
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": 2.9})
+        )
+
+    def test_observed_worker_task_generation_rejects_malformed_snapshot_shapes(self) -> None:
+        # P2 reproduction: request_snapshot='invalid' must not raise
+        # AttributeError from calling .get() on a non-mapping value while
+        # still failing closed with no top-level generation.
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"request_snapshot": "invalid"})
+        )
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation(
+                {"task_generation": 1, "request_snapshot": "invalid"}
+            )
+        )
+        # A non-mapping metadata container must also fail closed without
+        # raising.
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation(
+                {"request_snapshot": {"metadata": "invalid"}}
+            )
+        )
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation(
+                {"request_snapshot": {"task_generation": 1, "metadata": "invalid"}}
+            )
+        )
+        # request_snapshot as a non-string, non-mapping type (e.g. a list)
+        # must also fail closed without raising.
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"request_snapshot": []})
+        )
+
+    def test_missing_handoff_blocker_fractional_generation_is_noop_byte_identical(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-GEN-FRACTIONAL",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+            status_path = Path(config["paths"]["status_file"])
+            before_bytes = status_path.read_bytes()
+
+            worker_fractional_gen = {
+                "task_id": "TASK-GEN-FRACTIONAL",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-fractional-gen",
+                "task_generation": 2.9,
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/11",
+            }
+
+            event = supervisor.record_missing_handoff_blocker(config, worker_fractional_gen)
+            self.assertIsNone(event)
+            self.assertEqual(status_path.read_bytes(), before_bytes)
+
+            state = {"workers": {worker_fractional_gen["run_id"]: worker_fractional_gen}, "queue": {"events": {}}}
+            with mock.patch.object(supervisor, "worker_prepared_review_head", return_value=True):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    worker_fractional_gen,
+                    task_map={"TASK-GEN-FRACTIONAL": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertNotEqual(worker_fractional_gen.get("status"), "failed")
+            self.assertEqual(status_path.read_bytes(), before_bytes)
+
+    def test_missing_handoff_blocker_malformed_snapshot_is_noop_no_raise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-GEN-SNAPSHOT-INVALID",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+            status_path = Path(config["paths"]["status_file"])
+            before_bytes = status_path.read_bytes()
+
+            worker_bad_snapshot = {
+                "task_id": "TASK-GEN-SNAPSHOT-INVALID",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-bad-snapshot",
+                "request_snapshot": "invalid",
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/12",
+            }
+
+            # Must not raise AttributeError; must be a clean fail-closed no-op.
+            event = supervisor.record_missing_handoff_blocker(config, worker_bad_snapshot)
+            self.assertIsNone(event)
+            self.assertEqual(status_path.read_bytes(), before_bytes)
+
+            # canonical_worker_terminal_status is a separate, unrelated
+            # classifier stage that also reads request_snapshot; pin it to
+            # None here so this test isolates the generation-extractor path
+            # under repair rather than that pre-existing, out-of-scope stage.
+            state = {"workers": {worker_bad_snapshot["run_id"]: worker_bad_snapshot}, "queue": {"events": {}}}
+            with mock.patch.object(
+                supervisor, "worker_prepared_review_head", return_value=True
+            ), mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    worker_bad_snapshot,
+                    task_map={"TASK-GEN-SNAPSHOT-INVALID": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertNotEqual(worker_bad_snapshot.get("status"), "failed")
+            self.assertEqual(status_path.read_bytes(), before_bytes)
+
     def test_missing_handoff_fail_closed_guards(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base_task = task_fixture(

@@ -9141,34 +9141,63 @@ def _coerce_observed_worker_task_generation(raw_gen: Any) -> int | None:
     """Parse a worker-observed task generation without ever guessing one.
 
     Returns ``None`` for anything that is not an unambiguous positive
-    generation value: absent, non-numeric, boolean, or non-positive. A
-    missing or malformed observation must never fall back to the task's
-    current generation and must never raise -- callers treat ``None`` as
-    "no valid observed binding" and refuse the write entirely.
+    integer generation value: absent, boolean, non-numeric, non-finite,
+    fractional, or non-positive. Only ``int`` or an integral ``float`` is
+    accepted -- ``2.9`` must not silently truncate to ``2``. A missing or
+    malformed observation must never fall back to the task's current
+    generation and must never raise -- callers treat ``None`` as "no valid
+    observed binding" and refuse the write entirely.
     """
     if raw_gen is None or isinstance(raw_gen, bool):
         return None
-    try:
+    if isinstance(raw_gen, int):
+        generation = raw_gen
+    elif isinstance(raw_gen, float):
+        if not math.isfinite(raw_gen) or not raw_gen.is_integer():
+            return None
         generation = int(raw_gen)
-    except (TypeError, ValueError):
-        return None
+    else:
+        try:
+            generation = int(raw_gen)
+        except (TypeError, ValueError, OverflowError):
+            return None
     return generation if generation >= 1 else None
 
 
 def observed_worker_task_generation(worker: dict[str, Any]) -> int | None:
     """Extract the exact task generation this worker was dispatched against.
 
-    Checks the worker's own ``task_generation`` field, then its dispatch
-    ``request_snapshot`` and that snapshot's ``metadata``, in that order.
-    Returns ``None`` (never a substitute value) when no field carries a
-    valid positive generation.
+    Reads every copy that is actually present -- the worker's own
+    ``task_generation`` field, its dispatch ``request_snapshot``, and that
+    snapshot's ``metadata`` -- and requires all present copies to parse to
+    the same valid positive generation. A malformed container shape (for
+    example a non-mapping ``request_snapshot`` or ``metadata``) is rejected
+    without calling ``.get`` on it, and any present-but-invalid or
+    conflicting copy makes the whole observation invalid. Returns ``None``
+    (never a substitute value) whenever no consistent valid generation can
+    be established.
     """
-    raw_gen = worker.get("task_generation")
-    if raw_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
-        raw_gen = (worker["request_snapshot"] or {}).get("task_generation")
-    if raw_gen is None and isinstance((worker.get("request_snapshot") or {}).get("metadata"), Mapping):
-        raw_gen = ((worker.get("request_snapshot") or {}).get("metadata") or {}).get("task_generation")
-    return _coerce_observed_worker_task_generation(raw_gen)
+    request_snapshot = worker.get("request_snapshot")
+    if request_snapshot is not None and not isinstance(request_snapshot, Mapping):
+        return None
+
+    metadata = request_snapshot.get("metadata") if isinstance(request_snapshot, Mapping) else None
+    if metadata is not None and not isinstance(metadata, Mapping):
+        return None
+
+    observations: list[int | None] = []
+    if "task_generation" in worker:
+        observations.append(_coerce_observed_worker_task_generation(worker.get("task_generation")))
+    if isinstance(request_snapshot, Mapping) and "task_generation" in request_snapshot:
+        observations.append(_coerce_observed_worker_task_generation(request_snapshot.get("task_generation")))
+    if isinstance(metadata, Mapping) and "task_generation" in metadata:
+        observations.append(_coerce_observed_worker_task_generation(metadata.get("task_generation")))
+
+    if not observations or any(value is None for value in observations):
+        return None
+    if len(set(observations)) != 1:
+        return None
+    return observations[0]
 
 
 def _prepare_missing_handoff_blocker_locked(
