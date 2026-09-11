@@ -134,6 +134,48 @@ def test_handoff_rejects_wrong_idempotency_binding(tmp_path, monkeypatch) -> Non
     assert store.list_all() == []
 
 
+def test_handoff_receipt_readback_survives_new_owner_store_and_client(tmp_path, monkeypatch) -> None:
+    client, store = _client(tmp_path, monkeypatch)
+    response = client.post(
+        "/api/governance/consultation-handoffs",
+        json=_payload(), headers=_headers(token=TOKEN),
+    )
+    assert response.status_code == 201
+    committed = store.get(response.json()["handoff_id"])
+    path = tmp_path / "consultation-handoffs.json"
+    before = path.read_bytes()
+    monkeypatch.setattr(main, "consultation_handoff_store",
+                        JsonGovernanceRecordStore(path, id_fields=("handoff_id",)))
+    with TestClient(main.app) as reloaded:
+        readback = reloaded.get("/api/governance/consultation-handoffs/gh-001",
+                                headers=_headers(token=TOKEN))
+    assert readback.status_code == 200
+    assert readback.json() == committed
+    assert readback.json()["memo_ids"] == ["memo-001"]
+    assert readback.json()["evidence_refs"] == ["evidence-001"]
+    assert readback.json()["request_digest"]
+    assert readback.json()["acknowledged_at"]
+    assert path.read_bytes() == before  # GET does not re-acknowledge the handoff.
+
+
+def test_handoff_readback_requires_existing_service_and_tenant_authority(tmp_path, monkeypatch) -> None:
+    client, _ = _client(tmp_path, monkeypatch)
+    path = "/api/governance/consultation-handoffs/gh-001"
+    assert client.post("/api/governance/consultation-handoffs", json=_payload(),
+                       headers=_headers(token=TOKEN)).status_code == 201
+    assert client.get(path, headers=_headers()).status_code == 401
+    assert client.get(path, headers=_headers(token="wrong-token")).status_code == 401
+    wrong_actor = {**_headers(token=TOKEN), "X-Pantheon-Service-Actor": "operator-bff"}
+    assert client.get(path, headers=wrong_actor).status_code == 403
+    assert client.get(path, headers=_headers(token=TOKEN, tenant="tenant-b")).status_code == 403
+    monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS", "tenant-a,tenant-b")
+    hidden = client.get(path, headers=_headers(token=TOKEN, tenant="tenant-b"))
+    missing = client.get("/api/governance/consultation-handoffs/missing",
+                         headers=_headers(token=TOKEN, tenant="tenant-b"))
+    assert hidden.status_code == missing.status_code == 404
+    assert hidden.json() == missing.json()
+
+
 def test_handoff_rejects_published_token_in_enforced_posture(
     tmp_path,
     monkeypatch,
