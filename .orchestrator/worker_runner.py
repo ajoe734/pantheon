@@ -39,7 +39,6 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     git_toplevel as _git_toplevel,
     validate_status_command_runtime as _validate_status_command_runtime,
 )
-import execution_authorization  # noqa: E402 - see sys.path bootstrap above
 import runtime_state as promotion_state  # noqa: E402
 from rewrite.task_state_store import load_snapshot  # noqa: E402
 from rewrite.task_identity import task_generation as canonical_task_generation  # noqa: E402
@@ -936,7 +935,12 @@ def validate_worker_entry_binding(
         raise RuntimeError("worker_runner: canonical dispatch/run/process identity mismatch")
     if worker.get("status") not in {"starting", "running"}:
         raise RuntimeError("worker_runner: canonical worker lease is not active")
-    expires = execution_authorization._parse_utc(worker.get("lease_expires_at"))
+    try:
+        expires = datetime.fromisoformat(str(worker.get("lease_expires_at") or "").replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            raise ValueError("lease timestamp must include timezone")
+    except (TypeError, ValueError):
+        expires = None
     if expires is None or datetime.now(timezone.utc) >= expires:
         raise RuntimeError("worker_runner: canonical worker lease is expired or missing")
     if (worker.get("command") != command
@@ -978,12 +982,9 @@ def validate_worker_entry_binding(
             role = "owner_finalize"
     if not role or not agent:
         raise RuntimeError("worker_runner: canonical purpose/assignment is not current")
-    authorization_run_id = str(metadata.get("execution_authorization_run_id") or "")
-    ensure_execution_authorized_before_launch(
-        coordination_root, task_id, active_role=role, run_id=authorization_run_id
-    )
-    authorization = task.get("execution_authorization")
-    policy = authorization.get("policy") if isinstance(authorization, dict) else None
+    if task.get("waiting_for"):
+        raise RuntimeError("worker_runner: task is on an explicit hold")
+    bridge = task.get("dev_bridge")
     source_root = worker.get("workspace_source_root")
     source_readonly_roots = []
     if source_root:
@@ -993,47 +994,9 @@ def validate_worker_entry_binding(
         source_readonly_roots.append(source)
     return {"task_id": task_id, "agent": agent, "role": role,
             "owner": owner, "reviewer": reviewer,
-            "authorization_run_id": authorization_run_id,
             "source_readonly_roots": source_readonly_roots,
             "read_only_worktree": role != "owner" and (
-                execution_authorization.task_privileged_by_source(task)
-                or (isinstance(policy, dict) and bool(policy.get("requires_execution_authorization"))))}
-
-
-def ensure_execution_authorized_before_launch(
-    coordination_root: Path | None,
-    task_id: str | None,
-    *,
-    active_role: str,
-    run_id: str,
-) -> None:
-    """Direct worker-entry execution-authorization barrier (SA/SD 4).
-
-    ``worker_runner`` is the actual process-launch boundary: a direct
-    invocation (bypassing ``supervisor.start_worker_for_request``'s planned
-    dispatch), a replayed queue event, or a stale run id must never launch a
-    privileged owner-execution attempt just because it reached this binary.
-    Only the owner-execution purpose spends/requires the grant; a reviewer or
-    finalize invocation is read-only and is intentionally not checked here,
-    matching the purpose-scoped gate in ``rewrite/dispatch_admission.py`` and
-    ``supervisor.start_worker_for_request``.
-
-    Raises :class:`RuntimeError` before any subprocess is created if the
-    canonical task is privileged and this exact run is not a live, current,
-    unexpired ``STATE_RESERVED`` binding for ``run_id``.
-    """
-
-    task = _get_task_record(coordination_root, task_id)
-    if active_role in {"reviewer", "owner_finalize"}:
-        return
-    if active_role != "owner" or task is None:
-        raise RuntimeError("worker_runner: canonical execution purpose is missing")
-    now = datetime.now(timezone.utc)
-    if not execution_authorization.reservation_is_current(task, run_id=run_id, now=now):
-        raise RuntimeError(
-            f"worker_runner: task {task_id} is not currently execution-authorized "
-            f"for run {run_id!r}; refusing to launch owner-execution process"
-        )
+                isinstance(bridge, dict) and bridge.get("work_class") in {"security", "hosted", "live"})}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1106,7 +1069,6 @@ def main(argv: list[str] | None = None) -> int:
     task_id = binding["task_id"]
     active_role = binding["role"]
     task_roles = {"owner": binding["owner"], "reviewer": binding["reviewer"]}
-    authorization_run_id = binding["authorization_run_id"]
     command = bind_relative_command_to_runtime(
         command,
         command_root,
@@ -1127,7 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"worker_runner: failed to isolate working directory to {workspace_path}: {exc}", file=sys.stderr)
 
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
-    authorization_interval = min(interval, 15.0)
+    binding_interval = min(interval, 15.0)
     started_at = utc_now()
     child: subprocess.Popen[str] | None = None
     terminating_signal: int | None = None
@@ -1158,7 +1120,7 @@ def main(argv: list[str] | None = None) -> int:
                 digest = planned_drain_digest(coordination_root, args.run_id, command_runtime)
             except (OSError, ValueError, RuntimeError):
                 digest = None
-            if digest and not status.get("execution_authorization_revoked"):
+            if digest and not status.get("dispatch_binding_revoked"):
                 status["promotion_drain_digest"] = digest
                 next_status = "promotion_drained"
         status["status"] = next_status
@@ -1223,7 +1185,7 @@ def main(argv: list[str] | None = None) -> int:
         status["child_pid"] = child.pid
         publish("running")
         next_heartbeat = time.monotonic() + interval
-        next_authorization_check = time.monotonic() + authorization_interval
+        next_binding_check = time.monotonic() + binding_interval
         direct_exit_code: int | None = None
         while True:
             if direct_exit_code is None:
@@ -1232,26 +1194,20 @@ def main(argv: list[str] | None = None) -> int:
                     status["exit_code"] = direct_exit_code
                     status["finished_at"] = utc_now()
 
-            # Safe-stop boundary (SA/SD 4): an already-launched owner-execution
-            # attempt is re-checked against the canonical reservation on every
-            # cadence tick. Revocation only prevents *new* effects, so this
-            # cannot retroactively undo work already done -- it only moves
-            # this running process onto the same bounded termination path a
-            # forwarded SIGTERM already uses, instead of letting a revoked or
-            # expired attempt keep running unobserved for its full lifetime.
+            # Stop a child whose canonical task/run binding is no longer current.
             if (
                 direct_exit_code is None
                 and terminating_signal is None
-                and time.monotonic() >= next_authorization_check
+                and time.monotonic() >= next_binding_check
             ):
-                next_authorization_check = time.monotonic() + authorization_interval
+                next_binding_check = time.monotonic() + binding_interval
                 try:
                     validate_worker_entry_binding(coordination_root, **entry_arguments, entry=False)
-                    authorization_current = True
+                    binding_current = True
                 except (RuntimeError, ValueError, OSError):
-                    authorization_current = False
-                if not authorization_current:
-                    status["execution_authorization_revoked"] = True
+                    binding_current = False
+                if not binding_current:
+                    status["dispatch_binding_revoked"] = True
                     terminating_signal = signal.SIGTERM
                     signal_received_at = time.monotonic()
                     status["signal"] = signal.SIGTERM

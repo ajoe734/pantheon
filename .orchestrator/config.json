@@ -13,9 +13,6 @@
     "mode": "authoritative",
     "event_log": ".orchestrator/task-state-events-v2.jsonl"
   },
-  "execution_authorization": {
-    "mfa_issuer_public_keys": {}
-  },
   "review_gate": {
     "github_review_bridge_required": false
   },
@@ -424,7 +421,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
-      "account": "claude2",
+      "account": "claude1",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",

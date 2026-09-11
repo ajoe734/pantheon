@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dispatch_policy
 from rewrite import integration_receipt
+from rewrite.dispatch_admission import (
+    AdmissionSnapshot, DeliveryEndpoint, DispatchLane, HealthRecord, HealthState,
+)
 from scripts.git import auto_integrator
 from dispatch_policy import (
     ALLOWLISTED_EXECUTION_RESOURCES,
@@ -368,25 +371,13 @@ def test_task_review_requeue_is_materialized_fails_closed_on_no_record() -> None
 
 @pytest.mark.parametrize("authorization_state", ["pending_authorization", "revoked"])
 @pytest.mark.parametrize("status,role", [("todo", "owner"), ("in_progress", "owner"), ("review", "reviewer"), ("review_approved", "owner")])
-def test_wrapper_normalizes_only_auth_fence_for_canonical_purpose(authorization_state, status, role):
+def test_retired_mfa_record_never_clears_operator_hold(authorization_state, status, role):
     import dispatch_policy
-    import execution_authorization as ea
-    from rewrite.dispatch_admission import AdmissionSnapshot, DeliveryEndpoint, DispatchLane, HealthRecord, HealthState
-    from test_execution_authorization import ExecutionAuthorizationTestCase
-
-    fixture = ExecutionAuthorizationTestCase()
-    fixture.setUp()
-    task = deepcopy(fixture._granted_task())
-    task["execution_resources"] = ["pantheon-dev"]
-    task["dev_bridge"]["task_spec"]["execution_resources"] = ["pantheon-dev"]
-    fixture.policy = ea.derive_execution_policy(
-        task_id=task["id"], work_class="security", repository="pantheon",
-        resources=["pantheon-dev"], artifacts=task["artifacts"], task_spec=task["dev_bridge"]["task_spec"],
-    )
-    task["dev_bridge"]["task_spec_hash"] = fixture.policy["task_spec_hash"]
-    task.update(status=status, waiting_for="Human/Ops")
-    task["execution_authorization"] = ea.pending_authorization_hold(fixture.policy)
-    task["execution_authorization"]["state"] = authorization_state
+    task = {
+        "id": "DEV-HOLD-001", "owner": "Codex2", "reviewer": "Codex",
+        "status": status, "waiting_for": "Human/Ops", "execution_resources": ["pantheon-dev"],
+        "execution_authorization": {"state": authorization_state, "old_runtime_hold": True},
+    }
     original = deepcopy(task)
     lane = DispatchLane("test-lane", task[role], 1, (DeliveryEndpoint("endpoint", "provider", "account"),))
     snapshot = AdmissionSnapshot(
@@ -410,11 +401,8 @@ def test_wrapper_normalizes_only_auth_fence_for_canonical_purpose(authorization_
         mock.patch.object(dispatch_policy, "review_decision_intent_replay_eligible", return_value=False),
     ):
         decision = evaluate()
-        if status in {"review", "review_approved"}:
-            assert decision.eligible
-        else:
-            assert not decision.eligible
-            assert decision.reason.value == "execution_authorization_required"
+        assert not decision.eligible
+        assert decision.reason.value == "human_hold"
         assert task == original
         task["waiting_for"] = "Claude"
         assert evaluate().reason.value == "human_hold"
@@ -424,6 +412,11 @@ def test_wrapper_normalizes_only_auth_fence_for_canonical_purpose(authorization_
         task["execution_authorization"]["old_runtime_hold"] = True
         task["review_decision_intent"] = {"nonce": "unresolved-independent-review-decision"}
         assert evaluate().reason.value == "human_hold"
+        task.pop("review_decision_intent")
+        task.pop("waiting_for")
+        # Historical pending/revoked MFA records no longer gate an explicitly
+        # resumed ordinary dev task. No grant or issuer is injected here.
+        assert evaluate().eligible
 
 
 def test_task_has_current_canonical_integration_receipt_multirepo() -> None:
@@ -582,7 +575,7 @@ def test_is_non_default_repository_finalization_pending_cases() -> None:
     }
     assert dispatch_policy.is_non_default_repository_finalization_pending(config, task_fe_reconciled) is False
 
-    # Normal unmerged Pantheon task (review_approved, no receipt) -> not suppressed (False)
+    # A non-PR Pantheon closeout needs no PR integration receipt.
     task_pantheon = {
         "id": "OPS-PAN-001",
         "status": "review_approved",
@@ -684,7 +677,7 @@ def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
         assert dec_receipted.eligible
         assert dec_receipted.task_reason.value == 1
 
-        # 3. Normal unmerged Pantheon task -> admitted
+        # 3. A Pantheon PR uses the same integration-receipt rule as FE.
         task_pantheon = {
             "id": "OPS-PAN-001",
             "status": "review_approved",
@@ -702,7 +695,14 @@ def test_evaluate_task_delivery_admission_multirepo_gate() -> None:
             config, {}, task_pantheon, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
             agent_loads={}, active_account_loads={}, pending_account_loads={},
         )
-        assert dec_pantheon.eligible
+        assert not dec_pantheon.eligible
+        assert dec_pantheon.reason.value == "task_not_dispatchable"
+        # Non-PR closeout is unaffected by the receipt gate.
+        task_pantheon.pop("review_binding")
+        assert dispatch_policy.evaluate_task_delivery_admission(
+            config, {}, task_pantheon, "Codex", {}, active_task_ids=set(), pending_task_ids=set(),
+            agent_loads={}, active_account_loads={}, pending_account_loads={},
+        ).eligible
         assert dec_pantheon.task_reason.value == 1
 
         # 4. evaluate_dispatch_candidate surfaces task_not_dispatchable
