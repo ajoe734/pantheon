@@ -2307,7 +2307,7 @@ def test_drain_waits_for_active_task_state_store_lock_writer(tmp_path: Path) -> 
     assert result["drained"] is True
 
 
-def test_retained_immutable_writer_cannot_recreate_migrated_task_state(tmp_path: Path) -> None:
+def test_current_writer_cannot_recreate_migrated_task_state(tmp_path: Path) -> None:
     from rewrite import task_state_store
     status = tmp_path / "status"
     status.mkdir()
@@ -2333,7 +2333,7 @@ common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-w
 '''
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PANTHEON_", "AI_"))}
     result = subprocess.run(
-        [sys.executable, "-c", program, str(Path(os.environ["PANTHEON_COMMAND_ROOT"]) / ".orchestrator"), json.dumps(old_cfg)],
+        [sys.executable, "-c", program, str(Path(__file__).resolve().parents[1] / ".orchestrator"), json.dumps(old_cfg)],
         env=env,
         capture_output=True,
         text=True,
