@@ -32,6 +32,78 @@ class ArtifactError(RuntimeError):
     pass
 
 
+FAILURE_CODE = "DEV_ARTIFACT_OPERATION_FAILED"
+FAILURE_STAGES = frozenset({"initialize", "install", "transport", "capture", "verify",
+                            "seal-candidate", "restore", "seal-result", "publish-evidence"})
+FAILURE_KINDS = frozenset({"contract", "timeout", "subprocess", "filesystem", "invalid-data", "unexpected"})
+FAILURE_SOURCE = re.compile(r"(?:capture_dev_artifact_baseline|dev_release_artifact_driver|dev_release_artifacts|dev_remote_guarded_exec)\.py:[1-9][0-9]{0,5}")
+
+
+def failure_record(error: Exception, stage: str) -> dict:
+    """Public failure metadata, never exception text, locals, argv or stderr.
+
+    The last checked-in source line and the innermost explicit cause locate
+    contract errors AND unexpected bugs without maintaining per-function stage
+    enums or mutating the CLI namespace. This record is diagnostic, not proof.
+    """
+    location = "unknown"
+    cause = error
+    seen = set()
+    while id(cause) not in seen:
+        seen.add(id(cause))
+        trace = cause.__traceback__
+        while trace is not None:
+            candidate = f"{Path(trace.tb_frame.f_code.co_filename).name}:{trace.tb_lineno}"
+            if FAILURE_SOURCE.fullmatch(candidate):
+                location = candidate
+            trace = trace.tb_next
+        if cause.__cause__ is None:
+            break
+        cause = cause.__cause__
+    kind, code = "unexpected", 75
+    if isinstance(cause, (TimeoutError, subprocess.TimeoutExpired)):
+        kind, code = "timeout", 124
+    elif isinstance(cause, subprocess.CalledProcessError):
+        kind = "subprocess"
+        status = cause.returncode
+        if type(status) is int and 0 < abs(status) < 128:
+            code = status if status > 0 else 128 - status
+        elif type(status) is int and 128 <= status <= 255:
+            code = status
+    elif isinstance(cause, OSError):
+        kind = "filesystem"
+    elif isinstance(cause, ArtifactError):
+        kind = "contract"
+    elif isinstance(cause, (ValueError, TypeError, KeyError, AttributeError)):
+        kind = "invalid-data"
+    return {"status": "error", "error_code": FAILURE_CODE,
+            "failure_stage": stage if isinstance(stage, str) and stage in FAILURE_STAGES else "initialize",
+            "failure_kind": kind, "failure_location": location, "exit_code": code}
+
+
+def remote_failure_record(raw: bytes) -> dict | None:
+    """Accept only bounded, fixed-shape diagnostics; malformed stderr is ignored."""
+    if not isinstance(raw, bytes) or len(raw) > 1024 * 1024:
+        return None
+    for line in reversed(raw.splitlines()):
+        try:
+            value = _json(line)
+        except (ArtifactError, ValueError, TypeError, RecursionError):
+            continue
+        if not isinstance(value, dict) or set(value) != {
+            "status", "error_code", "failure_stage", "failure_kind", "failure_location", "exit_code"
+        }:
+            continue
+        stage, kind, location = (value[key] for key in ("failure_stage", "failure_kind", "failure_location"))
+        if (value["status"] == "error" and value["error_code"] == FAILURE_CODE
+                and isinstance(stage, str) and stage in FAILURE_STAGES
+                and isinstance(kind, str) and kind in FAILURE_KINDS
+                and isinstance(location, str) and (location == "unknown" or FAILURE_SOURCE.fullmatch(location))
+                and type(value["exit_code"]) is int and 1 <= value["exit_code"] <= 255):
+            return value
+    return None
+
+
 class Docker:
     def call(self, *args: str) -> str:
         # The eventual runner selects the approved VM. Never let an ambient

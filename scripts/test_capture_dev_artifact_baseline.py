@@ -309,3 +309,51 @@ def test_failed_transport_never_uploads_raw_diagnostics_or_creates_seal(fake_tra
     assert public.out == ""
     assert not list(evidence.iterdir())
     assert not output.exists()
+
+
+@pytest.mark.parametrize("status", [1, 37, 124, 255])
+@pytest.mark.parametrize("diagnostic", ["none", "valid", "duplicate", "list-stage", "list-kind"])
+def test_remote_diagnostics_never_mask_actual_exit_or_leak_stderr(fake_transport, capsys, status, diagnostic):
+    _, _, _, _, evidence, output, transport = fake_transport
+    row = primitive.failure_record(primitive.ArtifactError("fixture-secret"), "capture")
+    row["exit_code"] = 75  # Untrusted metadata cannot replace the observed exit.
+    if diagnostic == "list-stage": row["failure_stage"] = []
+    if diagnostic == "list-kind": row["failure_kind"] = []
+    raw = json.dumps(row)
+    if diagnostic == "duplicate": raw = '{"status":"error",' + raw[1:]
+    if diagnostic == "none": raw = "fixture-secret SSH failure"
+    transport.write_text("import sys\n" + f"print({raw!r},file=sys.stderr)\nraise SystemExit({status})\n")
+    assert c.main() == status
+    public = capsys.readouterr()
+    observed = json.loads(public.err)
+    assert observed["exit_code"] == status
+    assert observed["failure_stage"] == ("capture" if diagnostic == "valid" else "transport")
+    assert "fixture-secret" not in public.out + public.err
+    assert not list(evidence.iterdir()) and not output.exists()
+
+
+def test_installer_failure_before_driver_reports_stage_and_original_status():
+    script = c.remote_script(IDENTITY, {name: b"# fixture\n" for name in c.IMPLEMENTATIONS}, environment(), GUARD_ID)
+    # A real shell executes the generated boundary, but this local function
+    # replaces Python before any filesystem, VM, Docker or network operation.
+    stub = "python3() { echo fixture-secret-installer-error >&2; return 37; }\n"
+    completed = subprocess.run(["bash"], input=stub + script, text=True, capture_output=True,
+                               env={**os.environ, "PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD": "9"})
+    assert completed.returncode == 37 and completed.stdout == ""
+    row = json.loads(completed.stderr)
+    assert row["failure_stage"] == "install" and row["exit_code"] == 37
+    assert "fixture-secret" not in completed.stderr
+
+
+def test_unexpected_seal_bug_reports_local_boundary_without_accepting_evidence(fake_transport, monkeypatch, capsys):
+    _, _, _, _, evidence, output, _ = fake_transport
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("fixture-secret unexpected parser bug")
+    monkeypatch.setattr(c, "seal_result", fail)
+    assert c.main() == 75
+    public = capsys.readouterr()
+    row = json.loads(public.err)
+    assert row["failure_stage"] == "seal-result" and row["failure_kind"] == "unexpected"
+    assert row["failure_location"].startswith("capture_dev_artifact_baseline.py:")
+    assert "fixture-secret" not in public.out + public.err
+    assert not list(evidence.iterdir()) and not output.exists()
