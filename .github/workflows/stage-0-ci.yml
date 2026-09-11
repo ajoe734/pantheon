@@ -27,9 +27,8 @@ on:
           - dev
           - staging-live
       bff_base_url:
-        description: "Target BFF base URL for live evidence"
-        required: true
-        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        description: "Optional BFF override; dev uses DEV_BFF_URL, staging requires an explicit URL"
+        required: false
         type: string
       expected_sha:
         description: "Expected deployed BFF source commit SHA for task-scoped hosted probes"
@@ -209,7 +208,7 @@ jobs:
     environment: ${{ inputs.environment }}
     env:
       PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
-      PANTHEON_BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      PANTHEON_BFF_BASE_URL: ${{ inputs.bff_base_url || (inputs.environment == 'dev' && vars.DEV_BFF_URL) || '' }}
       PANTHEON_FRONTEND_SHA: ${{ github.sha }}
       PANTHEON_BFF_SHA: ${{ github.sha }}
       PANTHEON_RELEASE_GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -300,7 +299,7 @@ jobs:
     environment: ${{ inputs.environment }}
     timeout-minutes: 15
     env:
-      BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      BFF_BASE_URL: ${{ inputs.bff_base_url || (inputs.environment == 'dev' && vars.DEV_BFF_URL) || '' }}
       EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
       TENANT_ID: pantheon-dev
       DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
@@ -348,10 +347,10 @@ jobs:
     permissions:
       contents: read
     env:
-      BFF_BASE: ${{ inputs.bff_base_url }}
-      TJ_E2E_FE_DEPLOYMENT_URL: ${{ format('{0}/deployment.json', vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io') }}
-      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      BFF_BASE: ${{ inputs.bff_base_url || (inputs.environment == 'dev' && vars.DEV_BFF_URL) || '' }}
+      TJ_E2E_FE_DEPLOYMENT_URL: ${{ format('{0}/deployment.json', vars.DEV_FE_URL) }}
+      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL }}
+      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL }}
       TJ_E2E_EXPECTED_BFF_SHA: ${{ inputs.expected_sha }}
       TJ_E2E_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
       TJ_E2E_TENANT_ID: tenant-dev
@@ -363,8 +362,8 @@ jobs:
       TJ_E2E_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
       TJ_E2E_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
       TJ_E2E_EVIDENCE_DIR: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
     steps:
       - name: Reject non-dev acceptance dispatch
         if: ${{ inputs.environment != 'dev' }}
@@ -387,8 +386,8 @@ jobs:
       - name: Materialize explicitly authorized dev-only source scenarios
         if: ${{ inputs.seed_scenarios }}
         env:
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
         run: |
           set -euo pipefail
           [[ "${TJ_E2E_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]

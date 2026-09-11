@@ -35,7 +35,7 @@ import runtime_state
 def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None,
                         mutate_journal=None, during_run=None, local_stub=False,
                         publish_receipt=True, mutate_store=None, receipt_in_phase=False,
-                        revoke_during_sandbox=False,
+                        hold_during_sandbox=False,
                         **_kwargs):
     """Publish an isolated supervisor receipt for one actual wrapper process.
 
@@ -77,9 +77,9 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
                "    from rewrite.task_state_store import load_snapshot, append_state_commit\n"
                "    journal=os.environ['PANTHEON_TASK_STATE_EVENT_LOG']\n"
                "    state=load_snapshot(journal)['state']\n"
-               "    state['tasks'][0]['execution_authorization']['state']='revoked'\n"
+               "    state['tasks'][0]['waiting_for']='Human/Ops'\n"
                "    append_state_commit(journal,state,source='isolated-pre-Popen-revocation')\n"
-               if revoke_during_sandbox else "")
+               if hold_during_sandbox else "")
             + "    return command\n"
             "wr.bind_worker_sandbox=sandbox\n"
             "sys.exit(wr.main(sys.argv[2:]))"
@@ -107,7 +107,7 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
             "logical_agent_id": task["owner"].lower(),
             "request_snapshot": {"task_id": task["id"], "task_generation": wr.canonical_task_generation(task),
                                  "agent_id": task["owner"].lower(), "reason": "owned_in_progress_dispatch",
-                                 "metadata": {"execution_authorization_run_id": "fixture-attempt-1"}},
+                                 "metadata": {}},
         }
         if mutate_receipt:
             mutate_receipt(worker)
@@ -145,7 +145,7 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
 
 
 _CLEANUP_BINDING = {"agent": "codex", "task_id": "CLEANUP-FIXTURE", "role": "owner",
-                    "owner": "Codex", "reviewer": "Claude", "authorization_run_id": "",
+                    "owner": "Codex", "reviewer": "Claude",
                     "read_only_worktree": False, "source_readonly_roots": []}
 
 def _probe_bwrap() -> str | None:
@@ -1937,6 +1937,11 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
 
             live_config = runtime / "live-supervisor.json"
             live_config.write_text('{"live": true}\n', encoding="utf-8")
+            # Task data may grow sidecars without blocking worker startup.
+            # Symlinks in that writable data directory cannot make the target
+            # outside its mount boundary writable.
+            (task_state_dir / "compaction-progress.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / "config-link").symlink_to(live_config)
             coord_config = central / ".orchestrator" / "config.json"
 
             program = (
@@ -1989,7 +1994,11 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "    coord_conf.write_text('mutated')\n"
                 "except OSError:\n"
                 "    denied += 1\n"
-                "sys.exit(0 if denied == 6 else 43)\n"
+                "try:\n"
+                "    (event_log_path.parent / 'config-link').write_text('mutated through task data')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "sys.exit(0 if denied == 7 else 43)\n"
             )
 
             orch_dir = str(Path(__file__).resolve().parent)
@@ -2187,7 +2196,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                         sandbox_binary="/usr/bin/bwrap",
                     )
 
-    def test_bind_worker_sandbox_rejects_unqualified_layout_with_extraneous_files(self):
+    def test_bind_worker_sandbox_accepts_task_data_without_a_sibling_name_registry(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-unqualified-extra-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
@@ -2204,22 +2213,25 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             event_log.write_text("event\n", encoding="utf-8")
             (task_state_dir / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
             (task_state_dir / f"{event_log.name}.lock").touch()
-            # Extraneous non-task-state sibling inside task-state directory
-            (task_state_dir / "live-supervisor.json").write_text("{}\n", encoding="utf-8")
+            # TaskStore owns this data directory, including future sidecars.
+            (task_state_dir / "compaction-progress.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / "archive").mkdir()
 
             with mock.patch.dict(
                 os.environ,
                 {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
                 clear=False,
             ):
-                with self.assertRaisesRegex(RuntimeError, "unqualified task-state layout: directory .* contains non-task-state entry"):
-                    wr.bind_worker_sandbox(
-                        ["python3", "-c", "pass"],
-                        command_root=command_root,
-                        workspace_path=worktree,
-                        coordination_root=central,
-                        sandbox_binary="/usr/bin/bwrap",
-                    )
+                command = wr.bind_worker_sandbox(
+                    ["python3", "-c", "pass"],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+            mounts = [command[i:i + 3] for i in range(len(command) - 2)]
+            self.assertIn(["--bind", str(task_state_dir), str(task_state_dir)], mounts)
+            self.assertIn(["--ro-bind-try", str(runtime), str(runtime)], mounts)
 
     @unittest.skipUnless(
         _FUNCTIONAL_BWRAP,
@@ -2349,23 +2361,12 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
                     "PANTHEON_STATUS_ROOT": str(self.central),
                     "PANTHEON_WORKTREE_ROOT": str(self.workspace),
                     "ORCH_WORKSPACE_PATH": str(self.workspace)}
-        from test_execution_authorization import ExecutionAuthorizationTestCase
-        fixture = ExecutionAuthorizationTestCase()
-        fixture.setUp()
-        fixture.now = datetime.now(timezone.utc)
-        self.task = fixture._granted_task()
-        self.task["generation"] = 1
-        self.task["status"] = "in_progress"
-        grant = fixture._grant(generation=1)
-        # Exercise a genuinely verified isolated synthetic issuer assertion.
-        wr.execution_authorization.verify_execution_grant(
-            grant, policy=fixture.policy, task_id=self.task["id"],
-            generation=self.task["generation"], trusted_issuers=fixture.trusted_issuers,
-            now=fixture.now)
-        self.task["execution_authorization"] = wr.execution_authorization.build_granted_authorization(
-            policy=fixture.policy, grant=grant, task=self.task)
-        self.task["execution_authorization"] = wr.execution_authorization.reserve_execution_authorization(
-            self.task, run_id="fixture-attempt-1", now=fixture.now)
+        self.task = {
+            "id": "OPS-PRIV-001", "title": "Canonical dev worker fixture",
+            "owner": "Codex2", "reviewer": "Codex", "target_repo": "pantheon",
+            "generation": 1, "status": "in_progress", "execution_resources": ["dev-supervisor"],
+            "dev_bridge": {"work_class": "hosted"},
+        }
 
     def run_worker(self, *, task=None, code=None, **kwargs):
         command = [sys.executable, "-c", code or (
@@ -2489,7 +2490,7 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertEqual(proc.returncode, 143, proc.stderr)
         self.assertNotIn("promotion_drain_digest", json.loads(self.runner_status.read_text()))
 
-    def test_exact_canonical_receipt_and_reservation_launch_once(self):
+    def test_exact_canonical_receipt_launches_without_mfa(self):
         proc = self.run_worker()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(self.marker.exists())
@@ -2538,20 +2539,67 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
 
     def test_forged_task_in_prompt_cannot_replace_canonical_task(self):
         def pending(state):
-            state["tasks"][0]["execution_authorization"]["state"] = "pending_authorization"
+            state["tasks"][0]["waiting_for"] = "Human/Ops"
         self.assert_denied(self.run_worker(code="print('Task ID: FUNCTIONAL'); open('provider-effect','w').write('bad')",
-                                           mutate_journal=pending), "not currently execution-authorized")
+                                           mutate_journal=pending), "task is on an explicit hold")
 
-    def test_revocation_in_journal_overrides_stale_projection(self):
+    def test_operator_hold_in_journal_overrides_stale_projection(self):
         (self.central / "ai-status.json").write_text(json.dumps({"tasks": [self.task]}))
         def revoke(state):
-            state["tasks"][0]["execution_authorization"]["state"] = "revoked"
-        self.assert_denied(self.run_worker(mutate_journal=revoke), "not currently execution-authorized")
+            state["tasks"][0]["waiting_for"] = "Human/Ops"
+        self.assert_denied(self.run_worker(mutate_journal=revoke), "task is on an explicit hold")
 
-    def test_missing_authorization_fails_closed_even_with_matching_receipt(self):
-        def remove(state):
-            state["tasks"][0].pop("execution_authorization")
-        self.assert_denied(self.run_worker(mutate_journal=remove), "not currently execution-authorized")
+    def test_no_mfa_record_required_with_matching_canonical_receipt(self):
+        self.assertNotIn("execution_authorization", self.task)
+        proc = self.run_worker()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.marker.exists())
+
+    def test_authenticated_sandbox_setup_failure_has_terminal_receipt_after_reload(self):
+        def invalid_mount_layout(_journal):
+            (self.central / "unrelated-symlink").symlink_to(self.workspace)
+        proc = self.run_worker(local_stub=False, mutate_store=invalid_mount_layout)
+        self.assertNotEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("coordination sibling cannot be a symlink", proc.stderr)
+        self.assertFalse(self.marker.exists())
+        # Independent process reloads both durable receipts and canonical task
+        # state: startup failed, not an unrecorded/vanished worker or task success.
+        program = (
+            "import json,sys; from pathlib import Path; "
+            "from rewrite.task_state_store import load_snapshot; "
+            "print(json.dumps({'status':json.loads(Path(sys.argv[1]).read_text()), "
+            "'heartbeat':json.loads(Path(sys.argv[2]).read_text()), "
+            "'task':load_snapshot(sys.argv[3],refresh_checkpoint=False)['state']['tasks'][0]}))"
+        )
+        reload_result = subprocess.run(
+            [sys.executable, "-B", "-c", program, str(self.runner_status), str(self.heartbeat),
+             str(self.root / "runtime/task-state/events.jsonl")],
+            env={**os.environ, "PYTHONPATH": str(Path(_P).resolve().parent)},
+            text=True, capture_output=True, check=True,
+        )
+        readback = json.loads(reload_result.stdout)
+        terminal = readback["status"]
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["exit_code"], proc.returncode)
+        self.assertEqual(terminal["task_id"], self.task["id"])
+        self.assertEqual(terminal["agent"].casefold(), self.task["owner"].casefold())
+        self.assertIsNotNone(terminal["finished_at"])
+        self.assertIsNone(terminal["child_pid"])
+        self.assertIn("coordination sibling cannot be a symlink", terminal["error"])
+        self.assertEqual(readback["heartbeat"]["status"], "failed")
+        self.assertEqual(readback["heartbeat"]["run_id"], terminal["run_id"])
+        self.assertEqual(readback["task"]["status"], "in_progress")
+
+    def test_authenticated_missing_sandbox_executable_has_terminal_receipt(self):
+        self.env["PANTHEON_SANDBOX_BINARY"] = str(self.root / "no-such-bwrap")
+        proc = self.run_worker(local_stub=False)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertFalse(self.marker.exists())
+        terminal = json.loads(self.runner_status.read_text())
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["exit_code"], 1)
+        self.assertIn("FileNotFoundError", terminal["error"])
+        self.assertEqual(json.loads(self.heartbeat.read_text())["status"], "failed")
 
     def test_corrupt_authoritative_head_has_zero_launch(self):
         self.assert_denied(self.run_worker(mutate_store=lambda journal: Path(str(journal) + ".head.json").write_text("{broken")),
@@ -2581,9 +2629,8 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assert_denied(self.run_worker(mutate_receipt=lambda worker: worker.update(task_state_identity={})),
                            "TaskStore receipt binding mismatch")
 
-    def test_canonical_review_does_not_spend_pending_authorization(self):
+    def test_canonical_review_needs_no_mfa_record(self):
         self.task["status"] = "review"
-        self.task["execution_authorization"]["state"] = "pending_authorization"
         def review(worker):
             worker["agent_id"] = worker["logical_agent_id"] = "codex"
             worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
@@ -2591,8 +2638,15 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(self.marker.exists())
         journal = self.root / "runtime" / "task-state" / "events.jsonl"
-        self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
+        self.assertNotIn("execution_authorization", load_snapshot(journal)["state"]["tasks"][0])
         self.assertEqual(json.loads(self.runner_status.read_text())["role"], "reviewer")
+
+    def test_operator_hold_blocks_review_entry_too(self):
+        self.task.update(status="review", waiting_for="Human/Ops")
+        def review(worker):
+            worker["agent_id"] = worker["logical_agent_id"] = "codex"
+            worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
+        self.assert_denied(self.run_worker(mutate_receipt=review), "task is on an explicit hold")
 
     def test_privileged_readonly_sandbox_does_not_reopen_worktree_git(self):
         with mock.patch.object(wr, "_append_leased_git_metadata_mounts") as git_mounts:
@@ -2607,7 +2661,6 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
 
     def test_privileged_review_real_sandbox_denies_worktree_write(self):
         self.task["status"] = "review"
-        self.task["execution_authorization"]["state"] = "pending_authorization"
         def review(worker):
             worker["agent_id"] = worker["logical_agent_id"] = "codex"
             worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
@@ -2617,9 +2670,8 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertEqual(json.loads(self.runner_status.read_text())["role"], "reviewer")
 
-    def test_canonical_owner_finalize_keeps_pending_workspace_readonly(self):
+    def test_canonical_owner_finalize_keeps_workspace_readonly(self):
         self.task["status"] = "review_approved"
-        self.task["execution_authorization"]["state"] = "pending_authorization"
         def finalize(worker):
             worker["request_snapshot"]["reason"] = "owned_finalize_dispatch"
         proc = self.run_worker(mutate_receipt=finalize, local_stub=False)
@@ -2628,7 +2680,7 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertEqual(json.loads(self.runner_status.read_text())["role"], "owner_finalize")
         journal = self.root / "runtime" / "task-state" / "events.jsonl"
-        self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
+        self.assertNotIn("execution_authorization", load_snapshot(journal)["state"]["tasks"][0])
 
     def test_nested_workspace_under_outer_runtime_bind_worker_sandbox_readonly(self):
         nested_workspace = self.root / "runtime" / "nested-worktree"
@@ -2649,7 +2701,6 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         nested_workspace = self.root / "runtime" / "nested-worktree"
         _init_repo(nested_workspace)
         self.task["status"] = "review"
-        self.task["execution_authorization"]["state"] = "pending_authorization"
         def review(worker):
             worker["agent_id"] = worker["logical_agent_id"] = "codex"
             worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
@@ -2667,7 +2718,6 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         nested_workspace = self.root / "runtime" / "nested-worktree"
         _init_repo(nested_workspace)
         self.task["status"] = "review_approved"
-        self.task["execution_authorization"]["state"] = "pending_authorization"
         def finalize(worker):
             worker["request_snapshot"]["reason"] = "owned_finalize_dispatch"
         env = {**self.env, "PANTHEON_WORKTREE_ROOT": str(nested_workspace), "ORCH_WORKSPACE_PATH": str(nested_workspace)}
@@ -2699,30 +2749,30 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
             self.assertIn(["--bind", str(journal.parent), str(journal.parent)],
                           [bwrap_cmd[i:i+3] for i in range(len(bwrap_cmd)-2)])
 
-    def test_revocation_after_first_binding_before_popen_has_zero_effect(self):
-        proc = self.run_worker(revoke_during_sandbox=True)
+    def test_operator_hold_after_first_binding_before_popen_has_zero_effect(self):
+        proc = self.run_worker(hold_during_sandbox=True)
         self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("not currently execution-authorized", proc.stderr)
+        self.assertIn("task is on an explicit hold", proc.stderr)
         self.assertFalse(self.marker.exists())
-        self.assertFalse(self.heartbeat.exists())
+        self.assertEqual(json.loads(self.heartbeat.read_text())["status"], "failed")
         status = json.loads(self.runner_status.read_text())
         self.assertIsNone(status["child_pid"])
         self.assertEqual(status["status"], "failed")
 
-    def test_active_revocation_stops_child_before_next_effect(self):
+    def test_active_operator_hold_stops_child_before_next_effect(self):
         ready = self.workspace / "ready"
         def revoke_after_start(proc, journal, state):
             deadline = time.monotonic() + 10
             while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
                 time.sleep(0.05)
             self.assertTrue(ready.exists(), "child never reached its authorized initial boundary")
-            state["tasks"][0]["execution_authorization"]["state"] = "revoked"
+            state["tasks"][0]["waiting_for"] = "Human/Ops"
             append_state_commit(journal, state, source="isolated-test-revoke-active-run")
         proc = self.run_worker(code="from pathlib import Path; import time; Path('ready').write_text('ready'); time.sleep(4); Path('provider-effect').write_text('unauthorized')",
                                during_run=revoke_after_start)
         self.assertEqual(proc.returncode, 143, proc.stderr)
         self.assertFalse(self.marker.exists())
-        self.assertTrue(json.loads(self.runner_status.read_text())["execution_authorization_revoked"])
+        self.assertTrue(json.loads(self.runner_status.read_text())["dispatch_binding_revoked"])
 
 
 if __name__ == "__main__":

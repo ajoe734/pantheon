@@ -58,7 +58,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from common import utc_now as iso_now
-import execution_authorization
+from . import canonical_packet_bytes
 
 # Canonical home of the materialization re-entrancy guard (see module
 # docstring) -- ai_status.py imports this exact instance rather than owning
@@ -230,7 +230,7 @@ def dev_bridge_replay_ledger(state: dict[str, Any]) -> dict[str, Any]:
 def verify_signed_dev_bridge_packet(
     batch: Mapping[str, Any], *, state: dict[str, Any] | None = None
 ) -> None:
-    """Verify BFF packet authority and optionally consume it atomically."""
+    """Verify local packet content and optionally consume it atomically."""
     ai_status = _ai_status_module()
 
     packet = batch.get("signed_packet")
@@ -256,11 +256,7 @@ def verify_signed_dev_bridge_packet(
     encoded_public_key = public_keys.get(key_id)
     if not isinstance(encoded_public_key, str):
         raise SystemExit("Dev bridge signed packet key is not trusted")
-    body = deepcopy(dict(packet))
-    body.pop("signature", None)
-    canonical = json.dumps(
-        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode()
+    canonical = canonical_packet_bytes(packet)
     try:
         public_key = base64.urlsafe_b64decode(
             encoded_public_key + "=" * (-len(encoded_public_key) % 4)
@@ -287,24 +283,10 @@ def verify_signed_dev_bridge_packet(
     ).strip().lower()
     if work_class not in ai_status.DEV_BRIDGE_WORK_CLASSES:
         raise SystemExit(f"Dev bridge work class is invalid: {work_class!r}")
-    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 retired the former MFA-at-intake
-    # rule: a correctly signed security/hosted/live packet may be
-    # materialized without any operator grant.  It becomes a canonical
-    # non-executable pending-authorization record instead
-    # (execution_authorization.pending_authorization_hold, applied by
-    # scripts/ai_status.py's command_assign when it sees a privileged
-    # dev_bridge work_class).  Genuine, independently verified MFA is
-    # enforced later, separately, at actual execution -- never here at
-    # intake.  ``operator_authorization`` on the packet is no longer
-    # consulted for admission; a legacy packet embedding it is accepted the
-    # same way, and that embedded assertion is never treated as an implicit
-    # or perpetual execution grant.  See
-    # docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
-    # section 2.
-    #
-    # Expiry bounds admission at the authenticated BFF boundary.  The signed
-    # packet is the durable receipt; a queued packet may drain later without
-    # turning supervisor wall-clock latency into an authorization failure.
+    # A signed task uses the ordinary canonical owner/scope/hold lifecycle.
+    # No separate execution-grant issuer is involved.
+    # A queued signed packet may drain later; scheduler latency must not
+    # turn a durable task submission into a fresh human-authorization request.
     packet_tasks = packet.get("tasks")
     if not isinstance(packet_tasks, list) or len(packet_tasks) != len(batch["tasks"]):
         raise SystemExit("Dev bridge signed packet task count does not match batch")
@@ -357,9 +339,7 @@ def verify_signed_dev_bridge_packet(
             )
             for consumed_id in ordered[: len(consumed) - 2047]:
                 consumed.pop(consumed_id, None)
-        # No genuine operator/MFA nonce exists at intake any more (SA/SD 2):
-        # this is now plain packet-identity replay protection for privileged
-        # classes, keyed by the source's own idempotent packet_id (not the
+        # Packet replay protection uses the source's idempotent packet_id (not the
         # recomputed signature digest, which legitimately varies with
         # emitted_at on a resubmitted packet that otherwise reuses the same
         # packet_id).
@@ -583,13 +563,6 @@ def read_dev_bridge_materialized_batch(
                 raise SystemExit(
                     "Dev bridge materialize readback immutable task-spec mismatch: "
                     f"{task_id}.{spec_field}"
-                )
-        if execution_authorization.is_privileged_work_class(expected_bridge.get("work_class")):
-            authorization = task.get("execution_authorization")
-            policy = authorization.get("policy") if isinstance(authorization, Mapping) else None
-            if not execution_authorization.execution_policy_matches_task(task, policy=policy):
-                raise SystemExit(
-                    f"Dev bridge materialize readback execution-policy mismatch: {task_id}"
                 )
         results.append(
             {

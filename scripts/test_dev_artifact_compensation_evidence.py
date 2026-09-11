@@ -40,7 +40,8 @@ def case(tmp_path, monkeypatch):
                 "frontend": {"target": "/var/www/pantheon-dev-fe-releases/prior-fixture", "dist_sha256": "7" * 64,
                              "manifest_sha256": "6" * 64, "frontend_sha": "b" * 40, "backend_sha": "a" * 40},
                 "baseline_nonsecret_config": {"PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
-                                              "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": ""}}
+                                              "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
+                                              **dict.fromkeys(e.capture.artifacts.BASELINE_AUTH_FLAGS, "false")}}
     baseline_hash = e.capture.digest(e.capture.encoded(baseline))
     record = {"schema_version": "pantheon.dev-candidate-image-admission.v1", "environment": "dev",
               "project_id": "pantheon-dev-20260902", "vm": "pantheon-dev-deploy", "identity": deepcopy(identity),

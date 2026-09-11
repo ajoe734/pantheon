@@ -62,7 +62,8 @@ def manifest(identity=None):
                          "backend_sha": identity["previous_backend_sha"]},
             "baseline_nonsecret_config": {
                 "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
-                "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner"}}
+                "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
+                **dict.fromkeys(primitive.BASELINE_AUTH_FLAGS, "true")}}
 
 
 def result(identity=None):
@@ -144,6 +145,33 @@ def test_duplicate_keys_are_rejected_before_becoming_an_external_seal():
     raw = json.dumps(result()).encode()
     raw = b'{"manifest_path":"/ignored-invalid-path",' + raw[1:]
     with pytest.raises(c.CaptureError): c.seal_result(raw, IDENTITY)
+
+
+@pytest.mark.parametrize("key", primitive.BASELINE_AUTH_FLAGS)
+@pytest.mark.parametrize("value", [None, "", "true", "false", "TRUE", "1", "0", "yes", "no", "on", "off"])
+def test_seal_preserves_exact_captured_auth_values(key, value):
+    emitted = result()
+    emitted["manifest"]["baseline_nonsecret_config"][key] = value
+    emitted["manifest_sha256"] = c.digest(c.encoded(emitted["manifest"]))
+    raw, _ = c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+    assert json.loads(raw)["baseline_nonsecret_config"][key] == value
+
+
+@pytest.mark.parametrize("failure", ["old_two_field_manifest", "missing_auth_flag", "not_a_boolean"])
+def test_unknown_auth_baseline_cannot_be_sealed(failure):
+    emitted = result()
+    config = emitted["manifest"]["baseline_nonsecret_config"]
+    if failure == "old_two_field_manifest":
+        for key in primitive.BASELINE_AUTH_FLAGS:
+            del config[key]
+    elif failure == "missing_auth_flag":
+        del config[primitive.BASELINE_AUTH_FLAGS[0]]
+    else:
+        config[primitive.BASELINE_AUTH_FLAGS[0]] = "fixture-private-unsupported"
+    emitted["manifest_sha256"] = c.digest(c.encoded(emitted["manifest"]))
+    with pytest.raises(c.CaptureError) as error:
+        c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+    assert "fixture-private" not in str(error.value)
 
 
 def test_read_implementation_requires_exact_committed_bytes(tmp_path):
@@ -309,3 +337,51 @@ def test_failed_transport_never_uploads_raw_diagnostics_or_creates_seal(fake_tra
     assert public.out == ""
     assert not list(evidence.iterdir())
     assert not output.exists()
+
+
+@pytest.mark.parametrize("status", [1, 37, 124, 255])
+@pytest.mark.parametrize("diagnostic", ["none", "valid", "duplicate", "list-stage", "list-kind"])
+def test_remote_diagnostics_never_mask_actual_exit_or_leak_stderr(fake_transport, capsys, status, diagnostic):
+    _, _, _, _, evidence, output, transport = fake_transport
+    row = primitive.failure_record(primitive.ArtifactError("fixture-secret"), "capture")
+    row["exit_code"] = 75  # Untrusted metadata cannot replace the observed exit.
+    if diagnostic == "list-stage": row["failure_stage"] = []
+    if diagnostic == "list-kind": row["failure_kind"] = []
+    raw = json.dumps(row)
+    if diagnostic == "duplicate": raw = '{"status":"error",' + raw[1:]
+    if diagnostic == "none": raw = "fixture-secret SSH failure"
+    transport.write_text("import sys\n" + f"print({raw!r},file=sys.stderr)\nraise SystemExit({status})\n")
+    assert c.main() == status
+    public = capsys.readouterr()
+    observed = json.loads(public.err)
+    assert observed["exit_code"] == status
+    assert observed["failure_stage"] == ("capture" if diagnostic == "valid" else "transport")
+    assert "fixture-secret" not in public.out + public.err
+    assert not list(evidence.iterdir()) and not output.exists()
+
+
+def test_installer_failure_before_driver_reports_stage_and_original_status():
+    script = c.remote_script(IDENTITY, {name: b"# fixture\n" for name in c.IMPLEMENTATIONS}, environment(), GUARD_ID)
+    # A real shell executes the generated boundary, but this local function
+    # replaces Python before any filesystem, VM, Docker or network operation.
+    stub = "python3() { echo fixture-secret-installer-error >&2; return 37; }\n"
+    completed = subprocess.run(["bash"], input=stub + script, text=True, capture_output=True,
+                               env={**os.environ, "PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD": "9"})
+    assert completed.returncode == 37 and completed.stdout == ""
+    row = json.loads(completed.stderr)
+    assert row["failure_stage"] == "install" and row["exit_code"] == 37
+    assert "fixture-secret" not in completed.stderr
+
+
+def test_unexpected_seal_bug_reports_local_boundary_without_accepting_evidence(fake_transport, monkeypatch, capsys):
+    _, _, _, _, evidence, output, _ = fake_transport
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("fixture-secret unexpected parser bug")
+    monkeypatch.setattr(c, "seal_result", fail)
+    assert c.main() == 75
+    public = capsys.readouterr()
+    row = json.loads(public.err)
+    assert row["failure_stage"] == "seal-result" and row["failure_kind"] == "unexpected"
+    assert row["failure_location"].startswith("capture_dev_artifact_baseline.py:")
+    assert "fixture-secret" not in public.out + public.err
+    assert not list(evidence.iterdir()) and not output.exists()

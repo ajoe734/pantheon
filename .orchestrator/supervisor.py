@@ -45,6 +45,7 @@ from common import (
     canonical_task_state_lock_file,
     canonical_task_state_identity,
     config_path,
+    cmdline_is_worker_runner,
     display_name_for,
     load_config,
     load_json,
@@ -181,7 +182,6 @@ from watch_events import (
 
 # Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
-import execution_authorization
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
@@ -3152,75 +3152,6 @@ class StaleDispatchBeforeLaunch(RuntimeError):
     """The canonical task assignment changed before adapter process spawn."""
 
 
-class ExecutionAuthorizationSpendFailed(RuntimeError):
-    """A privileged task's grant could not be reserved for this exact launch."""
-
-
-def reserve_execution_authorization_for_launch(
-    config: dict[str, Any],
-    task_id: str,
-    *,
-    run_id: str,
-) -> None:
-    """Atomically spend one privileged task's execution grant for one launch.
-
-    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): dispatch admission
-    already refused to build a launch request unless
-    ``execution_authorization.is_execution_authorized`` was ``True`` at
-    snapshot time, but that snapshot is not the authoritative claim/lease
-    boundary -- two concurrent launch attempts could otherwise both observe
-    ``STATE_GRANTED`` and both proceed. This function is that boundary: it
-    reloads canonical state under the same exclusive task-state lock every
-    other canonical mutation uses, re-verifies authorization against the
-    freshly loaded task, and -- only if it is still ``STATE_GRANTED`` --
-    commits the transition to ``STATE_RESERVED`` bound to this exact
-    ``run_id`` in the same write. A task with no execution-authorization
-    subrecord (the overwhelmingly common, non-privileged case) is a no-op:
-    ordinary functional/paper/read_only/ci/reconcile_only dispatch never
-    takes this lock path at all costs beyond one dict lookup.
-    """
-
-    status_path = config_path(config, "status_file")
-    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-        status = load_status(config)
-        task = task_index_from_status(config, status).get(task_id)
-        if task is None:
-            # Cannot independently prove this dispatched task is
-            # non-privileged when the authoritative reload cannot even find
-            # it. Fail closed rather than treating an unresolvable task the
-            # same as an ordinary functional one (SA/SD 4, 7).
-            raise ExecutionAuthorizationSpendFailed(
-                f"cannot verify execution-authorization policy for missing task {task_id}"
-            )
-        privileged_by_source = execution_authorization.task_privileged_by_source(task)
-        record = task.get("execution_authorization")
-        policy = record.get("policy") if isinstance(record, dict) else None
-        policy_requires = isinstance(policy, dict) and bool(
-            policy.get("requires_execution_authorization")
-        )
-        if not privileged_by_source and not policy_requires:
-            return
-        if not policy_requires:
-            # Ground truth (the verified dev-bridge packet provenance) says
-            # this task is privileged, but its execution-authorization
-            # subrecord/policy is missing, corrupt, or downgraded. Never
-            # silently relabel that as an ordinary, unauthorized-by-default
-            # task -- refuse the launch instead (SA/SD 2, 7).
-            raise ExecutionAuthorizationSpendFailed(
-                f"task {task_id} is privileged by source provenance but has no "
-                "valid execution-authorization policy; refusing to reserve"
-            )
-        now = datetime.now(timezone.utc)
-        try:
-            updated = execution_authorization.reserve_execution_authorization(
-                task, run_id=run_id, now=now
-            )
-        except execution_authorization.ExecutionAuthorizationError as exc:
-            raise ExecutionAuthorizationSpendFailed(str(exc)) from exc
-        task["execution_authorization"] = updated
-        write_status(config, status, source="supervisor-execution-authorization-reserve")
-
-
 def promotion_launch_guard(operation):
     @wraps(operation)
     def guarded(config, state, *args, **kwargs):
@@ -3292,11 +3223,6 @@ def start_worker_for_request(
     request.metadata["task_state_identity"] = json.loads(
         issued_command_env.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", "{}")
     )
-    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-        request.metadata["execution_authorization_run_id"] = (
-            f"{event_id_for_log or queue_event_id or ''}"
-            f"-attempt-{max(1, int(attempt_count))}"
-        )
     _persist_runtime_phase_launch_intent(
         config,
         state,
@@ -3309,19 +3235,6 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
-    # Always reload at the spend boundary. A stale/corrupted queue snapshot
-    # cannot classify privileged work as ordinary to skip this check.
-    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-        execution_authorization_run_id = request.metadata["execution_authorization_run_id"]
-        try:
-            reserve_execution_authorization_for_launch(
-                config, str(request.task_id or ""),
-                run_id=execution_authorization_run_id,
-            )
-        except BaseException:
-            _discard_unlaunched_runtime_phase_intent(config, state)
-            raise
-        request.metadata["execution_authorization_run_id"] = execution_authorization_run_id
     delivery_invoked = False
     try:
         # Keep the canonical assignment read lock through process creation.
@@ -3341,16 +3254,6 @@ def start_worker_for_request(
             )
             if stale_message:
                 raise StaleDispatchBeforeLaunch(stale_message)
-            if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-                current_task = latest_task_map.get(str(request.task_id or ""))
-                if current_task is None or not execution_authorization.reservation_is_current(
-                    current_task,
-                    run_id=request.metadata.get("execution_authorization_run_id"),
-                    now=datetime.now(timezone.utc),
-                ):
-                    raise ExecutionAuthorizationSpendFailed(
-                        "execution authorization changed between reservation and launch"
-                    )
             delivery_invoked = True
             result = adapter.deliver(request)
     except BaseException:
@@ -3911,30 +3814,6 @@ def process_queue(
             )
             changed = True
             continue
-        except ExecutionAuthorizationSpendFailed as exc:
-            # The admission snapshot said this privileged task was granted,
-            # but the exact claim/lease boundary found it already reserved,
-            # expired, revoked, or reassigned since that snapshot was taken.
-            # Skip like any other late-eligibility change; a future cycle
-            # re-evaluates admission from fresh canonical state.
-            record["status"] = "completed"
-            record["processed_at"] = utc_now()
-            record["skip_reason"] = "execution_authorization_required"
-            record["error"] = str(exc)
-            write_activity_log(
-                config,
-                {
-                    "type": "wake_skipped",
-                    "task_id": event.get("task_id"),
-                    "target_agent": event.get("target_display_name")
-                    or event.get("target_agent"),
-                    "message": str(exc),
-                    "queue_event_id": event_id,
-                    "dispatch_reason": event.get("reason"),
-                },
-            )
-            changed = True
-            continue
         record["attempt_count"] = attempt_count
         record["last_attempt_at"] = utc_now()
         if not ok:
@@ -4301,7 +4180,15 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
         # otherwise the live worker count is ~3x inflated and max_concurrent_workers
         # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
-        if "worker_runner.py" not in cmdline:
+        # A raw substring search over the whole cmdline blob is not an identity
+        # boundary: provider descendants inherit the wake prompt as an argv
+        # value and can carry the same "worker_runner.py" text, so the scan
+        # must instead require an exact argv path token whose basename is
+        # worker_runner.py under an .orchestrator directory, bound to the actual
+        # interpreter or script invocation (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        raw_cmd = raw[:-1] if raw.endswith(b"\x00") else raw
+        argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
+        if not cmdline_is_worker_runner(argv_parts):
             continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
@@ -6994,7 +6881,11 @@ def _proc_worker_runner_launch_marker(
     """
 
     raw_cmdline = (entry / "cmdline").read_bytes()
-    if not raw_cmdline or b"worker_runner.py" not in raw_cmdline:
+    if not raw_cmdline:
+        return None
+    raw_cmd = raw_cmdline[:-1] if raw_cmdline.endswith(b"\x00") else raw_cmdline
+    argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
+    if not cmdline_is_worker_runner(argv_parts):
         return None
     raw_environ = (entry / "environ").read_bytes()
     env: dict[str, str] = {}
@@ -7058,11 +6949,7 @@ def _proc_worker_runner_launch_marker(
     # process generations that are definitively earlier than the intent.
     if process_started_epoch + 1.0 < prepared_epoch:
         return None
-    argv = [
-        value.decode("utf-8", errors="ignore")
-        for value in raw_cmdline.split(b"\0")
-        if value
-    ]
+    argv = argv_parts
     run_id = str(env.get("ORCH_RUN_ID") or "")
     if not run_id and "--run-id" in argv:
         index = argv.index("--run-id") + 1

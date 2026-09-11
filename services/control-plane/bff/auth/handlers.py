@@ -153,8 +153,8 @@ def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies) -> Dict[str
         "tenant_id": profile["tenant_id"],
         "allowed_tenants": profile["allowed_tenants"],
     }
-    if profile.get("mfa_verified"):
-        claims["mfa_verified"] = True
+    # A client id/secret exchange proves one credential, not a second factor.
+    # Only a genuine IdP-authenticated MFA session may carry MFA claims.
     token = encode_jwt_hs256(claims, secret=secret)
     iso = lambda value: datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
     return {

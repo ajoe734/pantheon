@@ -1,7 +1,7 @@
 # Pantheon VM Dev／Staging／Prod 管理計畫
 
 - 狀態：已確認的目標方案，尚待分階段實作
-- 決策日期：2026-08-25（2026-09-04 完成實測複核與架構設計閉環）
+- 決策日期：2026-08-25（2026-09-11 更新 Dev 環境設定 readback）
 - 規範性架構與設計閉環規格：[`docs/04/pantheon_environment_closure_sa_sd_2026-09/`](../04/pantheon_environment_closure_sa_sd_2026-09/INDEX.md)（任務 `ENV-STAGING-PROD-PLAN-001`）
 - 主要執行平台：Google Compute Engine VM
 - 管理入口：GitHub Actions、`gcloud`、Docker Compose
@@ -70,20 +70,48 @@ FE 與 BFF 位於不同 repository，因此不會有同一個 Git SHA。一次 r
 
 ## 3. 現況基線
 
-本節描述 2026-08-25 的事實，不代表目標能力已全部完成。
+Dev 以 § 3.1 的現行設定為準；Staging／Prod 保留各自最後查核日期，不代表已建立目標能力。
 
 ### 3.1 Dev
 
-- GCP project：`pantheon-lupin-dev-20260719`。
-- VM：`pantheon-lupin-dev`。
-- 區域：`asia-east1-b`。
-- 對外 FE：`https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`。
-- 對外 BFF：`https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`。
+本節是現行 Dev 環境身分與變數的唯一文件入口。2026-09-11 透過
+GitHub API `repos/ajoe734/pantheon/actions/variables/{name}` 唯讀取得以下
+非秘密設定；這是 **configured identity**，不是 DNS／HTTPS、hosted pair 或產品驗收通過證據。
+此次清理沒有連線舊 VM，也沒有修改任何 GitHub 變數或雲端資源。
+
+| GitHub repository variable | 已設定值 |
+| --- | --- |
+| `DEV_GCP_DEPLOY_PROJECT_ID` | `pantheon-dev-20260902` |
+| `DEV_VM` | `pantheon-dev-deploy` |
+| `DEV_ZONE` | `asia-east1-b` |
+| `DEV_DEPLOY_SSH_HOST` | `34.81.52.222` |
+| `NONPROD_REMOTE_USER` | `chloe_ong_dev_cctech_support_com` |
+| `DEV_REMOTE_DIR` | `/home/chloe_ong_dev_cctech_support_com/pantheon` |
+| `DEV_DEPLOY_WORKTREE_ROOT` | `/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/managed-deploy-worktrees` |
+| `DEV_FE_URL` | `https://app.dev.mvl-cap.tw` |
+| `DEV_BFF_URL` | `https://api.dev.mvl-cap.tw` |
+| `DEV_FE_PUBLIC_HOST` | `app.dev.mvl-cap.tw` |
+| `DEV_BFF_PUBLIC_HOST` | `api.dev.mvl-cap.tw` |
+| `DEV_BFF_CANONICAL_CORS_ORIGIN` | `https://app.dev.mvl-cap.tw` |
+
+- VM 上 backend checkout 為部署帳號的 `~/pantheon`，不是開發工作站的 `~/code/pantheon`。
 - Pantheon compose project：`pantheon`。
 - FE repository：`ajoe734/execute-plans`，發布分支為 `dev`。
 - BFF/backend repository：`ajoe734/pantheon`，發布分支為 `dev`。
 
-現有 `Pantheon Nonprod Deploy` 已具備 exact FE/BFF pair admission、受管 deploy worktree、BFF exact-version probe、FE 原子 symlink 切換，以及 FE 失敗時補償 BFF 的能力。這些治理保留，不另造第二套 release authority。
+`scripts/dev_vm_ssh.sh` 不再猜測 host 或 Linux 帳號；呼叫端須傳入
+`DEV_DEPLOY_SSH_HOST` 與 `DEV_DEPLOY_SSH_USER`（取自 `NONPROD_REMOTE_USER`，或明確的
+`REMOTE_USER`）。仍使用部署用 SSH key 與已釘選的 known_hosts，不會自動修改 SSH metadata。
+憑證內容不放在文件或 source；此變更不要求新增憑證／安全服務。
+
+`Pantheon Nonprod Deploy` 是唯一 Dev 發布入口，沿用 exact FE/BFF pair、受管 worktree、
+gate-before-switch、served identity 與 exact prior artifacts rollback。是否實際發布成功，
+必須看當次 workflow、hosted `deployment.json` 與 BFF `/bff/version` 的一致證據，不能由變數或
+本文件宣告成功。開發工具 cleanup 不會自動恢復被 operator 停止的產品部署。
+
+`pantheon-lupin-dev-20260719`、`pantheon-benjamin-20260528` 及其舊 IP／sslip.io hostname
+只准作歷史證據，不是可連線、可部署的目標。`scripts/gcp_dev_vm_migrate.sh` 和
+`scripts/migrate_to_benjamin_cutover.sh` 已刪除；需要追溯時讀 Git 歷史，不保留另一組可執行副本。
 
 ### 3.2 Staging
 
@@ -121,7 +149,7 @@ GitHub Actions
         └── create snapshots and collect resource identity
 
 Non-production project
-  ├── pantheon-lupin-dev                 always on
+  ├── pantheon-dev-deploy               always on (current identity: § 3.1)
   └── pantheon-stg-<release-id>           normally absent
 
 Production project

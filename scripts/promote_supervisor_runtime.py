@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Replace the supervisor with one exact authoritative-V2 runtime.
 
-This command intentionally has no incumbent compatibility path.  A promotion
-is a short replacement operation: render the candidate's V2 config, stop the
-existing supervisor, atomically install that config, and launch the candidate.
-It never reconstructs a retired runtime or tries to restore one.
+An ordinary promotion replaces executable code and config while keeping the
+same durable storage paths. Failed launch restores the qualified incumbent.
+Moving storage is a separate, explicitly selected --migrate-storage operation.
 """
 from __future__ import annotations
 
@@ -12,6 +11,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import shlex
 import shutil
@@ -61,6 +61,10 @@ DEPLOY_ROOT = Path(
 LIVE_SUPERVISOR_CONFIG_PATH = DEPLOY_ROOT / "runtime" / "live-supervisor-mainroot-config.json"
 COMMAND_RUNTIME_PARENT = DEPLOY_ROOT / "command-runtimes"
 TASK_STATE_MODE = "authoritative"
+# A first cycle may run four serial provider probes (up to 120 seconds each)
+# before publishing fresh canonical projection health. This is independent of
+# the much shorter deadline for stopping one exact process generation.
+DEFAULT_HEALTH_TIMEOUT_SECONDS = 600.0
 SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES = (
     "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
 )
@@ -297,12 +301,31 @@ def _process_is_supervisor(pid: int) -> bool:
 
 
 def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        # A launched candidate is our direct child. kill(pid, 0) alone counts
+        # its unreaped zombie as alive forever while this promoter is running.
+        exited_pid, _status = os.waitpid(pid, os.WNOHANG)
+        if exited_pid == pid:
+            return False
+    except ChildProcessError:
+        pass  # Incumbents and workers may belong to another parent.
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    try:
+        raw_stat = (Path("/proc") / str(pid) / "stat").read_text()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    fields = raw_stat[raw_stat.rfind(")") + 2 :].split()
+    if fields and fields[0] in {"Z", "X"}:
+        return False
     return True
 
 
@@ -540,280 +563,6 @@ def verify_worker_sandbox(root: Path) -> dict[str, Any]:
     }
 
 
-_EXECUTION_AUTHORIZATION_BARRIER_PROBE = r'''
-import ast
-import base64
-import hashlib
-import json
-import os
-import subprocess
-import sys
-import tempfile
-from datetime import datetime, timezone
-from pathlib import Path
-
-root = Path(sys.argv[1]).resolve()
-sys.path[:0] = [str(root / ".orchestrator"), str(root / "scripts")]
-
-# All authority and writes below belong to this disposable probe. No live
-# verifier keys, worker identity, journal binding, or grants are inherited.
-with tempfile.TemporaryDirectory(prefix="execution-barrier-preflight-") as scratch:
-    status_root = Path(scratch) / "status"
-    status_root.mkdir()
-    event_log = Path(scratch) / "runtime" / "task-state-events.jsonl"
-    os.environ["PANTHEON_STATUS_ROOT"] = str(status_root)
-    os.environ["AI_NAME"] = "Codex2"
-    import ai_status
-    import common
-    import execution_authorization as ea
-    import worker_runner
-    from development_bridge import dev_bridge_materialize as intake
-    from rewrite import dispatch_admission as admission
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    modules = (ai_status, common, ea, worker_runner, intake, admission)
-    provenance = {}
-    for module in modules:
-        path = Path(module.__file__).resolve()
-        assert path.is_relative_to(root), "barrier imported outside candidate: " + str(path)
-        provenance[module.__name__] = {
-            "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        }
-    assert ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION in ea.RUNTIME_CAPABILITIES
-    # Behavioral helper checks below also require the real entry points to
-    # call those helpers. Retaining a detached function is not a barrier.
-    worker_tree = ast.parse(Path(worker_runner.__file__).read_text())
-    worker_functions = {
-        node.name: node for node in worker_tree.body if isinstance(node, ast.FunctionDef)
-    }
-    def call_name(node):
-        if not isinstance(node, ast.Call):
-            return ""
-        return ast.unparse(node.func)
-    def direct_call(statement, name):
-        value = getattr(statement, "value", None)
-        return call_name(value) == name
-    binding_function = worker_functions["validate_worker_entry_binding"]
-    assert any(direct_call(node, "ensure_execution_authorized_before_launch")
-               for node in binding_function.body), "worker entry detached from authorization"
-    main_function = worker_functions["main"]
-    binding_positions = [i for i, node in enumerate(main_function.body)
-                         if direct_call(node, "validate_worker_entry_binding")]
-    sandbox_positions = [i for i, node in enumerate(main_function.body)
-                         if direct_call(node, "bind_worker_sandbox")]
-    assert binding_positions and sandbox_positions and min(binding_positions) < min(sandbox_positions), (
-        "worker main must validate canonical receipt before sandbox setup"
-    )
-    guarded_launches = []
-    for node in ast.walk(main_function):
-        if not isinstance(node, ast.With):
-            continue
-        if not any(call_name(item.context_expr) == "canonical_task_state_lock_file"
-                   and any(keyword.arg == "shared" and isinstance(keyword.value, ast.Constant)
-                           and keyword.value.value is True for keyword in item.context_expr.keywords)
-                   for item in node.items):
-            continue
-        validation = [i for i, statement in enumerate(node.body)
-                      if direct_call(statement, "validate_worker_entry_binding")]
-        launch = [i for i, statement in enumerate(node.body)
-                  if direct_call(statement, "subprocess.Popen")]
-        if validation and launch and min(validation) < min(launch):
-            guarded_launches.extend(node.body[i].value for i in launch)
-    all_launches = [node for node in ast.walk(main_function) if call_name(node) == "subprocess.Popen"]
-    assert all_launches and set(all_launches) == set(guarded_launches), (
-        "worker launch lacks canonical lock and final receipt/authorization validation"
-    )
-    os.environ.update({
-        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
-        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
-        common.CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
-            common.canonical_task_state_identity_for_paths(
-                status_root=status_root, event_log=event_log,
-            )
-        ),
-    })
-    ai_status.configure_status_root_paths(status_root)
-    source_key = Ed25519PrivateKey.generate()
-    encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
-    canonical = lambda value: json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-    ).encode()
-    os.environ["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"] = json.dumps({
-        "isolated-preflight-source": encode(source_key.public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
-        )),
-    })
-    state = ai_status.default_state()
-    state["tasks"] = []
-    state["handoffs"] = []
-    state["blockers"] = []
-    state["wave_state"] = {"status": "open"}
-    for work_class in ("hosted", "functional"):
-        task_id = "RUNTIME-PREFLIGHT-" + work_class.upper()
-        packet_id = "isolated-preflight-" + work_class
-        spec = {
-            "id": task_id, "title": "Isolated runtime barrier preflight",
-            "owner": "Codex2", "reviewer": "Codex", "target_repo": "pantheon",
-            "phase": "Runtime preflight", "summary": "Disposable local probe",
-            "depends_on": [], "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
-            "acceptance": ["Verify local runtime barriers without launching work"],
-            "execution_resources": ["pantheon-dev"] if work_class == "hosted" else [],
-        }
-        packet = {
-            "packet_id": packet_id, "work_class": work_class, "tasks": [spec],
-            "actor": {"id": "isolated-preflight-source", "roles": ["source"]},
-        }
-        digest = hashlib.sha256(canonical(packet)).hexdigest()
-        packet["signature"] = {
-            "key_id": "isolated-preflight-source", "algorithm": "Ed25519",
-            "value": encode(source_key.sign(canonical(packet))),
-        }
-        batch = {
-            "packet_id": packet_id, "packet_digest": digest,
-            "actor": ai_status.DEV_BRIDGE_BATCH_ACTOR, "signed_packet": packet,
-            "tasks": [{
-                "task_id": task_id, "owner": spec["owner"], "reviewer": spec["reviewer"],
-                "title": spec["title"], "assignment_next": None,
-                "task_metadata": {"dev_bridge": {
-                    "packet_id": packet_id, "packet_digest": digest,
-                    "task_spec": spec, "task_spec_hash": hashlib.sha256(canonical(spec)).hexdigest(),
-                    "work_class": work_class, "conversation_id": "isolated-runtime-preflight",
-                    "source_turn_ids": [], "documents": [],
-                }},
-            }],
-        }
-        # Verify the actual source signature before invoking the actual
-        # materialization/assignment code. There is deliberately no MFA.
-        intake.verify_signed_dev_bridge_packet(batch, state=state)
-        intake.run_dev_bridge_materialize_batch(state, batch, commands={"assign": ai_status.command_assign})
-    ai_status.save_state(state)
-    state = ai_status.load_state()
-    hosted = ai_status.get_task(state, "RUNTIME-PREFLIGHT-HOSTED")
-    functional = ai_status.get_task(state, "RUNTIME-PREFLIGHT-FUNCTIONAL")
-    assert hosted["execution_authorization"]["state"] == "pending_authorization"
-    assert hosted["execution_authorization"]["old_runtime_hold"] is True
-    assert hosted["waiting_for"] == "Human/Ops"
-    assert hosted["execution_authorization"]["grant"] is None
-    now = datetime.now(timezone.utc)
-    lane = admission.DispatchLane("preflight", "Codex2", 1, (
-        admission.DeliveryEndpoint("preflight-endpoint", "preflight-provider", "preflight-account"),
-    ))
-    snapshot = admission.AdmissionSnapshot(
-        now=now,
-        endpoint_health={"preflight-endpoint": admission.HealthRecord("healthy")},
-        account_health={"preflight-account": admission.HealthRecord("healthy")},
-        account_limits={"preflight-account": 1},
-    )
-    for task, should_run in ((hosted, False), (functional, True)):
-        authorized = ea.is_execution_authorized(task, now=now)
-        assert authorized is should_run
-        # Dependency completion and removal of the compatibility hold must
-        # not bypass the independent planner or late queue-delivery gate.
-        intent = admission.TaskIntent(
-            task["id"], "todo", task["owner"], task["reviewer"], True,
-            execution_authorized=authorized,
-        )
-        for endpoint in (None, "preflight-endpoint"):
-            decision = admission.evaluate_dispatch_intent(
-                intent, lane, snapshot, requested_endpoint_id=endpoint,
-            )
-            assert decision.eligible is should_run, str(decision)
-            if not should_run:
-                assert decision.reason.value == "execution_authorization_required"
-        try:
-            worker_runner.ensure_execution_authorized_before_launch(
-                status_root, task["id"], active_role="owner", run_id="isolated-unreserved-run",
-            )
-        except RuntimeError:
-            assert not should_run, "ordinary execution incorrectly rejected at worker entry"
-        else:
-            assert should_run, "pending privileged task passed worker entry"
-    # Enter the actual runner main with no usable launch receipt. The sole
-    # stub is sandbox construction: if reached, it would use a harmless local
-    # marker command. Runtime/source and receipt validators stay unmodified.
-    subprocess.run(["git", "init", "-q", str(status_root)], check=True, capture_output=True)
-    runner_id = "isolated-runner-entry"
-    for name, value in (("state.json", {"workers": {runner_id: None}}),
-                        ("approval-queue.json", {}), ("config.json", {})):
-        worker_runner.write_json(status_root / ".orchestrator" / name, value)
-    os.environ.update({
-        "PANTHEON_COMMAND_ROOT": str(root),
-        "PANTHEON_COMMAND_RUNTIME_SHA": subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, check=True,
-            capture_output=True, text=True,
-        ).stdout.strip(),
-        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
-        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
-    })
-    sandbox_calls = []
-    def isolated_sandbox(command, **kwargs):
-        sandbox_calls.append(True)
-        return command
-    worker_runner.bind_worker_sandbox = isolated_sandbox
-    heartbeat = status_root / ".orchestrator/worker-runtime/heartbeats/preflight.json"
-    runner_status = status_root / ".orchestrator/worker-runtime/status/preflight.json"
-    marker = Path(scratch) / "unauthorized-provider-marker"
-    try:
-        worker_runner.main([
-            "--run-id", runner_id, "--heartbeat-path", str(heartbeat),
-            "--status-path", str(runner_status), "--", sys.executable, "-c",
-            "from pathlib import Path; Path(" + repr(str(marker)) + ").touch()",
-        ])
-    except RuntimeError as exc:
-        assert "canonical worker receipt is malformed" in str(exc), str(exc)
-    else:
-        raise AssertionError("worker main accepted an unusable launch receipt")
-    assert not sandbox_calls and not marker.exists() and not heartbeat.exists() and not runner_status.exists()
-    print(json.dumps({
-        "outcome": "barriers_verified", "command_root": str(root),
-        "capability": "execution_authorization_v1", "python_executable": sys.executable,
-        "python_prefix": sys.prefix, "module_provenance": provenance,
-        "checks": ["signed_no_mfa_pending_intake", "durable_legacy_hold",
-                   "planner_denies_pending", "late_delivery_denies_pending",
-                   "worker_entry_denies_unreserved", "ordinary_functional_dispatch",
-                   "worker_main_denies_invalid_receipt", "worker_launch_guard_wiring"],
-    }, sort_keys=True))
-'''
-
-
-def verify_execution_authorization_barriers(
-    root: Path, *, python_executable: Path
-) -> dict[str, Any]:
-    """Exercise candidate intake and execution gates with its selected Python.
-
-    The isolated subprocess uses only candidate code and disposable TaskStore
-    state. No live authority is inherited and no worker or grant is created.
-    A declaration or an importable no-op hook cannot pass this preflight.
-    """
-
-    runtime_root = root.expanduser().resolve()
-    python_executable = python_executable.expanduser().absolute()
-    try:
-        probe = subprocess.run(
-            [str(python_executable), "-I", "-B", "-c", _EXECUTION_AUTHORIZATION_BARRIER_PROBE, str(runtime_root)],
-            cwd=str(runtime_root),
-            env={"PATH": os.defpath, "LANG": "C.UTF-8"},
-            capture_output=True, text=True, check=False, timeout=30,
-        )
-        if probe.returncode != 0:
-            raise ValueError((probe.stderr or probe.stdout or "probe failed").strip())
-        result = json.loads(probe.stdout)
-        if (
-            not isinstance(result, dict)
-            or result.get("outcome") != "barriers_verified"
-            or result.get("command_root") != str(runtime_root)
-            or result.get("python_executable") != str(python_executable)
-        ):
-            raise ValueError("barrier probe returned mismatched runtime/interpreter provenance")
-    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        raise ValueError(
-            "command runtime is missing the required deferred-intake/late-"
-            f"execution authorization barriers: {exc}"
-        ) from exc
-    return result
-
-
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
     """Preserve the coordination checkout; executable code is immutable.
 
@@ -841,6 +590,26 @@ def _fsync_dir(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def require_unchanged_storage(
+    incumbent: Mapping[str, Any] | None, rendered: Mapping[str, Any],
+) -> None:
+    """Keep a code update from implicitly becoming a data migration."""
+    if not incumbent:
+        return
+    for section, key in (
+        ("task_state_store", "event_log"),
+        ("paths", "state_file"),
+        ("paths", "approval_queue"),
+    ):
+        old_path = (incumbent.get(section) or {}).get(key)
+        new_path = (rendered.get(section) or {}).get(key)
+        if old_path != new_path:
+            raise ValueError(
+                f"ordinary promotion cannot change {section}.{key}; "
+                "keep the installed data path or explicitly select --migrate-storage"
+            )
 
 
 def _preflight_storage_migration(
@@ -1463,6 +1232,8 @@ def _migrate_storage_paths(
 
 def verify_promotion_health(config: dict[str, Any], identity: Mapping[str, str], pid: int, *, timeout_seconds: float) -> dict[str, Any]:
     """Wait boundedly for the exact child and its canonical TaskStore readback."""
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("health timeout must be finite and positive")
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if not _pid_alive(pid):
@@ -1480,7 +1251,7 @@ def verify_promotion_health(config: dict[str, Any], identity: Mapping[str, str],
                 and str(projection.get("last_checked_at") or "") > str(fence.get("started_at") or "")):
             return {"pid": pid, "runtime": runtime_state.promotion_runtime(identity),
                     "health": health, "canonical_readback": projection}
-        time.sleep(0.1)
+        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
     raise RuntimeError("promoted supervisor health/canonical readback timed out")
 
 
@@ -1522,16 +1293,20 @@ def _replace_supervisor_locked(
     live_config_path: Path,
     python_executable: Path,
     termination_timeout: float,
+    health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     evidence_path: Path | None = None,
     authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
     requirements_path: Path | None = None,
+    migrate_storage: bool = False,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
-    if termination_timeout <= 0:
-        raise ValueError("termination timeout must be positive")
+    if not math.isfinite(termination_timeout) or termination_timeout <= 0:
+        raise ValueError("termination timeout must be finite and positive")
+    if not math.isfinite(health_timeout) or health_timeout <= 0:
+        raise ValueError("health timeout must be finite and positive")
     rendered, identity = render_v2_config(
         repo_root,
         status_root=status_root,
@@ -1551,6 +1326,8 @@ def _replace_supervisor_locked(
         raise ValueError("rendered V2 config must define paths.approval_queue")
     approval_queue_path = Path(approval_queue_value).expanduser().absolute()
     incumbent = _load_json(live_config_path, label="installed live config") if live_config_path.exists() else None
+    if not migrate_storage:
+        require_unchanged_storage(incumbent, rendered)
     incumbent_pid_path = _incumbent_pid_path(live_config_path, rendered)
     result: dict[str, Any] = {
         "schema_version": 2,
@@ -1579,6 +1356,8 @@ def _replace_supervisor_locked(
         "incumbent_pid_file": str(incumbent_pid_path),
         "stopped_pid": None,
         "launched_pid": None,
+        "termination_timeout_seconds": termination_timeout,
+        "health_timeout_seconds": health_timeout,
         "outcome": "failed",
     }
     # Runtime promotion and supervisor reservation recovery share one
@@ -1595,7 +1374,7 @@ def _replace_supervisor_locked(
         admission_lock_entered = False
         try:
             return verify_promotion_health(config, runtime_identity, pid,
-                                           timeout_seconds=max(30.0, termination_timeout))
+                                           timeout_seconds=health_timeout)
         finally:
             admission_lock = runtime_state.runtime_state_lock(dict(config))
             admission_lock.__enter__()
@@ -1607,11 +1386,6 @@ def _replace_supervisor_locked(
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
-        )
-        result["execution_authorization_barrier_preflight"] = (
-            verify_execution_authorization_barriers(
-                Path(identity["root"]), python_executable=python_executable,
-            )
         )
         if incumbent:
             incumbent_identity = qualify_incumbent_identity(incumbent, candidate_identity=identity)
@@ -1670,7 +1444,11 @@ def _replace_supervisor_locked(
         restoration_verified = False
         launch_succeeded = False
         try:
-            migration_record = _migrate_storage_paths(incumbent, rendered, keep_lock=True)
+            migration_record = (
+                _migrate_storage_paths(incumbent, rendered, keep_lock=True)
+                if migrate_storage
+                else {"migrated": False, "files": []}
+            )
             lock_fd = migration_record.get("lock_fd")
             result["storage_migration"] = {
                 "migrated": migration_record["migrated"],
@@ -1697,9 +1475,16 @@ def _replace_supervisor_locked(
                 runtime_state.finish_promotion(candidate_state, fence_epoch)
             launch_succeeded = True
         except Exception as launch_exc:
+            result["launch_error"] = f"{type(launch_exc).__name__}: {launch_exc}"
             if result.get("launched_pid"):
                 # Candidate must stop before restoring/moving any authority files.
-                stop_unaccepted_candidate(result["launched_pid"], timeout_seconds=termination_timeout)
+                try:
+                    stop_unaccepted_candidate(result["launched_pid"], timeout_seconds=termination_timeout)
+                except Exception as stop_exc:
+                    result["rollback_stop_error"] = f"{type(stop_exc).__name__}: {stop_exc}"
+                    raise RuntimeError(
+                        f"{result['launch_error']}; rollback stop failed: {result['rollback_stop_error']}"
+                    ) from stop_exc
             if lock_fd is not None:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             rollback_errors: list[str] = []
@@ -1853,11 +1638,13 @@ def replace_supervisor(
     live_config_path: Path,
     python_executable: Path,
     termination_timeout: float,
+    health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     evidence_path: Path | None = None,
     authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
     requirements_path: Path | None = None,
+    migrate_storage: bool = False,
 ) -> dict[str, Any]:
     """Validate and switch config while excluding the canonical merge owner."""
 
@@ -1868,11 +1655,13 @@ def replace_supervisor(
             live_config_path=live_config_path,
             python_executable=python_executable,
             termination_timeout=termination_timeout,
+            health_timeout=health_timeout,
             evidence_path=evidence_path,
             authority_env_file=authority_env_file,
             repository_source_roots=repository_source_roots,
             repository_integration_roots=repository_integration_roots,
             requirements_path=requirements_path,
+            migrate_storage=migrate_storage,
         )
 
 
@@ -1892,6 +1681,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--termination-timeout", type=float, default=15.0)
+    parser.add_argument(
+        "--health-timeout", type=float, default=DEFAULT_HEALTH_TIMEOUT_SECONDS,
+        help="Seconds to wait for exact runtime and fresh canonical projection health; independent of process termination.",
+    )
     parser.add_argument("--evidence-path")
     parser.add_argument(
         "--authority-env-file",
@@ -1915,6 +1708,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Render a dedicated clean merge checkout into coordination.repositories.",
     )
     parser.add_argument("--promote", action="store_true", help="Stop and replace the runtime.")
+    parser.add_argument(
+        "--migrate-storage", action="store_true",
+        help="Explicitly move durable task/runtime data to the rendered paths during promotion.",
+    )
     parser.add_argument("--discover-only", action="store_true", help="Render and validate only.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -1958,6 +1755,9 @@ def main(argv: list[str] | None = None) -> int:
                 repository_integration_roots=repository_integration_roots,
                 requirements_path=requirements_path,
             )
+            incumbent = _load_json(live_config_path, label="installed live config") if live_config_path.exists() else None
+            if not args.migrate_storage:
+                require_unchanged_storage(incumbent, rendered)
             result: dict[str, Any] = {
                 "schema_version": 2,
                 "kind": "supervisor_v2_replacement_preflight",
@@ -1966,9 +1766,6 @@ def main(argv: list[str] | None = None) -> int:
                 "live_config": str(live_config_path),
                 "task_state_store": dict(rendered["task_state_store"]),
                 "supervisor_command": rendered["watchdog"]["supervisor_command"],
-                "execution_authorization_barrier_preflight": verify_execution_authorization_barriers(
-                    Path(identity["root"]), python_executable=python_executable,
-                ),
                 "repository_source_roots": {
                     repository_id: str(entry.get("local_path"))
                     for repository_id, entry in (
@@ -1995,11 +1792,13 @@ def main(argv: list[str] | None = None) -> int:
                 live_config_path=live_config_path,
                 python_executable=python_executable,
                 termination_timeout=args.termination_timeout,
+                health_timeout=args.health_timeout,
                 evidence_path=evidence_path,
                 authority_env_file=authority_env_file,
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
                 requirements_path=requirements_path,
+                migrate_storage=args.migrate_storage,
             )
     except (OSError, ValueError, auto_integrator.IntegrationLockError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}
