@@ -8,9 +8,9 @@
   "source": {
     "repository": "ajoe734/pantheon",
     "branch": "task/OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
-    "base_sha": "2030696b4b7e793d24824e65682bf683db0f9ed9",
-    "implementation_commit": "8332856f937e134ce31d2c7c1ab1674ce1c1afbd",
-    "implementation_tree": "5d41285ea19c1c179f3ee4699063b58eb1f11860",
+    "base_sha": "e3ef0a4b6c8500f19019196e67fcbd5df6df67dc",
+    "implementation_commit": "f84d677a586732795f8a03853e6ed9a5ee4b9d07",
+    "implementation_tree": "91b47ad74c38eb053e55da266e92b9e0598cafb9",
     "files_sha256": {
       ".orchestrator/supervisor.py": "3fa33a53925499b2f6a3766d6d7014abda113398f9be7ffff70a245515ae2ba7",
       ".orchestrator/test_supervisor.py": "b87cd87cc925cee0412b11f57f37c397a9b8365eab0740a09935964dd6a3741f",
