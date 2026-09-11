@@ -9140,6 +9140,11 @@ def owner_worker_canonical_handoff_status(
 def _prepare_missing_handoff_blocker_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
+    *,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
     """Record an actionable missing-handoff blocker for a prepared-but-unhanded task."""
     if not config.get("paths", {}).get("status_file"):
@@ -9152,16 +9157,65 @@ def _prepare_missing_handoff_blocker_locked(
     if not owner_agent:
         return None
 
-    status = load_status(config)
+    try:
+        status = load_status(config)
+    except Exception:
+        return None
     if status.get("status_activity_outbox") not in (None, {}, []):
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
         return None
-    if str(task.get("owner") or "").strip() != owner_agent:
+    if task.get("review_decision_intent") not in (None, {}, []):
+        return None
+    if task_has_active_worker_recovery(task):
+        return None
+    if str(task.get("waiting_for") or "").strip():
         return None
 
-    reviewer = str(task.get("reviewer") or "").strip()
+    old_owner = str(task.get("owner") or "").strip()
+    old_reviewer = str(task.get("reviewer") or "").strip()
+    old_status = str(task.get("status") or "").strip()
+    old_generation = task_generation(task)
+
+    if expected_generation is None:
+        raw_gen = worker.get("task_generation")
+        if raw_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
+            raw_gen = (worker["request_snapshot"] or {}).get("task_generation")
+        if raw_gen is None and isinstance((worker.get("request_snapshot") or {}).get("metadata"), Mapping):
+            raw_gen = ((worker.get("request_snapshot") or {}).get("metadata") or {}).get("task_generation")
+        if raw_gen is not None:
+            try:
+                expected_generation = int(raw_gen)
+            except (TypeError, ValueError):
+                pass
+
+    if expected_owner is not None:
+        if (
+            old_owner != expected_owner.strip()
+            and canonical_agent_name(config, old_owner) != canonical_agent_name(config, expected_owner)
+        ):
+            return None
+    if (
+        old_owner != owner_agent
+        and canonical_agent_name(config, old_owner) != canonical_agent_name(config, owner_agent)
+    ):
+        return None
+
+    if expected_reviewer is not None:
+        if (
+            old_reviewer != expected_reviewer.strip()
+            and canonical_agent_name(config, old_reviewer) != canonical_agent_name(config, expected_reviewer)
+        ):
+            return None
+
+    if expected_status is not None and old_status != expected_status.strip():
+        return None
+
+    if expected_generation is not None and old_generation != expected_generation:
+        return None
+
+    reviewer = old_reviewer
     waiting_for = reviewer or owner_agent
     if any(
         str(blocker.get("task_id") or "") == task_id
@@ -9183,7 +9237,7 @@ def _prepare_missing_handoff_blocker_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             task.get("status"),
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -9220,20 +9274,41 @@ def _prepare_missing_handoff_blocker_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_status(config, status, source="supervisor-missing-handoff")
+    try:
+        write_status(config, status, source="supervisor-missing-handoff")
+    except Exception:
+        return None
     return event
 
 
-def record_missing_handoff_blocker(config: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
+def record_missing_handoff_blocker(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
+) -> dict[str, Any] | None:
     if not config.get("paths", {}).get("status_file"):
         return None
-    status_path = config_path(config, "status_file")
+    try:
+        status_path = config_path(config, "status_file")
+    except Exception:
+        return None
     with canonical_task_state_lock_file(
         status_path,
         shared=False,
         nonblocking=False,
     ):
-        event = _prepare_missing_handoff_blocker_locked(config, worker)
+        event = _prepare_missing_handoff_blocker_locked(
+            config,
+            worker,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
+        )
     if event is None:
         return None
     sync_status_pipeline(config)
@@ -9256,6 +9331,10 @@ def _prepare_failure_loop_blocker_locked(
     *,
     task_id: str,
     message: str,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
     """Record an actionable failure-loop hold for a task that keeps failing
     even after ``reconcile_failure_loops`` already tried reassigning it.
@@ -9269,14 +9348,44 @@ def _prepare_failure_loop_blocker_locked(
     if not config.get("paths", {}).get("status_file"):
         return None
 
-    status = load_status(config)
+    try:
+        status = load_status(config)
+    except Exception:
+        return None
     if status.get("status_activity_outbox") not in (None, {}, []):
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
         return None
+    if task.get("review_decision_intent") not in (None, {}, []):
+        return None
+    if task_has_active_worker_recovery(task):
+        return None
     if str(task.get("waiting_for") or "").strip():
         return None
+
+    old_owner = str(task.get("owner") or "").strip()
+    old_reviewer = str(task.get("reviewer") or "").strip()
+    old_status = str(task.get("status") or "").strip()
+    old_generation = task_generation(task)
+
+    if expected_owner is not None:
+        if (
+            old_owner != expected_owner.strip()
+            and canonical_agent_name(config, old_owner) != canonical_agent_name(config, expected_owner)
+        ):
+            return None
+    if expected_reviewer is not None:
+        if (
+            old_reviewer != expected_reviewer.strip()
+            and canonical_agent_name(config, old_reviewer) != canonical_agent_name(config, expected_reviewer)
+        ):
+            return None
+    if expected_status is not None and old_status != expected_status.strip():
+        return None
+    if expected_generation is not None and old_generation != expected_generation:
+        return None
+
     if any(
         str(blocker.get("task_id") or "") == task_id
         and str(blocker.get("status") or "") == "open"
@@ -9289,7 +9398,7 @@ def _prepare_failure_loop_blocker_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             task.get("status"),
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -9320,7 +9429,10 @@ def _prepare_failure_loop_blocker_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_status(config, status, source="supervisor-failure-loop")
+    try:
+        write_status(config, status, source="supervisor-failure-loop")
+    except Exception:
+        return None
     return event
 
 
@@ -9329,15 +9441,30 @@ def record_failure_loop_blocker(
     *,
     task_id: str,
     message: str,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
-    status_path = config_path(config, "status_file")
+    if not config.get("paths", {}).get("status_file"):
+        return None
+    try:
+        status_path = config_path(config, "status_file")
+    except Exception:
+        return None
     with canonical_task_state_lock_file(
         status_path,
         shared=False,
         nonblocking=False,
     ):
         event = _prepare_failure_loop_blocker_locked(
-            config, task_id=task_id, message=message
+            config,
+            task_id=task_id,
+            message=message,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
         )
     if event is None:
         return None
@@ -10900,7 +11027,18 @@ def reconcile_failure_loops(config: dict[str, Any], state: dict[str, Any]) -> bo
                 f"under {owner} even after {attempts_used} auto-reassignment(s); "
                 f"holding for Human/Ops investigation."
             )
-            if record_failure_loop_blocker(config, task_id=task_id, message=message) is not None:
+            if (
+                record_failure_loop_blocker(
+                    config,
+                    task_id=task_id,
+                    message=message,
+                    expected_owner=owner,
+                    expected_reviewer=reviewer,
+                    expected_status=str(task.get("status") or ""),
+                    expected_generation=task_generation(task),
+                )
+                is not None
+            ):
                 watch.pop(task_id, None)
                 changed = True
 
@@ -11563,7 +11701,20 @@ def poll_worker_completion_stage(
             # handoff, not a provider failure. Reassigning or redispatching the
             # same owner reproduces the same clean exit every tick; surface the
             # concrete blocker instead and take the task out of owner dispatch.
-            blocker = record_missing_handoff_blocker(config, worker)
+            raw_worker_gen = worker.get("task_generation")
+            if raw_worker_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
+                raw_worker_gen = (worker["request_snapshot"] or {}).get("task_generation")
+            if raw_worker_gen is None and isinstance((worker.get("request_snapshot") or {}).get("metadata"), Mapping):
+                raw_worker_gen = ((worker.get("request_snapshot") or {}).get("metadata") or {}).get("task_generation")
+            worker_task_gen = int(raw_worker_gen) if raw_worker_gen is not None else (task_generation(task) if task else None)
+            blocker = record_missing_handoff_blocker(
+                config,
+                worker,
+                expected_owner=str(task.get("owner") or "") if task else None,
+                expected_reviewer=str(task.get("reviewer") or "") if task else None,
+                expected_status=str(task.get("status") or "") if task else None,
+                expected_generation=worker_task_gen,
+            )
             if blocker is not None:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
@@ -11584,6 +11735,7 @@ def poll_worker_completion_stage(
                     config, state, worker, "failed", MISSING_HANDOFF_EXIT_REASON
                 )
                 return {"changed": True, "stop": True}
+            return {"changed": False, "stop": True}
         generic_failure_summary = summarize_failure_reason(
             GENERIC_WORKER_EXIT_REASON,
             str(worker.get("provider") or worker.get("agent_id") or ""),

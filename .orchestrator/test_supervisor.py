@@ -18502,5 +18502,542 @@ class SchedulerCadenceTelemetryTests(unittest.TestCase):
         self.assertEqual(state["supervisor"]["cadence_next_deadline_monotonic"], 2.0)
 
 
+class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
+    """Regressions for OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001:
+    - Raw TaskAction.BLOCK coercion failure reproduction & correction
+    - Real isolated persistence of missing-handoff and failure-loop holds
+    - Exact snapshot fence revalidation (owner, reviewer, status, generation)
+    - Stale worker and failure-loop observations are no-ops against successor generations
+    - Failure-loop reconciler invokes real hold path after budget exhaustion
+    - Fail-closed guards for all error/mismatch cases
+    """
+
+    def test_independent_reproduction_raw_task_action_enum_fails_closed(self) -> None:
+        # Reproduction A: Passing TaskAction.BLOCK enum object into coerce_action returns None
+        self.assertIsNone(
+            supervisor.rewrite_task_machine.coerce_action(
+                supervisor.rewrite_task_machine.TaskAction.BLOCK
+            )
+        )
+        with self.assertRaises(supervisor.rewrite_task_machine.TransitionError):
+            supervisor.rewrite_task_machine.transition(
+                "todo", supervisor.rewrite_task_machine.TaskAction.BLOCK
+            )
+        with self.assertRaises(supervisor.rewrite_task_machine.TransitionError):
+            supervisor.rewrite_task_machine.transition(
+                "in_progress", supervisor.rewrite_task_machine.TaskAction.BLOCK
+            )
+
+        # Corrective: Passing TaskAction.BLOCK.value succeeds
+        self.assertEqual(
+            supervisor.rewrite_task_machine.coerce_action(
+                supervisor.rewrite_task_machine.TaskAction.BLOCK.value
+            ),
+            supervisor.rewrite_task_machine.TaskAction.BLOCK,
+        )
+        self.assertEqual(
+            supervisor.rewrite_task_machine.transition(
+                "todo", supervisor.rewrite_task_machine.TaskAction.BLOCK.value
+            ),
+            supervisor.rewrite_task_machine.TaskState.BLOCKED,
+        )
+        self.assertEqual(
+            supervisor.rewrite_task_machine.transition(
+                "in_progress", supervisor.rewrite_task_machine.TaskAction.BLOCK.value
+            ),
+            supervisor.rewrite_task_machine.TaskState.BLOCKED,
+        )
+
+    def _setup_env(self, tmp_dir: str, initial_status: dict[str, Any] | None = None) -> dict[str, Any]:
+        temp_root = Path(tmp_dir)
+        status_root = temp_root / "status"
+        (status_root / ".orchestrator").mkdir(parents=True)
+        (temp_root / "runtime").mkdir(parents=True)
+        config = config_fixture(status_root)
+        event_log = temp_root / "runtime" / "tasks.jsonl"
+        config["task_state_store"] = {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        }
+        status = initial_status if initial_status is not None else {"tasks": [], "blockers": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log, status, source="test-seed"
+        )
+        Path(config["paths"]["status_file"]).write_text(
+            json.dumps(status), encoding="utf-8"
+        )
+        return config
+
+    def test_missing_handoff_blocker_persists_fenced_hold_real_isolated_write_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-MISSING-1",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            worker = {
+                "task_id": "TASK-MISSING-1",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-missing-1",
+                "task_generation": 1,
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/42",
+            }
+
+            with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True) as sync_spy:
+                event = supervisor.record_missing_handoff_blocker(config, worker)
+
+            self.assertIsNotNone(event)
+            self.assertEqual(event["type"], "task_missing_handoff_blocked")
+            self.assertEqual(event["task_id"], "TASK-MISSING-1")
+            self.assertEqual(event["target_agent"], "Codex")
+            self.assertEqual(event["waiting_for"], "Codex2")
+            self.assertEqual(event["pr_url"], "https://github.com/ajoe734/pantheon/pull/42")
+            sync_spy.assert_called_once_with(config)
+
+            # Validate persisted status on disk
+            persisted = supervisor.load_status(config)
+            persisted_task = persisted["tasks"][0]
+            self.assertEqual(persisted_task["status"], "blocked")
+            self.assertEqual(persisted_task["waiting_for"], "Codex2")
+            self.assertIn("confirm the prepared head", persisted_task["next"])
+
+            # Validate open blocker record
+            self.assertEqual(len(persisted.get("blockers") or []), 1)
+            blocker = persisted["blockers"][0]
+            self.assertEqual(blocker["task_id"], "TASK-MISSING-1")
+            self.assertEqual(blocker["status"], "open")
+            self.assertEqual(blocker["blocker_kind"], "missing_handoff")
+            self.assertEqual(blocker["waiting_for"], "Codex2")
+            self.assertEqual(blocker["worker_run_id"], "run-missing-1")
+            self.assertEqual(blocker["pr_url"], "https://github.com/ajoe734/pantheon/pull/42")
+
+            # Duplicate call should be a no-op (duplicate open blocker guard)
+            repeat_event = supervisor.record_missing_handoff_blocker(config, worker)
+            self.assertIsNone(repeat_event)
+            self.assertEqual(len(supervisor.load_status(config)["blockers"]), 1)
+
+    def test_failure_loop_blocker_persists_fenced_hold_real_isolated_write_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-LOOP-1",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            msg = "Repeated failures persisted under Codex; holding for Human/Ops investigation."
+            with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True) as sync_spy:
+                event = supervisor.record_failure_loop_blocker(
+                    config,
+                    task_id="TASK-LOOP-1",
+                    message=msg,
+                    expected_owner="Codex",
+                    expected_reviewer="Codex2",
+                    expected_status="in_progress",
+                    expected_generation=1,
+                )
+
+            self.assertIsNotNone(event)
+            self.assertEqual(event["type"], "task_failure_loop_blocked")
+            self.assertEqual(event["task_id"], "TASK-LOOP-1")
+            self.assertEqual(event["waiting_for"], "Human/Ops")
+            sync_spy.assert_called_once_with(config)
+
+            persisted = supervisor.load_status(config)
+            persisted_task = persisted["tasks"][0]
+            self.assertEqual(persisted_task["status"], "blocked")
+            self.assertEqual(persisted_task["waiting_for"], "Human/Ops")
+            self.assertEqual(persisted_task["next"], msg)
+
+            self.assertEqual(len(persisted.get("blockers") or []), 1)
+            blocker = persisted["blockers"][0]
+            self.assertEqual(blocker["task_id"], "TASK-LOOP-1")
+            self.assertEqual(blocker["status"], "open")
+            self.assertEqual(blocker["blocker_kind"], "failure_loop")
+            self.assertEqual(blocker["waiting_for"], "Human/Ops")
+
+            # Duplicate call should be a no-op
+            repeat_event = supervisor.record_failure_loop_blocker(
+                config,
+                task_id="TASK-LOOP-1",
+                message=msg,
+                expected_owner="Codex",
+                expected_reviewer="Codex2",
+                expected_status="in_progress",
+                expected_generation=1,
+            )
+            self.assertIsNone(repeat_event)
+            self.assertEqual(len(supervisor.load_status(config)["blockers"]), 1)
+
+    def test_failure_loop_reconciler_invokes_real_hold_path_after_budget_exhausted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-RECON-1",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Human/Ops",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+            config["worker_reassignment"] = {
+                "enabled": True,
+                "failure_loop": {
+                    "enabled": True,
+                    "window_seconds": 600,
+                    "max_failures_in_window": 3,
+                    "max_auto_reassignments": 1,
+                },
+            }
+
+            state = {
+                "workers": {},
+                "failure_loop_watch": {"TASK-RECON-1": {"auto_reassignments": 1}},
+            }
+
+            with mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-RECON-1": 3}
+            ), mock.patch.object(
+                supervisor, "sync_status_pipeline", return_value=True
+            ):
+                changed = supervisor.reconcile_failure_loops(config, state)
+
+            self.assertTrue(changed)
+            self.assertNotIn("TASK-RECON-1", state["failure_loop_watch"])
+
+            persisted = supervisor.load_status(config)
+            persisted_task = persisted["tasks"][0]
+            self.assertEqual(persisted_task["status"], "blocked")
+            self.assertEqual(persisted_task["waiting_for"], "Human/Ops")
+            self.assertEqual(len(persisted["blockers"]), 1)
+            self.assertEqual(persisted["blockers"][0]["blocker_kind"], "failure_loop")
+
+    def test_stale_worker_observation_against_successor_generation_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Successor generation 2: task reassigned to Codex2
+            task = task_fixture(
+                task_id="TASK-GEN-1",
+                status="in_progress",
+                owner="Codex2",
+                reviewer="Codex",
+            )
+            task["generation"] = 2
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            # Stale worker from generation 1
+            stale_worker = {
+                "task_id": "TASK-GEN-1",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-stale-1",
+                "task_generation": 1,
+                "status": "running",
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/1",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+
+            # Helper returns None
+            event = supervisor.record_missing_handoff_blocker(
+                config,
+                stale_worker,
+                expected_owner="Codex",
+                expected_reviewer="Codex2",
+                expected_status="in_progress",
+                expected_generation=1,
+            )
+            self.assertIsNone(event)
+
+            # Successor task is untouched
+            persisted = supervisor.load_status(config)
+            self.assertEqual(persisted["tasks"][0]["status"], "in_progress")
+            self.assertEqual(persisted["tasks"][0]["owner"], "Codex2")
+            self.assertEqual(persisted["tasks"][0]["generation"], 2)
+            self.assertEqual(len(persisted.get("blockers") or []), 0)
+
+            # poll_worker_completion_stage with stale worker and prepared review head makes no lease change
+            state = {"workers": {stale_worker["run_id"]: stale_worker}, "queue": {"events": {}}}
+            with mock.patch.object(supervisor, "worker_prepared_review_head", return_value=True):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    stale_worker,
+                    task_map={"TASK-GEN-1": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertNotEqual(stale_worker.get("status"), "failed")
+
+    def test_stale_failure_loop_observation_against_successor_generation_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Successor generation 2
+            task = task_fixture(
+                task_id="TASK-LOOP-GEN",
+                status="in_progress",
+                owner="Codex2",
+                reviewer="Codex",
+            )
+            task["generation"] = 2
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            # Stale call expecting generation 1
+            event = supervisor.record_failure_loop_blocker(
+                config,
+                task_id="TASK-LOOP-GEN",
+                message="Stale failure loop observation",
+                expected_owner="Codex",
+                expected_reviewer="Codex2",
+                expected_status="in_progress",
+                expected_generation=1,
+            )
+            self.assertIsNone(event)
+
+            persisted = supervisor.load_status(config)
+            self.assertEqual(persisted["tasks"][0]["status"], "in_progress")
+            self.assertEqual(persisted["tasks"][0]["generation"], 2)
+            self.assertEqual(len(persisted.get("blockers") or []), 0)
+
+    def test_missing_handoff_fail_closed_guards(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base_task = task_fixture(
+                task_id="TASK-GUARD-1",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [base_task], "blockers": []})
+            worker = {
+                "task_id": "TASK-GUARD-1",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-g1",
+                "task_generation": 1,
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/1",
+            }
+
+            # 1. Absent status path
+            self.assertIsNone(supervisor.record_missing_handoff_blocker({}, worker))
+
+            # 2. Nonempty activity outbox
+            supervisor.write_status(
+                config,
+                {"tasks": [base_task], "status_activity_outbox": [{"type": "pending"}]},
+                source="test",
+            )
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+            supervisor.write_status(config, {"tasks": [base_task], "status_activity_outbox": []}, source="test")
+
+            # 3. Missing task
+            missing_worker = dict(worker, task_id="TASK-NONEXISTENT")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, missing_worker))
+
+            # 4. Mismatched owner identity
+            self.assertIsNone(
+                supervisor.record_missing_handoff_blocker(config, worker, expected_owner="OtherAgent")
+            )
+            bad_worker = dict(worker, agent_id="otheragent")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, bad_worker))
+
+            # 5. Mismatched reviewer
+            self.assertIsNone(
+                supervisor.record_missing_handoff_blocker(config, worker, expected_reviewer="WrongReviewer")
+            )
+
+            # 6. Mismatched lifecycle status
+            self.assertIsNone(
+                supervisor.record_missing_handoff_blocker(config, worker, expected_status="review")
+            )
+
+            # 7. Mismatched generation
+            self.assertIsNone(
+                supervisor.record_missing_handoff_blocker(config, worker, expected_generation=99)
+            )
+
+            # 8. Existing waiting target
+            waiting_task = dict(base_task, waiting_for="Codex2")
+            supervisor.write_status(config, {"tasks": [waiting_task]}, source="test")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+            supervisor.write_status(config, {"tasks": [base_task]}, source="test")
+
+            # 9. Duplicate open blocker
+            blocked_status = {
+                "tasks": [base_task],
+                "blockers": [
+                    {
+                        "task_id": "TASK-GUARD-1",
+                        "status": "open",
+                        "blocker_kind": "missing_handoff",
+                    }
+                ],
+            }
+            supervisor.write_status(config, blocked_status, source="test")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+            supervisor.write_status(config, {"tasks": [base_task], "blockers": []}, source="test")
+
+            # 10. Invalid transition (task is done)
+            done_task = dict(base_task, status="done")
+            supervisor.write_status(config, {"tasks": [done_task]}, source="test")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+
+            # 11. Stale recovery fence (active worker recovery pending)
+            fence_task = dict(
+                base_task,
+                worker_recovery={"receipt_id": "rcpt-1", "status": "pending", "fence_generation": 1},
+            )
+            supervisor.write_status(config, {"tasks": [fence_task]}, source="test")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+
+            # 12. Active review_decision_intent
+            review_task = dict(base_task, review_decision_intent={"intent_id": "rev-1", "status": "pending"})
+            supervisor.write_status(config, {"tasks": [review_task]}, source="test")
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+
+            # 13. Unavailable status storage / write error
+            supervisor.write_status(config, {"tasks": [base_task]}, source="test")
+            with mock.patch.object(supervisor, "write_status", side_effect=IOError("disk full")):
+                self.assertIsNone(supervisor.record_missing_handoff_blocker(config, worker))
+
+    def test_failure_loop_fail_closed_guards(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base_task = task_fixture(
+                task_id="TASK-GUARD-2",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [base_task], "blockers": []})
+            msg = "Failure loop test"
+
+            # 1. Absent status path
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker({}, task_id="TASK-GUARD-2", message=msg)
+            )
+
+            # 2. Nonempty activity outbox
+            supervisor.write_status(
+                config,
+                {"tasks": [base_task], "status_activity_outbox": [{"type": "pending"}]},
+                source="test",
+            )
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg
+                )
+            )
+            supervisor.write_status(config, {"tasks": [base_task], "status_activity_outbox": []}, source="test")
+
+            # 3. Missing task
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-NONEXISTENT", message=msg
+                )
+            )
+
+            # 4. Mismatched owner identity
+            supervisor.write_status(config, {"tasks": [base_task]}, source="test")
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg, expected_owner="OtherAgent"
+                )
+            )
+
+            # 5. Mismatched reviewer
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg, expected_reviewer="WrongReviewer"
+                )
+            )
+
+            # 6. Mismatched lifecycle status
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg, expected_status="review"
+                )
+            )
+
+            # 7. Mismatched generation
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg, expected_generation=99
+                )
+            )
+
+            # 8. Existing waiting target
+            waiting_task = dict(base_task, waiting_for="Human/Ops")
+            supervisor.write_status(config, {"tasks": [waiting_task]}, source="test")
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg
+                )
+            )
+            supervisor.write_status(config, {"tasks": [base_task]}, source="test")
+
+            # 9. Duplicate open blocker
+            blocked_status = {
+                "tasks": [base_task],
+                "blockers": [
+                    {
+                        "task_id": "TASK-GUARD-2",
+                        "status": "open",
+                        "blocker_kind": "failure_loop",
+                    }
+                ],
+            }
+            supervisor.write_status(config, blocked_status, source="test")
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg
+                )
+            )
+            supervisor.write_status(config, {"tasks": [base_task], "blockers": []}, source="test")
+
+            # 10. Invalid transition (task is done)
+            done_task = dict(base_task, status="done")
+            supervisor.write_status(config, {"tasks": [done_task]}, source="test")
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg
+                )
+            )
+
+            # 11. Stale recovery fence (active worker recovery pending)
+            fence_task = dict(
+                base_task,
+                worker_recovery={"receipt_id": "rcpt-1", "status": "pending", "fence_generation": 1},
+            )
+            supervisor.write_status(config, {"tasks": [fence_task]}, source="test")
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg
+                )
+            )
+
+            # 12. Active review_decision_intent
+            review_task = dict(base_task, review_decision_intent={"intent_id": "rev-2", "status": "pending"})
+            supervisor.write_status(config, {"tasks": [review_task]}, source="test")
+            self.assertIsNone(
+                supervisor.record_failure_loop_blocker(
+                    config, task_id="TASK-GUARD-2", message=msg
+                )
+            )
+
+            # 13. Unavailable status storage / write error
+            supervisor.write_status(config, {"tasks": [base_task]}, source="test")
+            with mock.patch.object(supervisor, "write_status", side_effect=IOError("disk full")):
+                self.assertIsNone(
+                    supervisor.record_failure_loop_blocker(
+                        config, task_id="TASK-GUARD-2", message=msg
+                    )
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
