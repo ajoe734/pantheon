@@ -19,6 +19,21 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertTrue(result["tooling_only"])
         self.assertEqual(result["domains"], ["development_tooling"])
 
+    def test_retired_tooling_issuer_is_not_product_auth(self) -> None:
+        result = component_boundary.classify_paths(self.manifest, [
+            "deploy/execution-grant-issuer/run_server.py",
+            "scripts/request_execution_grant.py",
+            "scripts/test_promote_supervisor_runtime.py",
+            "docs/operations/development-tooling-mfa-retirement.md",
+        ])
+        self.assertTrue(result["tooling_only"])
+        self.assertEqual(result["domains"], ["development_tooling"])
+        mixed = component_boundary.classify_paths(self.manifest, [
+            "deploy/execution-grant-issuer/run_server.py",
+            "services/control-plane/bff/auth/handlers.py",
+        ])
+        self.assertFalse(mixed["tooling_only"])
+
     def test_product_path_selects_product_runtime(self) -> None:
         result = component_boundary.classify_paths(
             self.manifest,
