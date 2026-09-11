@@ -1185,6 +1185,8 @@ def install_compensation_artifact_fixture(
     }
     candidate_override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
                                         for service, row in candidate_services.items()}}
+    candidate_override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": candidate_services["operator-bff"]["image_id"]}
     candidate_record["image_override_sha256"] = hashlib.sha256(canonical(candidate_override)).hexdigest()
     artifact_root = "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts"
     remote_folder = f"{artifact_root}/baseline-999-1-{candidate_id}"

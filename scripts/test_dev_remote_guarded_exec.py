@@ -632,6 +632,8 @@ def candidate_documents(tmp_path, monkeypatch):
                                                  "loop-run-projector-scheduler"), start=3)}
     override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
                              for service, row in services.items()}}
+    override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": services["operator-bff"]["image_id"]}
     override_hash = hashlib.sha256(encoded(override)).hexdigest()
     record = {"schema_version": "pantheon.dev-candidate-image-admission.v1", "environment": "dev",
               "project_id": "pantheon-dev-20260902", "vm": "pantheon-dev-deploy", "identity": identity,
