@@ -30,6 +30,22 @@ ARTIFACT_ROOT = VM_HOME / "pantheon-ci-deploy/release-artifacts"
 FIELDS = ("candidate_id", "run_id", "attempt", "controller_sha", "candidate_backend_sha",
           "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha")
 IMPLEMENTATIONS = ("dev_release_artifact_driver.py", "dev_release_artifacts.py")
+REMOTE_DIAGNOSTIC_CODE = "DEV_ARTIFACT_DRIVER_FAILED"
+REMOTE_DIAGNOSTIC_STAGES = frozenset({
+    "initialize",
+    "capture_frontend",
+    "capture_public_posture",
+    "capture_protected_owners",
+    "capture_baseline_config",
+    "capture_storage",
+    "capture_images",
+    "capture_stability",
+    "capture_publish",
+    "load_baseline",
+    "seal_candidate",
+    "restore_baseline",
+    "verify_readback",
+})
 
 
 class CaptureError(RuntimeError):
@@ -56,6 +72,37 @@ def unique_object(pairs):
 def exact_keys(value, keys):
     if not isinstance(value, dict) or set(value) != set(keys):
         raise CaptureError("capture document fields are invalid")
+
+
+def remote_failure_summary(raw: bytes) -> str | None:
+    """Return only a schema-validated, non-secret remote failure stage.
+
+    The guarded transport's stderr can contain SSH, shell, Docker, HTTP, and
+    application diagnostics.  It must never be copied to Actions logs.  The
+    VM driver may emit one deliberately opaque JSON record for a known
+    ArtifactError; retain only that fixed code and an enumerated stage label.
+    """
+
+    if not isinstance(raw, bytes) or len(raw) > 1024 * 1024:
+        return None
+    for line in reversed(raw.splitlines()):
+        try:
+            value = json.loads(line.decode("utf-8"), object_pairs_hook=unique_object)
+        except (UnicodeDecodeError, ValueError, TypeError):
+            continue
+        if (
+            isinstance(value, dict)
+            and set(value) == {"status", "error_code", "failure_stage"}
+            and value.get("status") == "error"
+            and value.get("error_code") == REMOTE_DIAGNOSTIC_CODE
+            and value.get("failure_stage") in REMOTE_DIAGNOSTIC_STAGES
+        ):
+            return (
+                "[dev-artifact-capture] remote contract failure "
+                f"code={REMOTE_DIAGNOSTIC_CODE} "
+                f"stage={value['failure_stage']}"
+            )
+    return None
 
 
 def matches(value, pattern):
@@ -319,6 +366,9 @@ def main() -> int:
                                      "--script-file", str(script), "--deadline-seconds", "1200"],
                                     capture_output=True, timeout=1230)
             if result.returncode:
+                summary = remote_failure_summary(result.stderr)
+                if summary is not None:
+                    print(summary, file=sys.stderr)
                 # Neither the private script nor remote raw diagnostics are evidence.
                 raise CaptureError("guarded artifact capture failed")
         manifest_raw, outputs = seal_result(result.stdout, identity, expected_lease_id=guard)

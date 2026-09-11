@@ -648,6 +648,29 @@ def test_cli_errors_are_sanitized_and_never_claim_completion(monkeypatch, capsys
     assert json.loads(output.err) == {"status": "error", "error_code": "DEV_ARTIFACT_DRIVER_FAILED"}
 
 
+def test_known_contract_failure_exposes_only_fixed_stage(monkeypatch, capsys):
+    message = "fixture-private-token must not appear in output"
+    monkeypatch.setattr(d, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(d.a.ArtifactError(message)))
+    monkeypatch.setattr(d, "parse_args", lambda _argv: type("Args", (), {"guard_channel_fd": 3, "guard_max_silence_seconds": 10})())
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: object())
+    assert d.main([]) == 75
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert message not in output.err
+    assert json.loads(output.err) == {
+        "status": "error",
+        "error_code": "DEV_ARTIFACT_DRIVER_FAILED",
+        "failure_stage": "initialize",
+    }
+
+
+def test_unknown_contract_failure_does_not_expose_text_or_stage():
+    message = "fixture-private-token must not appear in output"
+    assert d.failure_payload(d.a.ArtifactError(message), "unknown") == {
+        "status": "error", "error_code": "DEV_ARTIFACT_DRIVER_FAILED"
+    }
+
+
 def test_cancellation_before_capture_never_seals(case):
     case.barrier.fail_at = 1
     with pytest.raises(d.a.ArtifactError): execute(case)
