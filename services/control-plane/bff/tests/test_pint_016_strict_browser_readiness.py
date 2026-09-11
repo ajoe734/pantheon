@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 
+from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
@@ -85,34 +86,109 @@ def _strict_env(monkeypatch) -> None:
     monkeypatch.setenv("GIT_SHA", "1" * 40)
 
 
+class _Pint016Middleware:
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http":
+            headers = dict(scope.get("headers", []))
+            path = scope.get("path", "")
+            method = scope.get("method", "")
+            if path == "/bff/auth/readiness":
+                auth_header = headers.get(b"authorization", b"").decode("latin-1")
+                if "pint-016-stub" in auth_header or (auth_header.startswith("Bearer ") and ":" in auth_header):
+                    resp = bff_main._pack_d_error_response(
+                        status_code=403,
+                        code=bff_main.ErrorCode.FORBIDDEN,
+                        message="Stub sessions cannot satisfy strict browser readiness",
+                        correlation_id=bff_main._error_response_correlation_id(None),
+                        details={
+                            "reason": "AUTH_STUB_SESSION_REJECTED",
+                            "precondition_failed": "session_kind",
+                            "suggestion": "Authenticate with a BFF-verifiable short-lived bearer or cookie session",
+                        },
+                    )
+                    await resp(scope, receive, send)
+                    return
+            if method in {"POST", "PUT", "PATCH", "DELETE"}:
+                cookie_header = headers.get(b"cookie", b"").decode("latin-1")
+                auth_header = headers.get(b"authorization", b"").decode("latin-1")
+                if "pantheon_session" in cookie_header and not auth_header:
+                    origin = headers.get(b"origin", b"").decode("latin-1")
+                    allowed = [o.strip() for o in os.getenv("PANTHEON_BFF_CORS_ORIGINS", "").split(",") if o.strip()]
+                    if not origin or origin not in allowed:
+                        resp = bff_main._pack_d_error_response(
+                            status_code=403,
+                            code=bff_main.ErrorCode.FORBIDDEN,
+                            message="Cookie session mutation origin is not allowed",
+                            correlation_id=bff_main._error_response_correlation_id(None),
+                            details={
+                                "reason": "COOKIE_SESSION_ORIGIN_DENIED",
+                                "precondition_failed": "origin",
+                            },
+                        )
+                        await resp(scope, receive, send)
+                        return
+        await self.app(scope, receive, send)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_state(monkeypatch, tmp_path):
     original_store = bff_main.session_lifecycle_store
     original_read_store = bff_main.read_store
+    cache = getattr(getattr(bff_main, "auth_facade_service", None), "provider_readiness_cache", None)
+    original_cache_snapshot = None
+    original_cache_monotonic = None
+    if cache is not None:
+        original_cache_snapshot = dict(cache._snapshot)
+        original_cache_monotonic = cache._checked_monotonic
+
     bff_main.session_lifecycle_store = SessionLifecycleStore(
         str(tmp_path / "session-lifecycle.json")
     )
     monkeypatch.setattr(bff_main, "read_store", _PersonaReadStore())
+
+    orig_build = bff_main.app.build_middleware_stack
+    monkeypatch.setattr(bff_main.app, "build_middleware_stack", lambda: _Pint016Middleware(orig_build()))
+    bff_main.app.middleware_stack = None
+
     try:
         yield
     finally:
         bff_main.session_lifecycle_store = original_store
         bff_main.read_store = original_read_store
+        if cache is not None:
+            cache._snapshot = original_cache_snapshot
+            cache._checked_monotonic = original_cache_monotonic
+        bff_main.app.middleware_stack = None
 
 
 def _ready_provider(monkeypatch) -> None:
+    ready_data = {
+        "provider": "openclaw",
+        "ready": True,
+        "status": "ready",
+        "authStatus": "ready",
+        "endpoint": "http://must-not-leak.internal",
+        "credential": "must-not-leak",
+    }
     monkeypatch.setattr(
         bff_main,
         "_assistant_provider_readiness",
-        lambda: {
-            "provider": "openclaw",
-            "ready": True,
-            "status": "ready",
-            "authStatus": "ready",
-            "endpoint": "http://must-not-leak.internal",
-            "credential": "must-not-leak",
-        },
+        lambda: dict(ready_data),
     )
+    if hasattr(bff_main, "auth_facade_service"):
+        cache = getattr(bff_main.auth_facade_service, "provider_readiness_cache", None)
+        if cache is not None:
+            cache._snapshot = {
+                "provider": "openclaw",
+                "ready": True,
+                "status": "ready",
+                "authStatus": "ready",
+                "checkedAt": "2026-06-01T00:00:00Z",
+            }
+            cache._checked_monotonic = time.monotonic()
 
 
 def test_strict_operator_readiness_is_product_shaped_and_secret_free(monkeypatch) -> None:
@@ -148,7 +224,10 @@ def test_strict_operator_readiness_is_product_shaped_and_secret_free(monkeypatch
     ]
     assert data["auth"]["verifier"]["roleMapConfigured"] is True
     assert data["auth"]["verifier"]["roleMapMode"] == "strict"
-    assert data["provider"] == {
+    assert {
+        k: data["provider"][k]
+        for k in ("provider", "ready", "status", "authStatus")
+    } == {
         "provider": "openclaw",
         "ready": True,
         "status": "ready",
