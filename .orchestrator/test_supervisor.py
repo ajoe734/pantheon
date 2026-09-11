@@ -18674,6 +18674,106 @@ class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
             self.assertIsNone(repeat_event)
             self.assertEqual(len(supervisor.load_status(config)["blockers"]), 1)
 
+    def test_missing_handoff_blocker_projection_failure_still_reports_committed_hold(self) -> None:
+        """Fault-injection regression for the projection-failure defect: the
+        journal commit for the blocked hold succeeds, but derived-file
+        projection (``write_json`` onto ``status_file``) fails because the
+        status file path is a directory instead of a regular file. The
+        helper must not treat this the same as a precommit failure -- it
+        must still report the committed event so the caller runs
+        ``sync_status_pipeline`` to repair the projection, instead of
+        silently returning ``None`` while the missing-handoff worker keeps
+        running against an already-blocked task.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-MISSING-PROJ-1",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            status_path = Path(config["paths"]["status_file"])
+            status_path.unlink()
+            status_path.mkdir()
+
+            worker = {
+                "task_id": "TASK-MISSING-PROJ-1",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-missing-proj-1",
+                "task_generation": 1,
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/43",
+            }
+
+            with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True) as sync_spy:
+                event = supervisor.record_missing_handoff_blocker(config, worker)
+
+            self.assertIsNotNone(event)
+            self.assertEqual(event["type"], "task_missing_handoff_blocked")
+            self.assertEqual(event["task_id"], "TASK-MISSING-PROJ-1")
+            self.assertEqual(event["waiting_for"], "Codex2")
+            sync_spy.assert_called_once_with(config)
+
+            # The authoritative journal already reflects the committed hold
+            # even though the status.json projection never landed.
+            journal_state = supervisor.rewrite_task_state_store.load_snapshot(
+                config["task_state_store"]["event_log"]
+            )["state"]
+            journal_task = {t["id"]: t for t in journal_state["tasks"]}["TASK-MISSING-PROJ-1"]
+            self.assertEqual(journal_task["status"], "blocked")
+            self.assertEqual(journal_task["waiting_for"], "Codex2")
+            self.assertEqual(len(journal_state.get("blockers") or []), 1)
+            self.assertEqual(journal_state["blockers"][0]["blocker_kind"], "missing_handoff")
+            self.assertTrue(journal_state.get("status_activity_outbox"))
+
+    def test_failure_loop_blocker_projection_failure_still_reports_committed_hold(self) -> None:
+        """Same fault-injection regression as the missing-handoff case above,
+        but for ``record_failure_loop_blocker``: the journal commit succeeds
+        while ``write_json`` fails because ``status_file`` is a directory.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-LOOP-PROJ-1",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            status_path = Path(config["paths"]["status_file"])
+            status_path.unlink()
+            status_path.mkdir()
+
+            msg = "Repeated failures persisted under Codex; holding for Human/Ops investigation."
+            with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True) as sync_spy:
+                event = supervisor.record_failure_loop_blocker(
+                    config,
+                    task_id="TASK-LOOP-PROJ-1",
+                    message=msg,
+                    expected_owner="Codex",
+                    expected_reviewer="Codex2",
+                    expected_status="in_progress",
+                    expected_generation=1,
+                )
+
+            self.assertIsNotNone(event)
+            self.assertEqual(event["type"], "task_failure_loop_blocked")
+            self.assertEqual(event["task_id"], "TASK-LOOP-PROJ-1")
+            self.assertEqual(event["waiting_for"], "Human/Ops")
+            sync_spy.assert_called_once_with(config)
+
+            journal_state = supervisor.rewrite_task_state_store.load_snapshot(
+                config["task_state_store"]["event_log"]
+            )["state"]
+            journal_task = {t["id"]: t for t in journal_state["tasks"]}["TASK-LOOP-PROJ-1"]
+            self.assertEqual(journal_task["status"], "blocked")
+            self.assertEqual(journal_task["waiting_for"], "Human/Ops")
+            self.assertEqual(len(journal_state.get("blockers") or []), 1)
+            self.assertEqual(journal_state["blockers"][0]["blocker_kind"], "failure_loop")
+            self.assertTrue(journal_state.get("status_activity_outbox"))
+
     def test_failure_loop_reconciler_invokes_real_hold_path_after_budget_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             task = task_fixture(

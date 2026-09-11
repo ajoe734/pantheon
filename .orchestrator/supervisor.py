@@ -9200,6 +9200,45 @@ def observed_worker_task_generation(worker: dict[str, Any]) -> int | None:
     return observations[0]
 
 
+def _blocked_hold_already_committed(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    waiting_for: str,
+    blocker_kind: str,
+) -> bool:
+    """Distinguish a precommit ``write_status`` failure from an already
+    durable hold whose derived-file projection merely failed to land.
+
+    ``write_status`` journals the authoritative commit before it projects
+    ``status_file``; a projection failure (for example an unwritable or
+    replaced status path) still leaves the journal committed. ``load_status``
+    reads directly from that journal, independent of the failed projection,
+    so re-reading it after a ``write_status`` exception tells the caller
+    whether the transition it built already became durable. Returning
+    ``None`` for an already-committed hold would make the caller believe no
+    write occurred while the task is, in fact, already blocked -- exactly
+    the storage-failure/no-partial-write violation this guards against.
+    """
+    try:
+        reloaded = load_status(config)
+    except Exception:
+        return False
+    reloaded_task = task_index_from_status(config, reloaded).get(task_id)
+    if not reloaded_task:
+        return False
+    if str(reloaded_task.get("status") or "") != "blocked":
+        return False
+    if str(reloaded_task.get("waiting_for") or "") != waiting_for:
+        return False
+    return any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == blocker_kind
+        for blocker in (reloaded.get("blockers") or [])
+    )
+
+
 def _prepare_missing_handoff_blocker_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -9335,6 +9374,17 @@ def _prepare_missing_handoff_blocker_locked(
     try:
         write_status(config, status, source="supervisor-missing-handoff")
     except Exception:
+        if _blocked_hold_already_committed(
+            config,
+            task_id=task_id,
+            waiting_for=waiting_for,
+            blocker_kind="missing_handoff",
+        ):
+            # The journal commit already landed the blocked hold; only the
+            # derived-file projection failed. Report the event as committed
+            # so the caller still runs sync_status_pipeline to repair
+            # projection, instead of pretending the write never happened.
+            return event
         return None
     return event
 
@@ -9490,6 +9540,17 @@ def _prepare_failure_loop_blocker_locked(
     try:
         write_status(config, status, source="supervisor-failure-loop")
     except Exception:
+        if _blocked_hold_already_committed(
+            config,
+            task_id=task_id,
+            waiting_for="Human/Ops",
+            blocker_kind="failure_loop",
+        ):
+            # The journal commit already landed the blocked hold; only the
+            # derived-file projection failed. Report the event as committed
+            # so the caller still runs sync_status_pipeline to repair
+            # projection, instead of pretending the write never happened.
+            return event
         return None
     return event
 
