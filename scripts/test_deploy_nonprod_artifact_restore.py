@@ -128,6 +128,8 @@ def fixture(tmp_path: Path):
     })
     candidate_override = {"services": {name: {"image": "sha256:" + str(i) * 64, "pull_policy": "never"}
         for i, name in enumerate(("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler"), 1)}}
+    candidate_override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": candidate_override["services"]["operator-bff"]["image"]}
     encoded = lambda value: (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     override = baseline / "candidate-images.override.json"
     override.write_bytes(encoded(candidate_override)); override.chmod(0o600)

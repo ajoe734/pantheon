@@ -27,6 +27,35 @@ GUARD_ID = "12345678-1234-4234-8234-123456789abc"
 VIEWER_SECRET = "fixture-viewer-'quoted'-$never-expanded\nline-two"
 
 
+@pytest.mark.parametrize("entrypoint", [
+    "capture_dev_artifact_baseline.py", "dev_remote_guarded_exec.py",
+    "dev_candidate_receipt.py", "fetch_dev_artifact_evidence.py",
+    "dev_artifact_compensation_evidence.py", "dev_release_artifact_driver.py",
+])
+@pytest.mark.parametrize("safe_path", ["ordinary", "environment", "flag"])
+def test_direct_artifact_entrypoints_import_siblings_without_cwd_shadowing(
+    tmp_path, entrypoint, safe_path,
+):
+    # Reproduce the real sanitized workflow, not pytest's package import path.
+    for module in ("dev_release_artifacts", "capture_dev_artifact_baseline", "dev_candidate_receipt"):
+        (tmp_path / f"{module}.py").write_text(
+            "raise RuntimeError('untrusted-cwd-module-was-imported')\n"
+        )
+    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    env.pop("PYTHONSAFEPATH", None)
+    if safe_path == "environment":
+        env["PYTHONSAFEPATH"] = "1"
+    command = [sys.executable, "-B"]
+    if safe_path == "flag":
+        command.append("-P")
+    command.extend([str(c.ROOT / "scripts" / entrypoint), "--help"])
+    result = subprocess.run(command, cwd=tmp_path, env=env, text=True,
+                            capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
+    assert "untrusted-cwd-module" not in result.stdout + result.stderr
+
+
 def environment(identity=None):
     result = {"TARGET_ENV": "dev", "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
               "DEV_VM": "pantheon-dev-deploy", "DEV_ZONE": "asia-east1-b",
