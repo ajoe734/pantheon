@@ -54,6 +54,21 @@ BASELINE_CONFIG = {
     "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
     "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
 }
+DIAGNOSTIC_STAGES = frozenset({
+    "initialize",
+    "capture_frontend",
+    "capture_public_posture",
+    "capture_protected_owners",
+    "capture_baseline_config",
+    "capture_storage",
+    "capture_images",
+    "capture_stability",
+    "capture_publish",
+    "load_baseline",
+    "seal_candidate",
+    "restore_baseline",
+    "verify_readback",
+})
 # Filtering happens inside Docker's formatter. No unrelated entry crosses the
 # subprocess boundary; unexpected values in these two fields fail without echo.
 CONFIG_FORMAT = '{{range .Config.Env}}{{$v := split . "="}}{{if or ' + ' '.join(
@@ -207,6 +222,21 @@ def _identity(args):
     except (ValueError, KeyError):
         raise a.ArtifactError("missing guard context ID") from None
     return {name: getattr(args, name) for name in IDENTITY_FIELDS}, lease_id
+
+
+def _set_diagnostic_stage(args, stage):
+    if stage not in DIAGNOSTIC_STAGES:
+        raise RuntimeError("invalid internal diagnostic stage")
+    args._diagnostic_stage = stage
+
+
+def failure_payload(error, stage):
+    """Return a fixed, non-secret failure record for a known driver stage."""
+
+    payload = {"status": "error", "error_code": "DEV_ARTIFACT_DRIVER_FAILED"}
+    if isinstance(error, a.ArtifactError) and stage in DIAGNOSTIC_STAGES:
+        payload["failure_stage"] = stage
+    return payload
 
 
 def _publish(path, raw):
@@ -591,23 +621,31 @@ def _load(args, identity, manifest_path):
 
 
 def run(args, *, docker, http, barrier):
+    _set_diagnostic_stage(args, "initialize")
     identity, lease_id = _identity(args)
     barrier.check()
     folder, images, manifest_path = _layout(args)
     compose = _compose_bytes(args.compose_file, args.candidate_backend_sha if args.command == "seal-candidate" else args.previous_backend_sha)
     compose_digest = hashlib.sha256(compose).hexdigest()
     if args.command == "capture":
+        _set_diagnostic_stage(args, "capture_frontend")
         frontend = a.capture_frontend(release_store=args.fe_release_store, live_link=args.fe_live_link,
                                       frontend_sha=args.previous_frontend_sha, backend_sha=args.previous_backend_sha)
+        _set_diagnostic_stage(args, "capture_public_posture")
         _public(args, frontend, http, barrier)
+        _set_diagnostic_stage(args, "capture_protected_owners")
         owners_before = _owners(docker)
+        _set_diagnostic_stage(args, "capture_baseline_config")
         config_before = _config(docker)
+        _set_diagnostic_stage(args, "capture_storage")
         for directory in (folder, images):
             directory.mkdir(mode=0o700, exist_ok=True)
             a._directory(directory, private=True)
         if manifest_path.exists():
             raise a.ArtifactError("capture already sealed; use verify with its trusted digest")
+        _set_diagnostic_stage(args, "capture_images")
         bundle = a.capture_images(docker=docker, archive_root=images, source_sha=args.previous_backend_sha, check_lease=barrier.check)
+        _set_diagnostic_stage(args, "capture_stability")
         a.verify_frontend(frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         if _owners(docker) != owners_before: raise a.ArtifactError("protected owners changed during capture")
         if _config(docker) != config_before: raise a.ArtifactError("baseline configuration changed during capture")
@@ -619,14 +657,17 @@ def run(args, *, docker, http, barrier):
                  "image_bundle": bundle, "image_bundle_sha256": hashlib.sha256(bundle_raw).hexdigest(),
                  "frontend": frontend, "compose_sha256": compose_digest, "baseline_nonsecret_config": config_before}
         raw = a.manifest_bytes(outer)
+        _set_diagnostic_stage(args, "capture_publish")
         barrier.check()
         _publish(folder / "baseline-compose.yml", compose)
         _publish(manifest_path, raw)
         barrier.check()
         return {"manifest_path": str(manifest_path), "manifest_sha256": hashlib.sha256(raw).hexdigest(), "manifest": outer}
 
+    _set_diagnostic_stage(args, "load_baseline")
     outer, raw = _load(args, identity, manifest_path)
     if args.command == "seal-candidate":
+        _set_diagnostic_stage(args, "seal_candidate")
         return _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, http, barrier)
     if compose_digest != outer["compose_sha256"] or a._file_digest(folder / "baseline-compose.yml")[0] != compose_digest:
         raise a.ArtifactError("baseline Compose bytes mismatch")
@@ -637,6 +678,7 @@ def run(args, *, docker, http, barrier):
     a.verify_frontend(outer["frontend"], release_store=args.fe_release_store, live_link=args.fe_live_link)
     owners_before = _owners(docker)
     if args.command == "restore":
+        _set_diagnostic_stage(args, "restore_baseline")
         if os.environ.get("PANTHEON_BFF_AUTH_STUB") != "false" or os.environ.get("PANTHEON_BFF_AUTH_MODE") != "strict":
             raise a.ArtifactError("restore caller did not inject the approved strict runtime environment")
         candidate = _load_candidate(args, identity, folder)
@@ -649,6 +691,7 @@ def run(args, *, docker, http, barrier):
         a.restore_images(bundle_raw, expected_sha256=outer["image_bundle_sha256"], expected_source_sha=args.previous_backend_sha,
                          archive_root=images, compose_files=((args.compose_file, compose_digest),), docker=cas,
                          check_lease=cas.check, environment="dev")
+    _set_diagnostic_stage(args, "verify_readback")
     observed = {service: a._current(docker, service)["image_id"] for service in a.SERVICES}
     if any(observed[service] != outer["image_bundle"]["services"][service]["image_id"] for service in a.SERVICES):
         raise a.ArtifactError("image readback differs despite any equal source SHA")
@@ -689,12 +732,24 @@ def parse_args(argv=None):
 def main(argv=None):
     def cancelled(_signal, _frame): raise a.ArtifactError("guarded operation cancelled")
     for name in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(name, cancelled)
+    args = None
     try:
         args = parse_args(argv)
+        _set_diagnostic_stage(args, "initialize")
         barrier = CancellationBarrier(args.guard_channel_fd, max_silence=args.guard_max_silence_seconds)
         result = run(args, docker=GuardedDocker(barrier), http=HTTP(), barrier=barrier)
         print(json.dumps(result, sort_keys=True))
         return 0
+    except a.ArtifactError as error:
+        # Do not hash or otherwise encode exception text: even a hash can be an
+        # offline oracle for a short secret.  Only a fixed internal stage label
+        # may cross the remote boundary.
+        print(
+            json.dumps(failure_payload(error, getattr(args, "_diagnostic_stage", None)),
+                       sort_keys=True, separators=(",", ":")),
+            file=__import__("sys").stderr,
+        )
+        return 75
     except Exception:
         # HTTP bodies, credentials and subprocess stderr are not diagnostics.
         print('{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED"}', file=__import__("sys").stderr)

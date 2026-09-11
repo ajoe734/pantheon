@@ -309,3 +309,43 @@ def test_failed_transport_never_uploads_raw_diagnostics_or_creates_seal(fake_tra
     assert public.out == ""
     assert not list(evidence.iterdir())
     assert not output.exists()
+
+
+def test_failed_transport_exposes_only_validated_fixed_contract_stage(fake_transport, capsys):
+    _, _, _, _, evidence, output, transport = fake_transport
+    stage = "capture_public_posture"
+    transport.write_text(
+        "import sys\n"
+        "print('fixture-secret-stdout')\n"
+        "print('fixture-secret-stderr',file=sys.stderr)\n"
+        "print('{\\\"status\\\":\\\"error\\\",\\\"error_code\\\":\\\"DEV_ARTIFACT_DRIVER_FAILED\\\",\\\"failure_stage\\\":\\\"" + stage + "\\\"}',file=sys.stderr)\n"
+        "raise SystemExit(75)\n"
+    )
+    assert c.main() == 75
+    public = capsys.readouterr()
+    assert "fixture-secret" not in public.out + public.err
+    assert public.out == ""
+    assert (
+        "[dev-artifact-capture] remote contract failure "
+        "code=DEV_ARTIFACT_DRIVER_FAILED "
+        f"stage={stage}"
+    ) in public.err
+    assert not list(evidence.iterdir())
+    assert not output.exists()
+
+
+def test_remote_failure_summary_rejects_untrusted_or_malformed_records():
+    stage = "capture_frontend"
+    accepted = (
+        b'{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED",'
+        b'"failure_stage":"' + stage.encode() + b'"}\n'
+    )
+    assert c.remote_failure_summary(accepted) is not None
+    for raw in (
+        b'{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED"}\n',
+        b'{"status":"error","error_code":"OTHER","failure_stage":"' + stage.encode() + b'"}\n',
+        b'{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED","failure_stage":"' + stage.encode() + b'","secret":"no"}\n',
+        b'{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED","failure_stage":"untrusted"}\n',
+        b'fixture-private-token\n',
+    ):
+        assert c.remote_failure_summary(raw) is None
