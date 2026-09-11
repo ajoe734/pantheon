@@ -23,6 +23,11 @@ import time
 import uuid
 from typing import Callable
 
+# Direct workflow execution uses PYTHONSAFEPATH=1; import only this
+# accepted script's siblings, not the caller's working directory.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 if __package__:
     from . import dev_release_artifacts as artifacts
 else:
