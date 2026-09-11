@@ -1,0 +1,191 @@
+{
+  "task_id": "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+  "recorded_at": "2026-09-10T07:15:49.191987+00:00",
+  "status": "blocked_admission_audit_seam",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "base_sha": "c99c090b405d95bff5fa0c426d249ea75ffcc9eb",
+  "source_head_sha": "c837f8e882bf8ec7290411fcda93a30afb562c3d",
+  "evidence_head_binding": "Evidence-only anchor follows source_head_sha. Exact evidence commit is the PR head; no completed migration or review approval is claimed.",
+  "branch": "task/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001/evidence.json"
+  ],
+  "source_scope": [
+    {
+      "path": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "sha256": "8a52054a0fb320ba21f4e0312bbbf00ac6a3a9962d53ebe7407657df0e1253ec",
+      "bff_main_imports": [
+        {
+          "line": 13,
+          "source": "import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [
+        {
+          "line": 11,
+          "source": "sys.path.insert(0, os.path.dirname(__file__))"
+        }
+      ]
+    },
+    {
+      "path": "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "sha256": "538c621610e326bf0375db6acf236cd031dc258cad6c2fb57e3e20887712e7aa",
+      "bff_main_imports": [
+        {
+          "line": 15,
+          "source": "from services.control_plane.bff import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    {
+      "path": "services/control-plane/bff/test_cw03_committee_board_contract.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "sha256": "d2bcf02e693f829b05001340b98de53ec599f5fea5829c3552d7b46625f80aa6",
+      "bff_main_imports": [
+        {
+          "line": 16,
+          "source": "from services.control_plane.bff import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    {
+      "path": "services/control-plane/bff/test_pkt009_governance_audit_contract.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "sha256": "b1c8e20ab94ef69750a8138dff024d1cb5e0d436217854b0b4ec25f259d4c16e",
+      "bff_main_imports": [
+        {
+          "line": 11,
+          "source": "import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [
+        {
+          "line": 9,
+          "source": "sys.path.insert(0, os.path.dirname(__file__))"
+        }
+      ]
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_evochain_005_governance_writes.py",
+      "disposition": "blocked_unmodified_main_importer",
+      "sha256": "0ec2f52b2041a0553e8962f21879894126987eebec863d0846dc15586016704f",
+      "bff_main_imports": [
+        {
+          "line": 184,
+          "source": "import main as bff_main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": [
+        {
+          "line": 10,
+          "source": "sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))"
+        }
+      ]
+    }
+  ],
+  "resolved_previous_blocker": "The shared-foundation corrective is done. The four corrected shared support paths exist; the earlier missing-fixture blocker is resolved.",
+  "blocker": {
+    "type": "external",
+    "waiting_for": "Human/Ops",
+    "declared_dependencies_satisfied": true,
+    "discrepancy": "The test-only six-file grant cannot preserve AUD-002 admission/audit assertions through the available main-free router defaults. Real command admission and command-derived audit projection are still injected from main.py. Replacing these paths with test-owned implementations or deleting the assertions would weaken behavior coverage.",
+    "affected_source": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+    "original_assertions": [
+      "data.receipt_id",
+      "foundation.audit_action.action_type == bff.command.accepted",
+      "foundation.audit_action.target_ref == Runtime:runtime-042",
+      "foundation.audit_action.payload_checksum",
+      "one command-derived audit event",
+      "audit_action.trace_id"
+    ],
+    "production_bindings": [
+      "main.py:7233 _submit_final_command_admission; main.py:1061 _build_foundation_command_context",
+      "main.py:22146 create_action_command_router(submit_command_admission=_submit_final_command_admission)",
+      "main.py:22254 create_incident_router(submit_sem_command=_sem_command_response, list_governance_audit_events=_list_governance_audit_events)",
+      "command_adapters/router.py:395 fallback action record omits foundation.audit_action and data.receipt_id",
+      "command_adapters/service.py:591 sem_command_response foundation contains only idempotency_record"
+    ],
+    "required_action": "Governed contract revision must identify an existing behavior-equivalent admission/audit seam or authorize a prerequisite to extract it with instance-scoped command/read dependencies. Preserve original AUD-002 assertions. Redispatch B06 after that seam is available.",
+    "implementation_stopped": true,
+    "safe_remaining_seams": [
+      "Governance router factory for PKT009 and committee reads",
+      "evolution.service.evolution_journal_rollback_item for EVOCHAIN rollback projection"
+    ]
+  },
+  "verification": {
+    "environment": {
+      "provision_command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-b06-dependencies/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_status": 0,
+      "dependency_install": "uv venv /tmp/bff-b06-dependencies && uv pip install --python /tmp/bff-b06-dependencies/bin/python -r services/control-plane/bff/requirements.txt -r requirements.txt"
+    },
+    "focused_tests": {
+      "command": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_pkt009_governance_audit_contract.py services/control-plane/bff/tests/test_evochain_005_governance_writes.py",
+      "exit_status": 2,
+      "result": "2 collection errors in 13.88s; no passing migration claim",
+      "errors": [
+        "test_aud_002_audit_action_write_engine.py imports top-level command_queue: attempted relative import with no known parent package",
+        "tests/test_evochain_005_governance_writes.py imports top-level command_executor: attempted relative import with no known parent package"
+      ]
+    },
+    "architecture_tests": {
+      "command": "timeout 30 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py --disable-warnings",
+      "exit_status": 0,
+      "result": "8 passed in 2.06s",
+      "limitation": "Catalog gate passes for existing inventory; does not prove this child migrated."
+    },
+    "seam_probe": {
+      "command": "timeout 30 .venv-pantheon/bin/python /tmp/bff-b06-seam-probe.py",
+      "reproduction": "Write script below to /tmp/bff-b06-seam-probe.py; run the command from the provisioned checkout.",
+      "script": "import json\nimport sys\nimport tempfile\nfrom pathlib import Path\nfrom types import SimpleNamespace\n\nfrom fastapi import FastAPI\nfrom fastapi.testclient import TestClient\nfrom services.control_plane.bff.command_adapters.router import create_action_command_router\nfrom services.control_plane.bff.command_adapters.service import CommandAdapterService\nfrom services.control_plane.bff.command_queue import CommandStore\nfrom services.control_plane.bff.incidents.router import create_incident_router\nfrom services.control_plane.bff.ports import create_in_memory_read_surface_ports\n\nwith tempfile.TemporaryDirectory() as td:\n    store = CommandStore(str(Path(td) / 'commands.jsonl'))\n    reads = create_in_memory_read_surface_ports()\n    identity = SimpleNamespace(operator_id='op-aud-002', roles={'operator'})\n    extract = lambda *args, **kwargs: identity\n    service = CommandAdapterService(command_store=store, read_surface=reads, extract_identity=extract)\n    app = FastAPI()\n    app.include_router(create_action_command_router(command_store=store, extract_identity=extract))\n    app.include_router(create_incident_router(\n        command_store=store, read_surface=reads, extract_identity=extract,\n        submit_sem_command=service.sem_command_response,\n    ))\n    with TestClient(app) as client:\n        response = client.post('/bff/actions/runtime/runtime-042/pause',\n            headers={'Idempotency-Key': 'aud-002-runtime-pause'}, json={'reason': 'AUD-002 runtime audit write proof'})\n        record = store._get_all_commands()[0]\n        runtime = {'status': response.status_code, 'receipt_id_present': 'receipt_id' in response.json()['data'],\n            'foundation_audit_action_present': 'audit_action' in record['foundation']}\n        response = client.post('/bff/audit/export', headers={'Idempotency-Key': 'aud-002-export'},\n            json={'target_type': 'Deployment', 'reason': 'AUD-002 export command'})\n        record = store._get_all_commands()[-1]\n        export = {'status': response.status_code, 'receipt_id_present': 'receipt_id' in response.json()['data'],\n            'foundation_audit_action_present': 'audit_action' in record['foundation']}\n        audit = client.get('/bff/audit', params={'target_type': 'AuditExport'})\n        export['audit_status'] = audit.status_code\n        export['audit_event_count'] = len(audit.json()['data'])\n    result = {'runtime_action': runtime, 'audit_export': export,\n        'bff_main_loaded': 'services.control_plane.bff.main' in sys.modules or 'main' in sys.modules}\n    print(json.dumps(result, indent=2))\n    assert runtime == {'status': 202, 'receipt_id_present': False, 'foundation_audit_action_present': False}\n    assert export == {'status': 202, 'receipt_id_present': False, 'foundation_audit_action_present': False,\n        'audit_status': 200, 'audit_event_count': 0}\n    assert result['bff_main_loaded'] is False\n",
+      "exit_status": 0,
+      "observed": {
+        "runtime_action": {
+          "status": 202,
+          "receipt_id_present": false,
+          "foundation_audit_action_present": false
+        },
+        "audit_export": {
+          "status": 202,
+          "receipt_id_present": false,
+          "foundation_audit_action_present": false,
+          "audit_status": 200,
+          "audit_event_count": 0
+        },
+        "bff_main_loaded": false
+      },
+      "meaning": "Probe success confirms the mismatch, not task acceptance. Only temporary command files are written; no network command execution."
+    },
+    "exact_scope_inventory": {
+      "command": "python3 /tmp/bff-b06-record-evidence.py",
+      "method": "ast.parse/ast.walk exact partition paths: Import, ImportFrom, all dynamic import calls, subprocess calls and sys.path insert/append; governance-service main is distinct from BFF main.",
+      "exit_status": 0,
+      "source_file_count": 5,
+      "bff_main_importer_count": 5,
+      "dynamic_import_call_count": 0,
+      "subprocess_call_count": 0,
+      "pairwise_disjoint": true
+    }
+  },
+  "delivery": {
+    "existing_pr": 5747,
+    "review": "not_requested_incomplete_scope",
+    "merge_commit": null,
+    "complete": false,
+    "publication_scope": "Evidence-only blocker update; do not merge as completed B06 migration."
+  }
+}
