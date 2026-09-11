@@ -7,7 +7,7 @@
   "reviewer": "Antigravity2",
   "target_repo": "pantheon",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+  "base_sha": "2030696b4b7e793d24824e65682bf683db0f9ed9",
   "scope": {
     "batch_source_files": [
       "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py",
