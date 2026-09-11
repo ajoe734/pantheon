@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import copy
 import json
-import os
-from pathlib import Path
-import sys
 from contextlib import contextmanager
+from pathlib import Path
 
+from typing import Any, Optional
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 APPROVER_AUTH = "Bearer test-approver:approver"
@@ -32,10 +32,9 @@ def _seeded_client(
     evolution_decisions: dict | None = None,
     approval_decisions: dict | None = None,
 ):
-    original_store = bff_main.read_store
     evos = dict(_SEED_EVOLUTION_DECISIONS if evolution_decisions is None else evolution_decisions)
     apprs = dict(_SEED_APPROVAL_DECISIONS if approval_decisions is None else approval_decisions)
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    ports = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "evolution_decisions": evos,
         },
@@ -43,11 +42,10 @@ def _seeded_client(
             "approval_decisions": list(apprs.values()) if isinstance(apprs, dict) else list(apprs),
         },
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+    app.include_router(create_governance_router(read_surface=ports))
+    client = TestClient(app)
+    yield client
 
 
 def test_mutation_review_projection_contract() -> None:
@@ -133,6 +131,7 @@ def test_mutation_review_review_action_allowed_when_proposed() -> None:
         assert payload["allowedActions"]["canReviewMutation"] is True
         assert payload["allowedActions"]["canApproveMutation"] is False
         assert payload["allowedActions"]["canExecuteMutation"] is False
+        assert payload["decision_state"] == "proposed"
 
 
 def test_mutation_review_execute_action_allowed_when_approved() -> None:
@@ -173,6 +172,7 @@ def test_mutation_review_execute_action_allowed_when_approved() -> None:
         assert payload["allowedActions"]["canExecuteMutation"] is True
         assert payload["allowedActions"]["canApproveMutation"] is False
         assert payload["allowedActions"]["canReviewMutation"] is False
+        assert payload["decision_state"] == "approved"
 
 
 def test_mutation_review_returns_503_when_required_evidence_is_unavailable() -> None:
