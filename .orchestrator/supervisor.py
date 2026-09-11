@@ -9015,9 +9015,116 @@ def owner_worker_canonical_handoff_status(
     )
 
 
+def _coerce_observed_worker_task_generation(raw_gen: Any) -> int | None:
+    """Parse a worker-observed task generation without ever guessing one.
+
+    Returns ``None`` for anything that is not an unambiguous positive
+    integer generation value: absent, boolean, non-numeric, non-finite,
+    fractional, or non-positive. Only ``int`` or an integral ``float`` is
+    accepted -- ``2.9`` must not silently truncate to ``2``. A missing or
+    malformed observation must never fall back to the task's current
+    generation and must never raise -- callers treat ``None`` as "no valid
+    observed binding" and refuse the write entirely.
+    """
+    if raw_gen is None or isinstance(raw_gen, bool):
+        return None
+    if isinstance(raw_gen, int):
+        generation = raw_gen
+    elif isinstance(raw_gen, float):
+        if not math.isfinite(raw_gen) or not raw_gen.is_integer():
+            return None
+        generation = int(raw_gen)
+    else:
+        try:
+            generation = int(raw_gen)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return generation if generation >= 1 else None
+
+
+def observed_worker_task_generation(worker: dict[str, Any]) -> int | None:
+    """Extract the exact task generation this worker was dispatched against.
+
+    Reads every copy that is actually present -- the worker's own
+    ``task_generation`` field, its dispatch ``request_snapshot``, and that
+    snapshot's ``metadata`` -- and requires all present copies to parse to
+    the same valid positive generation. A malformed container shape (for
+    example a non-mapping ``request_snapshot`` or ``metadata``) is rejected
+    without calling ``.get`` on it, and any present-but-invalid or
+    conflicting copy makes the whole observation invalid. Returns ``None``
+    (never a substitute value) whenever no consistent valid generation can
+    be established.
+    """
+    request_snapshot = worker.get("request_snapshot")
+    if request_snapshot is not None and not isinstance(request_snapshot, Mapping):
+        return None
+
+    metadata = request_snapshot.get("metadata") if isinstance(request_snapshot, Mapping) else None
+    if metadata is not None and not isinstance(metadata, Mapping):
+        return None
+
+    observations: list[int | None] = []
+    if "task_generation" in worker:
+        observations.append(_coerce_observed_worker_task_generation(worker.get("task_generation")))
+    if isinstance(request_snapshot, Mapping) and "task_generation" in request_snapshot:
+        observations.append(_coerce_observed_worker_task_generation(request_snapshot.get("task_generation")))
+    if isinstance(metadata, Mapping) and "task_generation" in metadata:
+        observations.append(_coerce_observed_worker_task_generation(metadata.get("task_generation")))
+
+    if not observations or any(value is None for value in observations):
+        return None
+    if len(set(observations)) != 1:
+        return None
+    return observations[0]
+
+
+def _blocked_hold_already_committed(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    waiting_for: str,
+    blocker_kind: str,
+) -> bool:
+    """Distinguish a precommit ``write_status`` failure from an already
+    durable hold whose derived-file projection merely failed to land.
+
+    ``write_status`` journals the authoritative commit before it projects
+    ``status_file``; a projection failure (for example an unwritable or
+    replaced status path) still leaves the journal committed. ``load_status``
+    reads directly from that journal, independent of the failed projection,
+    so re-reading it after a ``write_status`` exception tells the caller
+    whether the transition it built already became durable. Returning
+    ``None`` for an already-committed hold would make the caller believe no
+    write occurred while the task is, in fact, already blocked -- exactly
+    the storage-failure/no-partial-write violation this guards against.
+    """
+    try:
+        reloaded = load_status(config)
+    except Exception:
+        return False
+    reloaded_task = task_index_from_status(config, reloaded).get(task_id)
+    if not reloaded_task:
+        return False
+    if str(reloaded_task.get("status") or "") != "blocked":
+        return False
+    if str(reloaded_task.get("waiting_for") or "") != waiting_for:
+        return False
+    return any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == blocker_kind
+        for blocker in (reloaded.get("blockers") or [])
+    )
+
+
 def _prepare_missing_handoff_blocker_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
+    *,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
     """Record an actionable missing-handoff blocker for a prepared-but-unhanded task."""
     if not config.get("paths", {}).get("status_file"):
@@ -9030,16 +9137,60 @@ def _prepare_missing_handoff_blocker_locked(
     if not owner_agent:
         return None
 
-    status = load_status(config)
+    try:
+        status = load_status(config)
+    except Exception:
+        return None
     if status.get("status_activity_outbox") not in (None, {}, []):
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
         return None
-    if str(task.get("owner") or "").strip() != owner_agent:
+    if task.get("review_decision_intent") not in (None, {}, []):
+        return None
+    if task_has_active_worker_recovery(task):
+        return None
+    if str(task.get("waiting_for") or "").strip():
         return None
 
-    reviewer = str(task.get("reviewer") or "").strip()
+    old_owner = str(task.get("owner") or "").strip()
+    old_reviewer = str(task.get("reviewer") or "").strip()
+    old_status = str(task.get("status") or "").strip()
+    old_generation = task_generation(task)
+
+    if expected_generation is None:
+        expected_generation = observed_worker_task_generation(worker)
+    if expected_generation is None:
+        # No valid observed worker binding: refuse the write rather than
+        # substitute the task's current generation or skip the fence.
+        return None
+
+    if expected_owner is not None:
+        if (
+            old_owner != expected_owner.strip()
+            and canonical_agent_name(config, old_owner) != canonical_agent_name(config, expected_owner)
+        ):
+            return None
+    if (
+        old_owner != owner_agent
+        and canonical_agent_name(config, old_owner) != canonical_agent_name(config, owner_agent)
+    ):
+        return None
+
+    if expected_reviewer is not None:
+        if (
+            old_reviewer != expected_reviewer.strip()
+            and canonical_agent_name(config, old_reviewer) != canonical_agent_name(config, expected_reviewer)
+        ):
+            return None
+
+    if expected_status is not None and old_status != expected_status.strip():
+        return None
+
+    if expected_generation is not None and old_generation != expected_generation:
+        return None
+
+    reviewer = old_reviewer
     waiting_for = reviewer or owner_agent
     if any(
         str(blocker.get("task_id") or "") == task_id
@@ -9061,7 +9212,7 @@ def _prepare_missing_handoff_blocker_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             task.get("status"),
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -9098,20 +9249,52 @@ def _prepare_missing_handoff_blocker_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_status(config, status, source="supervisor-missing-handoff")
+    try:
+        write_status(config, status, source="supervisor-missing-handoff")
+    except Exception:
+        if _blocked_hold_already_committed(
+            config,
+            task_id=task_id,
+            waiting_for=waiting_for,
+            blocker_kind="missing_handoff",
+        ):
+            # The journal commit already landed the blocked hold; only the
+            # derived-file projection failed. Report the event as committed
+            # so the caller still runs sync_status_pipeline to repair
+            # projection, instead of pretending the write never happened.
+            return event
+        return None
     return event
 
 
-def record_missing_handoff_blocker(config: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
+def record_missing_handoff_blocker(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
+) -> dict[str, Any] | None:
     if not config.get("paths", {}).get("status_file"):
         return None
-    status_path = config_path(config, "status_file")
+    try:
+        status_path = config_path(config, "status_file")
+    except Exception:
+        return None
     with canonical_task_state_lock_file(
         status_path,
         shared=False,
         nonblocking=False,
     ):
-        event = _prepare_missing_handoff_blocker_locked(config, worker)
+        event = _prepare_missing_handoff_blocker_locked(
+            config,
+            worker,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
+        )
     if event is None:
         return None
     sync_status_pipeline(config)
@@ -9134,6 +9317,10 @@ def _prepare_failure_loop_blocker_locked(
     *,
     task_id: str,
     message: str,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
     """Record an actionable failure-loop hold for a task that keeps failing
     even after ``reconcile_failure_loops`` already tried reassigning it.
@@ -9147,14 +9334,44 @@ def _prepare_failure_loop_blocker_locked(
     if not config.get("paths", {}).get("status_file"):
         return None
 
-    status = load_status(config)
+    try:
+        status = load_status(config)
+    except Exception:
+        return None
     if status.get("status_activity_outbox") not in (None, {}, []):
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
         return None
+    if task.get("review_decision_intent") not in (None, {}, []):
+        return None
+    if task_has_active_worker_recovery(task):
+        return None
     if str(task.get("waiting_for") or "").strip():
         return None
+
+    old_owner = str(task.get("owner") or "").strip()
+    old_reviewer = str(task.get("reviewer") or "").strip()
+    old_status = str(task.get("status") or "").strip()
+    old_generation = task_generation(task)
+
+    if expected_owner is not None:
+        if (
+            old_owner != expected_owner.strip()
+            and canonical_agent_name(config, old_owner) != canonical_agent_name(config, expected_owner)
+        ):
+            return None
+    if expected_reviewer is not None:
+        if (
+            old_reviewer != expected_reviewer.strip()
+            and canonical_agent_name(config, old_reviewer) != canonical_agent_name(config, expected_reviewer)
+        ):
+            return None
+    if expected_status is not None and old_status != expected_status.strip():
+        return None
+    if expected_generation is not None and old_generation != expected_generation:
+        return None
+
     if any(
         str(blocker.get("task_id") or "") == task_id
         and str(blocker.get("status") or "") == "open"
@@ -9167,7 +9384,7 @@ def _prepare_failure_loop_blocker_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             task.get("status"),
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -9198,7 +9415,21 @@ def _prepare_failure_loop_blocker_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_status(config, status, source="supervisor-failure-loop")
+    try:
+        write_status(config, status, source="supervisor-failure-loop")
+    except Exception:
+        if _blocked_hold_already_committed(
+            config,
+            task_id=task_id,
+            waiting_for="Human/Ops",
+            blocker_kind="failure_loop",
+        ):
+            # The journal commit already landed the blocked hold; only the
+            # derived-file projection failed. Report the event as committed
+            # so the caller still runs sync_status_pipeline to repair
+            # projection, instead of pretending the write never happened.
+            return event
+        return None
     return event
 
 
@@ -9207,15 +9438,30 @@ def record_failure_loop_blocker(
     *,
     task_id: str,
     message: str,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
-    status_path = config_path(config, "status_file")
+    if not config.get("paths", {}).get("status_file"):
+        return None
+    try:
+        status_path = config_path(config, "status_file")
+    except Exception:
+        return None
     with canonical_task_state_lock_file(
         status_path,
         shared=False,
         nonblocking=False,
     ):
         event = _prepare_failure_loop_blocker_locked(
-            config, task_id=task_id, message=message
+            config,
+            task_id=task_id,
+            message=message,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
         )
     if event is None:
         return None
@@ -10778,7 +11024,18 @@ def reconcile_failure_loops(config: dict[str, Any], state: dict[str, Any]) -> bo
                 f"under {owner} even after {attempts_used} auto-reassignment(s); "
                 f"holding for Human/Ops investigation."
             )
-            if record_failure_loop_blocker(config, task_id=task_id, message=message) is not None:
+            if (
+                record_failure_loop_blocker(
+                    config,
+                    task_id=task_id,
+                    message=message,
+                    expected_owner=owner,
+                    expected_reviewer=reviewer,
+                    expected_status=str(task.get("status") or ""),
+                    expected_generation=task_generation(task),
+                )
+                is not None
+            ):
                 watch.pop(task_id, None)
                 changed = True
 
@@ -11441,7 +11698,19 @@ def poll_worker_completion_stage(
             # handoff, not a provider failure. Reassigning or redispatching the
             # same owner reproduces the same clean exit every tick; surface the
             # concrete blocker instead and take the task out of owner dispatch.
-            blocker = record_missing_handoff_blocker(config, worker)
+            # Never substitute the task's current generation here: only an
+            # exact, validly-typed generation observed on this worker's own
+            # dispatch record may fence the write. record_missing_handoff_blocker
+            # refuses (no write) when this is None.
+            worker_task_gen = observed_worker_task_generation(worker)
+            blocker = record_missing_handoff_blocker(
+                config,
+                worker,
+                expected_owner=str(task.get("owner") or "") if task else None,
+                expected_reviewer=str(task.get("reviewer") or "") if task else None,
+                expected_status=str(task.get("status") or "") if task else None,
+                expected_generation=worker_task_gen,
+            )
             if blocker is not None:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
@@ -11462,6 +11731,7 @@ def poll_worker_completion_stage(
                     config, state, worker, "failed", MISSING_HANDOFF_EXIT_REASON
                 )
                 return {"changed": True, "stop": True}
+            return {"changed": False, "stop": True}
         generic_failure_summary = summarize_failure_reason(
             GENERIC_WORKER_EXIT_REASON,
             str(worker.get("provider") or worker.get("agent_id") or ""),
