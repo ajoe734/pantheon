@@ -32,13 +32,30 @@ def create_performance_router(
     workshop_store: Optional[Any] = None,
     suggestion_store: Optional[PerformanceSuggestionStore] = None,
 ) -> APIRouter:
+    """Mount the performance routes.
+
+    ``get_trade_journey_store`` resolves the configured Postgres trade journey
+    projection reader (``page_journeys``/``page_timeline``); the name is kept for
+    the existing Agora router wiring.
+    """
     router = APIRouter(tags=["agora-performance"])
     store = suggestion_store or PerformanceSuggestionStore()
     service = PerformanceProjectionService(
         suggestion_store=store,
-        get_trade_journey_store=get_trade_journey_store,
+        get_projection_reader=get_trade_journey_store,
         utc_now=utc_now,
     )
+    _LIVE_ROLES = {"operator", "reviewer", "approver", "admin"}
+
+    def require_live_environment_role(scope: Any, environment: str) -> None:
+        if environment == "live" and not _LIVE_ROLES.intersection(scope.roles):
+            raise bff_error(
+                403,
+                "FORBIDDEN",
+                "Live performance identities require operator-level access",
+                "live_performance_identity_role_denied",
+                precondition_failed="role_check",
+            )
 
     def resolve_scope(
         authorization: Optional[str], tenant_id: Optional[str], *, write: bool = False
@@ -86,16 +103,7 @@ def create_performance_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> dict[str, Any]:
         scope = resolve_scope(authorization, x_tenant_id)
-        if environment == "live" and not {
-            "operator", "reviewer", "approver", "admin"
-        }.intersection(scope.roles):
-            raise bff_error(
-                403,
-                "FORBIDDEN",
-                "Live performance identities require operator-level access",
-                "live_performance_identity_role_denied",
-                precondition_failed="role_check",
-            )
+        require_live_environment_role(scope, environment)
         projection = service.project(
             tenant_id=scope.tenant_id,
             owner_user_id=scope.user_id,
@@ -179,6 +187,9 @@ def create_performance_router(
     )
     def get_agora_performance_attribution_by_strategy(
         period: Literal["latest", "7d", "30d", "all"] = Query(default="latest"),
+        environment: Literal["paper", "broker_sandbox", "canary", "live"] = Query(
+            default="paper"
+        ),
         page_size: int = Query(default=50, ge=1, le=200),
         pageSize: Optional[int] = Query(default=None, ge=1, le=200),
         page_token: Optional[str] = Query(default=None),
@@ -190,9 +201,11 @@ def create_performance_router(
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         scope = resolve_scope(authorization, x_tenant_id or x_pantheon_tenant)
+        require_live_environment_role(scope, environment)
         envelope = service.project_attribution(
             tenant_id=scope.tenant_id,
             owner_user_id=scope.user_id,
+            environment=environment,
             period=period,
             page_size=pageSize if pageSize is not None else page_size,
             page_token=pageToken or page_token,
