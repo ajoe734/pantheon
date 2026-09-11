@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
+  "scope": "development tooling: exact worker-wrapper identity predicate for supervisor capacity scanning and launch recovery",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "review_status": "pending_independent_exact_head_review",
+  "source": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
+    "base_sha": "2030696b4b7e793d24824e65682bf683db0f9ed9",
+    "implementation_commit": "8332856f937e134ce31d2c7c1ab1674ce1c1afbd",
+    "implementation_tree": "5d41285ea19c1c179f3ee4699063b58eb1f11860",
+    "files_sha256": {
+      ".orchestrator/supervisor.py": "3fcbdade0b28c2321451742c0865be405fe7d397a264f1ea410fb02d01990c06",
+      ".orchestrator/test_supervisor.py": "8e61afc9e8e8383fc0250db237a21fbd219d9934ecd3aed6970ae7c00bb099ce",
+      "docs/operations/supervisor-worker-identity.md": "070a37b9a4753e7c34bcdafcbf677e865299e9a3d81fc68df8b8f83173b13048"
+    },
+    "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
+  },
+  "dispatch_runtime": {
+    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+    "source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"
+  },
+  "problem": {
+    "summary": "Two independent live audits found the scheduler identified a live worker_runner.py wrapper with a raw substring search (\"worker_runner.py\" in the whole /proc/<pid>/cmdline text) instead of an exact argv-path predicate. Provider CLI and bwrap sandbox descendants inherit the wake prompt as an argv value; when that inherited prompt text itself contains the literal string \"worker_runner.py\" (for example while quoting the task's own artifact path), the substring search matched the descendant too. The scheduler reported six active processes while the watchdog's exact predicate (supervisor_watchdog.cmdline_is_worker_runner) correctly identified three real wrappers, so the global planner could believe genuinely free capacity slots were occupied."
+  },
+  "fix": {
+    "predicate": "supervisor.py now imports and reuses supervisor_watchdog.cmdline_is_worker_runner at both identity call sites instead of keeping separate, drifted substring checks. The predicate NUL-splits /proc/<pid>/cmdline into real argv tokens and requires one of the first four tokens to be path-shaped (starts with '/' or '.', no whitespace), have Path(token).name == 'worker_runner.py', and have '.orchestrator' in Path(token).parts.",
+    "call_sites": [
+      "supervisor.scan_live_worker_pids_by_agent (fleet capacity / live-worker count reconciliation)",
+      "supervisor._proc_worker_runner_launch_marker (launch-recovery identity evidence)"
+    ],
+    "unchanged": [
+      "zombie/dead-process filtering (Z/X state check, pid_is_alive gate)",
+      "task/agent environment binding (ORCH_TASK_ID, ORCH_AGENT_ID, ORCH_PROVIDER)",
+      "PID start-tick / process-generation checks and fail-closed RuntimeError on unreadable evidence",
+      "run-id handling, lease behavior, promotion-drain behavior",
+      "max_concurrent_workers capacity ceiling (not raised; this task corrects identity, not the limit)"
+    ]
+  },
+  "validation": [
+    {
+      "name": "supervisor",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "336 passed, 78 subtests passed in 97.36s (0:01:37)"
+    },
+    {
+      "name": "supervisor_watchdog",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "64 passed, 20 subtests passed in 7.29s"
+    },
+    {
+      "name": "focused_identity_regressions",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"worker_pid or worker_runner_launch_marker or zombie\"",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "3 passed, 333 deselected in 1.81s"
+    }
+  ],
+  "acceptance_evidence": {
+    "exact_predicate": "Both scan_live_worker_pids_by_agent and _proc_worker_runner_launch_marker now call the single shared supervisor_watchdog.cmdline_is_worker_runner predicate; no separate substring check remains at either site.",
+    "focused_regressions": "test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants proves a real .orchestrator/worker_runner.py wrapper is counted exactly once (live_pids == {\"Codex\": [900001]}) while a bwrap descendant and a provider-CLI descendant that both carry the same wake prompt (one quoting the literal text 'worker_runner.py') are excluded. test_proc_worker_runner_launch_marker_rejects_prompt_text_match proves the same rejection for launch-recovery identity even when ORCH_TASK_ID/ORCH_AGENT_ID match.",
+    "preserved_behavior": "Pre-existing test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch continues to pass unchanged; full .orchestrator/test_supervisor.py and .orchestrator/test_supervisor_watchdog.py suites pass with no regressions.",
+    "documentation": "docs/operations/supervisor-worker-identity.md records the identity rule, its procfs boundaries, the relation between watchdog and scheduler counts, and a read-only runtime health/count observation.",
+    "delivery_scope": "Only the declared tooling files (.orchestrator/supervisor.py, .orchestrator/test_supervisor.py, docs/operations/supervisor-worker-identity.md, this evidence file) changed; no product runtime behavior, hosted deployment, external branch protection, task state, or unrelated worktree was touched."
+  },
+  "live_activation": {
+    "runtime_activation_is_separate": true,
+    "note": "This task changes only the source tree. Runtime activation on a live supervisor is a separate governed promotion (scripts/promote_supervisor_runtime.py) after this source merges into dev.",
+    "observed_running_supervisor_source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+    "observed_note": "The running supervisor's dispatch_runtime.source_sha predates this fix, so its live process image still runs the prior substring-based scan until an operator promotes the merged commit."
+  }
+}
