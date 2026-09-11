@@ -27,7 +27,7 @@ repeats its parent's argv.
 
 ## The fix
 
-Both call sites that need worker-wrapper identity now share the watchdog's
+Both call sites that need worker-wrapper identity now share the tightened
 `cmdline_is_worker_runner(parts)` predicate instead of each keeping — and
 subtly diverging from — their own substring check:
 
@@ -36,23 +36,33 @@ subtly diverging from — their own substring check:
 - `supervisor._proc_worker_runner_launch_marker` (launch-recovery identity
   evidence used to recover an intent's exact live PID/start-tick generation)
 
-`cmdline_is_worker_runner` NUL-splits `/proc/<pid>/cmdline` into its real argv
-tokens (never the space-joined display string) and requires that one of the
-first four tokens:
+`cmdline_is_worker_runner` binds directly to the actual interpreter or script
+invocation, rather than searching anywhere in argv:
 
-- is path-shaped (starts with `/` or `.`) and contains no whitespace, and
-- has `Path(token).name == "worker_runner.py"`, and
-- has `.orchestrator` among `Path(token).parts`.
+- **Direct script execution**: `argv[0]` is itself path-shaped, contains no
+  whitespace, has `Path(argv[0]).name == "worker_runner.py"`, and has
+  `.orchestrator` among `Path(argv[0]).parts`.
+- **Python interpreter execution**: `argv[0]` is a recognized Python or PyPy
+  executable (e.g. `python3`, `python`, `python3.12`), followed by optional
+  Python interpreter flags (e.g. `-u`, `-B`, `-W ignore`; excluding `-c` and
+  `-m`), and the first positional script argument is path-shaped, contains no
+  whitespace, has `Path(token).name == "worker_runner.py"`, and has
+  `.orchestrator` among `Path(token).parts`.
 
-A wake-prompt argument that merely contains the same text fails this
-predicate: it is not path-shaped (it contains spaces) and it is not one of the
-process's own path tokens. A `bwrap` sandbox child or a provider CLI process
-fails it for the same reason — their own argv[0..3] path tokens name the
-sandbox or CLI binary, not `worker_runner.py` under `.orchestrator`.
+This explicitly rejects:
+- Provider CLI arguments (e.g. `['claude', '--prompt', '/repo/.orchestrator/worker_runner.py', 'wake']`),
+  where `argv[0]` is the provider binary rather than Python.
+- Bubblewrap sandbox bind operands (e.g. `['/usr/bin/bwrap', '--ro-bind', '/repo/.orchestrator/worker_runner.py', '/tmp/ref.py', 'wake']`),
+  where `argv[0]` is the sandbox binary and the script path is a mount argument.
+- Non-script Python modes (`-c` inline code, `-m` module execution).
+- Python executions of other scripts where `worker_runner.py` is an argument
+  to that other script.
+- Prompt text arguments merely quoting `worker_runner.py` as free text.
 
 Both capacity scanning and launch-recovery identification now use this one
-predicate, so a real wrapper is counted/identified exactly once and a
-descendant that carries the same wake prompt is excluded from both.
+predicate, so a real wrapper is counted/identified exactly once and descendants
+that carry the same wake prompt or pass the script as an argument/operand are
+excluded from both.
 
 ## What did not change
 
@@ -72,28 +82,116 @@ descendant that carries the same wake prompt is excluded from both.
 
 Runtime activation is a separate governed promotion after source merge
 (`scripts/promote_supervisor_runtime.py`); this task changes only the source
-tree. As a read-only observation ahead of that promotion: the currently
-running supervisor is on `dispatch_runtime.command_root`/`source_sha`
-`ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58` (see `evidence.json`), which
-predates this fix and therefore still runs the substring-based scan in its
-live process image until an operator runs the promotion script against the
-merged commit.
+tree.
+
+A reproducible read-only observation was captured from the live coordination
+root via:
+
+```bash
+python3 -c '
+import json, datetime
+from pathlib import Path
+
+status_root = Path("/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root")
+state_path = status_root / ".orchestrator/worker-runtime/state.json"
+watchdog_path = status_root / ".orchestrator/watchdog-state.json"
+
+with open(state_path, encoding="utf-8") as f:
+    state = json.load(f)
+with open(watchdog_path, encoding="utf-8") as f:
+    watchdog = json.load(f)
+
+sup = state.get("supervisor", {})
+cmd_health = sup.get("command_runtime_health", {})
+runtime_info = cmd_health.get("runtime", {})
+res = watchdog.get("last_decision", {}).get("resource", {})
+
+observation = {
+    "observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "read_only_health": {
+        "supervisor_pid": sup.get("pid"),
+        "lifecycle": sup.get("lifecycle"),
+        "last_heartbeat_at": sup.get("last_heartbeat_at"),
+        "last_successful_loop_at": sup.get("last_successful_loop_at"),
+        "command_runtime_healthy": cmd_health.get("healthy"),
+        "command_runtime_reason": cmd_health.get("reason"),
+    },
+    "counts": {
+        "watchdog_active_worker_count": res.get("active_worker_count"),
+        "watchdog_active_worker_live_count": res.get("active_worker_live_count"),
+        "watchdog_active_worker_runtime_state_count": res.get("active_worker_runtime_state_count"),
+        "watchdog_active_worker_count_source": res.get("active_worker_count_source"),
+        "scheduler_state_workers_count": len(state.get("workers", {})),
+    },
+    "identities": {
+        "supervisor_pid": sup.get("pid"),
+        "command_root": runtime_info.get("command_root"),
+        "source_sha": runtime_info.get("source_sha"),
+        "remote": runtime_info.get("remote"),
+        "base_ref": runtime_info.get("base_ref"),
+        "coordination_status_root": str(status_root),
+    },
+    "scheduler_workers": {
+        k: {"status": v.get("status"), "task_id": v.get("task_id")}
+        for k, v in state.get("workers", {}).items()
+    }
+}
+print(json.dumps(observation, indent=2))
+'
+```
+
+Observation result:
+- `observed_at`: `2026-09-11T00:37:19.408170+00:00`
+- `read_only_health`:
+  - `supervisor_pid`: 3325540
+  - `lifecycle`: `"running"`
+  - `last_heartbeat_at`: `"2026-09-11T00:37:14Z"`
+  - `last_successful_loop_at`: `"2026-09-11T00:37:09Z"`
+  - `command_runtime_healthy`: `true`
+  - `command_runtime_reason`: `"healthy"`
+- `counts`:
+  - `watchdog_active_worker_count`: 2
+  - `watchdog_active_worker_live_count`: 2
+  - `watchdog_active_worker_runtime_state_count`: 2
+  - `watchdog_active_worker_count_source`: `"live_worker_runner_pid_identity"`
+  - `scheduler_state_workers_count`: 2
+- `identities`:
+  - `supervisor_pid`: 3325540
+  - `command_root`: `"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"`
+  - `source_sha`: `"ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"`
+  - `remote`: `"ajoe734/pantheon"`
+  - `base_ref`: `"origin/dev"`
+  - `coordination_status_root`: `"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root"`
+- `scheduler_workers`:
+  - `codex-20260911T002857Z-7b970405` (task: `OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001`, status: `running`)
+  - `antigravity-20260911T003028Z-b6c4b2ee` (task: `OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001`, status: `running`)
+
+The running supervisor's source SHA predates this fix, so its live process
+image still runs the prior scan until an operator promotes the merged commit.
 
 ## Verification
 
 Focused procfs regressions (`.orchestrator/test_supervisor.py`):
 
-- `test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants` —
-  a real `.orchestrator/worker_runner.py` wrapper is counted once; a `bwrap`
-  descendant and a provider CLI descendant that both carry the same wake
-  prompt (one of them quoting the literal text `worker_runner.py`) are
-  excluded.
-- `test_proc_worker_runner_launch_marker_rejects_prompt_text_match` — a
-  descendant whose prompt argument contains the literal text
-  `worker_runner.py`, with matching `ORCH_TASK_ID`/`ORCH_AGENT_ID` in its
-  environment, is still rejected as launch-recovery evidence because its argv
-  is not path-shaped.
-- `test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch`
-  (pre-existing) continues to pass unchanged.
+- `test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants`:
+  verifies capacity scanning counts genuine wrapper executions (standard
+  python, python with `-u`, direct script invocation) while strictly rejecting
+  provider arguments (`claude --prompt <path>`), sandbox bind operands
+  (`bwrap --ro-bind <path>`), free-text prompt references, python running
+  unrelated scripts, python `-c` code execution, and non-orchestrator scripts.
+- `test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands`:
+  verifies recovery rejects provider arguments (`claude --prompt <path>`),
+  sandbox bind operands (`bwrap --ro-bind <path>`), and free text references
+  even when matching `ORCH_TASK_ID`/`ORCH_AGENT_ID`/`ORCH_RUN_ID` are present in
+  the process environment.
+- `test_proc_worker_runner_launch_marker_recovers_real_wrapper`:
+  positive recovery coverage verifying a real python worker wrapper is
+  correctly identified, its start ticks validated against the prepared intent,
+  and a complete recovery marker dictionary returned.
+- `test_cmdline_is_worker_runner_predicate_supported_and_rejected`:
+  direct unit testing of the exact predicate against supported and rejected
+  argv token structures.
+- `test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch`:
+  pre-existing zombie filtering continues to pass unchanged.
 
 Full suite: see `evidence.json` for exact commands and results.

@@ -13328,37 +13328,42 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         """Only the real .orchestrator/worker_runner.py wrapper counts toward capacity.
 
         Two independent live audits found the prior scan used a raw substring
-        search over the whole cmdline blob: a provider CLI descendant or a
-        bwrap sandbox child inherits the wake prompt as an argv value, and
-        that prompt text can itself contain "worker_runner.py" (for example
-        while quoting the task's own artifact path), which inflated the
-        scheduler's live-worker count relative to the watchdog's exact
-        argv-path predicate (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        search over the whole cmdline blob. Provider CLI descendants and bwrap
+        sandbox children inherit the wake prompt and can carry the path
+        worker_runner.py in their arguments (e.g. --prompt or --ro-bind). The
+        predicate binds to the actual interpreter or direct script invocation,
+        rejecting provider arguments and sandbox bind operands
+        (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
         """
         mock_proc_dir = Path(self.temp.name) / "mock_proc_identity"
         mock_proc_dir.mkdir(parents=True)
 
-        # 1) The real one-per-worker wrapper: argv path token is exactly
-        #    .orchestrator/worker_runner.py.
+        # 1) Real wrapper executed via python3:
+        #    argv = ["python3", "/repo/.orchestrator/worker_runner.py", "auto worker 身分是：Codex"]
         real_wrapper_dir = mock_proc_dir / "900001"
         real_wrapper_dir.mkdir()
         (real_wrapper_dir / "cmdline").write_bytes(
-            b"python3\x00.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+            b"python3\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
         )
 
-        # 2) A bwrap sandbox descendant carrying the same wake prompt, but its
-        #    own argv path is the sandbox binary, not worker_runner.py.
-        bwrap_child_dir = mock_proc_dir / "900002"
-        bwrap_child_dir.mkdir()
-        (bwrap_child_dir / "cmdline").write_bytes(
-            b"/usr/bin/bwrap\x00--ro-bind\x00/\x00/\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        # 2) Provider CLI descendant whose --prompt argument is the path:
+        #    argv = ["claude", "--prompt", "/repo/.orchestrator/worker_runner.py", "auto worker 身分是：Codex"]
+        provider_arg_dir = mock_proc_dir / "900002"
+        provider_arg_dir.mkdir()
+        (provider_arg_dir / "cmdline").write_bytes(
+            b"claude\x00--prompt\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
         )
 
-        # 3) A provider CLI descendant whose prompt argument merely quotes the
-        #    literal text "worker_runner.py" (e.g. an artifact path in the
-        #    task brief). It is not a path-shaped argv token, so the exact
-        #    predicate must reject it even though the raw substring is present.
-        provider_cli_dir = mock_proc_dir / "900003"
+        # 3) Bubblewrap sandbox descendant with --ro-bind operand:
+        #    argv = ["/usr/bin/bwrap", "--ro-bind", "/repo/.orchestrator/worker_runner.py", "/tmp/ref.py", "auto worker 身分是：Codex"]
+        bwrap_operand_dir = mock_proc_dir / "900003"
+        bwrap_operand_dir.mkdir()
+        (bwrap_operand_dir / "cmdline").write_bytes(
+            b"/usr/bin/bwrap\x00--ro-bind\x00/repo/.orchestrator/worker_runner.py\x00/tmp/ref.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 4) Provider CLI descendant whose prompt merely quotes worker_runner.py in free text:
+        provider_cli_dir = mock_proc_dir / "900004"
         provider_cli_dir.mkdir()
         (provider_cli_dir / "cmdline").write_bytes(
             b"claude\x00--prompt\x00"
@@ -13366,35 +13371,191 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             b"see .orchestrator/worker_runner.py for details\x00"
         )
 
+        # 5) Python running an unrelated script with worker_runner as an option:
+        other_script_dir = mock_proc_dir / "900005"
+        other_script_dir.mkdir()
+        (other_script_dir / "cmdline").write_bytes(
+            b"python3\x00/repo/other.py\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 6) Python running inline code (-c):
+        python_c_dir = mock_proc_dir / "900006"
+        python_c_dir.mkdir()
+        (python_c_dir / "cmdline").write_bytes(
+            b"python3\x00-c\x00import sys\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 7) Python running a non-.orchestrator worker_runner:
+        non_orch_dir = mock_proc_dir / "900007"
+        non_orch_dir.mkdir()
+        (non_orch_dir / "cmdline").write_bytes(
+            b"python3\x00scripts/dev/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 8) Supported variant: python3 with flags (-u):
+        real_flags_dir = mock_proc_dir / "900008"
+        real_flags_dir.mkdir()
+        (real_flags_dir / "cmdline").write_bytes(
+            b"/usr/bin/python3\x00-u\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 9) Supported variant: direct script execution:
+        direct_exec_dir = mock_proc_dir / "900009"
+        direct_exec_dir.mkdir()
+        (direct_exec_dir / "cmdline").write_bytes(
+            b"/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
         live_pids = supervisor.scan_live_worker_pids_by_agent(proc_root=mock_proc_dir)
 
-        self.assertEqual(live_pids, {"Codex": [900001]})
+        # Only 900001, 900008, 900009 are real wrapper invocations
+        self.assertEqual(live_pids, {"Codex": [900001, 900008, 900009]})
 
-    def test_proc_worker_runner_launch_marker_rejects_prompt_text_match(self) -> None:
-        """Recovery identity must use the same exact argv-path predicate.
+    def test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands(self) -> None:
+        """Recovery identity rejects provider arguments and bwrap bind operands.
 
-        A descendant process whose prompt argument merely contains the text
-        "worker_runner.py" must not be treated as the launched wrapper during
-        recovery, even though ORCH_TASK_ID/ORCH_AGENT_ID happen to be present
-        in its environment.
+        Even with matching ORCH_TASK_ID/ORCH_AGENT_ID/ORCH_RUN_ID, descendant
+        processes (claude, bwrap) are rejected because they are not actual
+        interpreter or script invocations of worker_runner.py.
         """
-        mock_entry_dir = Path(self.temp.name) / "mock_proc_launch_marker" / "900004"
-        mock_entry_dir.mkdir(parents=True)
-        (mock_entry_dir / "cmdline").write_bytes(
-            b"claude\x00--prompt\x00see .orchestrator/worker_runner.py for details\x00"
+        base_dir = Path(self.temp.name) / "mock_proc_recovery_neg"
+
+        # 1) claude --prompt /repo/.orchestrator/worker_runner.py
+        claude_dir = base_dir / "900021"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "cmdline").write_bytes(
+            b"claude\x00--prompt\x00/repo/.orchestrator/worker_runner.py\x00wake\x00"
         )
-        (mock_entry_dir / "environ").write_bytes(
+        (claude_dir / "environ").write_bytes(
             b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
             b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
         )
 
-        result = supervisor._proc_worker_runner_launch_marker(
-            {},
-            {"task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001", "agent_id": "Codex"},
-            mock_entry_dir,
+        # 2) /usr/bin/bwrap --ro-bind /repo/.orchestrator/worker_runner.py /tmp/ref.py
+        bwrap_dir = base_dir / "900022"
+        bwrap_dir.mkdir(parents=True)
+        (bwrap_dir / "cmdline").write_bytes(
+            b"/usr/bin/bwrap\x00--ro-bind\x00/repo/.orchestrator/worker_runner.py\x00/tmp/ref.py\x00wake\x00"
+        )
+        (bwrap_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
         )
 
-        self.assertIsNone(result)
+        # 3) Free text prompt quoting worker_runner.py
+        prompt_dir = base_dir / "900023"
+        prompt_dir.mkdir(parents=True)
+        (prompt_dir / "cmdline").write_bytes(
+            b"claude\x00--prompt\x00see .orchestrator/worker_runner.py for details\x00"
+        )
+        (prompt_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
+        )
+
+        intent = {
+            "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
+            "agent_id": "Codex",
+            "prepared_boottime_ticks": 1000,
+        }
+
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, claude_dir))
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, bwrap_dir))
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, prompt_dir))
+
+    def test_proc_worker_runner_launch_marker_recovers_real_wrapper(self) -> None:
+        """Positive recovery coverage: real python wrapper is identified and recovered."""
+        wrapper_dir = Path(self.temp.name) / "mock_proc_recovery_pos" / "900030"
+        wrapper_dir.mkdir(parents=True)
+        (wrapper_dir / "cmdline").write_bytes(
+            b"python3\x00/repo/.orchestrator/worker_runner.py\x00--run-id\x00run-rec-001\x00--\x00echo\x00hi\x00"
+        )
+        (wrapper_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-rec-001\x00"
+        )
+
+        intent = {
+            "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
+            "agent_id": "Codex",
+            "prepared_boottime_ticks": 1000,
+        }
+
+        with mock.patch.object(
+            supervisor, "worker_pid_start_ticks", return_value=1000
+        ), mock.patch.object(
+            supervisor, "_proc_process_started_epoch_seconds", return_value=1700000000.0
+        ), mock.patch.object(
+            supervisor, "_runtime_launch_prepared_epoch_seconds", return_value=1700000000.0
+        ):
+            recovered = supervisor._proc_worker_runner_launch_marker({}, intent, wrapper_dir)
+
+        self.assertIsNotNone(recovered)
+        marker, status_path = recovered
+        self.assertEqual(marker["run_id"], "run-rec-001")
+        self.assertEqual(marker["task_id"], "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001")
+        self.assertEqual(marker["agent"], "Codex")
+        self.assertEqual(marker["pid"], 900030)
+        self.assertEqual(marker["pid_start_ticks"], 1000)
+        self.assertEqual(marker["launch_recovered_from"], "proc_environ")
+        self.assertEqual(marker["command"], ["echo", "hi"])
+
+    def test_cmdline_is_worker_runner_predicate_supported_and_rejected(self) -> None:
+        """Unit test for the exact cmdline_is_worker_runner predicate."""
+        # Supported invocations
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "/repo/.orchestrator/worker_runner.py", "wake"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["/usr/bin/python3", "-u", "/repo/.orchestrator/worker_runner.py", "--run-id", "r1"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            [".venv-pantheon/bin/python3", ".orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["/repo/.orchestrator/worker_runner.py", "--run-id", "r1"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "--", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3.12", "-B", "-u", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-W", "ignore", "/repo/.orchestrator/worker_runner.py"]
+        ))
+
+        # Rejected provider arguments, bind operands, and non-script modes
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["claude", "--prompt", "/repo/.orchestrator/worker_runner.py", "wake"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["/usr/bin/bwrap", "--ro-bind", "/repo/.orchestrator/worker_runner.py", "/tmp/ref.py", "wake"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["node", "/bin/codex", "prompt mentions /repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "/repo/other.py", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-c", "import sys", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-m", "pytest", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "scripts/dev/worker_runner.py", "wake"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["claude", "--prompt", "auto worker 身分是：Codex see .orchestrator/worker_runner.py for details"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner([]))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(["python3"]))
 
 
 class SupervisorLaunchAuthorityTests(unittest.TestCase):

@@ -4253,13 +4253,83 @@ def worker_process_activity_advanced(previous: dict[str, Any] | None, current: d
     )
 
 
+_PYTHON_EXE_RE = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|pypy(?:\d+(?:\.\d+)?)?)$")
+
+
+def _is_worker_runner_script_token(token: str) -> bool:
+    """Return True if token is an exact path to worker_runner.py under .orchestrator."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    path = Path(token)
+    return path.name == "worker_runner.py" and ".orchestrator" in path.parts
+
+
+def _is_python_executable_token(token: str) -> bool:
+    """Return True if token is a python/pypy interpreter executable name or path."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    name = Path(token).name
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return bool(_PYTHON_EXE_RE.match(name))
+
+
+def cmdline_is_worker_runner(parts: list[str]) -> bool:
+    """Match only the real one-per-worker wrapper, never CLI children or prompts.
+
+    Binds the shared predicate to the actual interpreter/script invocation:
+    - Direct script execution: argv[0] is worker_runner.py under .orchestrator
+    - Python interpreter execution: argv[0] is Python, followed by optional
+      interpreter flags (excluding -c/-m), and the first positional script
+      argument is worker_runner.py under .orchestrator.
+
+    Rejects:
+    - Provider CLI descendants whose arguments contain worker_runner.py (e.g.
+      ['claude', '--prompt', '/repo/.orchestrator/worker_runner.py', 'wake'])
+    - Sandbox shims whose bind operands contain worker_runner.py (e.g.
+      ['/usr/bin/bwrap', '--ro-bind', '/repo/.orchestrator/worker_runner.py', '/tmp/ref.py', 'wake'])
+    - Non-script python modes (-c code, -m module)
+    - Unrelated scripts executed by python where worker_runner.py is a downstream option
+    """
+    if not parts:
+        return False
+
+    # 1. Direct script execution: argv[0] is the worker_runner script itself
+    if _is_worker_runner_script_token(parts[0]):
+        return True
+
+    # 2. Python interpreter execution: argv[0] is python, first positional arg is worker_runner
+    if _is_python_executable_token(parts[0]):
+        idx = 1
+        while idx < len(parts):
+            arg = parts[idx]
+            if arg == "--":
+                idx += 1
+                break
+            if arg.startswith("-"):
+                # -c and -m execute inline code or module, not a script file
+                if arg in ("-c", "-m") or arg.startswith(("-c", "-m")):
+                    return False
+                # Option taking a separate argument token
+                if arg in ("-W", "-X"):
+                    idx += 2
+                    continue
+                # Single-dash flags like -u, -B, -E, -s, etc.
+                idx += 1
+                continue
+            break
+
+        if idx < len(parts) and _is_worker_runner_script_token(parts[idx]):
+            return True
+
+    return False
+
+
 # Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
 # scan /proc to recover the truth when state["workers"] bookkeeping drifts.
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
 def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
     """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
-    from supervisor_watchdog import cmdline_is_worker_runner
-
     root = proc_root if proc_root is not None else Path("/proc")
     result: dict[str, list[int]] = {}
     try:
@@ -4307,9 +4377,8 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         # boundary: provider descendants inherit the wake prompt as an argv
         # value and can carry the same "worker_runner.py" text, so the scan
         # must instead require an exact argv path token whose basename is
-        # worker_runner.py under an .orchestrator directory, matching the
-        # watchdog's cmdline_is_worker_runner predicate exactly
-        # (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        # worker_runner.py under an .orchestrator directory, bound to the actual
+        # interpreter or script invocation (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
         argv_parts = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\x00") if part]
         if not cmdline_is_worker_runner(argv_parts):
             continue
@@ -7002,8 +7071,6 @@ def _proc_worker_runner_launch_marker(
     recovery process-generation evidence even when the runner has not yet
     published its first atomic JSON marker.
     """
-
-    from supervisor_watchdog import cmdline_is_worker_runner
 
     raw_cmdline = (entry / "cmdline").read_bytes()
     if not raw_cmdline:
