@@ -126,7 +126,7 @@
 
 - **Evolution**：program POST/PATCH 向 read-store 呼叫不存在的 write 方法；正式 program owner 能力缺失，不應繼續污染 ReadSurfacePorts。現役 FE 狀態為 `draft/active/paused/under_review/completed/retired`，另有獨立 run state；撤回前版三狀態簡化方案。
 - **Jobs**：實際查得至少六類 job/run 來源（Research worker jobs、Research orchestrator runs、Trainer preview jobs、Source-ingest runs/jobs、Policy-learning jobs、OpenClaw workflow jobs）。各有原本 owner，不能預設 gateway 是一切 Job 的 owner，亦不可擅刪未實作動作。
-- **去重與保留**：既有下游 corrective（`BFF-ROUTER-USECASE-CORRECTIVE-001`、`DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001`、`JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001`、`BFF-READ-OWNER-WIRING-CORRECTIVE-001`、`LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001`、`SIMPLIFY-BFF-RESIDUAL-001`、`DEV502-FIX-001`、`DEV502-OBSERVE-001`）均正式明列責任界線，保留原任務未交付部分，不准重做相同修復。
+- **去重與保留**：既有下游 corrective（`BFF-ROUTER-USECASE-CORRECTIVE-001`、`DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001`、`JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001`、`BFF-READ-OWNER-WIRING-CORRECTIVE-001`、`LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001`、`SIMPLIFY-BFF-RESIDUAL-001`、`DEV502-FIX-001`、`DEV502-OBSERVE-001`）均正式明列責任界線，精確保留原任務未交付之具體義務：包括 `JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001` 之真 DecisionJournal runtime durability/config/bootstrap/readback（非本輪單一 resolver 所能涵蓋）、`LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001` 之真 12-loop receipt 鏈整合與 ground-truth 對照、`DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001` 之其餘 writers／配置與全域 durability 整合、`BFF-ROUTER-USECASE-CORRECTIVE-001` 之未涵蓋 route-usecase 抽離與跨 domain 整合、`BFF-READ-OWNER-WIRING-CORRECTIVE-001` 之尚缺來源與跨 owner 讀回、`SIMPLIFY-BFF-RESIDUAL-001` 之剩餘結構／體積／import 回歸、以及 `DEV502-FIX-001`／`DEV502-OBSERVE-001` 之真 trace 所需其餘 failpath／觀測與驗收。恪守單一 owner 界線與相關 shared-writer 循序約束，不准重做已由上游交付之相同修復（詳見 04 第 4 節去重與保留責任矩陣）。
 
 ---
 

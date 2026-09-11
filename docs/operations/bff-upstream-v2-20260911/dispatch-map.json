@@ -28,7 +28,8 @@
         "backend_task": "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
         "frontend_task": "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
       }
-    ]
+    ],
+    "assignment_authority_note": "Timestamped snapshot at 2026-09-11T03:23:20Z records approved baseline assignments (including U10B/U10B-FE assigned to Antigravity2, confirmed by canonical TaskStore show); live TaskStore remains assignment authority."
   },
   "writer_order": [
     "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
@@ -974,7 +975,7 @@
       "original_planning_package": "U10B",
       "target_repo": "pantheon",
       "title": "後端：Research/Jobs 真實 actions 與 FE 閉環",
-      "owner": "Antigravity",
+      "owner": "Antigravity2",
       "reviewer": "Codex",
       "canonical_status": "todo",
       "depends_on": [
@@ -1023,7 +1024,7 @@
       "original_planning_package": "U10B",
       "target_repo": "execute_plans",
       "title": "前端：Research/Jobs 真實 actions 與 FE 閉環",
-      "owner": "Antigravity",
+      "owner": "Antigravity2",
       "reviewer": "Codex",
       "canonical_status": "todo",
       "depends_on": [

@@ -62,7 +62,7 @@
     },
     {
       "path": "docs/operations/bff-upstream-v2-20260911/01_CURRENT_AUDIT.md",
-      "sha256": "ff39d1abdec1993d5417a2cbdda8d1e0717df9e2d073f9f811bda0cc46745f73"
+      "sha256": "2d97569af53ea765e04314add4e08b96c89c2e9fa712f8fb7804edf67bc11d64"
     },
     {
       "path": "docs/operations/bff-upstream-v2-20260911/02_RESEARCH_AND_DESIGN.md",
@@ -70,11 +70,11 @@
     },
     {
       "path": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
-      "sha256": "540eb9f22cb7d37f4dbd12cd6fd4cc88707285c2e15f20c1b7f33aadccdb7221"
+      "sha256": "5761f8be7b02d05fc31e9b30660193b5f6acd5b30238190485ee7c4170d41339"
     },
     {
       "path": "docs/operations/bff-upstream-v2-20260911/04_ORDERED_DELIVERY.md",
-      "sha256": "63647d212ef9dba85c1924174e7f2183380e50237a4a3597c8b1371636fdc235"
+      "sha256": "023e955ab170b23a70a8bf47deee2b58ac7cb9d83c3081d82d110b5f6d1cd540"
     },
     {
       "path": "docs/operations/bff-upstream-v2-20260911/05_EVIDENCE_AND_ACCEPTANCE.md",
@@ -82,7 +82,7 @@
     },
     {
       "path": "docs/operations/bff-upstream-v2-20260911/dispatch-map.json",
-      "sha256": "8394a2503af86b896847d9d49ffeac292cc1c1088e09706d21f759d1aa6e6f7f"
+      "sha256": "33992f3ed464fbe1df932b2060e95bf90bd142a180d14b355f98825969b07f89"
     }
   ],
   "path_base": "repository_root",

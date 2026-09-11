@@ -82,7 +82,23 @@ DOC
 
 ---
 
-## 4. 正式 Contract 工具能力與派工處置準則
+## 4. 舊任務如何去重，而不是全砍重建
+
+| 原任務 | 移到上游的同義務 | 原任務保留 |
+|---|---|---|
+| BFF-ROUTER-USECASE-CORRECTIVE-001 | U2/U4/U5/U10A中明列owner/seam | 未涵蓋route-usecase抽離與跨domain整合，引用已merge owner而不重建 |
+| DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 | U3 CommandStore、U8A program、U10A research中有界必要transaction | 其他writers／配置與全域durability整合；不得再平行實作已收斂的store/admission |
+| JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001 | U4 context resolver／typed visibility讀契約 | 真DecisionJournal runtime durability/config/bootstrap/readback，非本輪一個resolver就全完成 |
+| BFF-READ-OWNER-WIRING-CORRECTIVE-001 | 已於source包完成的DI／read owner binding | 尚缺來源與跨owner讀回，不造替代read owner |
+| LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001 | U3已交付的command receipt/audit projection | 真12-loop receipt鏈整合與ground-truth對照，不補假receipt |
+| SIMPLIFY-BFF-RESIDUAL-001 | 各U包同步刪除的main bodies／fallback／cache | 剩餘結構／體積／import回歸；已刪項映射完成證據，不再做一遍 |
+| DEV502-FIX-001／DEV502-OBSERVE-001 | 與U2/U3重疊的具體修復 | 依真trace需要的其餘failpath／觀測及驗收，不能憑「都是Persona」全部取消 |
+
+刪除／合併的是**重複scope及舊實作**，不是未證明無用就砍整個task、PR或產品能力。已完成的source/test/決策保存其identity與證據；若原任務所有義務真的都被完成，才走現有正式supersession/completion流程，不手改JSON。
+
+---
+
+## 5. 正式 Contract 工具能力與派工處置準則
 
 本輪派工完全基於現行已驗證之工具能力，**不需要亦不允許擴充排程或資料庫工具**：
 
@@ -93,7 +109,7 @@ DOC
 
 ---
 
-## 5. 逐包交付之標準作業程序（SOP）
+## 6. 逐包交付之標準作業程序（SOP）
 
 所有承接本計畫任務之 auto-worker 必須遵循以下完成定義：
 

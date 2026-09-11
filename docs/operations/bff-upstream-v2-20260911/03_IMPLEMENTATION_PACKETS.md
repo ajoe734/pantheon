@@ -141,7 +141,7 @@
 - **主要 Write-Set**: `BFF/main.py`、`BFF/core/app_factory.py`、`services/control-plane/bff/management_nl_command_idempotency.py`、`BFF/assistant/management_service.py`。
 - **實作重點**: ask 與 stream 共用單一 NL use case 及既有 store；先高風險拒絕與 tenant 檢查，再執行 retrieval/provider；未知結果保持 uncertain。
 - **同步清理**: 徹底刪除記憶體字典、雙寫 bridge 與切換 flag。保留對話 session/turn。
-- **驗收標準**: 重複請求回傳 409、重啟與中斷後 stream 不重送 provider，背景任務乾淨回收。
+- **驗收標準**: 保留同 scope/key/hash 之 durable terminal replay 與單一 provider 效果（one provider effect）；區分 payload/hash conflict 409 與 pending/uncertain 待恢復狀態；重啟與中斷後 stream 不重送 provider，背景任務乾淨回收；storage loss fail closed；跨 scope 拒絕。
 
 ---
 
@@ -207,6 +207,8 @@
 - **Target Repo**: `execute_plans` | **Owner**: Antigravity2 | **Reviewer**: Codex
 - **主要 Write-Set**: FE jobs/experiments 操作端、CommandCenter、StrategyDetail 等 15 檔。
 - **實作重點**: 逐 source 呈現真實動作結果與進度，未知外部結果不自動盲目重試。
+
+> **指派權威與快照備註**：U10B 與 U10B-FE 之指派統一依 2026-09-11 派工快照核定為 `Owner: Antigravity2` / `Reviewer: Codex`（當前 canonical TaskStore 之 BE show 亦確認指派為 `Antigravity2`）；本文件與 `dispatch-map.json` 使用同一份時間戳指派快照，正式運行時以 live TaskStore 為即時指派權威。
 
 ---
 
