@@ -1,0 +1,1071 @@
+{
+  "schema_version": 1,
+  "kind": "pantheon.v2_dispatch_map",
+  "generated_at": "2026-09-11T03:23:20.004357+00:00",
+  "source_manifest_reference": "operator-approved V2 execution manifest 2026-09-11",
+  "source_baselines": {
+    "pantheon": "897eaaf70ca3fe1330e986f47626f37c7d502abe",
+    "execute-plans": "d0f2186c12355cb4aa7179f14069c7e627b8e840"
+  },
+  "admission_policy": {
+    "rule": "Single-repository task admission contract (each task must have exactly one target repository).",
+    "original_planning_packages": 16,
+    "total_execution_tasks": 19,
+    "split_explanation": "U9, U8B, and U10B originally spanned both Pantheon backend and execute-plans frontend. Under repository admission rules, each was split into an ordered backend task followed by a frontend task.",
+    "splits": [
+      {
+        "original_unit": "U9",
+        "backend_task": "BFF-CANONICAL-COMMAND-API-RETIREMENT-001",
+        "frontend_task": "FE-CANONICAL-COMMAND-API-RETIREMENT-001"
+      },
+      {
+        "original_unit": "U8B",
+        "backend_task": "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001",
+        "frontend_task": "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001"
+      },
+      {
+        "original_unit": "U10B",
+        "backend_task": "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
+        "frontend_task": "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
+      }
+    ]
+  },
+  "writer_order": [
+    "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+    "BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001",
+    "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+    "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+    "BFF-CANONICAL-COMMAND-API-RETIREMENT-001",
+    "FE-CANONICAL-COMMAND-API-RETIREMENT-001",
+    "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001",
+    "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001",
+    "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001",
+    "BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001",
+    "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+    "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001",
+    "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001",
+    "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+    "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
+    "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
+  ],
+  "decision_tasks": [
+    "BFF-COMMAND-STORE-CONTRACT-DECISION-001",
+    "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001",
+    "BFF-RESEARCH-JOBS-CONTRACT-DECISION-001"
+  ],
+  "canonical_dependency_updates": [
+    {
+      "task_id": "FE-QUERY-CACHE-001",
+      "added_dependencies": [
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001"
+      ]
+    },
+    {
+      "task_id": "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001",
+      "added_dependencies": [
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001",
+        "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+        "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+      "added_dependencies": [
+        "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001",
+        "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+      "added_dependencies": [
+        "BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001",
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+      "added_dependencies": [
+        "BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001",
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001",
+        "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001",
+        "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+      "added_dependencies": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001",
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+      "added_dependencies": [
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+      "added_dependencies": [
+        "BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001",
+        "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+        "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001",
+        "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+        "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+      "added_dependencies": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001"
+      ]
+    },
+    {
+      "task_id": "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+      "added_dependencies": [
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001",
+        "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001",
+        "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+        "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
+      ]
+    }
+  ],
+  "authority_boundary": "Canonical task state, active leases, and scheduler queues reside exclusively in the governed TaskStore. This dispatch map is a committed reference contract for downstream workers; it is not a secondary queue or live scheduler.",
+  "tasks": [
+    {
+      "task_id": "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+      "unit": "DOC",
+      "original_planning_package": "DOC",
+      "target_repo": "pantheon",
+      "title": "交付已批准 V2 SA/SD 與單一 execution contract 文件",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "canonical_status": "in_progress",
+      "depends_on": [],
+      "summary": "Publish approved V2 planning and exact execution map so all downstream workers consume one committed plan. Input report dir /tmp/pantheon-upstream-plan-review-20260911; dispatch input /tmp/pantheon-v2-dispatch-20260911/execution-manifest.json. This is documentation delivery only. No product implementation.",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-UPSTREAM-V2-PLAN-DELIVERY-001/evidence.json",
+        "docs/operations/bff-upstream-v2-20260911/01_CURRENT_AUDIT.md",
+        "docs/operations/bff-upstream-v2-20260911/02_RESEARCH_AND_DESIGN.md",
+        "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
+        "docs/operations/bff-upstream-v2-20260911/04_ORDERED_DELIVERY.md",
+        "docs/operations/bff-upstream-v2-20260911/05_EVIDENCE_AND_ACCEPTANCE.md",
+        "docs/operations/bff-upstream-v2-20260911/INDEX.md",
+        "docs/operations/bff-upstream-v2-20260911/dispatch-map.json"
+      ],
+      "acceptance_criteria": [
+        "將 /tmp/pantheon-upstream-plan-review-20260911 的六份 V2 文件作批准來源，在 docs/operations/bff-upstream-v2-20260911 交付 portable 版本；維持所有單一 owner、同步清理、同檔排序與功能保留條款。不重新發明產品設計；只做必要格式/證據引用/已知工具流程更正。",
+        "派工映射來源是 /tmp/pantheon-v2-dispatch-20260911/execution-manifest.json；將16任務ID/責任/deps/精確source範圍摘要寫入 dispatch-map.json。Runtime task/queue/leases、私鑰、其他任務metadata不可複製公開，這份manifest不是第二queue。",
+        "本回採正式 local operator create-only/assign 與 dependency-contract，不是先簽半套 packet 再修改 immutable task_spec。舊 signed bridge provenance 是歷史来源，正式 dependency-contract 修訂保留原簽章並另留audit，不重寫原簽章。",
+        "immutable artifact guard 只換catalog SHA的流程不能改scope/overlap；本批已查到相關 rows 無此guard。明列本回不需要擴充工具。不把 source-functional task 說成 hosted execution authorization。",
+        "上游主要檔案本次完成 exact-tree 展開；不得保留 broken /tmp hyperlinks作唯一持久證據。以精確BE/FE blob引用與sanitize後的局部事實替換；歷史快照標時間，不把過期狀態說成current。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。"
+      ]
+    },
+    {
+      "task_id": "BFF-COMMAND-STORE-CONTRACT-DECISION-001",
+      "unit": "D-COMMAND",
+      "original_planning_package": "D-COMMAND",
+      "target_repo": "pantheon",
+      "title": "定案 CommandStore 單一交易 backend 與讀取/replay契約",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001"
+      ],
+      "summary": "Finish the bounded design prerequisite already identified in V2 section 02.9; no source changes and no second command owner.",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-COMMAND-STORE-CONTRACT-DECISION-001/evidence.json",
+        "docs/operations/bff-upstream-v2-20260911/decisions/command-store.md"
+      ],
+      "acceptance_criteria": [
+        "在既有 CommandStore 邊界查 actual deployment/process/storage 需求，固定一個 backend：同檔跨程序交易或現有 shared PostgreSQL primitive 取代。不得先補一套JSONL再平行做另一套fallback；不要新增manager/router locks。",
+        "固定 trusted tenant+actor+canonical namespace+key 的 replay identity，operation/target/params hash；合法 reviewer/admin依原tenant/role/visibility讀取。保留 token lifecycle/confirmation 原子性及既有executor。",
+        "提出source-qualified具體方案與U3 exact-file scope；如果選擇需未批准的跨主機/資料遷移/安全權限變更，清楚提出 operator 決策並保持 task 未完成，不以文件簽字偽造批准。普通保留既有語義的修復不需再次批准例行命令。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。"
+      ]
+    },
+    {
+      "task_id": "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001",
+      "unit": "D-EVOLUTION",
+      "original_planning_package": "D-EVOLUTION",
+      "target_repo": "pantheon",
+      "title": "定案 Evolution lifecycle/metadata/actions 單一產品契約",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001"
+      ],
+      "summary": "Resolve the existing V2 Evolution contract gaps; preserve features and use one program aggregate and existing execution engine. No production implementation in this decision task.",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001/evidence.json",
+        "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md"
+      ],
+      "acceptance_criteria": [
+        "以現役program六狀態和獨立run/experiment狀態逐action對齊BE/FE；保留review/approve/pause/resume/complete/retire與stop/freeze/constraints/formulas/mutation rules/promotion義務，不用三狀態縮功能。",
+        "PATCH明列metadata欄位；status不得繞過同一transition/approval。Approved-decision副作用沿用既有outbox/worker/terminal receipts；metadata CRUD不強造dispatch。",
+        "明列U8A資料與U8B真執行分層、exact owner/action/authorization/artifact/readback及exact paths。沒有原契約可證明且涉及新語意的地方提出 operator 決策，未決保持未完成；不准發明live/capital權限或默默刪操作。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。"
+      ]
+    },
+    {
+      "task_id": "BFF-RESEARCH-JOBS-CONTRACT-DECISION-001",
+      "unit": "D-JOBS",
+      "original_planning_package": "D-JOBS",
+      "target_repo": "pantheon",
+      "title": "定案 Research/Jobs來源、身份與動作契約",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001"
+      ],
+      "summary": "Qualify the six discovered job sources and per-action semantics using existing domain owners before U10A/U10B source work. No job engine implementation here.",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json",
+        "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md"
+      ],
+      "acceptance_criteria": [
+        "逐一調查6類候選job/run來源，固定Management實際納入source/type/tenant/ID矩陣；不自動全納入也不預設gateway-only。ResearchTicket、Experiment、OrchestratorRun、Job各自是不同aggregate。",
+        "對每個納入來源確認auth/tenant/持久性/真取消/attempt lineage/retry/archive/promote的既有owner契約及缺口，提供exact API/store/test paths與唯一驗收映射。不得新增scheduler/store/registry與原owner競爭。",
+        "U10A只完成qualified read/最小write；U10B完成保留action的actual owner effects。未知operation不fake success，但功能義務不得刪。新語義/資料保留/批准/live權限未有authority須提 operator 決策並保留未完成，不自簽批准。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。"
+      ]
+    },
+    {
+      "task_id": "BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001",
+      "unit": "U1",
+      "original_planning_package": "U1",
+      "target_repo": "pantheon",
+      "title": "HTTP/Auth 組裝與單一安全政策",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001"
+      ],
+      "summary": "V2 U1; retained owner: core/app_factory + existing auth policy/service + runtime_auth_inbound JWKS cache\nHTTP／Auth真正組裝與單一安全政策\n\n- 主要write-set：`BFF/main.py`、`core/app_factory.py`、`core/lifespan.py`、`auth/policy.py`、`auth/service.py`、`services/runtime_auth_inbound.py`。若確有需要，建議`BFF/core/http_security.py`、`core/errors.py`作無狀態責任模組，不另建app factory。\n- 沿用：既有AuthFacade、session/JWKS驗證owner、ProviderReadinessCache與lifespan。\n- 實作：搬出app／middleware／error bodies；真正將同一cache、provider probe、background refresh、shutdown與production組裝相連；JWKS prewarm使用原cache，無設定no-op、失敗有界且auth仍fail closed。\n- 同步清理：main已搬走的實作、可選no-op guards、重複error/security政策；受影響tests從真實新入口驗證，不留main wrapper。\n- 驗收：JWT／cookie／MFA／role，401/403/500一致error與CORS，preflight204、SSE streaming；冷啟動／direct JWKS／discovery／cache hit／TTL／timeout；僅一組refresh task及乾淨shutdown。\n- 原批次：B03、B04；auth/confirmation生命週期的另一部分由U3承接，不在本包再造token機制。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/auth/handlers.py",
+        "services/control-plane/bff/auth/policy.py",
+        "services/control-plane/bff/auth/router.py",
+        "services/control-plane/bff/auth/service.py",
+        "services/control-plane/bff/core/app_factory.py",
+        "services/control-plane/bff/core/errors.py",
+        "services/control-plane/bff/core/http_security.py",
+        "services/control-plane/bff/core/lifespan.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/smoke_test.py",
+        "services/control-plane/bff/test_bff_auth_facade.py",
+        "services/control-plane/bff/test_security_headers.py",
+        "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+        "services/control-plane/bff/tests/test_bff_auth_facade.py",
+        "services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+        "services/control-plane/bff/tests/test_http_auth_composition_owner.py",
+        "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "services/control-plane/bff/tests/test_unhandled_error_cors.py",
+        "services/runtime_auth_inbound.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "JWT/cookie/MFA/role: 401/403； error500+CORS/correlation；204 preflight and true SSE streaming.",
+        "Direct JWKS/discovery/no-config/failure/cache-hit/TTL; one app cache and exactly one refresh task； bounded network I/O and shutdown.",
+        "No duplicate app/router/session registration or optional no-op guard; existing management harness remains reused.",
+        "同步清理：Moved main app/middleware/error/MFA bodies and forwarding exports.",
+        "同步清理：Retired optional policy/no-op guard and duplicate formatter branches in scoped factories.",
+        "在修改main前核對既有PR5494/5577 exact hunk與active lease；它們不是已admitted的新本包，也不能擅自merge/close/cherry-pick。只有確無live同檔writer才開工；若既有owner恢復執行需正式序列化，不要求master PR5721先上線。"
+      ]
+    },
+    {
+      "task_id": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+      "unit": "U2",
+      "original_planning_package": "U2",
+      "target_repo": "pantheon",
+      "title": "Persona projection/cache 單一 owner",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001"
+      ],
+      "summary": "V2 U2; retained owner: one app-scoped PersonaService; one internal source-health cache\nPersona projection單一owner\n\n- 主要write-set：`BFF/main.py`、`personas/service.py`、`personas/router.py`、實際persona routes DI與`runtime/router.py`。純health計算可拆內聚模組，但仍只有一個PersonaService/cache owner。\n- 實作：合併10組相同AST bodies與1組近似helpers；搬出真實health builder與必要read helper。Runtime、Persona、Assistant使用同一app-scoped instance。\n- 同步清理：main duplicated projection／builder、被取代的module-global caches及aliases；不是把395行closure原封複製到更大的service。\n- 必須同交付遷移五檔：`test_p0_tw_paper_activate_honesty.py`、`test_loop_auto_bff004_cross_loop_drill.py`（B14）；`test_bff_promotion_review_governance.py`（B05）；`test_pathreon_market_persona_fleet_contract.py`（已done B07）；`test_srclive_overlay_contract.py`（已done B15 remainder）。五檔均直接位於`BFF/`根下，**不是**`BFF/tests/`。\n- ownership：只對仍eligible的原任務做正式artifact異動。兩個已done任務不改；新的source correction取得該兩檔grant、保留原assertions並重驗，不能為此重跑／重開整批。\n- 驗收：TTL／monotonic clock／deep-copy、tenant/persona隔離、stale/unavailable、paper/live honesty、同instance讀取；五檔完整回歸及無舊consumer。\n- 邊界：Persona內command複本由接續U3收斂，不能因projection完成就宣布整個Persona service不再重複。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/personas/router.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/runtime/router.py",
+        "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "services/control-plane/bff/tests/test_persona_health_single_owner.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Exactly one PersonaService cache/health builder； all persona/runtime/assistant consumers bound to same instance.",
+        "TTL/monotonic/deep-copy； tenant/persona scope； stale/unavailable vs healthy empty； paper/live honesty.",
+        "Five mandatory files migrate atomically; done B07/B15 tasks are not reopened; their covered assertions remain.",
+        "同步清理：main duplicate 11 helpers； real builder and source cache; replaced service module-global cache and aliases.",
+        "同步清理：No copied main closure/globals injection or second projection service."
+      ]
+    },
+    {
+      "task_id": "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+      "unit": "U3",
+      "original_planning_package": "U3",
+      "target_repo": "pantheon",
+      "title": "收斂全部 command admission/confirmation/audit 旁路",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-COMMAND-STORE-CONTRACT-DECISION-001"
+      ],
+      "summary": "V2 U3; retained owner: existing CommandAdapterService + CommandStore; one command audit projector\nCommand admission／confirmation／audit一次收斂\n\n這是優先的結構及安全修復，範圍比前版廣。保留**既有CommandAdapterService與CommandStore**，不新增平行admission service或万能state machine。\n\n### 來源與所有消費端\n\n- Core：`BFF/main.py`、`command_adapters/service.py`、`command_adapters/router.py`、`command_queue.py`；必要具名無狀態contracts／preconditions／receipts；建議`governance/command_audit.py`只作projection。\n- Persona：`personas/service.py`、`personas/router.py`、`personas/routes/common.py`、`ranking.py`、`lifecycle.py`。\n- Agora：`agora/service.py`、`agora/router.py`、`agora/identity/router.py`、`agora/personalization/router.py`。\n- 其他actual callers：`runtime/router.py`、`deployment/router.py`、`incidents/service.py`與`router.py`、`governance/service.py`與`router.py`、`tools_integrations/service.py`與`router.py`、`control_loops/router.py`、`jobs/router.py`、`evolution/router.py`、`research/router.py`；Capital command callsites由清冊確認，Capital CRUD本身不併入。\n- 上述source與B03/B04/B05/B06/B14/B16中真正依賴這些入口的tests一起入約。65個具名caller／20個persist候選逐項分類；不能只改三個外層入口就交付。\n\n### 單一機制與交易\n\n1. 搬main完整normalization／policy／precondition／foundation／receipt，不使用service現有簡化fallback取代真實規則。\n2. 同時收斂token create/read/redeem/revoke、expiry、actor/tenant/target綁定與confirmation transaction。不同語意的HTTP endpoints可保留薄adapter，不能保留不同token ledger／規則。\n3. replay綁trusted tenant＋actor＋canonical namespace＋key，操作／target／params放request hash；status/audit沿用role＋tenant＋record visibility，合法reviewer/admin可讀被授權紀錄。移除default colon-token parser、dummy身份與未注入guard仍允許操作的路徑。\n4. CommandStore作唯一command／confirm state boundary，修cache一致性與交易內重驗證。**先固定一個backend方案**：本機同檔用單一transaction中sidecar lock＋fresh read＋fsync；跨主機需求則明確採共享backend取代，不同時開發兩條fallback。現有AtomicJsonRecordStore並非JSONL multi-record的可直接替換物。\n5. 區分「尚待執行命令」與「已完成domain mutation之audit」；Agora feedback／handoff等後者不能再dispatch一次。不同aggregate保持原owner及role policy。\n\n### 同步刪除與真失敗修復\n\n- 刪main final／semantic／confirm重複bodies、service的callback-switch／minimal foundation／memory replay、router-local persist/dispatch。\n- 刪Persona semantic複本與strategy/persona command複本；ranking不再觸發缺global的NameError。\n- 刪Tools／Governance假accepted fallback、錯誤callback簽名與猜TypeError重試；Alert ack不能吞persist錯誤後只改memory回submitted。\n- Agora已完成動作改讀真正domain outcome做audit；不是再創造假的待執行command。\n- 共享dictionary中的非command使用者先移回各自既有owner，再刪無consumer的舊dictionary；歷史audit資料不刪。\n\n驗收：同鍵20並發僅一次record與dispatch；不同payload或target同鍵409、跨transport同指令重播；跨tenant/actor不借用replay，未授權讀取拒絕且合法reviewer讀取仍成功；confirmation race恰一方成功；storage failure無202／無dispatch／無部分token消耗；兩instance及兩process可見一致、重啟、nested lock不deadlock；receipt/status/audit/query/export可對回真實command與domain receipt。負向重跑Persona／Alert／Tools／Governance探針。\n\n可用小commit按責任搬移，但一個flow的body、所有consumers、舊機制刪除在同個可接受head完成。若分PR，每份明列仍未收斂的flows，**最後全清才可宣稱single implementation**。不可先merge另一套owner，讓舊邏輯等下一批清理。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/action_catalog.py",
+        "services/control-plane/bff/agora/identity/router.py",
+        "services/control-plane/bff/agora/personalization/router.py",
+        "services/control-plane/bff/agora/router.py",
+        "services/control-plane/bff/agora/service.py",
+        "services/control-plane/bff/command_adapters/contracts.py",
+        "services/control-plane/bff/command_adapters/preconditions.py",
+        "services/control-plane/bff/command_adapters/receipts.py",
+        "services/control-plane/bff/command_adapters/registry.py",
+        "services/control-plane/bff/command_adapters/router.py",
+        "services/control-plane/bff/command_adapters/service.py",
+        "services/control-plane/bff/command_queue.py",
+        "services/control-plane/bff/control_loops/router.py",
+        "services/control-plane/bff/deployment/router.py",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/governance/command_audit.py",
+        "services/control-plane/bff/governance/router.py",
+        "services/control-plane/bff/governance/service.py",
+        "services/control-plane/bff/incidents/router.py",
+        "services/control-plane/bff/incidents/service.py",
+        "services/control-plane/bff/jobs/router.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/models.py",
+        "services/control-plane/bff/personas/router.py",
+        "services/control-plane/bff/personas/routes/common.py",
+        "services/control-plane/bff/personas/routes/lifecycle.py",
+        "services/control-plane/bff/personas/routes/ranking.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/research/router.py",
+        "services/control-plane/bff/runtime/router.py",
+        "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+        "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+        "services/control-plane/bff/test_v5_interventions.py",
+        "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+        "services/control-plane/bff/tests/test_command_adapters_router.py",
+        "services/control-plane/bff/tests/test_command_admission_single_owner.py",
+        "services/control-plane/bff/tests/test_command_audit_scope.py",
+        "services/control-plane/bff/tests/test_command_store_multiprocess.py",
+        "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "services/control-plane/bff/tools_integrations/router.py",
+        "services/control-plane/bff/tools_integrations/service.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Every discovered candidate classified; pending command vs completed-domain audit vs NL exchange are not conflated.",
+        "Tenant+actor+namespace+key replay； operation/target/params hash； same key new target409； cross-transport same command replay.",
+        "Read authorization supports legitimate tenant/role/record-scoped reviewer/admin; no unauthorized replay/status/audit.",
+        "20 concurrent one command+dispatch; confirm race one redemption； storage failure no202/no partial consumption; two instances/processes/restart/nested-lock tests.",
+        "True receipt/status/audit/export chain; rerun Persona missing-global/Alert lost-persist/Tools/Governance fail-closed probes.",
+        "同步清理：main final/semantic/confirm bodies; service callback-switch/minimal foundation/memory replay; router-local persist/dispatch.",
+        "同步清理：Persona semantic/action copies; Tools/Governance fake accepted; Alert swallow-write-error memory ack.",
+        "同步清理：Agora completed-domain actions do not re-dispatch; only command-specific state removed after all noncommand owners classified.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。"
+      ]
+    },
+    {
+      "task_id": "BFF-CANONICAL-COMMAND-API-RETIREMENT-001",
+      "unit": "U9",
+      "original_planning_package": "U9",
+      "target_repo": "pantheon",
+      "title": "後端：同步退役 BE/FE 舊 generic command write API",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001"
+      ],
+      "summary": "Single-repository BE execution half of U9. FE delivery belongs only to FE-CANONICAL-COMMAND-API-RETIREMENT-001. V2 U9; retained owner: one generic command POST /bff/v1/commands; existing FE command transport\n提前完成BE／FE舊generic API退役\n\n編號沿用前版以便比對，**執行提前到U3之後**，不等待所有新增Evolution／Jobs功能；避免舊API長期留存。\n\n- BE主要write-set：`BFF/main.py`、`command_adapters/router.py`與`service.py`、必要`models.py`、action URL producers、現役smoke／OpenAPI契約；所有具名URL consumer由機制清冊逐項入約。\n- FE主要write-set：`src/lib/bff-v1/writes.ts`、`personas.ts`、`paths.ts`、相關command mapping／types與seed-taxonomy、`src/management/pages/PersonaDetail.tsx`、HighRiskConfirm消費端及其tests/mocks。\n- 保留`POST /bff/v1/commands`；刪重複generic `POST /bff/actions/{…}`、`POST /api/v1/operator/commands`及專屬legacy-actions／DTO branches／OpenAPI aliases。\n- 四個Persona操作run_eval／restrict_tools／suspend／retire改接既有canonical command client；若保留具名domain convenience function，它只委派同一transport，不另算受理規則。Confirmation expiry使用server值，不自行加TTL。\n- **保留**唯一GET command status與GET action catalog；不同confirmation操作按語意判定，不按URL前綴刪除。\n- 驗收：兩repo active舊POST caller為0，OpenAPI路由退役、POST404/405，四個Persona操作及高風險confirm→receipt→status通過；exact BE/FE candidate pair無契約錯配。\n\n跨repo不能假稱一筆Git原子commit。可各自source merge，但未通paired gate不能部署任一不匹配版本；實際switch／rollback由既有exact-pair發布協定執行。U9 source完成與hosted完成分開，不靠兼容fallback過渡。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-CANONICAL-COMMAND-API-RETIREMENT-001/evidence.json",
+        "scripts/aggregate_bff_release_gate.mjs",
+        "scripts/bff/failover_demo.sh",
+        "scripts/bff/run_multi_replica_smoke.sh",
+        "scripts/test_bff_cw_contract_prerequisite.py",
+        "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md",
+        "services/control-plane/bff/action_catalog.py",
+        "services/control-plane/bff/agora/governance/router.py",
+        "services/control-plane/bff/agora/service.py",
+        "services/control-plane/bff/command_adapters/router.py",
+        "services/control-plane/bff/command_adapters/service.py",
+        "services/control-plane/bff/command_executor.py",
+        "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+        "services/control-plane/bff/control_loops/router.py",
+        "services/control-plane/bff/deployment/router.py",
+        "services/control-plane/bff/http_smoke_test.py",
+        "services/control-plane/bff/incidents/router.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/management_read_models/ranking_router.py",
+        "services/control-plane/bff/management_read_models/service.py",
+        "services/control-plane/bff/models.py",
+        "services/control-plane/bff/personas/routes/lifecycle.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/runtime/router.py",
+        "services/control-plane/bff/smoke_test.py",
+        "services/control-plane/bff/smoke_test_incident.py",
+        "services/control-plane/bff/strategies/routes/detail.py",
+        "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+        "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+        "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "services/control-plane/bff/test_bff_strategy_persona_contract.py",
+        "services/control-plane/bff/test_command_executor.py",
+        "services/control-plane/bff/test_cw03_committee_board_contract.py",
+        "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+        "services/control-plane/bff/test_final_command_execution_bridge.py",
+        "services/control-plane/bff/test_final_contract_primitives.py",
+        "services/control-plane/bff/test_governance_command_submission.py",
+        "services/control-plane/bff/test_normalized_route_uniqueness.py",
+        "services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
+        "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py",
+        "services/control-plane/bff/tests/test_bff_emergency_containment.py",
+        "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+        "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+        "services/control-plane/bff/tests/test_command_adapters_router.py",
+        "services/control-plane/bff/tests/test_command_replay_conflict.py",
+        "services/control-plane/bff/tests/test_legacy_command_write_retirement.py",
+        "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+        "services/control-plane/bff/tests/test_runtime_router.py",
+        "services/control-plane/bff/tools_integrations/router.py"
+      ],
+      "acceptance_criteria": [
+        "本任務只擁有 Pantheon 的 exact artifacts；下列設計條款中的 FE 工作由下游 FE-CANONICAL-COMMAND-API-RETIREMENT-001 唯一實作。本任務驗收本 repo 的完整 owner/API/負向測試/舊碼清理，不以等待下游FE完成形成循環，也不能聲稱整體配對已完成。配對 source 驗收及 FE 零殘留由該 FE 任務完成後才交既有 release lane；過渡期間不部署、不保留相容第二實作。",
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Both obsolete generic POST routes absent404/405； no active FE/BE old POST caller； OpenAPI/schema/mocks/smoke consistent.",
+        "Preserve existing GET command status/catalog； legitimate domain transport； receipt tracking and independent audit contracts.",
+        "Persona run_eval/restrict_tools/suspend/retire keep target/params/idempotency/MFA/confirm semantics; server expiry used.",
+        "Exact FE/BE paired candidate qualifies before hosted switch; do not invent release controller.",
+        "同步清理：Legacy generic POST handlers /bff/actions/... and /api/v1/operator/commands; legacy-actions branch and exclusive DTO/OpenAPI alias.",
+        "同步清理：Exclusive old path builders/mocks after active callers move; preserve historic evidence and GET read functions.",
+        "PPL-ALLOC-007僅保留原歷史provenance hold，不在本包重做其頁面或改generation；寫FE前核對它仍无active worker/lease。若該任務恢復實作，先正式定序再寫，不與其並行。"
+      ]
+    },
+    {
+      "task_id": "FE-CANONICAL-COMMAND-API-RETIREMENT-001",
+      "unit": "U9-FE",
+      "original_planning_package": "U9",
+      "target_repo": "execute_plans",
+      "title": "前端：同步退役 BE/FE 舊 generic command write API",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-CANONICAL-COMMAND-API-RETIREMENT-001"
+      ],
+      "summary": "Single-repository FE execution half of U9. Backend prerequisite BFF-CANONICAL-COMMAND-API-RETIREMENT-001. V2 U9; retained owner: one generic command POST /bff/v1/commands; existing FE command transport\n提前完成BE／FE舊generic API退役\n\n編號沿用前版以便比對，**執行提前到U3之後**，不等待所有新增Evolution／Jobs功能；避免舊API長期留存。\n\n- BE主要write-set：`BFF/main.py`、`command_adapters/router.py`與`service.py`、必要`models.py`、action URL producers、現役smoke／OpenAPI契約；所有具名URL consumer由機制清冊逐項入約。\n- FE主要write-set：`src/lib/bff-v1/writes.ts`、`personas.ts`、`paths.ts`、相關command mapping／types與seed-taxonomy、`src/management/pages/PersonaDetail.tsx`、HighRiskConfirm消費端及其tests/mocks。\n- 保留`POST /bff/v1/commands`；刪重複generic `POST /bff/actions/{…}`、`POST /api/v1/operator/commands`及專屬legacy-actions／DTO branches／OpenAPI aliases。\n- 四個Persona操作run_eval／restrict_tools／suspend／retire改接既有canonical command client；若保留具名domain convenience function，它只委派同一transport，不另算受理規則。Confirmation expiry使用server值，不自行加TTL。\n- **保留**唯一GET command status與GET action catalog；不同confirmation操作按語意判定，不按URL前綴刪除。\n- 驗收：兩repo active舊POST caller為0，OpenAPI路由退役、POST404/405，四個Persona操作及高風險confirm→receipt→status通過；exact BE/FE candidate pair無契約錯配。\n\n跨repo不能假稱一筆Git原子commit。可各自source merge，但未通paired gate不能部署任一不匹配版本；實際switch／rollback由既有exact-pair發布協定執行。U9 source完成與hosted完成分開，不靠兼容fallback過渡。\n",
+      "exact_source_scope": [
+        "execute-plans/e2e/05-interventions.spec.ts",
+        "execute-plans/e2e/06-entity-registry.spec.ts",
+        "execute-plans/e2e/08-create-intent.spec.ts",
+        "execute-plans/e2e/12-approvals.spec.ts",
+        "execute-plans/e2e/19-management-persona-100-flows.spec.ts",
+        "execute-plans/e2e/29-persona-interaction.spec.ts",
+        "execute-plans/e2e/ppl-alloc-009-cross-repo-hosted.spec.ts",
+        "execute-plans/src/lib/bff-v1/__tests__/envelope.test.ts",
+        "execute-plans/src/lib/bff-v1/__tests__/runAction.test.ts",
+        "execute-plans/src/lib/bff-v1/__tests__/writes.test.ts",
+        "execute-plans/src/lib/bff-v1/dto.ts",
+        "execute-plans/src/lib/bff-v1/paths.ts",
+        "execute-plans/src/lib/bff-v1/personas.ts",
+        "execute-plans/src/lib/bff-v1/seed-taxonomy.json",
+        "execute-plans/src/lib/bff-v1/writes.ts",
+        "execute-plans/src/lib/v5/management/__tests__/revamp-2026-05-20.test.ts",
+        "execute-plans/src/management/components/write/createEntity.ts",
+        "execute-plans/src/management/pages/PersonaDetail.test.ts",
+        "execute-plans/src/management/pages/PersonaDetail.tsx",
+        "execute-plans/src/platform/components/HighRiskConfirm.test.tsx",
+        "execute-plans/src/platform/components/HighRiskConfirm.tsx",
+        "execute-plans/docs/deployment/evidence/FE-CANONICAL-COMMAND-API-RETIREMENT-001/evidence.json"
+      ],
+      "acceptance_criteria": [
+        "本任務只擁有 ajoe734/execute-plans 的 exact artifacts；下列設計條款中的 BE 工作由 BFF-CANONICAL-COMMAND-API-RETIREMENT-001 唯一實作並先 merge。本任務不得重做後端；只驗證其 receipt/API 契約並完成所有授權 FE consumers、舊碼清理及配對 source tests。讀取批准的 Pantheon 文件須使用獨立 checkout 或 exact GitHub blob；不可複製後端到前端repo。",
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Both obsolete generic POST routes absent404/405； no active FE/BE old POST caller； OpenAPI/schema/mocks/smoke consistent.",
+        "Preserve existing GET command status/catalog； legitimate domain transport； receipt tracking and independent audit contracts.",
+        "Persona run_eval/restrict_tools/suspend/retire keep target/params/idempotency/MFA/confirm semantics; server expiry used.",
+        "Exact FE/BE paired candidate qualifies before hosted switch; do not invent release controller.",
+        "同步清理：Legacy generic POST handlers /bff/actions/... and /api/v1/operator/commands; legacy-actions branch and exclusive DTO/OpenAPI alias.",
+        "同步清理：Exclusive old path builders/mocks after active callers move; preserve historic evidence and GET read functions.",
+        "PPL-ALLOC-007僅保留原歷史provenance hold，不在本包重做其頁面或改generation；寫FE前核對它仍无active worker/lease。若該任務恢復實作，先正式定序再寫，不與其並行。"
+      ]
+    },
+    {
+      "task_id": "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001",
+      "unit": "U4",
+      "original_planning_package": "U4",
+      "target_repo": "pantheon",
+      "title": "Journal context 與既有 Agora visibility 收斂",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "FE-CANONICAL-COMMAND-API-RETIREMENT-001"
+      ],
+      "summary": "V2 U4; retained owner: Agora interaction resolver + bound existing AgoraService visibility + scoped journal readers\nJournal context與唯一visibility policy\n\n- 主要write-set：`BFF/main.py`、`agora/service.py`、`agora/interaction/router.py`／實際DI；建議`agora/interaction/context_resolver.py`。\n- 實作：typed resolver讀bound AgoraService／既有scope policy與typed journal readers。各DecisionEvent、DecisionJournal、trade episode仍保留真正owner。\n- 同步清理：main resolver、duplicate private filters、TypeError後無scope重讀、forward wrapper；不能複製第三份ACL。\n- 驗收：schema／tenant／persona／private owner／audience矩陣，來源缺失明確unavailable。`audience_verified:false`不能升成true；ownerless-private現有行為先characterize，改政策須明列安全決策。B05真router與journal全檔回歸。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/agora/interaction/context_resolver.py",
+        "services/control-plane/bff/agora/interaction/router.py",
+        "services/control-plane/bff/agora/router.py",
+        "services/control-plane/bff/agora/service.py",
+        "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/tests/test_journal_context_resolver_owner.py",
+        "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+        "services/control-plane/bff/tests/test_read_surface_caller_migration.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Bound instance policy and typed tenant/user readers; no TypeError unscoped retry.",
+        "DecisionEvent/DecisionJournal/trade-episode schema/route/tenant/persona/audience; unavailable sources preserved.",
+        "Do not upgrade audience_verified:false or ownerless-private authority during extraction; policy change requires explicit single-owner behavior decision.",
+        "同步清理：main resolver and duplicated private filters; forward wrapper； optional auth and signature guessing fallback."
+      ]
+    },
+    {
+      "task_id": "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001",
+      "unit": "U5",
+      "original_planning_package": "U5",
+      "target_repo": "pantheon",
+      "title": "Assistant 真實 typed source collectors 抽離",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001"
+      ],
+      "summary": "V2 U5; retained owner: existing assistant context composer with one typed source collector\nAssistant typed source collectors\n\n- 主要write-set：`BFF/main.py`、`assistant/context_composer.py`、`assistant/routes.py`及實際workshop binding；建議`assistant/source_collectors.py`。\n- 實作：一份typed collector使用真實PersonaService、command audit projector與domain read ports；保留既有composer、redaction、mode policy。\n- 同步清理：main collector／wrapper／回呼main。不可用假健康資料替代待測業務，不引入shell、repo write、task creation、supervisor依賴。\n- 驗收：B02四檔；identity／tenant／citations／allowlist／pagination／freshness；Jobs有真實來源以前如實標來源未完成。結構抽離可單獨通過，但B02依賴的Jobs資料驗收仍在U10A，不算整個產品ready。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/agora/identity/router.py",
+        "services/control-plane/bff/agora/service.py",
+        "services/control-plane/bff/assistant/context_composer.py",
+        "services/control-plane/bff/assistant/routes.py",
+        "services/control-plane/bff/assistant/source_collectors.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/tests/test_assistant_agora_ask.py",
+        "services/control-plane/bff/tests/test_assistant_context_pack.py",
+        "services/control-plane/bff/tests/test_assistant_source_collectors_owner.py",
+        "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+        "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Typed real domain reads； single composer; identity/tenant/redaction/citations/pagination/freshness and doc allowlist.",
+        "B02 four files retain coverage; structural extraction distinct from U10A Job source truth.",
+        "No main callback； repo write； shell； task packet or supervisor dependency.",
+        "同步清理：main collector/context forwarding wrapper; duplicate collector or healthy placeholder branches."
+      ]
+    },
+    {
+      "task_id": "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001",
+      "unit": "U6",
+      "original_planning_package": "U6",
+      "target_repo": "pantheon",
+      "title": "Management NL 單一 use case/durable replay",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001"
+      ],
+      "summary": "V2 U6; retained owner: one Management NL use case + existing durable ManagementNlCommandIdempotencyStore\nManagement NL單一use case與durable replay\n\n- 主要write-set：`BFF/main.py`、`core/app_factory.py`、`management_nl_command_idempotency.py`；建議`assistant/management_service.py`與typed contracts；實际NL專屬conversation bridge、compose/env/test中的雙機制flag。\n- 實作：ask／stream共用NL use case與既有ManagementNlCommandIdempotencyStore；高風險拒絕在retrieval/session/provider前；tenant先於retrieval；provider未知結果保留uncertain。\n- 同步清理：NL memory dictionary、conversation replay雙寫／legacy adoption、選擇新舊機制的flag、main handler closure与這組反射dispatch。保留conversation session/turn與另一aggregate的Assistant command store。\n- 驗收：reservation／hash／replay／409／跨scope拒絕、重啟、crash、stream reconnect不再送provider、disconnect/shutdown回收；storage loss fail closed。不能將NL併入operator command queue。\n",
+      "exact_source_scope": [
+        "docker-compose.yml",
+        "docs/deployment/evidence/BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/assistant/management_contracts.py",
+        "services/control-plane/bff/assistant/management_service.py",
+        "services/control-plane/bff/core/app_factory.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/management_ai_store.py",
+        "services/control-plane/bff/management_nl_command_idempotency.py",
+        "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+        "services/control-plane/bff/tests/test_assistant_dev_compose_flags.py",
+        "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+        "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+        "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+        "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+        "services/control-plane/bff/tests/test_management_nl_single_owner.py",
+        "services/control-plane/bff/tests/test_management_read_models_router.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Identity/input→high-risk refusal→tenant→reservation→retrieval/provider→durable terminal/stream; same use case for ask/stream.",
+        "One provider call； scope/hash409/restart/crash/uncertain; no blind retry; disconnect/reconnect/shutdown do not duplicate provider effect.",
+        "Session/turn and distinct Assistant command aggregate preserved; source cannot write development tasks.",
+        "同步清理：NL memory dictionary/conversation replay double write/legacy adoption and old/new flag.",
+        "同步清理：main NL closure and this route family reflection; orphan background task globals."
+      ]
+    },
+    {
+      "task_id": "BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001",
+      "unit": "U7",
+      "original_planning_package": "U7",
+      "target_repo": "pantheon",
+      "title": "Evolution review/journal evidence truth",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001"
+      ],
+      "summary": "V2 U7; retained owner: existing GovernanceService mutation-review policy + Evolution journal projection\nEvolution mutation-review／journal read truth\n\n- 主要write-set：`BFF/main.py`、`governance/service.py`與`router.py`、`evolution/service.py`與`router.py`。\n- 實作：沿用Governance policy，直接／nested read一致由actor/state/evidence導出allowedActions；必要evidence缺失503／unavailable，健康空與壞來源分開。\n- 同步清理：main nested projection copy、固定fresh/ok、缺證據仍放行、seed補假健康。\n- 驗收：B10已記錄的八個失敗case保留語意，role×state×evidence、journal surfaces；通過不代表program執行引擎已閉環。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/governance/router.py",
+        "services/control-plane/bff/governance/service.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_evolution_center_contract.py",
+        "services/control-plane/bff/test_ew05_mutation_review_contract.py",
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+        "services/control-plane/bff/tests/test_mutation_review_projection_policy.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Direct and nested allowedActions use same actor/state/evidence policy.",
+        "Required evidence missing503/unavailable; healthy empty vs failure distinct; no hardcoded fresh/seed.",
+        "All eight documented failing B10 cases retained; does not complete program execution.",
+        "同步清理：main duplicated nested review and fixed fresh/ok fallbacks; no extra journal router/store."
+      ]
+    },
+    {
+      "task_id": "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+      "unit": "U8A",
+      "original_planning_package": "U8A",
+      "target_repo": "pantheon",
+      "title": "Evolution program durable aggregate 與 typed ports",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001",
+        "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001"
+      ],
+      "summary": "V2 U8A; retained owner: existing Evolution service: missing program aggregate only; existing PostgreSQL primitive\nEvolution program持久化aggregate／typed ports\n\n- 主要write-set：`services/evolution/main.py`、`client.py`、`models.py`及建議有界program domain／store／router模組；`BFF/evolution/service.py`與`router.py`、`ports/persona_capital_runtime.py`、必要`ports/read_surface_ports.py`、`command_adapters/evolution_adapter.py`、`BFF/main.py`與精確db/config/tests。\n- 實作：以現役六種program狀態為研究基線，確定create／patch與membership；沿用PostgresJsonOwnerStore transaction primitive，typed read/write分離。program＋revision＋idempotency receipt＋必要link同transaction，trusted tenant隔離。\n- PATCH限明列metadata欄位；status／approval／retire等走同一transition policy，不得直接改row繞過U8B。現役直接PATCH status=paused的測試需保留原業務意圖並按批准契約改驗同一控制入口，不能隨便刪assertion。\n- 同步清理：ReadSurfacePorts找create/patch、memory或直接DB fallback、TypeError猜簽名、hardcoded prog-001、無owner仍執行成功。\n- 驗收：真DB create/list/detail/patch、20同鍵並發、payload conflict、revision race、restart／crash／缺owner拒絕；同owner讀回。這只完成資料契約與必要B04/B10source prerequisite。\n- A階段未實作的action明確fail closed／unavailable，保留未完成義務、不退役宣告；不能改metadata假稱pause或executed。需要真實action的整批驗收仍等待B。\n",
+      "exact_source_scope": [
+        "docker-compose.control.yml",
+        "docker-compose.yml",
+        "docs/deployment/evidence/EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/ports/evolution_program_commands.py",
+        "services/control-plane/bff/ports/persona_capital_runtime.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "services/control-plane/bff/test_idempotency_concurrency_guard.py",
+        "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+        "services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+        "services/control-plane/bff/tests/test_evolution_programs_population_contract.py",
+        "services/evolution/client.py",
+        "services/evolution/dispatch_outbox.py",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/main.py",
+        "services/evolution/models.py",
+        "services/evolution/program_router.py",
+        "services/evolution/program_service.py",
+        "services/evolution/program_store.py",
+        "services/evolution/test_compose_activation.py",
+        "services/evolution/test_l12_evo_001_process_recovery.py",
+        "services/evolution/test_program_owner.py",
+        "services/evolution/tests/test_postmortem_evolution_decision_e2e.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "True tenant-scoped DB create/list/detail/metadata PATCH； revision and idempotency receipt atomic;20same-key create exactly1；409different payload.",
+        "PATCH status/approval/retire cannot bypass the unique transition policy; no second lifecycle route.",
+        "Restart/crash/revision race； owner missing/auth failure honest; unimplemented actions unavailable with obligation still open.",
+        "Data acceptance only; B10 real pause/cancel still waits U8B/U10B.",
+        "同步清理：read-store create/patch mutation lookup; BFF memory/direct-DB fallback; TypeError guesses and prog-001/fake executed.",
+        "同步清理：No new polling/outbox/worker loop; PostgreSQL storage primitive reused.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。"
+      ]
+    },
+    {
+      "task_id": "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001",
+      "unit": "U10A",
+      "original_planning_package": "U10A",
+      "target_repo": "pantheon",
+      "title": "Research/Jobs 真實 owner/read/SSE 接線",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+        "BFF-RESEARCH-JOBS-CONTRACT-DECISION-001"
+      ],
+      "summary": "V2 U10A; retained owner: ResearchWriteOwner + qualified original Job source owners; one BFF composition/JobAction selection\nResearch／Jobs真實owner與讀取接線\n\n- 主要write-set：`BFF/main.py`、`command_adapters/evolution_adapter.py`與`registry.py`、建議具名experiment/job adapters、`jobs/router.py`、`events/router.py`、`research/router.py`、`research/routes/experiments.py`、`ports/read_surface_ports.py`、`ports/research_knowledge_source.py`、必要`action_catalog.py`與Assistant source collector；`services/research/`既有ResearchWriteOwner／兩API家族；**核准納入的**job來源之exact API/store files。\n- 先固定Job source/type/tenant/identity矩陣；已找到六類來源，不自動全部納入、不默認gateway-only。Jobs composition是讀投影／typed dispatch選擇，不是第二個JobStore或scheduler。\n- ResearchWriteOwner先具備tenant、idempotency、transaction、ticket-link一致性，再把兩API家族與read source切到同一owner；刪memory `_experiments` writer及直接DB fallback。\n- Registry一個normalized command/entity/action恰一handler；新增experiment/job adapter時，同commit刪Evolution adapter對它們的handled entries及body，不能讓first-match藏重複實作。\n- Jobs list/detail/log/SSE/assistant/summary都綁同一真實source及scope；修job SSE忽略jobId、ResearchTicket冒充Job、假ID／假健康空。\n- 驗收：real-source IDs/readback／unauthorized／unknown target／owner unavailable／registry唯一match；B02/B10/B16受影響部分。**不以owner row變cancelled取代worker已停止證據**。\n- A只交付已qualified的讀取／最小寫入，未完成的action明確unavailable而非假成功，保留其功能義務。B10／B16中真正pause/cancel/promote等驗收要等U8B／U10B；registry唯一不能代替action完整。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/action_catalog.py",
+        "services/control-plane/bff/assistant/source_collectors.py",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/command_adapters/experiment_adapter.py",
+        "services/control-plane/bff/command_adapters/job_adapter.py",
+        "services/control-plane/bff/command_adapters/registry.py",
+        "services/control-plane/bff/events/router.py",
+        "services/control-plane/bff/jobs/projection.py",
+        "services/control-plane/bff/jobs/router.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/management_read_models/service.py",
+        "services/control-plane/bff/ports/job_read.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/ports/research_commands.py",
+        "services/control-plane/bff/ports/research_knowledge_source.py",
+        "services/control-plane/bff/research/CHARACTERIZATION.md",
+        "services/control-plane/bff/research/router.py",
+        "services/control-plane/bff/research/routes/__init__.py",
+        "services/control-plane/bff/research/routes/common.py",
+        "services/control-plane/bff/research/routes/experiments.py",
+        "services/control-plane/bff/research/test_router.py",
+        "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+        "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py",
+        "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+        "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+        "services/control-plane/bff/tests/read_store_migration_inventory.json",
+        "services/control-plane/bff/tests/test_assistant_context_pack.py",
+        "services/control-plane/bff/tests/test_assistant_security.py",
+        "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+        "services/control-plane/bff/tests/test_bff_b2_004_research_search.py",
+        "services/control-plane/bff/tests/test_console_data_route_workflows_projection.py",
+        "services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
+        "services/control-plane/bff/tests/test_overlay_retirement.py",
+        "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+        "services/research/main.py",
+        "services/research/write_owner.py"
+      ],
+      "acceptance_criteria": [
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Research tenant/idempotency/transaction/ticket-link qualified; both API families and reads use one owner； no local fallback.",
+        "Job list/detail/log/SSE/assistant/summary use qualified real source identity/scope; tickets never masquerade as jobs.",
+        "One matching handler tuple; adding adapters removes Evolution Experiment/Job handling in same commit.",
+        "Only qualified reads/minimal writes complete; unfinished action honest unavailable and still tracked to U10B.",
+        "同步清理：DefaultResearchKnowledgeSourcePort memory _experiments writer and route replay/direct-DB fallback after all live consumers switch.",
+        "同步清理：Evolution adapter Experiment/Job handled commands/entities and fake body; no duplicated registry match.",
+        "同步清理：ResearchTicket→Job binding； fake ID/progress/completed and job SSE ignoring requested identity/scope.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。"
+      ]
+    },
+    {
+      "task_id": "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001",
+      "unit": "U8B",
+      "original_planning_package": "U8B",
+      "target_repo": "pantheon",
+      "title": "後端：Evolution 真實 lifecycle actions 與 FE 閉環",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001",
+        "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001"
+      ],
+      "summary": "Single-repository BE execution half of U8B. FE delivery belongs only to FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001. V2 U8B; retained owner: same Evolution program owner, existing approved-decision dispatch/outbox/terminal receipts\nEvolution真實控制與現役UI功能補齊\n\n- 主要write-set：既有`services/evolution/`的program API、`dispatch_outbox.py`、`dispatch_worker.py`、`dispatch_receipts.py`中確有需要的綁定／政策；`BFF/evolution/service.py`與`router.py`、`command_adapters/evolution_adapter.py`、必要`registry.py`／`action_catalog.py`／`main.py` binding；FE EvolutionDetail、evolution client、writes/DTO/status/stateMachine及相應tests。不是要求所有既有dispatch檔都重寫。\n- 決策輸入：program/run狀態和review/approve/pause/resume/complete/retire，stop／freeze、constraints／formulas／mutation rules、promotion的正式契約。前版三狀態方案已撤回。\n- 實作：對符合approved-decision語意的真實執行，program→decision→run→candidate/artifact→approval→terminal receipt沿用既有執行鏈；metadata CRUD不強造decision，禁止第二個poller／scheduler／retry engine。\n- 同步清理：synthetic run/candidate IDs、Resume無handler、browser-local constraint假保存、固定空promotion/formula/mutation列表、未驗證的executed/active。\n- 驗收：每個保留action有真正owner、合法狀態轉移、拒絕/race/receipt/readback，UI顯示真實ID與結果。pause與cancel／freeze不假設同義；不可因UI有promote_live就啟用production或資金操作。\n- 完成定義獨立於U8A；不能以CRUD成功宣稱整個Evolution可運作。若action移交原corrective，必須逐action指向唯一task與驗收，不能空白留給「之後整合」。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/action_catalog.py",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/command_adapters/registry.py",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
+        "services/evolution/client.py",
+        "services/evolution/dispatch_outbox.py",
+        "services/evolution/dispatch_receipts.py",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/main.py",
+        "services/evolution/models.py",
+        "services/evolution/program_router.py",
+        "services/evolution/program_service.py",
+        "services/evolution/program_store.py",
+        "services/evolution/test_program_owner.py"
+      ],
+      "acceptance_criteria": [
+        "本任務只擁有 Pantheon 的 exact artifacts；下列設計條款中的 FE 工作由下游 FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001 唯一實作。本任務驗收本 repo 的完整 owner/API/負向測試/舊碼清理，不以等待下游FE完成形成循環，也不能聲稱整體配對已完成。配對 source 驗收及 FE 零殘留由該 FE 任務完成後才交既有 release lane；過渡期間不部署、不保留相容第二實作。",
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Each retained action has owner/approval/valid transition/real receipt/readback and UI; program state distinct from run state.",
+        "No new execution loop; approved-decision effects reuse existing outbox/worker； metadata transaction independent.",
+        "Resume sends real command; constraints durably reread; formulas/mutations/promotions not fixed empty; no synthetic run/candidate IDs.",
+        "Pause/stop/freeze not assumed equivalent; no production/live/capital activation by task approval.",
+        "同步清理：Remaining program fake success/readback； synthetic IDs； browser-local constraint success； empty function stubs and Resume no-op.",
+        "同步清理：Old action vocabulary only after exact producer/consumer mapping; no permanent alias or shadow handler.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。",
+        "PPL-ALLOC-007僅保留原歷史provenance hold，不在本包重做其頁面或改generation；寫FE前核對它仍无active worker/lease。若該任務恢復實作，先正式定序再寫，不與其並行。"
+      ]
+    },
+    {
+      "task_id": "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+      "unit": "U8B-FE",
+      "original_planning_package": "U8B",
+      "target_repo": "execute_plans",
+      "title": "前端：Evolution 真實 lifecycle actions 與 FE 閉環",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001"
+      ],
+      "summary": "Single-repository FE execution half of U8B. Backend prerequisite EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001. V2 U8B; retained owner: same Evolution program owner, existing approved-decision dispatch/outbox/terminal receipts\nEvolution真實控制與現役UI功能補齊\n\n- 主要write-set：既有`services/evolution/`的program API、`dispatch_outbox.py`、`dispatch_worker.py`、`dispatch_receipts.py`中確有需要的綁定／政策；`BFF/evolution/service.py`與`router.py`、`command_adapters/evolution_adapter.py`、必要`registry.py`／`action_catalog.py`／`main.py` binding；FE EvolutionDetail、evolution client、writes/DTO/status/stateMachine及相應tests。不是要求所有既有dispatch檔都重寫。\n- 決策輸入：program/run狀態和review/approve/pause/resume/complete/retire，stop／freeze、constraints／formulas／mutation rules、promotion的正式契約。前版三狀態方案已撤回。\n- 實作：對符合approved-decision語意的真實執行，program→decision→run→candidate/artifact→approval→terminal receipt沿用既有執行鏈；metadata CRUD不強造decision，禁止第二個poller／scheduler／retry engine。\n- 同步清理：synthetic run/candidate IDs、Resume無handler、browser-local constraint假保存、固定空promotion/formula/mutation列表、未驗證的executed/active。\n- 驗收：每個保留action有真正owner、合法狀態轉移、拒絕/race/receipt/readback，UI顯示真實ID與結果。pause與cancel／freeze不假設同義；不可因UI有promote_live就啟用production或資金操作。\n- 完成定義獨立於U8A；不能以CRUD成功宣稱整個Evolution可運作。若action移交原corrective，必須逐action指向唯一task與驗收，不能空白留給「之後整合」。\n",
+      "exact_source_scope": [
+        "execute-plans/src/lib/bff-v1/dto.ts",
+        "execute-plans/src/lib/bff-v1/evolution.ts",
+        "execute-plans/src/lib/bff-v1/writes.ts",
+        "execute-plans/src/lib/stateMachines/coverage.test.ts",
+        "execute-plans/src/lib/stateMachines/index.ts",
+        "execute-plans/src/lib/stateMachines/stateMachines.test.ts",
+        "execute-plans/src/lib/v3/status.ts",
+        "execute-plans/src/management/components/detail/EvolutionCandidatesTab.tsx",
+        "execute-plans/src/management/components/detail/EvolutionFreezePanel.tsx",
+        "execute-plans/src/management/components/detail/EvolutionRunsPanel.tsx",
+        "execute-plans/src/management/components/detail/FitnessFormulaPanel.tsx",
+        "execute-plans/src/management/components/detail/MutationRuleManager.tsx",
+        "execute-plans/src/management/components/detail/PromotionPanel.tsx",
+        "execute-plans/src/management/pages/EvolutionDetail.tsx",
+        "execute-plans/src/management/pages/Lists.tsx",
+        "execute-plans/src/management/pages/StrategyDetail.tsx",
+        "execute-plans/docs/deployment/evidence/FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001/evidence.json"
+      ],
+      "acceptance_criteria": [
+        "本任務只擁有 ajoe734/execute-plans 的 exact artifacts；下列設計條款中的 BE 工作由 EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001 唯一實作並先 merge。本任務不得重做後端；只驗證其 receipt/API 契約並完成所有授權 FE consumers、舊碼清理及配對 source tests。讀取批准的 Pantheon 文件須使用獨立 checkout 或 exact GitHub blob；不可複製後端到前端repo。",
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Each retained action has owner/approval/valid transition/real receipt/readback and UI; program state distinct from run state.",
+        "No new execution loop; approved-decision effects reuse existing outbox/worker； metadata transaction independent.",
+        "Resume sends real command; constraints durably reread; formulas/mutations/promotions not fixed empty; no synthetic run/candidate IDs.",
+        "Pause/stop/freeze not assumed equivalent; no production/live/capital activation by task approval.",
+        "同步清理：Remaining program fake success/readback； synthetic IDs； browser-local constraint success； empty function stubs and Resume no-op.",
+        "同步清理：Old action vocabulary only after exact producer/consumer mapping; no permanent alias or shadow handler.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。",
+        "PPL-ALLOC-007僅保留原歷史provenance hold，不在本包重做其頁面或改generation；寫FE前核對它仍无active worker/lease。若該任務恢復實作，先正式定序再寫，不與其並行。"
+      ]
+    },
+    {
+      "task_id": "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
+      "unit": "U10B",
+      "original_planning_package": "U10B",
+      "target_repo": "pantheon",
+      "title": "後端：Research/Jobs 真實 actions 與 FE 閉環",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+        "BFF-RESEARCH-JOBS-CONTRACT-DECISION-001"
+      ],
+      "summary": "Single-repository BE execution half of U10B. FE delivery belongs only to FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001. V2 U10B; retained owner: same qualified Research/Job domain owners and adapters established by U10A\n保留操作的真正execution contract與FE完整呈現\n\n- 主要write-set：U10A已選定domain owner/API、experiment/job adapters與registry的必要action綁定、FE jobs/experiments操作／CommandCenter／StrategyDetail／SkillSandboxStudio及其typed client、DTO／writes／tests。\n- 決策输入：哪些source支援cancel/retry/archive/promote、批准與artifact要求、attempt lineage、資料保留。預設保留現役需求，**不能擅刪操作以讓測試變綠**；若明確批准退役，才同步刪catalog/API/UI/tests中對應宣告。\n- 實作：取消request→owner accepted→worker停止與late-completion fence；retry只允許eligible state、同鍵一個新attempt且保留原evidence；archive是visibility／retention，不推論physical delete；promote驗artifact/approval/target/registry receipt。\n- 同步清理：unsupported operation fake executed、假cancel／retry成功、前端固定或browser-local完成、只為退役功能存在的孤立程式。\n- 驗收：逐source逐action的正向／拒絕／race／crash／readback與真UI。未知外部結果不自動重送；OpenClaw workflow不混入開發supervisor task。\n",
+      "exact_source_scope": [
+        "docs/deployment/evidence/RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/action_catalog.py",
+        "services/control-plane/bff/command_adapters/experiment_adapter.py",
+        "services/control-plane/bff/command_adapters/job_adapter.py",
+        "services/control-plane/bff/command_adapters/registry.py",
+        "services/control-plane/bff/jobs/projection.py",
+        "services/control-plane/bff/jobs/router.py",
+        "services/control-plane/bff/ports/job_read.py",
+        "services/control-plane/bff/ports/research_commands.py",
+        "services/control-plane/bff/research/routes/experiments.py",
+        "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+        "services/research/main.py",
+        "services/research/write_owner.py"
+      ],
+      "acceptance_criteria": [
+        "本任務只擁有 Pantheon 的 exact artifacts；下列設計條款中的 FE 工作由下游 FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001 唯一實作。本任務驗收本 repo 的完整 owner/API/負向測試/舊碼清理，不以等待下游FE完成形成循環，也不能聲稱整體配對已完成。配對 source 驗收及 FE 零殘留由該 FE 任務完成後才交既有 release lane；過渡期間不部署、不保留相容第二實作。",
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Per-source/per-action success/forbidden/state-conflict/race/crash/readback/UI; preserved product obligations unless explicit retirement.",
+        "Cancel request vs owner accepted vs worker terminal; late completion fenced; retry exactly one linked new attempt/key； no uncertain blind replay.",
+        "Archive retains evidence/log/artifact authority; promote verifies artifact/approval/target/registry receipt; no capital/live activation.",
+        "B10/B16 true execution cases cannot be closed by U10A registry/read plumbing alone.",
+        "同步清理：Remaining fake cancel/retry/executed/readback and UI local success.",
+        "同步清理：Only explicitly retired operation code/catalog/UI/tests after approval; do not delete planned functionality.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。",
+        "PPL-ALLOC-007僅保留原歷史provenance hold，不在本包重做其頁面或改generation；寫FE前核對它仍无active worker/lease。若該任務恢復實作，先正式定序再寫，不與其並行。"
+      ]
+    },
+    {
+      "task_id": "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001",
+      "unit": "U10B-FE",
+      "original_planning_package": "U10B",
+      "target_repo": "execute_plans",
+      "title": "前端：Research/Jobs 真實 actions 與 FE 閉環",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "canonical_status": "todo",
+      "depends_on": [
+        "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+        "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001"
+      ],
+      "summary": "Single-repository FE execution half of U10B. Backend prerequisite RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001. V2 U10B; retained owner: same qualified Research/Job domain owners and adapters established by U10A\n保留操作的真正execution contract與FE完整呈現\n\n- 主要write-set：U10A已選定domain owner/API、experiment/job adapters與registry的必要action綁定、FE jobs/experiments操作／CommandCenter／StrategyDetail／SkillSandboxStudio及其typed client、DTO／writes／tests。\n- 決策输入：哪些source支援cancel/retry/archive/promote、批准與artifact要求、attempt lineage、資料保留。預設保留現役需求，**不能擅刪操作以讓測試變綠**；若明確批准退役，才同步刪catalog/API/UI/tests中對應宣告。\n- 實作：取消request→owner accepted→worker停止與late-completion fence；retry只允許eligible state、同鍵一個新attempt且保留原evidence；archive是visibility／retention，不推論physical delete；promote驗artifact/approval/target/registry receipt。\n- 同步清理：unsupported operation fake executed、假cancel／retry成功、前端固定或browser-local完成、只為退役功能存在的孤立程式。\n- 驗收：逐source逐action的正向／拒絕／race／crash／readback與真UI。未知外部結果不自動重送；OpenClaw workflow不混入開發supervisor task。\n",
+      "exact_source_scope": [
+        "execute-plans/src/lib/bff-v1/__tests__/writes.test.ts",
+        "execute-plans/src/lib/bff-v1/dto.ts",
+        "execute-plans/src/lib/bff-v1/lists.ts",
+        "execute-plans/src/lib/bff-v1/operations.ts",
+        "execute-plans/src/lib/bff-v1/paths.ts",
+        "execute-plans/src/lib/bff-v1/research.ts",
+        "execute-plans/src/lib/bff-v1/writes.ts",
+        "execute-plans/src/lib/stateMachines/index.ts",
+        "execute-plans/src/lib/v3/status.ts",
+        "execute-plans/src/management/pages/CommandCenter.tsx",
+        "execute-plans/src/management/pages/ResearchDetail.test.tsx",
+        "execute-plans/src/management/pages/ResearchDetail.tsx",
+        "execute-plans/src/management/pages/StrategyDetail.tsx",
+        "execute-plans/src/management/pages/studios/SkillSandboxStudio.tsx",
+        "execute-plans/docs/deployment/evidence/FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001/evidence.json"
+      ],
+      "acceptance_criteria": [
+        "本任務只擁有 ajoe734/execute-plans 的 exact artifacts；下列設計條款中的 BE 工作由 RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001 唯一實作並先 merge。本任務不得重做後端；只驗證其 receipt/API 契約並完成所有授權 FE consumers、舊碼清理及配對 source tests。讀取批准的 Pantheon 文件須使用獨立 checkout 或 exact GitHub blob；不可複製後端到前端repo。",
+        "依 operator 批准的 V2 計畫實作；先讀 docs/operations/bff-upstream-v2-20260911/INDEX.md 與當前 canonical task notes。這是開發 source/isolated-test 範圍；不部署 hosted/production、不啟用 live trading/資金操作、不改憑證、安全授權或 canonical task/queue；正常自身 task lifecycle 回報仍走既有流程。",
+        "使用 clean task worktree；重新讀 current origin/dev/base/head 與真實 caller，僅修改 exact artifacts 內本包責任。發現額外檔案需求先用正式 contract 修訂；不靠 main wrapper、第二 cache/store/state machine、fallback 或減少 assertion 逃避 scope。",
+        "一個 flow 只保留一個實作與 state owner。每次搬移同一 accepted head 改完所有現役 consumers 並刪舊 bodies/imports/DI/flags/tests-mocks；different aggregates 保留各自 owner。新模組只有在既有 owner 無合適責任邊界時才建立。",
+        "同檔案依 canonical dependency 次序執行；前一 writer merge、canonical completion、lease settled 後，下一 writer rebase accepted dev。不得自行啟動同 scope 的另一 worker 或合併他人未完成 PR。",
+        "保留原 inventory 每個 case 的業務語義與負向驗證；focused/full-file regression、source owner 清冊、舊碼/舊API消費端零殘留、併發/儲存/權限失敗按本包風險驗證。AST function 數不是 passed 數；禁止 skip/fixture fake success 取代缺口。",
+        "只 stage intended paths；遵循 repo subject/trailers、branch push、產品 PR、exact-head independent review、required checks 與 merge-to-dev。記錄 head/base/merge、changed paths、commands/exit/collection/pass/fail/skip 及刪除證據。不得偽造 review/CI/hosted receipt。",
+        "完成本包不代表整體 Management/Agora/12-loop 或 hosted deployment 完成；不同 repo 的 frontend artifacts 必須在 ajoe734/execute-plans 獨立 checkout，不能複製进 Pantheon。BE/FE source pair 通過才可交既有 release lane，這個 task 不做 live switch。",
+        "Per-source/per-action success/forbidden/state-conflict/race/crash/readback/UI; preserved product obligations unless explicit retirement.",
+        "Cancel request vs owner accepted vs worker terminal; late completion fenced; retry exactly one linked new attempt/key； no uncertain blind replay.",
+        "Archive retains evidence/log/artifact authority; promote verifies artifact/approval/target/registry receipt; no capital/live activation.",
+        "B10/B16 true execution cases cannot be closed by U10A registry/read plumbing alone.",
+        "同步清理：Remaining fake cancel/retry/executed/readback and UI local success.",
+        "同步清理：Only explicitly retired operation code/catalog/UI/tests after approval; do not delete planned functionality.",
+        "先讀對應已完成的契約決策文件；未批准的新增功能/權限/資料操作不可推論授權。未納入source-provider檔案須正式exact artifact修訂後才寫，不把conditional paths當隱性grant。",
+        "PPL-ALLOC-007僅保留原歷史provenance hold，不在本包重做其頁面或改generation；寫FE前核對它仍无active worker/lease。若該任務恢復實作，先正式定序再寫，不與其並行。"
+      ]
+    }
+  ]
+}

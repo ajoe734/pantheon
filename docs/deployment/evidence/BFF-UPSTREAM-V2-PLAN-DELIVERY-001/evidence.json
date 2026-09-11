@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-UPSTREAM-V2-PLAN-DELIVERY-001",
+  "scope": "documentation-only delivery of operator-approved V2 planning and execution dispatch map in docs/operations/bff-upstream-v2-20260911/; no product runtime changes, no hosted execution authorization",
+  "source_baselines": {
+    "pantheon": "897eaaf70ca3fe1330e986f47626f37c7d502abe",
+    "execute-plans": "d0f2186c12355cb4aa7179f14069c7e627b8e840"
+  },
+  "approved_plan": {
+    "source_report_dir": "/tmp/pantheon-upstream-plan-review-20260911",
+    "dispatch_manifest": "/tmp/pantheon-v2-dispatch-20260911/execution-manifest.json",
+    "delivery_directory": "docs/operations/bff-upstream-v2-20260911",
+    "status": "approved_by_operator_dispatched_to_canonical_taskstore"
+  },
+  "canonical_dispatch_state": {
+    "canonical_execution_tasks_total": 19,
+    "original_planning_packages": 16,
+    "split_for_single_repository_rule": [
+      {
+        "unit": "U9",
+        "tasks": [
+          "BFF-CANONICAL-COMMAND-API-RETIREMENT-001",
+          "FE-CANONICAL-COMMAND-API-RETIREMENT-001"
+        ]
+      },
+      {
+        "unit": "U8B",
+        "tasks": [
+          "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001",
+          "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001"
+        ]
+      },
+      {
+        "unit": "U10B",
+        "tasks": [
+          "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
+          "FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001"
+        ]
+      }
+    ],
+    "decision_tasks": [
+      "BFF-COMMAND-STORE-CONTRACT-DECISION-001",
+      "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001",
+      "BFF-RESEARCH-JOBS-CONTRACT-DECISION-001"
+    ],
+    "updated_existing_tasks": 10,
+    "recorded_notes": 17,
+    "checked_via": "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task-id>"
+  },
+  "validation": {
+    "files_delivered": 8,
+    "relative_links_checked": 6,
+    "relative_links_broken": 0,
+    "json_files_validated": 2,
+    "secret_pattern_matches": 0,
+    "runtime_tests": "not run: documentation-only delivery; no product/runtime code changed"
+  },
+  "files": [
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/INDEX.md",
+      "sha256": "4226c85938c5efd49b4c47612778705e4e02370df6afb93e64c1aba8b59a821b"
+    },
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/01_CURRENT_AUDIT.md",
+      "sha256": "ff39d1abdec1993d5417a2cbdda8d1e0717df9e2d073f9f811bda0cc46745f73"
+    },
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/02_RESEARCH_AND_DESIGN.md",
+      "sha256": "d607304edb87fdb6dd273da346dd09f6bc86ca0c562c25b86129935126db1f47"
+    },
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
+      "sha256": "540eb9f22cb7d37f4dbd12cd6fd4cc88707285c2e15f20c1b7f33aadccdb7221"
+    },
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/04_ORDERED_DELIVERY.md",
+      "sha256": "63647d212ef9dba85c1924174e7f2183380e50237a4a3597c8b1371636fdc235"
+    },
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/05_EVIDENCE_AND_ACCEPTANCE.md",
+      "sha256": "11e25f83be6e8efcd8b0c3cfb7c23ae131c70f0d26e353698f50eb8bb9774796"
+    },
+    {
+      "path": "docs/operations/bff-upstream-v2-20260911/dispatch-map.json",
+      "sha256": "8394a2503af86b896847d9d49ffeac292cc1c1088e09706d21f759d1aa6e6f7f"
+    }
+  ],
+  "path_base": "repository_root",
+  "delivery": {
+    "commit": null,
+    "pr": null,
+    "head_sha": null,
+    "merge_commit": null,
+    "note": "populated at owner handoff and updated at closeout; not filled by the initial task-scoped commit"
+  }
+}
