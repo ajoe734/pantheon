@@ -77,6 +77,16 @@
       "exit_code": 0,
       "expected_failures": 1,
       "errors": 0
+    },
+    {
+      "command": "PATH=\"/tmp/shared-quota-venv/bin:$PATH\" PYTHON=/tmp/shared-quota-venv/bin/python timeout 240 scripts/run-acceptance.sh smoke",
+      "exit_code": 0,
+      "result": "All smoke stages complete; repository baseline includes two existing skipped tests.",
+      "terminal_log_sha256": "ea8d331e2f503a892968a46d459f951f6b09e8bb70dbd05a04b7431dc49dbdcf"
+    },
+    {
+      "command": "timeout 60 /tmp/shared-quota-venv/bin/python scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge --delivery-class auto",
+      "exit_code": 0
     }
   ],
   "environment_attempts": [
