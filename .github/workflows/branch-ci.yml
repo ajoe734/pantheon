@@ -360,6 +360,16 @@ jobs:
             scripts/test_supervisor_launch_ownership.py \
             scripts/test_supervisor_watchdog_install.py
 
+      - name: Run delivery diagnostics and exit-status regressions
+        if: steps.boundary.outputs.delivery_touched == 'true'
+        run: |
+          PYTHONPATH=.orchestrator python3 -m pytest -q \
+            scripts/test_capture_dev_artifact_baseline.py \
+            scripts/test_dev_release_artifact_driver.py \
+            scripts/test_dev_release_artifacts.py \
+            scripts/test_dev_remote_guarded_exec.py \
+            scripts/test_run_acceptance.py
+
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')
         run: |

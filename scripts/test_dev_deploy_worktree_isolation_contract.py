@@ -103,7 +103,7 @@ def test_nonprod_deploy_uses_protected_controller_and_binds_both_roots() -> None
 
     assert "PANTHEON_DEPLOY_WORKTREE_ROOT:" in deploy_step
     assert "vars.DEV_DEPLOY_WORKTREE_ROOT" in deploy_step
-    assert DEPLOY_ROOT in deploy_step
+    assert "/home/lupin/" not in deploy_step
     assert "PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT" not in deploy_step
     assert (
         'bash "${GITHUB_WORKSPACE}/.agora-gate-controller/'
@@ -142,7 +142,10 @@ def test_hosted_probes_follow_the_isolated_dev_root_worktree() -> None:
         for binding in bindings:
             assert "format('{0}/dev-root'" in binding
             assert "vars.DEV_DEPLOY_WORKTREE_ROOT" in binding
-            assert DEPLOY_ROOT in binding
+            if workflow == NONPROD_WORKFLOW:
+                assert "/home/lupin/" not in binding
+            else:
+                assert DEPLOY_ROOT in binding
 
     probe = DEPLOYMENT_PROBE.read_text(encoding="utf-8")
     assert DEV_ROOT_WORKTREE in probe

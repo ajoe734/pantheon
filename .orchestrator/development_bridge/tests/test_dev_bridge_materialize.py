@@ -12,6 +12,7 @@ the isolated copy calling in, silently breaking the bridge-provenance guard).
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from copy import deepcopy
@@ -26,6 +27,23 @@ from development_bridge import dev_bridge_materialize
 
 
 class DevBridgeMaterializeModuleTests(unittest.TestCase):
+
+    def test_wire_canonicalization_keeps_legacy_fields_without_model_defaults(self):
+        from development_bridge.dev_bridge_signer import canonical_packet_bytes
+        packet = {"packet_id": "legacy-來源", "operator_authorization_required": True,
+                  "tasks": [], "signature": {"value": "excluded"}}
+        before = deepcopy(packet)
+        expected = json.dumps({k: v for k, v in packet.items() if k != "signature"},
+                              sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        self.assertEqual(canonical_packet_bytes(packet), expected)
+        self.assertIs(dev_bridge_materialize.canonical_packet_bytes, canonical_packet_bytes)
+        self.assertEqual(packet, before)
+
+    def test_queue_cli_defaults_to_local_tooling_source(self):
+        spec = importlib.util.spec_from_file_location("queue_cli_test", REPO_ROOT / "scripts/queue_assistant_dev_task_packet.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.build_parser().parse_args([]).source, "local_development_tooling")
 
     def test_module_imports_with_no_circular_dependency(self) -> None:
         # No importlib.reload() here: reloading this module would rebind its

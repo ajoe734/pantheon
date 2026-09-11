@@ -58,6 +58,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from common import utc_now as iso_now
+from .dev_bridge_signer import canonical_packet_bytes
 
 # Canonical home of the materialization re-entrancy guard (see module
 # docstring) -- ai_status.py imports this exact instance rather than owning
@@ -229,7 +230,7 @@ def dev_bridge_replay_ledger(state: dict[str, Any]) -> dict[str, Any]:
 def verify_signed_dev_bridge_packet(
     batch: Mapping[str, Any], *, state: dict[str, Any] | None = None
 ) -> None:
-    """Verify BFF packet authority and optionally consume it atomically."""
+    """Verify local packet content and optionally consume it atomically."""
     ai_status = _ai_status_module()
 
     packet = batch.get("signed_packet")
@@ -255,11 +256,7 @@ def verify_signed_dev_bridge_packet(
     encoded_public_key = public_keys.get(key_id)
     if not isinstance(encoded_public_key, str):
         raise SystemExit("Dev bridge signed packet key is not trusted")
-    body = deepcopy(dict(packet))
-    body.pop("signature", None)
-    canonical = json.dumps(
-        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode()
+    canonical = canonical_packet_bytes(packet)
     try:
         public_key = base64.urlsafe_b64decode(
             encoded_public_key + "=" * (-len(encoded_public_key) % 4)

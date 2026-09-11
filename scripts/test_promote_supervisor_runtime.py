@@ -503,6 +503,7 @@ def test_replace_quiesces_incumbent_before_draining_its_writers(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "launched", result.get("error", result)
@@ -565,6 +566,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "launched", result.get("error", result)
@@ -610,6 +612,7 @@ def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -733,6 +736,7 @@ def test_status_root_replacement_fails_before_changing_admission_authority(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1105,6 +1109,7 @@ def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1347,6 +1352,7 @@ def test_replace_supervisor_restarts_incumbent_with_incumbent_identity_on_launch
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1428,6 +1434,7 @@ def test_replace_supervisor_reports_rollback_failure_on_restart_crash(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1638,6 +1645,7 @@ def test_replace_supervisor_refuses_incumbent_restart_on_incomplete_restoration(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1683,6 +1691,7 @@ def test_replace_supervisor_qualifies_incumbent_before_stopping(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1714,6 +1723,7 @@ def test_replace_supervisor_refuses_shutdown_when_incumbent_identity_is_absent(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1809,6 +1819,7 @@ def test_post_rename_config_directory_fsync_failure_restores_and_verifies_incumb
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert bool(injected) is True
@@ -2005,6 +2016,7 @@ def test_partial_rollback_preserves_already_restored_head_and_idempotent(
         live_config_path=live,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
     assert result["outcome"] == "failed"
     assert old_head.exists()
@@ -2067,6 +2079,7 @@ def test_replace_supervisor_mixed_restored_unrestored_files_and_durability_error
         live_config_path=live,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -2368,6 +2381,9 @@ def test_health_requires_exact_pid_runtime_and_fresh_canonical_readback(tmp_path
 
 
 def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_path, monkeypatch):
+    def unexpected_migration(*args, **kwargs):
+        pytest.fail("ordinary source update entered storage migration")
+    monkeypatch.setattr(promotion, "_migrate_storage_paths", unexpected_migration)
     candidate, status_root = _candidate(tmp_path)
     live = tmp_path / "runtime/live.json"
     incumbent, identity = promotion.render_v2_config(candidate, status_root=status_root,
@@ -2399,6 +2415,31 @@ def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_pa
     assert promotion.runtime_state.promotion_launch_allowed(state, old_identity)
     assert not promotion.runtime_state.promotion_launch_allowed(state, identity)
     assert json.loads(live.read_text()) == incumbent
+
+
+@pytest.mark.parametrize("section,key", [
+    ("task_state_store", "event_log"), ("paths", "state_file"),
+    ("paths", "approval_queue"),
+])
+def test_ordinary_promotion_rejects_data_movement_before_stopping(tmp_path, monkeypatch, section, key):
+    candidate, status_root = _candidate(tmp_path)
+    live = tmp_path / "runtime/live.json"
+    incumbent, _ = promotion.render_v2_config(candidate, status_root=status_root,
+        live_config_path=live, python_executable=Path(sys.executable))
+    incumbent[section][key] = str(tmp_path / "existing-data" / key)
+    promotion.write_json_atomic(live, incumbent)
+    with mock.patch.object(promotion, "stop_existing_supervisor") as stop:
+        with pytest.raises(ValueError, match="explicitly select --migrate-storage"):
+            promotion.replace_supervisor(candidate, status_root=status_root,
+                live_config_path=live, python_executable=Path(sys.executable),
+                termination_timeout=1)
+    stop.assert_not_called()
+    assert json.loads(live.read_text()) == incumbent
+
+
+def test_storage_migration_is_explicit_cli_selection():
+    assert not promotion.parse_args(["--status-root", "/tmp/status", "--promote"]).migrate_storage
+    assert promotion.parse_args(["--status-root", "/tmp/status", "--promote", "--migrate-storage"]).migrate_storage
 
 
 def test_stop_failure_restores_prior_admission_without_signalling_workers(tmp_path, monkeypatch):

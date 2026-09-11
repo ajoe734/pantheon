@@ -21,7 +21,7 @@ import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Mapping, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -144,15 +144,20 @@ def validate_signing_key_pair() -> None:
 # Canonical payload
 # ---------------------------------------------------------------------------
 
+def canonical_packet_bytes(packet: Mapping[str, Any]) -> bytes:
+    """Encode the original signed wire content without adding model defaults."""
+    data = dict(packet)
+    data.pop("signature", None)
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
 def _canonical_payload(packet: DevTaskPacket) -> bytes:
     """Return the canonical bytes to sign.
 
     The signature field is excluded from the payload so the signature covers
     the packet content but not itself.
     """
-    data = packet.model_dump(by_alias=False, mode="json")
-    data.pop("signature", None)
-    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return canonical_packet_bytes(packet.model_dump(by_alias=False, mode="json"))
 
 
 def packet_digest(packet: DevTaskPacket) -> str:

@@ -10,6 +10,14 @@ DEV_WORKFLOWS = (
 )
 
 
+def test_nonprod_workflow_has_no_retired_account_or_path_fallback():
+    workflow = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert "'lupin'" not in workflow
+    assert "/home/lupin/" not in workflow
+    assert "REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}" in workflow
+    assert "DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}" in workflow
+
+
 def test_dev_workflows_have_one_direct_ssh_transport_and_no_metadata_ssh() -> None:
     for workflow in DEV_WORKFLOWS:
         text = workflow.read_text(encoding="utf-8")
