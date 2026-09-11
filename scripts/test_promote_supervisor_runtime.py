@@ -7,6 +7,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,6 @@ import promote_supervisor_runtime as promotion
 _REAL_VERIFY_PROMOTION_HEALTH = promotion.verify_promotion_health
 _REAL_VERIFY_DRAIN_CAPABILITY = promotion.verify_incumbent_drain_capability
 _REAL_VERIFY_WORKER_SANDBOX = promotion.verify_worker_sandbox
-_REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS = promotion.verify_execution_authorization_barriers
 
 
 @pytest.fixture(autouse=True)
@@ -37,24 +37,6 @@ def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "outcome": "available",
             "binary": "/usr/bin/bwrap",
             "command_root": str(Path(root).resolve()),
-        },
-    )
-    # This module's `_candidate()` fixture writes a minimal stub
-    # ``.orchestrator`` (a placeholder ``supervisor.py``, no
-    # ``execution_authorization.py``/``worker_runner.py`` at all) -- these
-    # tests exercise stop/install/launch/rollback semantics, not actual
-    # runtime source content, which is what
-    # ``verify_execution_authorization_barriers`` discover-only-probes for
-    # (OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001). Tests that need to exercise
-    # that probe itself replace this stub explicitly.
-    monkeypatch.setattr(
-        promotion,
-        "verify_execution_authorization_barriers",
-        lambda root, *, python_executable: {
-            "outcome": "barriers_verified",
-            "command_root": str(Path(root).resolve()),
-            "capability": "execution_authorization_v1",
-            "python_executable": str(python_executable),
         },
     )
     monkeypatch.setenv(
@@ -522,6 +504,7 @@ def test_replace_quiesces_incumbent_before_draining_its_writers(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "launched", result.get("error", result)
@@ -584,6 +567,7 @@ def test_replace_uses_canonical_runtime_lock_during_reservation_recovery(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "launched", result.get("error", result)
@@ -629,6 +613,7 @@ def test_replace_restarts_untouched_incumbent_when_post_stop_drain_fails(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -752,6 +737,7 @@ def test_status_root_replacement_fails_before_changing_admission_authority(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1002,240 +988,6 @@ def test_deploy_root_honors_env_override_and_expands_user(tmp_path: Path) -> Non
     assert lines[2] == str(Path(expected_root) / "command-runtimes")
 
 
-def _write_real_orchestrator_modules(orchestrator_dir: Path) -> None:
-    """Copy actual intake, TaskStore, admission and runner code plus imports."""
-
-    repo = Path(__file__).resolve().parents[1]
-    for directory in (".orchestrator", "scripts"):
-        for source in (repo / directory).rglob("*.py"):
-            if "tests" in source.parts or source.name.startswith("test_"):
-                continue
-            destination = orchestrator_dir.parent / source.relative_to(repo)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(source.read_bytes())
-    # The actual runner preflight validates immutable merged command source;
-    # publish this test-only source snapshot to its own local dev tracking ref.
-    candidate = orchestrator_dir.parent
-    _git(candidate, "add", ".orchestrator", "scripts")
-    _git(candidate, "commit", "-m", "isolated complete candidate runtime")
-    _git(candidate, "update-ref", "refs/remotes/origin/dev", "HEAD")
-
-
-def test_verify_execution_authorization_barriers_accepts_current_source(
-    tmp_path: Path,
-) -> None:
-    candidate, _status_root = _candidate(tmp_path)
-    _write_real_orchestrator_modules(candidate / ".orchestrator")
-
-    result = _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
-        candidate, python_executable=Path(sys.executable),
-    )
-
-    assert result["outcome"] == "barriers_verified"
-    assert result["capability"] == "execution_authorization_v1"
-    assert result["python_executable"] == sys.executable
-    assert set(result["checks"]) == {
-        "signed_no_mfa_pending_intake", "durable_legacy_hold",
-        "planner_denies_pending", "late_delivery_denies_pending",
-        "worker_entry_denies_unreserved", "ordinary_functional_dispatch",
-        "worker_main_denies_invalid_receipt", "worker_launch_guard_wiring",
-    }
-    assert all(
-        Path(item["path"]).is_relative_to(candidate) and len(item["sha256"]) == 64
-        for item in result["module_provenance"].values()
-    )
-
-
-def test_verify_execution_authorization_barriers_rejects_old_runtime(
-    tmp_path: Path,
-) -> None:
-    # An old-runtime rollback target predates execution_authorization.py
-    # entirely (OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 SA/SD 2, 6):
-    # ``_candidate()``'s stub ``.orchestrator`` has no such module at all.
-    candidate, _status_root = _candidate(tmp_path)
-
-    with pytest.raises(ValueError, match="authorization barriers"):
-        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
-            candidate, python_executable=Path(sys.executable),
-        )
-
-
-def test_barrier_probe_uses_selected_venv_and_ignores_ambient_authority(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    candidate, _ = _candidate(tmp_path)
-    _write_real_orchestrator_modules(candidate / ".orchestrator")
-    # Preserve a distinct venv executable spelling even when bin/python is
-    # a symlink. Resolving it would quietly run the base Python environment.
-    venv = tmp_path / "candidate-python"
-    subprocess.run(
-        [sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(venv)],
-        check=True, capture_output=True, text=True, timeout=30,
-    )
-    # The test runner may itself be in a venv; make its installed dependency
-    # directories available to the new isolated candidate venv via a .pth,
-    # while PYTHONPATH and Python caller state remain deliberately ignored.
-    site_dir = next((venv / "lib").glob("python*/site-packages"))
-    source_sites = [path for path in sys.path if path.endswith("site-packages")]
-    (site_dir / "preflight-test-dependencies.pth").write_text(
-        "\n".join(source_sites) + "\n", encoding="utf-8",
-    )
-    python = venv / "bin" / "python3"
-    monkeypatch.setenv("PYTHONPATH", "/untrusted/caller/code")
-    monkeypatch.setenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", "invalid ambient authority")
-    monkeypatch.setenv("PANTHEON_STATUS_ROOT", "/untrusted/live/status")
-    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", "/untrusted/live/journal")
-
-    result = _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
-        candidate, python_executable=python,
-    )
-
-    assert result["python_executable"] == str(python)
-    assert result["python_prefix"] == str(venv)
-
-
-def test_barrier_probe_does_not_fall_back_from_broken_selected_python(tmp_path: Path) -> None:
-    candidate, _ = _candidate(tmp_path)
-    _write_real_orchestrator_modules(candidate / ".orchestrator")
-    python = tmp_path / "broken-candidate-python"
-    python.write_text("#!/bin/sh\necho selected-interpreter-failed >&2\nexit 27\n", encoding="utf-8")
-    python.chmod(0o755)
-
-    with pytest.raises(ValueError, match="selected-interpreter-failed"):
-        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate, python_executable=python)
-
-
-@pytest.mark.parametrize("missing_barrier", [
-    "deferred_intake", "pending_hold", "dispatch_gate", "worker_entry",
-    "detached_helper", "detached_main", "unlocked_launch",
-])
-def test_barrier_probe_rejects_declarations_without_behavior(
-    tmp_path: Path, missing_barrier: str,
-) -> None:
-    candidate, _ = _candidate(tmp_path)
-    _write_real_orchestrator_modules(candidate / ".orchestrator")
-    if missing_barrier == "deferred_intake":
-        path = candidate / ".orchestrator/development_bridge/dev_bridge_materialize.py"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("\ndef verify_signed_dev_bridge_packet(*args, **kwargs):\n    raise SystemExit('MFA still required at intake')\n")
-    elif missing_barrier == "pending_hold":
-        path = candidate / "scripts/ai_status.py"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("\n_real_assign = command_assign\ndef command_assign(state, args):\n    result = _real_assign(state, args)\n    get_task(state, args[0]).pop('execution_authorization', None)\n    return result\n")
-    elif missing_barrier == "dispatch_gate":
-        path = candidate / ".orchestrator/rewrite/dispatch_admission.py"
-        source = path.read_text(encoding="utf-8")
-        changed = source.replace("if not intent.execution_authorized and task_reason in (", "if False and task_reason in (")
-        assert changed != source
-        path.write_text(changed, encoding="utf-8")
-    elif missing_barrier == "worker_entry":
-        path = candidate / ".orchestrator/worker_runner.py"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("\ndef ensure_execution_authorized_before_launch(*args, **kwargs):\n    return None\n")
-    else:
-        path = candidate / ".orchestrator/worker_runner.py"
-        source = path.read_text(encoding="utf-8")
-        if missing_barrier == "detached_helper":
-            changed = source.replace(
-                "    ensure_execution_authorized_before_launch(\n        coordination_root, task_id, active_role=role, run_id=authorization_run_id\n    )",
-                "    pass  # detached authorization helper",
-            )
-        elif missing_barrier == "detached_main":
-            changed = source.replace(
-                "binding = validate_worker_entry_binding(\n        coordination_root, **entry_arguments, wait_seconds=10.0\n    )",
-                "binding = {}  # detached canonical entry check",
-            )
-        else:
-            changed = source.replace(
-                "with canonical_task_state_lock_file(coordination_root / \"ai-status.json\", shared=True):",
-                "if True:  # launch lock removed",
-            )
-        assert changed != source
-        path.write_text(changed, encoding="utf-8")
-
-    with pytest.raises(ValueError, match="authorization barriers"):
-        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
-            candidate, python_executable=Path(sys.executable),
-        )
-
-
-def test_discover_only_refuses_old_runtime_and_never_stops_incumbent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-) -> None:
-    candidate, status_root = _candidate(tmp_path)
-    live_config = tmp_path / "runtime/live.json"
-    monkeypatch.setattr(promotion, "verify_execution_authorization_barriers", _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS)
-    stopped = []
-    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *args, **kwargs: stopped.append(True))
-
-    code = promotion.main([
-        "--discover-only", "--json", "--repo", str(candidate),
-        "--status-root", str(status_root), "--live-config", str(live_config),
-        "--python", sys.executable,
-    ])
-
-    result = json.loads(capsys.readouterr().out)
-    assert code == 1
-    assert "authorization barriers" in result["error"]
-    assert stopped == []
-    assert not live_config.exists()
-
-
-def test_verify_execution_authorization_barriers_rejects_missing_worker_runner_hook(
-    tmp_path: Path,
-) -> None:
-    candidate, _status_root = _candidate(tmp_path)
-    _write_real_orchestrator_modules(candidate / ".orchestrator")
-    worker_runner_path = candidate / ".orchestrator" / "worker_runner.py"
-    stripped = worker_runner_path.read_text(encoding="utf-8").replace(
-        "def ensure_execution_authorized_before_launch(",
-        "def _renamed_execution_authorization_hook(",
-    )
-    assert stripped != worker_runner_path.read_text(encoding="utf-8")
-    worker_runner_path.write_text(stripped, encoding="utf-8")
-
-    with pytest.raises(ValueError, match="authorization barriers"):
-        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
-            candidate, python_executable=Path(sys.executable),
-        )
-
-
-def test_replace_supervisor_refuses_old_runtime_rollback_without_barriers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    candidate, status_root = _candidate(tmp_path)
-    live_config = tmp_path / "runtime" / "live.json"
-    monkeypatch.undo()  # restore the autouse stub so the real probe runs
-    monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", tmp_path / "command-runtimes")
-    monkeypatch.setattr(
-        promotion,
-        "verify_worker_sandbox",
-        lambda root: {
-            "outcome": "available",
-            "binary": "/usr/bin/bwrap",
-            "command_root": str(Path(root).resolve()),
-        },
-    )
-    monkeypatch.setenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", '{"test-key":"public-test-key"}')
-    stop_calls = []
-    monkeypatch.setattr(
-        promotion, "stop_existing_supervisor", lambda *a, **k: stop_calls.append(1) or 41
-    )
-
-    result = promotion.replace_supervisor(
-        candidate,
-        status_root=status_root,
-        live_config_path=live_config,
-        python_executable=Path(sys.executable),
-        termination_timeout=1,
-    )
-
-    assert result["outcome"] == "failed"
-    assert "authorization barriers" in result["error"]
-    # The healthy incumbent must never be stopped once this preflight fails.
-    assert stop_calls == []
-
-
 def test_migrate_storage_paths_moves_task_state_and_worker_runtime_files(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     coord = tmp_path / "coord"
@@ -1358,6 +1110,7 @@ def test_replace_supervisor_rolls_back_storage_migration_on_launch_failure(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1600,6 +1353,7 @@ def test_replace_supervisor_restarts_incumbent_with_incumbent_identity_on_launch
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1681,6 +1435,7 @@ def test_replace_supervisor_reports_rollback_failure_on_restart_crash(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1891,6 +1646,7 @@ def test_replace_supervisor_refuses_incumbent_restart_on_incomplete_restoration(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1936,6 +1692,7 @@ def test_replace_supervisor_qualifies_incumbent_before_stopping(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -1967,6 +1724,7 @@ def test_replace_supervisor_refuses_shutdown_when_incumbent_identity_is_absent(
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -2062,6 +1820,7 @@ def test_post_rename_config_directory_fsync_failure_restores_and_verifies_incumb
         live_config_path=live_config,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert bool(injected) is True
@@ -2258,6 +2017,7 @@ def test_partial_rollback_preserves_already_restored_head_and_idempotent(
         live_config_path=live,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
     assert result["outcome"] == "failed"
     assert old_head.exists()
@@ -2320,6 +2080,7 @@ def test_replace_supervisor_mixed_restored_unrestored_files_and_durability_error
         live_config_path=live,
         python_executable=Path(sys.executable),
         termination_timeout=1,
+        migrate_storage=True,
     )
 
     assert result["outcome"] == "failed"
@@ -2547,7 +2308,7 @@ def test_drain_waits_for_active_task_state_store_lock_writer(tmp_path: Path) -> 
     assert result["drained"] is True
 
 
-def test_retained_immutable_writer_cannot_recreate_migrated_task_state(tmp_path: Path) -> None:
+def test_current_writer_cannot_recreate_migrated_task_state(tmp_path: Path) -> None:
     from rewrite import task_state_store
     status = tmp_path / "status"
     status.mkdir()
@@ -2573,7 +2334,7 @@ common.write_status(json.loads(sys.argv[2]), {"tasks": [], "marker": "retained-w
 '''
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PANTHEON_", "AI_"))}
     result = subprocess.run(
-        [sys.executable, "-c", program, str(Path(os.environ["PANTHEON_COMMAND_ROOT"]) / ".orchestrator"), json.dumps(old_cfg)],
+        [sys.executable, "-c", program, str(Path(__file__).resolve().parents[1] / ".orchestrator"), json.dumps(old_cfg)],
         env=env,
         capture_output=True,
         text=True,
@@ -2620,7 +2381,11 @@ def test_health_requires_exact_pid_runtime_and_fresh_canonical_readback(tmp_path
         _REAL_VERIFY_PROMOTION_HEALTH(config, candidate, 456, timeout_seconds=.01)
 
 
-def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stop_fails", [False, True])
+def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_path, monkeypatch, stop_fails):
+    def unexpected_migration(*args, **kwargs):
+        pytest.fail("ordinary source update entered storage migration")
+    monkeypatch.setattr(promotion, "_migrate_storage_paths", unexpected_migration)
     candidate, status_root = _candidate(tmp_path)
     live = tmp_path / "runtime/live.json"
     incumbent, identity = promotion.render_v2_config(candidate, status_root=status_root,
@@ -2636,22 +2401,154 @@ def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_pa
         return 43 if old else 42
     monkeypatch.setattr(promotion, "launch_v2_supervisor", launch)
     def health(config, identity, pid, **kwargs):
+        assert kwargs["timeout_seconds"] == 123
         events.append("health-old" if pid == 43 else "health-new")
         if pid == 42:
             raise RuntimeError("candidate canonical readback failed")
         return {"pid": pid, "verified": True}
     monkeypatch.setattr(promotion, "verify_promotion_health", health)
-    monkeypatch.setattr(promotion, "stop_unaccepted_candidate", lambda *a, **k: events.append("stop-new"))
+    def stop_candidate(pid, *, timeout_seconds):
+        assert timeout_seconds == 1
+        events.append("stop-new")
+        if stop_fails:
+            raise RuntimeError("candidate stop timed out")
+    monkeypatch.setattr(promotion, "stop_unaccepted_candidate", stop_candidate)
     result = promotion.replace_supervisor(candidate, status_root=status_root, live_config_path=live,
-        python_executable=Path(sys.executable), termination_timeout=1)
+        python_executable=Path(sys.executable), termination_timeout=1, health_timeout=123)
     assert result["outcome"] == "failed"
     assert "canonical readback failed" in result["error"]
+    assert result["launch_error"] == "RuntimeError: candidate canonical readback failed"
+    assert result["health_timeout_seconds"] == 123
+    assert result["termination_timeout_seconds"] == 1
+    if stop_fails:
+        assert events == ["stop-old", "launch-new", "health-new", "stop-new"]
+        assert result["rollback_stop_error"] == "RuntimeError: candidate stop timed out"
+        assert "candidate stop timed out" in result["error"]
+        assert promotion.runtime_state.load_runtime_state(incumbent)["promotion"]["phase"] == "verifying"
+        return
     assert events == ["stop-old", "launch-new", "health-new", "stop-new", "restart-old", "health-old"]
     state = promotion.runtime_state.load_runtime_state(incumbent)
     assert state["promotion"]["phase"] == "rolled_back"
     assert promotion.runtime_state.promotion_launch_allowed(state, old_identity)
     assert not promotion.runtime_state.promotion_launch_allowed(state, identity)
     assert json.loads(live.read_text()) == incumbent
+
+
+@pytest.mark.parametrize("section,key", [
+    ("task_state_store", "event_log"), ("paths", "state_file"),
+    ("paths", "approval_queue"),
+])
+def test_ordinary_promotion_rejects_data_movement_before_stopping(tmp_path, monkeypatch, section, key):
+    candidate, status_root = _candidate(tmp_path)
+    live = tmp_path / "runtime/live.json"
+    incumbent, _ = promotion.render_v2_config(candidate, status_root=status_root,
+        live_config_path=live, python_executable=Path(sys.executable))
+    incumbent[section][key] = str(tmp_path / "existing-data" / key)
+    promotion.write_json_atomic(live, incumbent)
+    with mock.patch.object(promotion, "stop_existing_supervisor") as stop:
+        with pytest.raises(ValueError, match="explicitly select --migrate-storage"):
+            promotion.replace_supervisor(candidate, status_root=status_root,
+                live_config_path=live, python_executable=Path(sys.executable),
+                termination_timeout=1)
+    stop.assert_not_called()
+    assert json.loads(live.read_text()) == incumbent
+
+
+def test_storage_migration_is_explicit_cli_selection():
+    assert not promotion.parse_args(["--status-root", "/tmp/status", "--promote"]).migrate_storage
+    assert promotion.parse_args(["--status-root", "/tmp/status", "--promote", "--migrate-storage"]).migrate_storage
+
+
+def test_health_and_termination_cli_budgets_are_independent():
+    basic = ["--status-root", "/tmp/status", "--promote"]
+    defaults = promotion.parse_args(basic)
+    assert defaults.termination_timeout == 15
+    assert defaults.health_timeout == promotion.DEFAULT_HEALTH_TIMEOUT_SECONDS == 600
+    explicit = promotion.parse_args(basic + ["--health-timeout", "321", "--termination-timeout", "2"])
+    assert explicit.health_timeout == 321
+    assert explicit.termination_timeout == 2
+
+
+def test_main_forwards_explicit_health_budget(tmp_path, monkeypatch):
+    candidate, status_root = _candidate(tmp_path)
+    with mock.patch.object(promotion, "replace_supervisor", return_value={
+        "outcome": "launched", "exit_code": 0,
+    }) as replace:
+        assert promotion.main([
+            "--repo", str(candidate), "--status-root", str(status_root),
+            "--live-config", str(tmp_path / "live.json"), "--promote", "--json",
+            "--python", sys.executable, "--health-timeout", "321", "--termination-timeout", "2",
+        ]) == 0
+    assert replace.call_args.kwargs["health_timeout"] == 321
+    assert replace.call_args.kwargs["termination_timeout"] == 2
+
+
+@pytest.mark.parametrize("budget", [0, -1, float("inf"), float("nan")])
+def test_invalid_health_budget_fails_before_render_or_stop(tmp_path, monkeypatch, budget):
+    with mock.patch.object(promotion, "render_v2_config") as render, mock.patch.object(
+        promotion, "stop_existing_supervisor"
+    ) as stop:
+        with pytest.raises(ValueError, match="health timeout must be finite and positive"):
+            promotion.replace_supervisor(tmp_path, status_root=tmp_path,
+                live_config_path=tmp_path / "live.json", python_executable=Path(sys.executable),
+                termination_timeout=1, health_timeout=budget)
+    render.assert_not_called()
+    stop.assert_not_called()
+
+
+def test_pid_alive_reaps_an_actual_exited_direct_child():
+    child = subprocess.Popen([sys.executable, "-B", "-c", "pass"])
+    try:
+        # Observe an unreaped child without Popen.poll()/wait() consuming it.
+        deadline = time.monotonic() + 5
+        while True:
+            raw = Path(f"/proc/{child.pid}/stat").read_text()
+            if raw[raw.rfind(")") + 2 :].split()[0] == "Z":
+                break
+            assert time.monotonic() < deadline, "fixture child did not exit"
+            time.sleep(.01)
+        os.kill(child.pid, 0)  # This succeeds for a zombie, the original defect.
+        assert not promotion._pid_alive(child.pid)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+    finally:
+        child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("process_state", ["Z", "X"])
+def test_pid_alive_rejects_terminal_nonchild(process_state, monkeypatch):
+    with mock.patch.object(promotion.os, "waitpid", side_effect=ChildProcessError), mock.patch.object(
+        promotion.os, "kill"
+    ), mock.patch.object(promotion.Path, "read_text", return_value=f"123 (child) {process_state} 1"):
+        assert not promotion._pid_alive(123)
+
+
+def test_stop_unaccepted_candidate_reaps_actual_sigterm_child(tmp_path):
+    script = tmp_path / "supervisor.py"
+    script.write_text("import time\ntime.sleep(60)\n")
+    child = subprocess.Popen([sys.executable, "-B", str(script)])
+    try:
+        assert promotion._pid_alive(child.pid)
+        promotion.stop_unaccepted_candidate(child.pid, timeout_seconds=2)
+        assert not promotion._pid_alive(child.pid)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+
+
+def test_health_timeout_remains_bounded_with_missing_projection(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(promotion.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(promotion.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(promotion, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(promotion.runtime_state, "load_runtime_state", lambda config: {})
+    with pytest.raises(RuntimeError, match="health/canonical readback timed out"):
+        _REAL_VERIFY_PROMOTION_HEALTH({}, {"root": "/candidate", "head": "a" * 40}, 123,
+            timeout_seconds=.25)
+    assert clock[0] == .25
 
 
 def test_stop_failure_restores_prior_admission_without_signalling_workers(tmp_path, monkeypatch):

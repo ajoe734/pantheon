@@ -6,7 +6,9 @@ and pulsing for the complete SSH command. Parent PID checks alone are not proof
 of containment. No GitHub token, lease acquisition or FE switching lives here.
 
 Compose secrets come only from the caller's approved process environment. This
-driver filters only the runtime path/actor and baked GIT_SHA from Config.Env.
+driver filters only the runtime path/actor, historical auth booleans and baked
+GIT_SHA from Config.Env. Historical auth flags are restored only from the seal;
+they never configure new candidate token issuance.
 No environment dump or expanded Compose configuration is retained or emitted.
 """
 from __future__ import annotations
@@ -50,12 +52,9 @@ OWNERS = ("governance", "registry", "deployment", "runtime-manager", "deployment
 IDENTITY_FIELDS = ("candidate_id", "run_id", "attempt", "controller_sha", "candidate_backend_sha",
                    "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha")
 OWNER_FORMAT = '{"container_id":{{json .Id}},"image_id":{{json .Image}},"started_at":{{json .State.StartedAt}},"restart_count":{{json .RestartCount}}}'
-BASELINE_CONFIG = {
-    "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
-    "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
-}
+BASELINE_CONFIG = a.BASELINE_CONFIG_KEYS
 # Filtering happens inside Docker's formatter. No unrelated entry crosses the
-# subprocess boundary; unexpected values in these two fields fail without echo.
+# subprocess boundary; unexpected values in these fields fail without echo.
 CONFIG_FORMAT = '{{range .Config.Env}}{{$v := split . "="}}{{if or ' + ' '.join(
     '(eq (index $v 0) "' + key + '")' for key in BASELINE_CONFIG
 ) + '}}{{json .}}{{"\\n"}}{{end}}{{end}}'
@@ -140,7 +139,7 @@ class GuardedDocker(a.Docker):
                         continue
                 self.barrier.check()
                 if process.returncode:
-                    raise a.ArtifactError("Docker artifact operation failed")
+                    raise a.ArtifactError("Docker artifact operation failed") from subprocess.CalledProcessError(process.returncode, command)
                 return output
             except BaseException:
                 # Stay in the remote watchdog's PGID so its STOP/TERM contains
@@ -263,10 +262,7 @@ def _owners(docker):
 
 
 def _validate_config(value):
-    a._keys(value, BASELINE_CONFIG, "baseline nonsecret configuration")
-    if any(value[key] not in (None, "", expected) for key, expected in BASELINE_CONFIG.items()):
-        raise a.ArtifactError("baseline configuration is outside the fixed allowlist")
-    return value
+    return a.validate_baseline_config(value)
 
 
 def _config(docker):
@@ -286,6 +282,50 @@ def _config(docker):
         seen.add(key)
         result[key] = value
     return _validate_config(result)
+
+
+def _check_compose_config(compose_file, expected, docker):
+    """Prove the sealed nonsecret values are representable before any switch.
+
+    Inspect an unexpanded model first. Only the allowlisted environment fields
+    enter a transient minimal Compose render; full expanded configuration and
+    unrelated secrets are never requested, retained or included in errors.
+    """
+    model = a._json(docker.call("compose", "-p", "pantheon", "-f", str(compose_file),
+                               "config", "--no-interpolate", "--no-env-resolution", "--format", "json"))
+    try:
+        fields = model["services"]["operator-bff"].get("environment", {})
+        selected = {key: fields[key] for key in BASELINE_CONFIG if key in fields}
+    except (KeyError, TypeError, AttributeError):
+        raise a.ArtifactError("baseline Compose configuration is unavailable") from None
+    del model, fields
+    if not all(value is None or isinstance(value, str) for value in selected.values()):
+        raise a.ArtifactError("baseline Compose configuration fields are invalid")
+    before = {key: os.environ.get(key) for key in BASELINE_CONFIG}
+    try:
+        os.environ.update({key: value or "" for key, value in expected.items()})
+        # This private, nonsecret renderer input is removed on success/failure;
+        # it is not another release artifact, manifest or configuration store.
+        with tempfile.TemporaryDirectory(prefix=".config-render-", dir=ROOT) as temporary:
+            path = Path(temporary) / "compose.json"
+            path.write_bytes(a.manifest_bytes({"services": {"operator-bff": {
+                "image": "pantheon-config-render-only", "environment": selected}}}))
+            rendered = a._json(docker.call("compose", "-p", "pantheon", "--env-file", "/dev/null",
+                                           "-f", str(path), "config", "--format", "json"))
+    finally:
+        for key, value in before.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    try:
+        fields = rendered["services"]["operator-bff"].get("environment", {})
+        observed = {key: fields.get(key) for key in BASELINE_CONFIG}
+    except (KeyError, TypeError, AttributeError):
+        raise a.ArtifactError("rendered baseline configuration is unavailable") from None
+    del rendered, fields
+    if observed != expected:
+        raise a.ArtifactError("baseline configuration cannot be represented by prior Compose")
 
 
 def _public(args, expected_fe, http, barrier):
@@ -530,6 +570,7 @@ def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, ht
         raise a.ArtifactError("candidate images already sealed; refusing re-admission")
     if a._file_digest(folder / "baseline-compose.yml")[0] != outer["compose_sha256"]:
         raise a.ArtifactError("retained baseline Compose has drifted")
+    _check_compose_config(folder / "baseline-compose.yml", outer["baseline_nonsecret_config"], docker)
     a.validate_images(a.manifest_bytes(outer["image_bundle"]), expected_sha256=outer["image_bundle_sha256"],
                       expected_source_sha=args.previous_backend_sha, archive_root=ROOT / "images")
     a.verify_frontend(outer["frontend"], release_store=args.fe_release_store, live_link=args.fe_live_link)
@@ -602,6 +643,7 @@ def run(args, *, docker, http, barrier):
         _public(args, frontend, http, barrier)
         owners_before = _owners(docker)
         config_before = _config(docker)
+        _check_compose_config(args.compose_file, config_before, docker)
         for directory in (folder, images):
             directory.mkdir(mode=0o700, exist_ok=True)
             a._directory(directory, private=True)
@@ -640,9 +682,11 @@ def run(args, *, docker, http, barrier):
         if os.environ.get("PANTHEON_BFF_AUTH_STUB") != "false" or os.environ.get("PANTHEON_BFF_AUTH_MODE") != "strict":
             raise a.ArtifactError("restore caller did not inject the approved strict runtime environment")
         candidate = _load_candidate(args, identity, folder)
+        _check_compose_config(args.compose_file, outer["baseline_nonsecret_config"], docker)
         cas = RestoreCAS(args, outer, candidate, docker, http, barrier)
         os.environ.update(GIT_SHA=args.previous_backend_sha, PANTHEON_ENV="dev", COMPOSE_PROFILES="")
-        # Only the two admitted non-secret values override the caller. Empty
+        # Only sealed non-secret baseline values override the caller, including
+        # historical MFA flags needed by the exact OLD Compose/image pair. Empty
         # injection prevents ambient values from filling a baseline absence;
         # exact post-recreate equality remains mandatory, never inferred.
         os.environ.update({key: value or "" for key, value in outer["baseline_nonsecret_config"].items()})
@@ -689,16 +733,19 @@ def parse_args(argv=None):
 def main(argv=None):
     def cancelled(_signal, _frame): raise a.ArtifactError("guarded operation cancelled")
     for name in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(name, cancelled)
+    stage = "initialize"
     try:
         args = parse_args(argv)
+        stage = args.command
         barrier = CancellationBarrier(args.guard_channel_fd, max_silence=args.guard_max_silence_seconds)
         result = run(args, docker=GuardedDocker(barrier), http=HTTP(), barrier=barrier)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except Exception:
+    except Exception as error:
         # HTTP bodies, credentials and subprocess stderr are not diagnostics.
-        print('{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED"}', file=__import__("sys").stderr)
-        return 75
+        record = a.failure_record(error, stage)
+        print(json.dumps(record, sort_keys=True), file=__import__("sys").stderr)
+        return record["exit_code"]
 
 
 if __name__ == "__main__":

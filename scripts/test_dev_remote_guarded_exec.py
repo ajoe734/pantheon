@@ -144,13 +144,24 @@ def launch_sender(children, tmp_path, fake_ssh, script, *, seconds=5, extra_env=
     return process
 
 
-@pytest.mark.parametrize("status", [0, 3, 17])
+@pytest.mark.parametrize("status", [0, 3, 17, 124, 255])
 def test_sender_bootstrap_success_and_exact_exit_status(children, tmp_path, fake_ssh, status):
     process = launch_sender(children, tmp_path, fake_ssh, f"printf 'safe-result\\n'; exit {status}\n")
     code, output, errors = finish(process)
     assert code == status, (output, errors)
     assert output == "safe-result\n"
     assert errors == ""
+
+
+def test_ssh_startup_exit_is_not_replaced_by_generic_capture_failure(children, tmp_path, fake_ssh):
+    # Close stdin before exit to exercise the EPIPE / process-exit race.
+    fake_ssh.write_text("#!/bin/sh\nexec 0<&-\nsleep 0.02\nexit 255\n")
+    process = launch_sender(children, tmp_path, fake_ssh, "true\n")
+    code, output, errors = finish(process)
+    assert code == 255 and output == ""
+    if errors:
+        row = json.loads(errors)
+        assert row["failure_stage"] == "transport" and row["exit_code"] == 255
 
 
 def test_sender_and_ssh_stay_in_existing_guard_pgid(children, tmp_path, fake_ssh):

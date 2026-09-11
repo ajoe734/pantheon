@@ -66,65 +66,21 @@ case "$MODE" in
     if [[ -f scripts/test_dev_paper_diagnostics_failure_path.py ]]; then
       run_step "dev-paper-diagnostics-failure-path" "$PYTHON" -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py
     fi
-    if [[ -d .orchestrator/execution_grant_issuer ]]; then
-      run_step "execution-grant-issuer-suite" "$PYTHON" -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'
-    fi
-    if [[ -f deploy/execution-grant-issuer/test_run_server.py ]]; then
-      run_step "execution-grant-issuer-server-suite" "$PYTHON" -m unittest deploy/execution-grant-issuer/test_run_server.py
-    fi
-    if [[ -f scripts/test_request_execution_grant.py ]]; then
-      run_step "request-execution-grant-suite" "$PYTHON" -m unittest scripts/test_request_execution_grant.py
-    fi
     ;;
   full)
     run_step "stage0-validate" stage0_validate
     run_step "stage0-baseline" stage0_baseline
-    if [[ -d .orchestrator/execution_grant_issuer ]]; then
-      run_step "execution-grant-issuer-suite" "$PYTHON" -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'
-    fi
-    if [[ -f deploy/execution-grant-issuer/test_run_server.py ]]; then
-      run_step "execution-grant-issuer-server-suite" "$PYTHON" -m unittest deploy/execution-grant-issuer/test_run_server.py
-    fi
-    if [[ -f scripts/test_request_execution_grant.py ]]; then
-      run_step "request-execution-grant-suite" "$PYTHON" -m unittest scripts/test_request_execution_grant.py
-    fi
     # Layer additional gates here as the suite grows.
     if [[ -f Makefile ]] && grep -q '^acceptance:' Makefile; then
       run_step "make-acceptance" make acceptance
     fi
     if [[ -d tests ]]; then
-      run_step "pytest" "$PYTHON" -m pytest -q tests || echo "pytest reported failures"
+      run_step "pytest" "$PYTHON" -m pytest -q tests
     fi
     # e2e-verifier-suite (glob): run every e2e business-flow verifier unit test in
     # one step so new scripts/test_verify_e2e_*.py are gated without per-round wiring.
-    if ls scripts/test_verify_e2e_*.py >/dev/null 2>&1; then
-      run_step "e2e-verifier-suite" "$PYTHON" -m pytest -q scripts/test_verify_e2e_*.py || echo "e2e verifier suite reported failures"
-    fi
-    # E2E binding-provenance verifier logic gate (the live run against a deployed
-    # BFF is a post-deploy smoke check; this gates the checker's decision logic).
-    if [[ -f scripts/test_verify_e2e_binding_provenance.py ]]; then
-      run_step "e2e-provenance-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_binding_provenance.py || echo "provenance verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_telemetry_drift_consistency.py ]]; then
-      run_step "e2e-telemetry-drift-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_telemetry_drift_consistency.py || echo "telemetry-drift verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_promotion_governance.py ]]; then
-      run_step "e2e-promotion-governance-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_promotion_governance.py || echo "promotion-governance verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_capital_integrity.py ]]; then
-      run_step "e2e-capital-integrity-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_capital_integrity.py || echo "capital-integrity verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_surface_consistency.py ]]; then
-      run_step "e2e-surface-consistency-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_surface_consistency.py || echo "surface-consistency verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_evolution_loop.py ]]; then
-      run_step "e2e-evolution-loop-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_evolution_loop.py || echo "evolution-loop verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_sentinel_integrity.py ]]; then
-      run_step "e2e-sentinel-integrity-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_sentinel_integrity.py || echo "sentinel-integrity verifier tests reported failures"
-    fi
-    if [[ -f scripts/test_verify_e2e_telemetry_dlq_health.py ]]; then
-      run_step "e2e-telemetry-dlq-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_telemetry_dlq_health.py || echo "telemetry-dlq verifier tests reported failures"
+    if compgen -G 'scripts/test_verify_e2e_*.py' >/dev/null; then
+      run_step "e2e-verifier-suite" "$PYTHON" -m pytest -q scripts/test_verify_e2e_*.py
     fi
     ;;
   wave)

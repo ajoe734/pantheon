@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -49,13 +50,18 @@ def _strict_auth_env(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_session_lifecycle_store(tmp_path):
-    original_store = bff_main.session_lifecycle_store
-    bff_main.session_lifecycle_store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
-    try:
-        yield
-    finally:
-        bff_main.session_lifecycle_store = original_store
+def isolated_session_lifecycle_store(tmp_path, monkeypatch):
+    store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    monkeypatch.setattr(bff_main, "session_lifecycle_store", store)
+    # Auth routes now bind explicit dependencies at composition time; changing
+    # main's old global alone leaves them reading a shared /tmp session store.
+    deps = replace(bff_main.auth_deps, session_lifecycle_store=store)
+    handlers = bff_main.create_auth_handlers(dependencies=deps)
+    isolated = bff_main.AuthFacadeService(
+        local_readiness=handlers["bff_auth_readiness"], handlers=handlers,
+    )
+    monkeypatch.setattr(bff_main.auth_facade_service, "invoke", isolated.invoke)
+    monkeypatch.setattr(bff_main.auth_facade_service, "readiness", isolated.readiness)
 
 
 def test_bff_me_stub_returns_frontend_ready_current_user_dto(monkeypatch) -> None:
@@ -534,7 +540,6 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
     _strict_auth_env(monkeypatch)
     monkeypatch.setenv("PANTHEON_ENV", "dev")
     monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
-    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "true")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "viewer-client")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "viewer-secret")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID", "approver-client")
@@ -545,8 +550,6 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", "operator-a-secret")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID", "operator-b-client")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET", "operator-b-secret")
-    for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
-        monkeypatch.setenv(f"PANTHEON_BFF_DEV_LOGIN_{identity}_MFA_VERIFIED", "true")
 
     client = TestClient(bff_main.app)
 
@@ -587,7 +590,10 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
     risk_owner_claims = _jwt_claims(risk_owner["access_token"])
 
     for payload in (viewer, approver, risk_owner, operator_a, operator_b):
-        assert _jwt_claims(payload["access_token"])["mfa_verified"] is True
+        assert "mfa_verified" not in _jwt_claims(payload["access_token"])
+
+    for data in (viewer_data, approver_data, operator_a_data, operator_b_data):
+        assert data["session"]["mfa_verified"] is False
 
     assert set(viewer_data["roles"]) == {"viewer"}
     assert set(approver_data["roles"]) == {"approver"}
@@ -758,9 +764,13 @@ def test_bff_dev_login_rejects_bad_client_secret(monkeypatch) -> None:
     assert error["details"]["reason"] == "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS"
 
 
-def test_bff_dev_login_disabled_for_staging_live(monkeypatch) -> None:
+@pytest.mark.parametrize("environment", ["staging", "staging-live", "prod", "production", "live", "canary"])
+@pytest.mark.parametrize("selector", ["PANTHEON_ENV", "PANTHEON_DEPLOYMENT_STAGE"])
+def test_bff_dev_login_disabled_outside_dev(monkeypatch, environment, selector) -> None:
     _strict_auth_env(monkeypatch)
-    monkeypatch.setenv("PANTHEON_ENV", "staging-live")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv(selector, environment)
     monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
     monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
 
@@ -774,6 +784,56 @@ def test_bff_dev_login_disabled_for_staging_live(monkeypatch) -> None:
     error = response.json()["error"]
     assert error["code"] == "PRECONDITION_FAILED"
     assert error["details"]["precondition_failed"] == "dev_login"
+
+
+@pytest.mark.parametrize("identity", ["operator", "viewer", "approver", "risk_owner", "operator_a", "operator_b"])
+def test_dev_login_ignores_legacy_static_mfa_and_client_mfa_claims(monkeypatch, identity) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    prefix = f"PANTHEON_BFF_DEV_LOGIN_{identity.upper()}"
+    monkeypatch.setenv(f"{prefix}_CLIENT_ID", f"{identity}-client")
+    monkeypatch.setenv(f"{prefix}_CLIENT_SECRET", "credential-secret")
+    # Existing machine-local configuration must not turn a password exchange
+    # into a second-factor attestation, even if a caller makes the same claim.
+    monkeypatch.setenv(f"{prefix}_MFA_VERIFIED", "true")
+    client = TestClient(bff_main.app)
+    login = client.post("/bff/auth/dev-login", json={
+        "client_id": f"{identity}-client", "client_secret": "credential-secret",
+        "mfa_verified": True, "amr": ["pwd", "mfa"],
+    })
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    encoded = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert "mfa_verified" not in claims
+    assert "amr" not in claims
+    assert claims["identity"] == identity
+    if identity != "risk_owner":
+        me = client.get("/bff/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200, me.text
+        assert me.json()["data"]["session"]["authenticated"] is True
+        assert me.json()["data"]["session"]["mfa_verified"] is False
+
+
+def test_password_only_dev_login_cannot_satisfy_explicit_mfa_requirement(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "true")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_CLIENT_SECRET", "ci-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED", "true")
+    client = TestClient(bff_main.app)
+    login = client.post("/bff/auth/dev-login", json={
+        "client_id": "ci-client", "client_secret": "ci-secret",
+    })
+    assert login.status_code == 200, login.text
+    me = client.get("/bff/me", headers={
+        "Authorization": f"Bearer {login.json()['access_token']}",
+    })
+    assert me.status_code == 401, me.text
+    assert me.json()["error"]["details"]["reason"] == "MFA_REQUIRED"
 
 
 def test_bff_me_propagates_accept_language_when_x_locale_absent(monkeypatch) -> None:
@@ -979,6 +1039,3 @@ def test_bff_dev_login_minted_credential_passes_proof_preflight_validator(monkey
             f"{label} token exp={expires_at} must strictly exceed now + 1200 "
             f"({now_seconds + proof_window_floor}); remaining={expires_at - now_seconds}s"
         )
-
-
-

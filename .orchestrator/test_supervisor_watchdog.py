@@ -1709,6 +1709,45 @@ class ActiveWorkerCountDedupeTests(unittest.TestCase):
         self.assertEqual(snapshot["active_worker_count_source"], "live_worker_runner_pid_identity")
         self.assertIsNone(snapshot["active_worker_scan_error"])
 
+    def test_identity_and_root_scans_use_executable_position_and_preserve_empty_argv(self):
+        script = "/repo/.orchestrator/worker_runner.py"
+        cases = [
+            (["claude", "--prompt", script, "wake"], False),
+            (["bwrap", "--ro-bind", script, "/tmp/ref.py"], False),
+            (["python3", "-u", "-B", "-W", "ignore", script], True),
+            (["python3", "-W", "", script], True),
+            (["python3", "", script], False),
+            (["python3", "-c", "", script], False),
+            (["python3", "-m", "", script], False),
+            (["python3", "--", "", script], False),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            proc_root = Path(tmp)
+            expected = set()
+            for pid, (parts, accepted) in enumerate(cases, start=100):
+                self.write_fake_process(proc_root, pid, parts, pid + 9000)
+                if accepted:
+                    expected.add((pid, pid + 9000))
+            identities, error = supervisor_watchdog.scan_live_worker_runner_identities(proc_root)
+            roots, root_error = supervisor_watchdog.scan_worker_runner_roots(proc_root)
+        self.assertIsNone(error)
+        self.assertIsNone(root_error)
+        self.assertEqual(identities, expected)
+        self.assertEqual(roots, {"/repo"})
+
+    def test_relative_worker_script_root_is_resolved_against_process_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc_root = Path(tmp) / "proc"
+            workspace = Path(tmp) / "leased-worktree"
+            workspace.mkdir()
+            self.write_fake_process(proc_root, 101,
+                                    ["python3", "-u", "-W", "ignore", ".orchestrator/worker_runner.py"],
+                                    9001)
+            (proc_root / "101" / "cwd").symlink_to(workspace, target_is_directory=True)
+            roots, error = supervisor_watchdog.scan_worker_runner_roots(proc_root)
+            self.assertIsNone(error)
+            self.assertEqual(roots, {str(workspace)})
+
     def test_failed_live_scan_fails_closed_with_recorded_count(self) -> None:
         runtime_state = {"workers": {"stale": {"status": "running"}}}
         with (

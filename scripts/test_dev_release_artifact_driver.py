@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import re
+import shutil
 import ssl
 import sys
 from types import SimpleNamespace
@@ -40,7 +42,11 @@ class Docker(FakeDocker):
         self.owners = {service: {"container_id": f"{index + 100:064x}", "image_id": IDS[0],
                                  "started_at": "2026-09-09T00:00:00Z", "restart_count": 0}
                        for index, service in enumerate(d.OWNERS)}
-        self.config = dict(d.BASELINE_CONFIG)
+        self.config = {**d.a.BASELINE_PRINCIPAL_CONFIG,
+                       **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, "false")}
+        self.baseline_config = None
+        self.compose_fields = None
+        self.render_drift = False
         self.config_drift = self.owner_drift = False
         self.extra_config = ""
         self.built = {}
@@ -74,6 +80,23 @@ class Docker(FakeDocker):
             self.calls.append(args)
             if "--images" in args:
                 return "postgres:16-alpine\npantheon-" + args[-1] + "\n"
+            compose_file = Path(args[args.index("-f") + 1])
+            if "--env-file" in args:
+                fields = json.loads(compose_file.read_bytes())["services"]["operator-bff"]["environment"]
+                for key, value in fields.items():
+                    match = re.fullmatch(r"\$\{([A-Z_]+)(:-|-)(.*?)\}", value or "")
+                    if match:
+                        name, operator, default = match.groups()
+                        fields[key] = os.environ.get(name, default)
+                        if operator == ":-" and not fields[key]: fields[key] = default
+                if self.render_drift:
+                    fields["PANTHEON_BFF_MFA_REQUIRED"] = "true"
+                return json.dumps({"services": {"operator-bff": {"environment": fields}}})
+            if compose_file != self.candidate_compose:
+                fields = self.compose_fields
+                if fields is None:
+                    fields = {key: value for key, value in (self.baseline_config or self.config).items() if value is not None}
+                return json.dumps({"services": {"operator-bff": {"environment": fields}}})
             model = {"services": {service: {"build": {"context": str(self.candidate_compose.parent), "dockerfile": d.DOCKERFILES[service]}}
                                   for service in d.a.SERVICES}}
             row = model["services"][d.a.SERVICES[0]]
@@ -92,8 +115,10 @@ class Docker(FakeDocker):
             for key in self.config:
                 # An absent baseline key models an older Compose file without
                 # this field. Existing keys use the driver's injected values.
-                if self.config[key] is not None:
+                if self.baseline_config[key] is not None:
                     self.config[key] = os.environ.get(key, "")
+                else:
+                    self.config[key] = None
             if self.config_drift:
                 self.config[next(iter(self.config))] = ""
             if self.owner_drift:
@@ -108,6 +133,8 @@ class HTTP:
         self.fail = None
         self.version_failure = None
         self.recover_on_restore = False
+        self.runtime_config = None
+        self.login_mfa_verified = False
         self.login = {"access_token": "fixture-private-access-token", "meta": {"identity": "viewer"}, "scope": "viewer"}
         self.me = {"data": {"roles": ["viewer"], "operator_id": "pantheon-dev-viewer", "tenant_id": "tenant-dev",
                             "user": {"roles": ["viewer"], "operator_id": "pantheon-dev-viewer"}, "tenant": {"id": "tenant-dev"},
@@ -125,8 +152,14 @@ class HTTP:
         if path == "/health": return 200, b"{}"
         if path == "/bff/version": return 200, json.dumps({"source_commit_sha": self.source, "config_posture": {"auth_stub": False, "auth_mode": "strict"}}).encode()
         if path == "/deployment.json": return 200, self.manifest.read_bytes()
-        if path == "/bff/auth/dev-login": return 200, json.dumps(self.login).encode()
+        if path == "/bff/auth/dev-login":
+            # Model the legacy image's config-fed claim to make rollback auth
+            # regression observable. This is not a real JWT or hosted proof.
+            self.login_mfa_verified = self.runtime_config.get("PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED") == "true"
+            return 200, json.dumps(self.login).encode()
         if path == "/bff/me":
+            if self.runtime_config.get("PANTHEON_BFF_MFA_REQUIRED") == "true" and not self.login_mfa_verified:
+                return 401, b"{}"
             return (200, json.dumps(self.me).encode()) if headers == {"Authorization": "Bearer fixture-private-access-token"} else (401, b"{}")
         raise AssertionError((method, url))
 
@@ -183,6 +216,7 @@ def case(tmp_path, monkeypatch):
                            candidate_image_manifest=None, candidate_image_manifest_sha256=None)
     docker, http = Docker(source_sha), HTTP(source_sha, manifest)
     docker.http = http
+    http.runtime_config = docker.config
     docker.candidate_compose = candidate_source / "docker-compose.yml"
     docker.built = {service: {"image_id": "sha256:" + str(index) * 64, "oci_revision": candidate_sha,
                              "git_sha": candidate_sha if service != "loop-run-projector-scheduler" else None,
@@ -198,6 +232,7 @@ def execute(case, operation=None):
 
 def seal(case, *, admit_candidate=True):
     result = execute(case)
+    case.docker.baseline_config = dict(result["manifest"]["baseline_nonsecret_config"])
     case.args.manifest = Path(result["manifest_path"])
     case.args.manifest_sha256 = result["manifest_sha256"]
     if admit_candidate:
@@ -385,7 +420,8 @@ def test_capture_verify_and_sanitized_external_seal(case):
     manifest = captured["manifest"]
     assert manifest["identity"]["controller_sha"] == case.args.controller_sha
     assert manifest["identity"]["previous_backend_sha"] == case.args.previous_backend_sha
-    assert manifest["baseline_nonsecret_config"] == d.BASELINE_CONFIG
+    assert manifest["baseline_nonsecret_config"] == case.docker.config
+    assert set(manifest["baseline_nonsecret_config"]) == set(d.BASELINE_CONFIG)
     assert case.args.manifest.stat().st_mode & 0o777 == 0o600
     assert case.args.manifest_sha256 == hashlib.sha256(case.args.manifest.read_bytes()).hexdigest()
     assert (case.args.manifest.parent / "baseline-compose.yml").read_bytes() == case.args.compose_file.read_bytes()
@@ -413,7 +449,7 @@ def test_same_source_different_images_requires_exact_restore(case):
     case.docker.images.clear()
     result = execute(case, "restore")
     assert result["images"] == dict(zip(d.a.SERVICES, IDS))
-    command = next(call for call in case.docker.calls if call[0] == "compose")
+    command = next(call for call in case.docker.calls if call[0] == "compose" and "up" in call)
     assert command[-3:] == d.a.SERVICES
     assert "--no-build" in command and "--no-deps" in command
     assert command[command.index("--pull") + 1] == "never"
@@ -483,10 +519,149 @@ def test_absent_or_empty_baseline_file_binding_never_creates_authority(case, val
     assert os.environ[key] == ""
 
 
-@pytest.mark.parametrize("failure", ["path", "actor", "unexpected", "duplicate"])
+def test_restore_old_auth_flags_from_seal_not_password_only_candidate_defaults(case, monkeypatch):
+    for key in d.a.BASELINE_AUTH_FLAGS:
+        case.docker.config[key] = "true"
+    captured = seal(case)
+    # The admitted candidate uses password-only login. Its environment must not
+    # replace the old image's true/true settings on exact-artifact rollback.
+    for service in d.a.SERVICES:
+        case.docker.containers[service]["image_id"] = case.docker.built[service]["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    for key in d.a.BASELINE_AUTH_FLAGS:
+        case.docker.config[key] = "false" if key.endswith("MFA_REQUIRED") else None
+        monkeypatch.setenv(key, "false")
+    result = execute(case, "restore")
+    assert case.docker.config == captured["manifest"]["baseline_nonsecret_config"]
+    assert all(os.environ[key] == "true" for key in d.a.BASELINE_AUTH_FLAGS)
+    assert case.http.login_mfa_verified is True
+    assert result["public"]["authenticated_viewer_readback_verified"] is True
+    assert execute(case, "verify")["baseline_nonsecret_config_verified"] is True
+
+
+@pytest.mark.parametrize("value", [None, "", "false", "False", "0", "no", "off"])
+def test_representable_literal_baseline_does_not_inherit_ambient_static_mfa(case, monkeypatch, value):
+    for key in d.a.BASELINE_AUTH_FLAGS:
+        case.docker.config[key] = value
+    captured = seal(case)
+    for key in d.a.BASELINE_AUTH_FLAGS:
+        monkeypatch.setenv(key, "true")
+    result = execute(case, "restore")
+    assert case.docker.config == captured["manifest"]["baseline_nonsecret_config"]
+    assert all(os.environ[key] == (value or "") for key in d.a.BASELINE_AUTH_FLAGS)
+    assert case.http.login_mfa_verified is False
+    assert result["public"]["authenticated_viewer_readback_verified"] is True
+
+
+@pytest.mark.parametrize("operation", ["capture", "seal-candidate", "restore"])
+def test_unrepresentable_baseline_refuses_before_seal_or_replacement(case, operation):
+    if operation != "capture":
+        seal(case, admit_candidate=operation == "restore")
+    case.docker.render_drift = True
+    with pytest.raises(d.a.ArtifactError, match="cannot be represented"):
+        if operation == "seal-candidate":
+            admit(case)
+        else:
+            execute(case, operation)
+    no_replacement(case)
+    if operation == "capture":
+        assert not list(d.ROOT.rglob("manifest.json"))
+    elif operation == "seal-candidate":
+        assert not (case.args.manifest.parent / "candidate-images.json").exists()
+    assert not list(d.ROOT.glob(".config-render-*"))
+
+
+@pytest.mark.parametrize("legacy_fields", [True, False], ids=["old-compose", "new-compose"])
+@pytest.mark.parametrize("value", [None, "", "true", "false", "False", "0", "no", "off"])
+def test_real_compose_auth_defaults_require_representable_baseline(case, monkeypatch, legacy_fields, value):
+    if shutil.which("docker") is None:
+        pytest.skip("requires Docker Compose renderer, never a Docker daemon")
+    check = subprocess.run(["docker", "compose", "version"], capture_output=True)
+    if check.returncode:
+        pytest.skip("requires Docker Compose renderer, never a Docker daemon")
+    # These are the actual old/new field expressions, rendered by Compose, not
+    # an emulation of its ${VAR:-false} semantics. No credentials are supplied.
+    fields = {key: "${" + key + ":-" + expected + "}" for key, expected in d.a.BASELINE_PRINCIPAL_CONFIG.items()}
+    fields["PANTHEON_BFF_MFA_REQUIRED"] = "${PANTHEON_BFF_MFA_REQUIRED:-false}"
+    if legacy_fields:
+        fields.update({key: "${" + key + ":-false}" for key in d.a.BASELINE_AUTH_FLAGS[1:]})
+    compose = case.args.compose_file.parent / "auth-only-compose.json"
+    compose.write_text(json.dumps({"services": {"operator-bff": {"image": "fixture-never-run", "environment": fields}}}))
+    expected = {**d.a.BASELINE_PRINCIPAL_CONFIG, **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, value)}
+    if not legacy_fields:
+        expected.update(dict.fromkeys(d.a.BASELINE_AUTH_FLAGS[1:], None))
+    class RenderOnly:
+        def call(self, *args):
+            assert args[0] == "compose" and "config" in args
+            environment = {"PATH": os.environ["PATH"], **{key: os.environ[key] for key in d.BASELINE_CONFIG if key in os.environ}}
+            result = subprocess.run(["docker", *args], env=environment, capture_output=True, text=True, timeout=20)
+            if result.returncode:
+                raise d.a.ArtifactError("isolated Compose renderer failed")
+            return result.stdout
+    before = {key: os.environ.get(key) for key in d.BASELINE_CONFIG}
+    if value in (None, ""):
+        with pytest.raises(d.a.ArtifactError, match="cannot be represented"):
+            d._check_compose_config(compose, expected, RenderOnly())
+    else:
+        d._check_compose_config(compose, expected, RenderOnly())
+    assert {key: os.environ.get(key) for key in d.BASELINE_CONFIG} == before
+    assert not list(d.ROOT.glob(".config-render-*"))
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_real_compose_literal_empty_or_omitted_auth_fields_can_be_represented(case, value):
+    if shutil.which("docker") is None:
+        pytest.skip("requires Docker Compose renderer, never a Docker daemon")
+    expected = {**d.a.BASELINE_PRINCIPAL_CONFIG, **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, value)}
+    fields = {key: setting for key, setting in expected.items() if setting is not None}
+    compose = case.args.compose_file.parent / "literal-auth-compose.json"
+    compose.write_text(json.dumps({"services": {"operator-bff": {"image": "fixture-never-run", "environment": fields}}}))
+    class RenderOnly:
+        def call(self, *args):
+            assert args[0] == "compose" and "config" in args
+            result = subprocess.run(["docker", *args], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True, timeout=20)
+            if result.returncode:
+                raise d.a.ArtifactError("isolated Compose renderer failed")
+            return result.stdout
+    d._check_compose_config(compose, expected, RenderOnly())
+
+
+@pytest.mark.parametrize("key", d.a.BASELINE_AUTH_FLAGS)
+@pytest.mark.parametrize("failure", ["missing", "invalid", "tampered"])
+def test_unknown_or_tampered_auth_baseline_rejects_before_restore_mutation(case, key, failure):
+    seal(case)
+    manifest = json.loads(case.args.manifest.read_bytes())
+    config = manifest["baseline_nonsecret_config"]
+    if failure == "missing":
+        del config[key]
+    else:
+        config[key] = "fixture-private-not-a-boolean" if failure == "invalid" else "true"
+    raw = d.a.manifest_bytes(manifest)
+    case.args.manifest.write_bytes(raw)
+    if failure != "tampered":
+        case.args.manifest_sha256 = hashlib.sha256(raw).hexdigest()
+    with pytest.raises(d.a.ArtifactError) as error:
+        execute(case, "restore")
+    assert "fixture-private" not in str(error.value)
+    no_replacement(case)
+
+
+@pytest.mark.parametrize("key", d.a.BASELINE_AUTH_FLAGS)
+@pytest.mark.parametrize("value", [True, False, 1, "fixture-private-secret", "true\n", "true=false"])
+def test_auth_manifest_validator_rejects_nonboolean_data(key, value):
+    # Exercise validation directly for nonstrings: Docker Config.Env values are
+    # strings, while a malformed incoming manifest may contain JSON booleans.
+    config = {**d.a.BASELINE_PRINCIPAL_CONFIG, **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, None), key: value}
+    with pytest.raises(d.a.ArtifactError) as error:
+        d._validate_config(config)
+    assert "fixture-private" not in str(error.value)
+
+
+@pytest.mark.parametrize("failure", ["path", "actor", "auth", "unexpected", "duplicate"])
 def test_nonsecret_configuration_allowlist_fails_before_sealing(case, failure):
     if failure == "path": case.docker.config["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE"] = "/unapproved/token"
     elif failure == "actor": case.docker.config["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"] = "operator-admin"
+    elif failure == "auth": case.docker.config["PANTHEON_BFF_MFA_REQUIRED"] = "fixture-private-not-a-boolean"
     elif failure == "unexpected": case.docker.extra_config = '\n"UNEXPECTED_SECRET=never-print"'
     else: case.docker.extra_config = '\n"PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID="'
     with pytest.raises(d.a.ArtifactError): execute(case)
@@ -645,7 +820,37 @@ def test_cli_errors_are_sanitized_and_never_claim_completion(monkeypatch, capsys
     assert d.main([]) == 75
     output = capsys.readouterr()
     assert output.out == ""
-    assert json.loads(output.err) == {"status": "error", "error_code": "DEV_ARTIFACT_DRIVER_FAILED"}
+    record = json.loads(output.err)
+    assert record["status"] == "error"
+    assert record["error_code"] == d.a.FAILURE_CODE
+    assert record["failure_stage"] == "initialize"
+    assert record["failure_kind"] == "unexpected"
+    assert record["failure_location"].startswith("dev_release_artifact_driver.py:")
+    assert "fixture-private" not in output.err and "subprocess-secret" not in output.err
+
+
+@pytest.mark.parametrize("failure,kind", [("public-health", "contract"), ("json-body", "invalid-data")])
+def test_main_reports_actual_capture_failure_location_without_namespace_stage(case, monkeypatch, capsys, failure, kind):
+    case.args.guard_channel_fd = 9
+    case.args.guard_max_silence_seconds = 10
+    monkeypatch.setattr(d, "parse_args", lambda _argv: case.args)
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: case.barrier)
+    monkeypatch.setattr(d, "GuardedDocker", lambda _barrier: case.docker)
+    monkeypatch.setattr(d, "HTTP", lambda: case.http)
+    if failure == "public-health":
+        case.http.fail = "/health"
+    else:
+        case.http.version_failure = (200, b"invalid fixture-private-body")
+    assert d.main([]) == 75
+    output = capsys.readouterr()
+    row = json.loads(output.err)
+    assert row["failure_stage"] == "capture" and row["failure_kind"] == kind
+    expected_source = "dev_release_artifact_driver.py:" if failure == "public-health" else "dev_release_artifacts.py:"
+    assert row["failure_location"].startswith(expected_source)
+    assert not hasattr(case.args, "_diagnostic_stage")
+    assert "fixture-private" not in output.err and "fixture-error-body" not in output.err
+    assert output.out == "" and not list(d.ROOT.rglob("manifest.json"))
+    no_replacement(case)
 
 
 def test_cancellation_before_capture_never_seals(case):
