@@ -1252,3 +1252,61 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             st["auto_commit_archive"]["pending_token"] = "valid-token"
         reloaded = runtime_state.load_runtime_state(valid_cfg)
         self.assertEqual(reloaded["auto_commit_archive"]["pending_token"], "valid-token")
+
+class PromotionFenceTests(unittest.TestCase):
+    def setUp(self):
+        self.state = runtime_state.default_state()
+        self.old = {"command_root": "/old", "source_sha": "a" * 40}
+        self.new = {"command_root": "/new", "source_sha": "b" * 40}
+        self.worker = {"run_id": "run", "task_id": "TASK", "task_generation": 1,
+                       "queue_event_id": "event", "pid": 11, "pid_start_ticks": 22,
+                       "process_generation": "generation", "lease_acquired_at": "now",
+                       "status_command_runtime": self.old}
+        self.epoch = runtime_state.begin_promotion(self.state, self.old, self.new)
+
+    def test_epoch_fences_both_runtimes_until_health_then_excludes_old(self):
+        for runtime in (self.old, self.new):
+            self.assertFalse(runtime_state.promotion_admission_allowed(self.state, runtime))
+        with self.assertRaisesRegex(RuntimeError, "stale"):
+            runtime_state.finish_promotion(self.state, "stale")
+        runtime_state.finish_promotion(self.state, self.epoch)
+        self.assertTrue(runtime_state.promotion_admission_allowed(self.state, self.new))
+        self.assertFalse(runtime_state.promotion_admission_allowed(self.state, self.old))
+
+    def test_rollback_restores_only_incumbent_and_discards_unconfirmed_intent(self):
+        runtime_state.prepare_promotion_drain(self.state, self.worker)
+        runtime_state.finish_promotion(self.state, self.epoch, rollback=True)
+        self.assertTrue(runtime_state.promotion_admission_allowed(self.state, self.old))
+        self.assertFalse(runtime_state.promotion_admission_allowed(self.state, self.new))
+        self.assertEqual(self.state["promotion"]["receipts"], {})
+        runtime_state.begin_promotion(self.state, self.old, self.new)
+
+    def test_drain_receipt_rejects_missing_signal_stale_epoch_and_changed_binding(self):
+        from copy import deepcopy
+        receipt = runtime_state.prepare_promotion_drain(self.state, self.worker)
+        self.assertIsNone(runtime_state.valid_promotion_drain(self.state, self.worker))
+        receipt["status"] = "drained"
+        receipt["terminal"] = {"run_id": "run", "pid": 11, "signal": 15,
+                               "exit_code": 143, "finished_at": "later",
+                               "status_command_runtime": self.old,
+                               "promotion_drain_digest": receipt["digest"]}
+        self.assertIsNotNone(runtime_state.valid_promotion_drain(self.state, self.worker))
+        for field, value in (("task_generation", 2), ("run_id", "other"), ("pid_start_ticks", 33),
+                             ("status_command_runtime", self.new)):
+            with self.subTest(field=field):
+                changed = {**self.worker, field: value}
+                self.assertIsNone(runtime_state.valid_promotion_drain(self.state, changed))
+        for field, value in (("signal", 9), ("exit_code", 0), ("promotion_drain_digest", "bad")):
+            changed = deepcopy(self.state)
+            changed["promotion"]["receipts"]["run"]["terminal"][field] = value
+            self.assertIsNone(runtime_state.valid_promotion_drain(changed, self.worker))
+        receipt["epoch"] = "old"
+        self.assertIsNone(runtime_state.valid_promotion_drain(self.state, self.worker))
+
+    def test_unknown_or_malformed_fence_never_opens_admission(self):
+        for phase in (None, "failed", "", "verifying", "draining"):
+            self.state["promotion"]["phase"] = phase
+            self.assertFalse(runtime_state.promotion_admission_allowed(self.state, self.old))
+        self.state["promotion"] = []
+        with self.assertRaises(runtime_state.RuntimeStateSchemaError):
+            runtime_state.normalize_v2_runtime_cache(self.state)
