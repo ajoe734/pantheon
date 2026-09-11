@@ -1,0 +1,144 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+  "batch_id": "B09_research_knowledge",
+  "title": "Research and knowledge",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "2030696b4b7e793d24824e65682bf683db0f9ed9",
+  "scope": {
+    "batch_source_files": [
+      "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py",
+      "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py",
+      "services/control-plane/bff/test_research_oss_preactivation_contract.py",
+      "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
+      "services/control-plane/bff/tests/test_bff_b2_004_research_search.py",
+      "services/control-plane/bff/tests/test_bff_knowledge_inbox.py",
+      "services/control-plane/bff/tests/test_console_research_projection.py",
+      "services/control-plane/bff/tests/test_pint_003_durable_opinions.py",
+      "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+      "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py"
+    ],
+    "exact_file_count": 10,
+    "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "blocker_resolution": {
+    "status": "resolved",
+    "resolution": "Dependencies BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001, BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001, and B01-AGORA-CORE-001 are merged into dev (ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58). Seams consumed and all 10 B09 test suites pass without missing fixtures or globals."
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py": {
+      "bytes": 9430,
+      "sha256": "b6753e42b3f266c8f80bba92c824bb4d1160891928872f49247af17884598df7",
+      "lines": 248
+    },
+    "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py": {
+      "bytes": 2471,
+      "sha256": "bb3dcf0cdf9c670ba7554f024c1c709e81d4343a4958d388625ae420a1a6c2a7",
+      "lines": 65
+    },
+    "services/control-plane/bff/test_research_oss_preactivation_contract.py": {
+      "bytes": 22876,
+      "sha256": "3021fbdf571d08ea234bcb13fa81f65ff042965a973018954a0f88a0c2d007b7",
+      "lines": 538
+    },
+    "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py": {
+      "bytes": 6352,
+      "sha256": "095db4f9b7ff9c8abc4ef67436cd9e5615c56a6c9edd02f5bfe260d1f9d69b7a",
+      "lines": 171
+    },
+    "services/control-plane/bff/tests/test_bff_b2_004_research_search.py": {
+      "bytes": 20505,
+      "sha256": "d6aee52dbbe0444623fb8a7da7e840d1e351f8964e2e9233e8da3428dd0edd62",
+      "lines": 498
+    },
+    "services/control-plane/bff/tests/test_bff_knowledge_inbox.py": {
+      "bytes": 6058,
+      "sha256": "81e3a5183ee9b5f89b4a6c98dcd942ecf50551c9118845e5e25a668f90dfed10",
+      "lines": 153
+    },
+    "services/control-plane/bff/tests/test_console_research_projection.py": {
+      "bytes": 14031,
+      "sha256": "9ad22266bb9023442981e753bdcfab1b93630241325d3477d91dd95b9fb9ee68",
+      "lines": 336
+    },
+    "services/control-plane/bff/tests/test_pint_003_durable_opinions.py": {
+      "bytes": 18053,
+      "sha256": "196e1cb549221766c0066a20827e0d3c0ed4be9b29544b212d1716565ad8c045",
+      "lines": 412
+    },
+    "services/control-plane/bff/tests/test_pint_013_durable_interactions.py": {
+      "bytes": 35425,
+      "sha256": "5deade5e9aaf3271f67bf3a8e624350c743a62253886a3ad3ffe7051a24afe7d",
+      "lines": 830
+    },
+    "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py": {
+      "bytes": 14899,
+      "sha256": "ee0c9776b9453d1bceed4b764f8ad1923cfd7de5af6f85561bf9019cf2ab3fd9",
+      "lines": 396
+    }
+  },
+  "suite_results": {
+    "total_suites": 10,
+    "total_tests_passed": 95,
+    "total_tests_failed": 0,
+    "details_by_file": {
+      "services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Clean execution against read_store mock without legacy globals."
+      },
+      "services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Consumed modular _build_knowledge_workbench_overview and ResearchRouteContext from services.control_plane.bff.research.routes.knowledge."
+      },
+      "services/control-plane/bff/test_research_oss_preactivation_contract.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Consumed merged modular research composition seams from services.control_plane.bff.research."
+      },
+      "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py": {
+        "tests_passed": 9,
+        "decoupling_approach": "Passed cleanly against test app and mock stores."
+      },
+      "services/control-plane/bff/tests/test_bff_b2_004_research_search.py": {
+        "tests_passed": 17,
+        "decoupling_approach": "Replaced retired _STRATEGY_BFF_OVERLAY with strategy store methods on _ResearchSearchTestStore; patched search context to preserve ?limit= alias."
+      },
+      "services/control-plane/bff/tests/test_bff_knowledge_inbox.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Passed cleanly against modular knowledge routes."
+      },
+      "services/control-plane/bff/tests/test_console_research_projection.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Updated surface status assertion to support canonical analysis_results key."
+      },
+      "services/control-plane/bff/tests/test_pint_003_durable_opinions.py": {
+        "tests_passed": 10,
+        "decoupling_approach": "Updated import to canonical services.control_plane.bff.agora.router.make_workshop_store."
+      },
+      "services/control-plane/bff/tests/test_pint_013_durable_interactions.py": {
+        "tests_passed": 37,
+        "decoupling_approach": "Isolated test app with canonical Agora router and canonical context ref resolver, eliminated cross-batch dependency on legacy read_store monkeypatching."
+      },
+      "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py": {
+        "tests_passed": 7,
+        "decoupling_approach": "Isolated middleware stack enforcing strict CSRF origin and stub rejection; updated provider readiness assertion to check canonical readiness fields."
+      }
+    }
+  },
+  "architecture_invariants": {
+    "zero_sys_path_mutations": true,
+    "zero_global_monkeypatching": true,
+    "test_bff_test_architecture_passed": 8
+  },
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_console_research_projection.py services/control-plane/bff/tests/test_pint_003_durable_opinions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py (95 passed)",
+    ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
+  ]
+}

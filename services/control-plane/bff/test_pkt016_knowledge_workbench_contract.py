@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from services.control_plane.bff.research.routes.knowledge import _build_knowledge_workbench_overview
+from services.control_plane.bff.research.routes.common import ResearchRouteContext
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -51,6 +53,13 @@ def test_pkt016_knowledge_workbench_returns_truthful_overview_payload() -> None:
 
 
 def test_pkt016_knowledge_workbench_example_matches_builder() -> None:
-    expected = bff_main._build_knowledge_workbench_overview("2026-04-22T00:00:00Z")
+    ctx = ResearchRouteContext(
+        get_read_store=lambda: None,
+        extract_identity=lambda _: None,
+        require_read_role=lambda _: None,
+        bff_error=bff_main._bff_error,
+        utc_now=lambda: "2026-04-22T00:00:00Z",
+    )
+    expected = _build_knowledge_workbench_overview(ctx, "2026-04-22T00:00:00Z")
     example = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     assert example == expected

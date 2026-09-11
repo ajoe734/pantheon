@@ -95,6 +95,7 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
             "process_generation": wr.worker_process_generation_id(
                 task_id=task["id"], worker_run_id=run_id, queue_event_id="fixture-dispatch",
                 pid=proc.pid, pid_start_ticks=ticks),
+            "lease_acquired_at": datetime.now(timezone.utc).isoformat(),
             "status": "running", "lease_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
             "command": command, "workspace_path": env.get("PANTHEON_WORKTREE_ROOT"),
             "workspace_source_root": str(central.parent / "shared-pantheon")
@@ -116,14 +117,18 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
         if mutate_store:
             mutate_store(journal)
         if publish_receipt:
-            runtime_state = ({"supervisor": {"runtime_phase_reservations": {
+            runtime_snapshot = ({"supervisor": {"runtime_phase_reservations": {
                 "delivery": {"launch_receipt": {"worker": worker}}}}}
                 if receipt_in_phase else {"workers": {run_id: worker}})
+            runtime_snapshot["queue"] = {"version": 2, "events": {"fixture-dispatch": {
+                "intent": {"event_id": "fixture-dispatch", "task_id": worker["task_id"]},
+                "status": "started", "run_id": run_id,
+            }}}
             # Production V2 workers read their launch receipt from the
             # worker-runtime state file, not the retired `.orchestrator` leaf.
             wr.write_json(
                 central / ".orchestrator" / "worker-runtime" / "state.json",
-                runtime_state,
+                {**runtime_state.default_state(), **runtime_snapshot},
             )
         if during_run:
             during_run(proc, journal, state)
@@ -177,9 +182,9 @@ def _write_status(path: Path) -> None:
         encoding="utf-8",
     )
     (path / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
-    (path / ".orchestrator" / "worker-runtime" / "state.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
     (path / ".orchestrator" / "worker-runtime" / "approval-queue.json").write_text("[]", encoding="utf-8")
-    (path / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
     (path / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
     (path / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
     (path / ".orchestrator" / "runtime-admission.lock").touch()
@@ -629,7 +634,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             }
             (central / "ai-status.json").write_text(json.dumps(status_data) + "\n", encoding="utf-8")
             (central / ".orchestrator").mkdir(parents=True, exist_ok=True)
-            (central / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+            (central / ".orchestrator" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
             (central / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
             (central / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
 
@@ -2378,6 +2383,111 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertFalse(self.marker.exists(), "unauthorized provider child produced an effect")
         self.assertFalse(self.heartbeat.exists(), "entry published a starting marker before authorization")
         self.assertFalse(self.runner_status.exists(), "entry published status before authorization")
+
+    def test_planned_sigterm_publishes_bound_receipt_from_real_runner(self):
+        seen = {}
+        def drain(proc, _journal, _state):
+            deadline = time.monotonic() + 10
+            while not self.marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(self.marker.exists())
+            config = wr.worker_runtime_config(self.central)
+            with runtime_state.runtime_state_update(config) as state:
+                worker = next(iter(state["workers"].values()))
+                old = worker["status_command_runtime"]
+                runtime_state.begin_promotion(state, old, {"root": "/candidate", "head": "b" * 40})
+                seen["receipt"] = runtime_state.prepare_promotion_drain(state, worker)
+            proc.terminate()
+        proc = self.run_worker(code="from pathlib import Path; import time; Path('provider-effect').touch(); time.sleep(20)", during_run=drain)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        terminal = json.loads(self.runner_status.read_text())
+        self.assertEqual(terminal["status"], "promotion_drained")
+        self.assertEqual(terminal["signal"], 15)
+        self.assertEqual(terminal["promotion_drain_digest"], seen["receipt"]["digest"])
+
+    def test_planned_drain_interrupts_wrapper_waiting_for_admission_without_child(self):
+        config = wr.worker_runtime_config(self.central)
+        def drain(proc, _journal, _state):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                marker = json.loads(self.runner_status.read_text()) if self.runner_status.exists() else {}
+                if marker.get("status") == "admission_wait":
+                    break
+                time.sleep(.02)
+            self.assertEqual(marker.get("status"), "admission_wait")
+            self.assertFalse(self.marker.exists())
+            with runtime_state.runtime_state_update(config) as state:
+                worker = next(iter(state["workers"].values()))
+                runtime_state.begin_promotion(state, worker["status_command_runtime"], {"root": "/candidate", "head": "b" * 40})
+                runtime_state.prepare_promotion_drain(state, worker)
+            proc.terminate()
+        with runtime_state.runtime_state_lock(config):
+            proc = self.run_worker(during_run=drain, timeout=15)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        self.assertFalse(self.marker.exists())
+        terminal = json.loads(self.runner_status.read_text())
+        self.assertEqual(terminal["status"], "promotion_drained")
+        self.assertTrue(terminal["promotion_drain_digest"])
+
+    def test_concurrent_admission_cannot_cross_real_promotion_drain(self):
+        sys.path.insert(0, str(Path(_P).resolve().parents[1] / "scripts"))
+        import promote_supervisor_runtime as promotion
+        effect = self.workspace / "racing-provider-effect"
+        def cutover(proc, _journal, _state):
+            deadline = time.monotonic() + 10
+            while not self.marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(self.marker.exists())
+            config = wr.worker_runtime_config(self.central)
+            challenger = None
+            try:
+                with runtime_state.runtime_state_lock(config):
+                    with runtime_state.runtime_state_update(config) as state:
+                        worker = next(iter(state["workers"].values()))
+                        old = worker["status_command_runtime"]
+                        runtime_state.begin_promotion(state, old, {"root": "/candidate", "head": "b" * 40})
+                    # This process requests admission concurrently, but cannot
+                    # acquire admission until the cutover transaction yields.
+                    program = (
+                        "import sys,json,subprocess; from pathlib import Path; "
+                        "sys.path.insert(0,sys.argv[1]); import worker_runner as wr; import runtime_state as rs; "
+                        "root=Path(sys.argv[2]); runtime=json.loads(sys.argv[3]); "
+                        "lock=rs.runtime_state_lock(wr.worker_runtime_config(root)); lock.__enter__(); "
+                        "wr.validate_promotion_admission(root,runtime); "
+                        "subprocess.run([sys.executable,'-c',\"from pathlib import Path; Path('racing-provider-effect').touch()\"],check=True)"
+                    )
+                    challenger = subprocess.Popen([sys.executable, "-c", program,
+                        str(Path(_P).resolve().parent), str(self.central), json.dumps(old)],
+                        cwd=self.workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    # poll() reaps our test-owned runner, avoiding a zombie in
+                    # the PID liveness predicate; all signals/receipts are real.
+                    with mock.patch.object(promotion, "_pid_alive", side_effect=lambda pid: proc.poll() is None if pid == proc.pid else False):
+                        result = promotion.qualify_and_drain_incumbent_writers(config, timeout_seconds=10)
+                    self.assertEqual(result["drained_run_ids"], [worker["run_id"]])
+                stdout, stderr = challenger.communicate(timeout=10)
+                self.assertNotEqual(challenger.returncode, 0, stdout + stderr)
+                self.assertIn("promotion admission fenced", stderr)
+                self.assertFalse(effect.exists())
+                state = runtime_state.load_runtime_state(config)
+                self.assertIsNotNone(runtime_state.valid_promotion_drain(state, worker))
+                self.assertEqual(state["queue"]["events"]["fixture-dispatch"]["run_id"], worker["run_id"])
+            finally:
+                if challenger is not None and challenger.poll() is None:
+                    challenger.kill()
+                    challenger.communicate(timeout=5)
+        proc = self.run_worker(code="from pathlib import Path; import time; Path('provider-effect').touch(); time.sleep(25)", during_run=cutover, timeout=30)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+
+    def test_unplanned_sigterm_has_no_promotion_receipt(self):
+        def terminate(proc, _journal, _state):
+            deadline = time.monotonic() + 10
+            while not self.marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(self.marker.exists())
+            proc.terminate()
+        proc = self.run_worker(code="from pathlib import Path; import time; Path('provider-effect').touch(); time.sleep(20)", during_run=terminate)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        self.assertNotIn("promotion_drain_digest", json.loads(self.runner_status.read_text()))
 
     def test_exact_canonical_receipt_and_reservation_launch_once(self):
         proc = self.run_worker()

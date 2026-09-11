@@ -374,7 +374,7 @@ def test_durable_opinions_degraded_path_flow(monkeypatch):
 
 
 def test_sse_replay_database_fallback(monkeypatch):
-    from agora.router import make_workshop_store
+    from services.control_plane.bff.agora.router import make_workshop_store
     store = make_workshop_store()
 
     # 1. Create a dummy workshop and events directly in store
