@@ -2,31 +2,33 @@
   "schema_version": 1,
   "task_id": "OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001",
   "scope": "development tooling: make supervisor missing-handoff and failure-loop blockers persist fenced holds",
-  "owner": "Antigravity",
+  "owner": "Claude",
   "reviewer": "Codex",
   "review_status": "pending_independent_exact_head_review",
   "source": {
     "repository": "ajoe734/pantheon",
     "branch": "task/OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001",
     "base_sha": "ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
-    "implementation_commit": "0eb4f0fd1670eb5e2f21f9bf8bd4cd4f1ef29c3c",
-    "implementation_tree": "3986ac16b246669e18e757da3eaa07cd499a0161",
+    "implementation_commit": "181eac0bfb103796d531e95269bf9762566b2f69",
+    "implementation_tree": "29f8ecbe78c6de73f6071ebc04d2eff65622b100",
     "files_sha256": {
-      ".orchestrator/supervisor.py": "47a99a1e2c1e03bb14df52f3489a7c33f82f6e9c40196c5632427b56461659e1",
-      ".orchestrator/test_supervisor.py": "51175d97efd6dc7a4208d6a4a95858832111334af429ffe0cfbb6e374a759f37"
+      ".orchestrator/supervisor.py": "dca033662da1456e2c2c69c09f1391f67bed3745ad262fba64173ce15f66e8e0",
+      ".orchestrator/test_supervisor.py": "02bd8ba6787fbd61475ab21c9b5109c88d4d89b0d2e8672effd7995da81ec476"
     },
     "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
   },
   "dispatch_runtime": {
-    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
-    "source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"
+    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
+    "source_sha": "ee318eebcb1654a0ffb9e4809a51b3a20164a10a"
   },
   "problem": {
-    "summary": "Double-audited runtime evidence showed that two supervisor blocker helpers (_prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked) passed an enum object (rewrite_task_machine.TaskAction.BLOCK) to rewrite_task_machine.transition. In rewrite_task_machine, coerce_action(action) executes TaskAction(str(action).strip().lower()). When passed an enum object, str(action) produces 'TaskAction.BLOCK', which lowers to 'taskaction.block' and raises ValueError in TaskAction(), returning None. This caused transition to fail closed with TransitionError before persisting task holds, leaving tasks in an unheld state despite blocker events or exhausting reassignment budgets. In addition, the blocker write paths lacked an exact task snapshot fence (expected_owner, expected_reviewer, expected_status, expected_generation), which could allow stale worker observations or failure-loop evaluations to block a reassigned successor task generation."
+    "summary": "Double-audited runtime evidence showed that two supervisor blocker helpers (_prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked) passed an enum object (rewrite_task_machine.TaskAction.BLOCK) to rewrite_task_machine.transition. In rewrite_task_machine, coerce_action(action) executes TaskAction(str(action).strip().lower()). When passed an enum object, str(action) produces 'TaskAction.BLOCK', which lowers to 'taskaction.block' and raises ValueError in TaskAction(), returning None. This caused transition to fail closed with TransitionError before persisting task holds, leaving tasks in an unheld state despite blocker events or exhausting reassignment budgets. In addition, the blocker write paths lacked an exact task snapshot fence (expected_owner, expected_reviewer, expected_status, expected_generation), which could allow stale worker observations or failure-loop evaluations to block a reassigned successor task generation.",
+    "independent_review_rejection_20260911": "A subsequent independent review rejected PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9 for two further defects in the missing-handoff generation fence itself: (P1) supervisor.py's poll_worker_completion_stage caller (previously ~11704-11716) and _prepare_missing_handoff_blocker_locked's own internal fallback (previously ~9181-9192) both substituted task_generation(task) -- the task's *current* generation -- whenever the worker snapshot carried no task_generation, silently defeating the fence for any worker missing that field, including a same-owner worker racing a successor generation. (P2) the caller's int(raw_worker_gen) raised an uncaught ValueError for a malformed (non-numeric) worker_generation instead of failing closed to a no-op."
   },
   "fix": {
     "coercion": "Both _prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked now pass rewrite_task_machine.TaskAction.BLOCK.value ('block'), which coerce_action cleanly accepts and transitions tasks from todo or in_progress to blocked.",
     "snapshot_fence": "Both blocker write paths now accept and enforce exact task snapshot fences: expected_owner, expected_reviewer, expected_status, and expected_generation. If any field does not match the latest task state (such as when a task was reassigned, transitioned, or bumped to a new generation), the blocker creation is safely aborted as a no-op.",
+    "generation_fence_hardening_20260911": "Added supervisor.observed_worker_task_generation() as the single strict extraction point for a worker's dispatched task generation (checked in order: worker.task_generation, worker.request_snapshot.task_generation, worker.request_snapshot.metadata.task_generation). It returns None -- never raises, never substitutes the task's current generation -- for an absent, non-numeric, boolean, or non-positive value. poll_worker_completion_stage's missing-handoff call site and _prepare_missing_handoff_blocker_locked's own internal fallback both now use this helper and refuse the write entirely (no task, journal, blocker, outbox, worker, or lease change) when it returns None, instead of skipping the generation check or guessing a value.",
     "failure_loop_budget": "reconcile_failure_loops now forwards the task snapshot (owner, reviewer, status, generation) to record_failure_loop_blocker and correctly holds the task upon failure budget exhaustion.",
     "worker_poll_lease": "poll_worker_completion_stage forwards the worker's snapshot to record_missing_handoff_blocker and safely leaves worker lease untouched when blocker creation is rejected or fails closed.",
     "fail_closed_guards": "Preserved and verified all fail-closed guards: absent status path, nonempty activity outbox, missing task, mismatched owner identity, mismatched reviewer, mismatched lifecycle status, mismatched generation, existing waiting target, duplicate open blocker, invalid transition, pending active worker recovery, active review decision intent, and storage write errors.",
@@ -36,83 +38,134 @@
       "supervisor._prepare_failure_loop_blocker_locked (failure loop hold persistence)",
       "supervisor.record_failure_loop_blocker (failure loop blocker API)",
       "supervisor.reconcile_failure_loops (failure loop reconciler holding on budget exhaustion)",
-      "supervisor.poll_worker_completion_stage (worker completion monitoring with hold protection)"
+      "supervisor.poll_worker_completion_stage (worker completion monitoring with hold protection)",
+      "supervisor.observed_worker_task_generation (new: single strict observed-generation extraction point)"
     ]
   },
+  "before_after_behavior_map": [
+    {
+      "scenario": "Same-owner task at generation 2; worker snapshot carries no task_generation field anywhere (absent).",
+      "before": "Caller/helper fallback substituted task_generation(task) (=2) as expected_generation, the generation check trivially matched, and the missing-handoff blocker persisted a real blocked transition, blocker record, status write, and worker status=failed lease change -- reproduced live against f4aca069876935c2cfeb6cbd0c2578eedd9086b9's supervisor.py via a real TaskStore-backed write path with sync_status_pipeline mocked out only to isolate the runtime-guard step; the pre-fix run reached and executed the real write (task flipped to blocked, blocker persisted) before that unrelated guard raised.",
+      "after": "observed_worker_task_generation(worker) returns None; both the caller and the helper refuse immediately. task/journal/blockers/outbox/worker/lease are all unchanged; poll_worker_completion_stage returns {'changed': False, 'stop': True} and worker['status'] stays unset."
+    },
+    {
+      "scenario": "Worker snapshot carries a malformed (non-numeric) task_generation, e.g. 'not-a-number'.",
+      "before": "int(raw_worker_gen) raised an uncaught ValueError inside poll_worker_completion_stage, propagating out of the polling loop instead of failing closed to a no-op.",
+      "after": "observed_worker_task_generation() catches (TypeError, ValueError) internally and returns None; poll_worker_completion_stage completes cleanly with {'changed': False, 'stop': True} and no state mutation."
+    },
+    {
+      "scenario": "Worker snapshot carries a valid, matching observed generation (e.g. 1) for a task still at generation 1.",
+      "before": "The blocker persisted a real blocked transition, one open missing_handoff blocker, the expected status-outbox activity, and worker status=failed.",
+      "after": "Unchanged: identical behavior. This path was already correct and remains covered by the pre-existing real-write regression plus the new test_missing_handoff_blocker_valid_generation_still_persists sanity check."
+    }
+  ],
   "validation": [
     {
       "name": "checkout_provisioning",
       "command": "python3 scripts/provision_live_supervisor_config.py --command-root \"$PANTHEON_COMMAND_ROOT\" --status-root \"$PANTHEON_STATUS_ROOT\" --validate-command-root-only",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "validated immutable supervisor command root: root=/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58 head=ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"
+      "summary": "validated immutable supervisor command root: root=/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ee318eebcb1654a0ffb9e4809a51b3a20164a10a head=ee318eebcb1654a0ffb9e4809a51b3a20164a10a"
     },
     {
-      "name": "supervisor_suite_unittest",
-      "command": "python3 -m unittest discover -s .orchestrator -p test_supervisor.py",
+      "name": "supervisor_suite_pytest",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "347 passed in 67.73s"
+      "summary": "352 passed, 78 subtests passed in 97.41s (rerun: 103.96s)"
     },
     {
-      "name": "supervisor_watchdog_suite_unittest",
-      "command": "python3 -m unittest discover -s .orchestrator -p test_supervisor_watchdog.py",
+      "name": "supervisor_watchdog_suite_pytest",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "64 passed in 2.48s"
+      "summary": "64 passed, 20 subtests passed in 7.17s (rerun: 7.38s)"
     },
     {
       "name": "focused_blocker_regressions",
-      "command": "python3 -m unittest -v test_supervisor.SupervisorBlockerTransitionCorrectiveTests",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k SupervisorBlockerTransitionCorrective",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "8 passed in 0.64s"
+      "summary": "13 passed in 3.14s-5.32s across reruns (8 pre-existing + 5 new: test_observed_worker_task_generation_never_substitutes_or_raises, test_missing_handoff_blocker_absent_generation_is_noop, test_missing_handoff_blocker_malformed_generation_is_noop, test_missing_handoff_blocker_same_owner_successor_generation_is_noop, test_missing_handoff_blocker_valid_generation_still_persists)"
+    },
+    {
+      "name": "isolated_defect_probe_p1_absent_generation_pre_fix",
+      "command": "python3 /tmp/repro_defect.py against .orchestrator/supervisor.py checked out at PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9 (git show f4aca0698:.orchestrator/supervisor.py), calling supervisor._prepare_missing_handoff_blocker_locked directly against a real isolated TaskStore-backed status root with a same-owner task at generation 2 and a worker snapshot with no task_generation field anywhere",
+      "exit_code": 0,
+      "outcome": "reproduced defect (fail case)",
+      "summary": "Pre-fix code returned a non-None event, and load_status showed the task flipped to status=blocked with one persisted missing_handoff blocker -- the generation fence was silently defeated by substituting the task's current generation (2) for the worker's absent observation."
+    },
+    {
+      "name": "isolated_defect_probe_p1_absent_generation_post_fix",
+      "command": "python3 /tmp/repro_defect.py against this task's fixed .orchestrator/supervisor.py (commit 181eac0bfb103796d531e95269bf9762566b2f69), identical fixture",
+      "exit_code": 0,
+      "outcome": "confirmed fix",
+      "summary": "record event is None; load_status shows the task unchanged at status=in_progress, generation=2, with zero blockers."
+    },
+    {
+      "name": "isolated_defect_probe_p2_malformed_generation_pre_fix",
+      "command": "python3 /tmp/repro_defect_p2.py against PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9's supervisor.py, calling supervisor.poll_worker_completion_stage with a worker whose task_generation='not-a-number'",
+      "exit_code": 0,
+      "outcome": "reproduced defect (fail case)",
+      "summary": "int(raw_worker_gen) raised an uncaught ValueError: invalid literal for int() with base 10: 'not-a-number', propagating out of poll_worker_completion_stage instead of failing closed."
+    },
+    {
+      "name": "isolated_defect_probe_p2_malformed_generation_post_fix",
+      "command": "python3 /tmp/repro_defect_p2.py against this task's fixed supervisor.py (commit 181eac0bfb103796d531e95269bf9762566b2f69), identical fixture",
+      "exit_code": 0,
+      "outcome": "confirmed fix",
+      "summary": "poll_worker_completion_stage returns {'changed': False, 'stop': True} cleanly; no exception, no state mutation."
     }
   ],
   "acceptance_evidence": {
     "transition_coercion": "Both _prepare_missing_handoff_blocker_locked and _prepare_failure_loop_blocker_locked pass TaskAction.BLOCK.value ('block') instead of the enum instance, allowing coerce_action to return TaskAction.BLOCK and rewrite_task_machine.transition to cleanly transition task states from todo or in_progress to blocked.",
     "fenced_snapshot_holds": "Exact snapshot fences (expected_owner, expected_reviewer, expected_status, expected_generation) prevent stale worker or failure-loop observations from persisting holds against a reassigned or bumped successor task generation.",
-    "focused_regressions": "test_independent_reproduction_raw_task_action_enum_fails_closed confirms the raw enum failure and fix; test_missing_handoff_blocker_persists_fenced_hold_real_isolated_write_path confirms missing-handoff hold persistence and deduplication; test_failure_loop_blocker_persists_fenced_hold_real_isolated_write_path confirms failure-loop hold persistence and deduplication; test_failure_loop_reconciler_invokes_real_hold_path_after_budget_exhausted confirms real hold invocation on budget exhaustion; test_stale_worker_observation_against_successor_generation_is_noop and test_stale_failure_loop_observation_against_successor_generation_is_noop confirm stale observations are no-ops and leave worker lease untouched; test_missing_handoff_fail_closed_guards and test_failure_loop_fail_closed_guards verify all 13 fail-closed guards.",
-    "preserved_behavior": "Full test_supervisor.py (347 tests) and test_supervisor_watchdog.py (64 tests) pass cleanly without regressions.",
+    "generation_fence_never_substitutes_20260911": "observed_worker_task_generation() is the sole point that extracts a worker's dispatched generation and returns None (never a fallback value, never raises) for absent, non-numeric, boolean, or non-positive input. Both the caller in poll_worker_completion_stage and _prepare_missing_handoff_blocker_locked's own internal derivation now require this valid observation and refuse the write when it is None, closing the fence-bypass the independent reviewer found in PR #5784 head f4aca069876935c2cfeb6cbd0c2578eedd9086b9.",
+    "focused_regressions": "test_independent_reproduction_raw_task_action_enum_fails_closed confirms the raw enum failure and fix; test_missing_handoff_blocker_persists_fenced_hold_real_isolated_write_path confirms missing-handoff hold persistence and deduplication; test_failure_loop_blocker_persists_fenced_hold_real_isolated_write_path confirms failure-loop hold persistence and deduplication; test_failure_loop_reconciler_invokes_real_hold_path_after_budget_exhausted confirms real hold invocation on budget exhaustion; test_stale_worker_observation_against_successor_generation_is_noop and test_stale_failure_loop_observation_against_successor_generation_is_noop confirm stale observations are no-ops and leave worker lease untouched; test_missing_handoff_fail_closed_guards and test_failure_loop_fail_closed_guards verify all 13 fail-closed guards; test_observed_worker_task_generation_never_substitutes_or_raises unit-tests every absent/malformed/boolean/non-positive/valid input to the new extraction helper; test_missing_handoff_blocker_absent_generation_is_noop and test_missing_handoff_blocker_malformed_generation_is_noop reproduce P1/P2 through both the direct helper call and the real poll_worker_completion_stage caller path and assert zero task/blocker/lease mutation; test_missing_handoff_blocker_same_owner_successor_generation_is_noop covers the exact same-owner generation-2 scenario the reviewer named; test_missing_handoff_blocker_valid_generation_still_persists is a positive-path sanity check that the fix did not turn the fence into an always-reject.",
+    "preserved_behavior": "Full test_supervisor.py (352 tests, 78 subtests) and test_supervisor_watchdog.py (64 tests, 20 subtests) pass cleanly without regressions.",
     "delivery_scope": "Only the declared tooling files (.orchestrator/supervisor.py, .orchestrator/test_supervisor.py, docs/deployment/evidence/OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001/evidence.json) are modified; no product runtime behavior, hosted deployment, external branch protection, task state, or unrelated worktree was touched."
   },
   "runtime_observation": {
     "observation_command": "python3 -c 'import json, datetime; from pathlib import Path; status_root = Path(\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root\"); state_path = status_root / \".orchestrator/worker-runtime/state.json\"; watchdog_path = status_root / \".orchestrator/watchdog-state.json\"; state = json.loads(state_path.read_text()); watchdog = json.loads(watchdog_path.read_text()); sup = state.get(\"supervisor\", {}); cmd_health = sup.get(\"command_runtime_health\", {}); runtime_info = cmd_health.get(\"runtime\", {}); res = watchdog.get(\"last_decision\", {}).get(\"resource\", {}); print(json.dumps({\"observed_at\": datetime.datetime.now(datetime.timezone.utc).isoformat(), \"read_only_health\": {\"supervisor_pid\": sup.get(\"pid\"), \"lifecycle\": sup.get(\"lifecycle\"), \"last_heartbeat_at\": sup.get(\"last_heartbeat_at\"), \"last_successful_loop_at\": sup.get(\"last_successful_loop_at\"), \"command_runtime_healthy\": cmd_health.get(\"healthy\"), \"command_runtime_reason\": cmd_health.get(\"reason\")}, \"counts\": {\"watchdog_active_worker_count\": res.get(\"active_worker_count\"), \"watchdog_active_worker_live_count\": res.get(\"active_worker_live_count\"), \"watchdog_active_worker_runtime_state_count\": res.get(\"active_worker_runtime_state_count\"), \"watchdog_active_worker_count_source\": res.get(\"active_worker_count_source\"), \"scheduler_state_workers_count\": len(state.get(\"workers\", {}))}, \"identities\": {\"supervisor_pid\": sup.get(\"pid\"), \"command_root\": runtime_info.get(\"command_root\"), \"source_sha\": runtime_info.get(\"source_sha\"), \"remote\": runtime_info.get(\"remote\"), \"base_ref\": runtime_info.get(\"base_ref\"), \"coordination_status_root\": str(status_root)}, \"scheduler_workers\": {k: {\"status\": v.get(\"status\"), \"task_id\": v.get(\"task_id\")} for k, v in state.get(\"workers\", {}).items()}}, indent=2))'",
-    "observed_at": "2026-09-11T02:20:32.703480+00:00",
+    "observed_at": "2026-09-11T03:38:32.513804+00:00",
     "read_only_health": {
-      "supervisor_pid": 3325540,
+      "supervisor_pid": 798144,
       "lifecycle": "running",
-      "last_heartbeat_at": "2026-09-11T02:20:18Z",
-      "last_successful_loop_at": "2026-09-11T02:20:18Z",
+      "last_heartbeat_at": "2026-09-11T03:38:28Z",
+      "last_successful_loop_at": "2026-09-11T03:38:19Z",
       "command_runtime_healthy": true,
       "command_runtime_reason": "healthy"
     },
     "counts": {
-      "watchdog_active_worker_count": 1,
-      "watchdog_active_worker_live_count": 1,
-      "watchdog_active_worker_runtime_state_count": 1,
+      "watchdog_active_worker_count": 2,
+      "watchdog_active_worker_live_count": 2,
+      "watchdog_active_worker_runtime_state_count": 2,
       "watchdog_active_worker_count_source": "live_worker_runner_pid_identity",
-      "scheduler_state_workers_count": 1
+      "scheduler_state_workers_count": 2
     },
     "identities": {
-      "supervisor_pid": 3325540,
-      "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
-      "source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+      "supervisor_pid": 798144,
+      "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
+      "source_sha": "ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
       "remote": "ajoe734/pantheon",
       "base_ref": "origin/dev",
       "coordination_status_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root"
     },
     "scheduler_workers": {
-      "antigravity-20260911T020610Z-77c889df": {
+      "claude-20260911T032339Z-d5191241": {
         "status": "running",
         "task_id": "OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001"
+      },
+      "antigravity-20260911T033125Z-45fc7d8b": {
+        "status": "running",
+        "task_id": "BFF-UPSTREAM-V2-PLAN-DELIVERY-001"
       }
     }
   },
   "live_activation": {
     "runtime_activation_is_separate": true,
     "note": "This task changes only the source tree. Runtime activation on a live supervisor is a separate governed promotion (scripts/promote_supervisor_runtime.py) after this source merges into dev.",
-    "observed_running_supervisor_source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+    "observed_running_supervisor_source_sha": "ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
     "observed_note": "The running supervisor's dispatch_runtime.source_sha predates this fix, so its live process image still runs the prior blocker helper until an operator promotes the merged commit."
   }
 }
