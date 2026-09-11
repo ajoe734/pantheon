@@ -193,7 +193,10 @@ def _identity(args):
     a._match(args.candidate_id, a.DIGEST, "candidate ID")
     if not re.fullmatch(r"[0-9]{1,20}", args.run_id) or not re.fullmatch(r"[0-9]{1,10}", args.attempt):
         raise a.ArtifactError("invalid run/attempt")
-    if args.environment != "dev" or args.project_id != PROJECT or args.vm != VM or socket.gethostname() != VM:
+    # GCE reports either the short VM name or its project-qualified hostname.
+    # Accept only these two identities, not a prefix match in another project.
+    hostnames = {VM, f"{VM}.c.{PROJECT}.internal"}
+    if args.environment != "dev" or args.project_id != PROJECT or args.vm != VM or socket.gethostname() not in hostnames:
         raise a.ArtifactError("artifact driver is restricted to the approved dev VM")
     if args.artifact_root != ROOT:
         raise a.ArtifactError("artifact root differs from fixed private dev store")
@@ -387,8 +390,13 @@ def _candidate_paths(folder):
 
 
 def _candidate_override(receipt):
-    return a.manifest_bytes({"services": {service: {"image": row["image_id"], "pull_policy": "never"}
-                                          for service, row in receipt["services"].items()}})
+    override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
+                             for service, row in receipt["services"].items()}}
+    # This is the observed OCI image/config digest, not a made-up build value
+    # or registry manifest digest. Inject it only after the image is built.
+    bff = override["services"]["operator-bff"]
+    bff["environment"] = {"BFF_IMAGE_DIGEST": bff["image"]}
+    return a.manifest_bytes(override)
 
 
 def _built_image(docker, service, candidate_sha):

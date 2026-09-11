@@ -258,6 +258,26 @@ def no_replacement(case):
     assert not any((call[0] == "compose" and "up" in call) or call[:2] == ("image", "load") for call in case.docker.calls)
 
 
+@pytest.mark.parametrize("hostname", [d.VM, f"{d.VM}.c.{d.PROJECT}.internal"])
+def test_identity_accepts_exact_gce_short_or_qualified_hostname(case, monkeypatch, hostname):
+    monkeypatch.setattr(d.socket, "gethostname", lambda: hostname)
+    identity, lease_id = d._identity(case.args)
+    assert identity["candidate_backend_sha"] == case.args.candidate_backend_sha
+    assert lease_id == os.environ["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    assert not case.docker.calls
+
+
+@pytest.mark.parametrize("hostname", [
+    "production", f"{d.VM}.c.other-project.internal",
+    f"other-vm.c.{d.PROJECT}.internal", f"{d.VM}.attacker.example",
+])
+def test_identity_rejects_other_hosts_and_projects(case, monkeypatch, hostname):
+    monkeypatch.setattr(d.socket, "gethostname", lambda: hostname)
+    with pytest.raises(d.a.ArtifactError, match="approved dev VM"):
+        d._identity(case.args)
+    assert not case.docker.calls
+
+
 def test_candidate_producer_seals_built_images_before_rollout(case):
     baseline = seal(case, admit_candidate=False)
     receipt = admit(case)
@@ -274,8 +294,11 @@ def test_candidate_producer_seals_built_images_before_rollout(case):
     override = Path(receipt["candidate_image_override_path"])
     assert override.name == "candidate-images.override.json"
     assert hashlib.sha256(override.read_bytes()).hexdigest() == receipt["candidate_image_override_sha256"]
-    assert json.loads(override.read_bytes()) == {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
-                                                             for service, row in case.docker.built.items()}}
+    expected_override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
+                                      for service, row in case.docker.built.items()}}
+    expected_override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": case.docker.built["operator-bff"]["image_id"]}
+    assert json.loads(override.read_bytes()) == expected_override
     assert "fixture-private" not in json.dumps(receipt)
     no_replacement(case)
     assert all(row["image_id"] == IDS[index] for index, row in enumerate(case.docker.containers.values()))

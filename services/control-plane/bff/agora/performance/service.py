@@ -1,14 +1,19 @@
-"""Truth-preserving Strategy Performance projection service."""
+"""Truth-preserving Strategy Performance projection service.
+
+Trade journeys are read through the configured Postgres projection reader
+(``get_projection_reader``); the service owns no event store or materializer.
+"""
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 import json
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Iterable, List, Mapping, Optional
 
 from pydantic import ValidationError
 
+from .journeys import parse_timestamp as _parse_timestamp, scan_owner_journeys
 from .models import (
     AdjustmentSuggestion,
     ComplianceMetric,
@@ -30,52 +35,6 @@ from .attribution import (
     project_agora_performance_attribution_by_strategy,
 )
 from .store import PerformanceSuggestionStore
-
-
-_USER_SCOPE_FIELDS = ("owner_user_id", "agora_user_id", "user_id")
-
-
-def _parse_timestamp(value: Any) -> Optional[datetime]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
-
-
-def _timestamp_in_period(value: Any, *, period: str, now: datetime) -> bool:
-    if period in {"all", "latest"}:
-        return True
-    parsed = _parse_timestamp(value)
-    if parsed is None:
-        return False
-    days = 7 if period == "7d" else 30
-    return parsed >= now - timedelta(days=days)
-
-
-def _event_user_ids(event: Mapping[str, Any]) -> set[str]:
-    return {
-        str(event.get(field) or "").strip()
-        for field in _USER_SCOPE_FIELDS
-        if str(event.get(field) or "").strip()
-    }
-
-
-def _projection_visible_to_user(projection: Any, user_id: str) -> bool:
-    scoped_values: set[str] = set()
-    for event in getattr(projection, "timeline", []) or []:
-        scoped_values.update(_event_user_ids(event))
-    return scoped_values == {user_id}
-
-
-def _projection_strategy_id(projection: Any) -> str:
-    identifiers = projection.snapshot.get("identifiers") or {}
-    values = identifiers.get("strategy_id") or []
-    return str(values[0]) if len(values) == 1 else ""
 
 
 def _dedupe(values: Iterable[Any]) -> List[str]:
@@ -136,11 +95,11 @@ class PerformanceProjectionService:
         self,
         *,
         suggestion_store: PerformanceSuggestionStore,
-        get_trade_journey_store: Callable[[], Any],
+        get_projection_reader: Callable[[], Any],
         utc_now: Callable[[], str],
     ) -> None:
         self.suggestion_store = suggestion_store
-        self.get_trade_journey_store = get_trade_journey_store
+        self.get_projection_reader = get_projection_reader
         self.utc_now = utc_now
 
     def project(
@@ -154,31 +113,20 @@ class PerformanceProjectionService:
     ) -> StrategyPerformanceProjection:
         snapshot_at = self.utc_now()
         now = _parse_timestamp(snapshot_at) or datetime.now(timezone.utc)
-        journey_store = self.get_trade_journey_store()
-        materializer = journey_store.materializer() if journey_store is not None else None
-        projection_metadata = (
-            journey_store.projection_metadata()
-            if journey_store is not None
-            and callable(getattr(journey_store, "projection_metadata", None))
-            else {}
+        scan = scan_owner_journeys(
+            self.get_projection_reader(),
+            tenant_id=tenant_id,
+            environment=environment,
+            owner_user_id=owner_user_id,
+            period=period,
+            now=now,
+            strategy_id=strategy_id,
         )
-        scoped: List[Any] = []
-        if materializer is not None:
+        scoped: List[Any] = list(scan.projections)
+        if period == "latest" and scoped:
             scoped = [
-                projection
-                for projection in materializer.projections
-                if projection.tenant_id == tenant_id
-                and projection.environment == environment
-                and _projection_strategy_id(projection) == strategy_id
-                and _projection_visible_to_user(projection, owner_user_id)
-                and _timestamp_in_period(
-                    projection.snapshot.get("updated_at"), period=period, now=now
-                )
+                max(scoped, key=lambda item: str(item.snapshot.get("updated_at") or ""))
             ]
-            if period == "latest" and scoped:
-                scoped = [
-                    max(scoped, key=lambda item: str(item.snapshot.get("updated_at") or ""))
-                ]
 
         compliance_metrics: List[ComplianceMetric] = []
         interventions: List[InterventionRecord] = []
@@ -274,7 +222,7 @@ class PerformanceProjectionService:
                 *(item.updated_at or item.as_of for item in suggestions),
             ]
         )
-        projector_source = ["canonical_trade_journey_projector"] if materializer else []
+        projector_source = ["canonical_trade_journey_projector"] if scan.reader_available else []
         compliance = ComplianceProjection(
             availability=_source_availability(
                 compliance_metrics,
@@ -347,17 +295,20 @@ class PerformanceProjectionService:
             if available_count == len(sections)
             else "partial"
         )
-        controller = (
-            projection_metadata.get("controller")
-            if isinstance(projection_metadata, Mapping)
-            and isinstance(projection_metadata.get("controller"), Mapping)
-            else {}
-        )
-        generation = (
-            projection_metadata.get("generation")
-            if isinstance(projection_metadata, Mapping)
-            else None
-        )
+        # Freshness comes from the projector controller row and the scoped
+        # projection rows themselves; the reader exposes no global watermark.
+        controller = scan.controller
+        generation = controller.get("generation")
+        source_watermarks = {
+            key: str(controller[key])
+            for key in ("source_high_watermark", "last_successful_publish_at")
+            if controller.get(key) not in (None, "")
+        }
+        revisions = [
+            int(item.snapshot.get("revision") or 0)
+            for item in scoped
+            if isinstance(item.snapshot.get("revision"), int)
+        ]
         return StrategyPerformanceProjection(
             strategy_id=strategy_id,
             period=period,
@@ -367,13 +318,9 @@ class PerformanceProjectionService:
                 status=availability,
                 snapshot_at=snapshot_at,
                 as_of=as_of,
-                source_watermarks=(
-                    dict(materializer.source_watermarks) if materializer else {}
-                ),
-                projection_revision=(materializer.revision if materializer else None),
-                projection_generation=(
-                    generation if isinstance(generation, int) else controller.get("generation")
-                ),
+                source_watermarks=source_watermarks,
+                projection_revision=max(revisions) if revisions else None,
+                projection_generation=generation if isinstance(generation, int) else None,
                 unavailable_sources=sorted(
                     name for name, state in sections.items() if state == "unavailable"
                 ),
@@ -390,6 +337,7 @@ class PerformanceProjectionService:
         *,
         tenant_id: str,
         owner_user_id: str,
+        environment: str = "paper",
         period: str = "latest",
         page_size: int = 50,
         page_token: Optional[str] = None,
@@ -399,11 +347,12 @@ class PerformanceProjectionService:
         return project_agora_performance_attribution_by_strategy(
             tenant_id=tenant_id,
             owner_user_id=owner_user_id,
+            environment=environment,
             period=period,
             page_size=page_size,
             page_token=page_token,
             strategy_id_filter=strategy_id_filter,
-            journey_store=self.get_trade_journey_store(),
+            projection_reader=self.get_projection_reader(),
             workshop_store=workshop_store,
             suggestion_store=self.suggestion_store,
             utc_now=self.utc_now,

@@ -616,10 +616,18 @@ async def _bff_unhandled_exception_handler(
     )
 
 def _build_bff_app() -> FastAPI:
+    from .auth.browser_session import DevBrowserSessionMiddleware
+
     cors_origins = _cors_origins_from_env()
     strict = _is_production_strict_mode()
     preview_regex = None if strict else _LOVABLE_PREVIEW_ORIGIN_REGEX
     built_app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
+    built_app.add_middleware(
+        DevBrowserSessionMiddleware,
+        enabled=lambda: _dev_login_enabled(),
+        origin_allowed=_cors_origin_allowed,
+        validate_session=lambda token: _raise_if_session_logged_out(_extract_identity(f"Bearer {token}")),
+    )
     if cors_origins or preview_regex:
         middleware_kwargs: Dict[str, Any] = dict(
             allow_origins=cors_origins,
@@ -22474,7 +22482,7 @@ auth_facade_service = AuthFacadeService(
     local_readiness=auth_handlers["bff_auth_readiness"],
     handlers=auth_handlers,
 )
-app.include_router(create_auth_router(service=auth_facade_service))
+app.include_router(create_auth_router(service=auth_facade_service, browser_origin_allowed=_cors_origin_allowed))
 from .core.app_factory import (
     create_settings_router,
     create_assistant_management_router,
@@ -22633,7 +22641,7 @@ _agora_router = _create_agora_router(
     get_audit_store=lambda: agora_audit_store,
     command_store=app_deps.command_store,
     persona_write_owner=app_deps.persona_write_owner,
-    get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
+    get_trade_journey_store=app_deps.read_surface.trade_journey_projection_reader,
     sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
     canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     idempotency_store=_AGORA_CORE_BFF_IDEMPOTENCY,

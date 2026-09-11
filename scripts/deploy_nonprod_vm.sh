@@ -3448,6 +3448,8 @@ if set(record["services"]) != set(services) or record["image_override_sha256"] !
     raise SystemExit("candidate service/override admission mismatch")
 expected_override = {"services": {service: {"image": record["services"][service]["image_id"],
                                            "pull_policy": "never"} for service in services}}
+expected_override["services"]["operator-bff"]["environment"] = {
+    "BFF_IMAGE_DIGEST": record["services"]["operator-bff"]["image_id"]}
 if override != expected_override or any(not re.fullmatch(r"sha256:[0-9a-f]{64}", row["image"])
                                         for row in override["services"].values()):
     raise SystemExit("candidate override must use only the three sealed image IDs")

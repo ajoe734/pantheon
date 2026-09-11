@@ -515,12 +515,14 @@ async def bff_logout(
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
             if response is not None:
                 response.delete_cookie("pantheon_session", path="/")
+                response.delete_cookie("pantheon_session", path="/bff", secure=True, httponly=True, samesite="lax")
             return result
     now = deps.utc_now()
     key = get_session_key(identity)
     deps.session_lifecycle_store.upsert_session(key, {"state": "logged_out", "logged_out_at": now}, now=now)
     if response is not None:
         response.delete_cookie("pantheon_session", path="/")
+        response.delete_cookie("pantheon_session", path="/bff", secure=True, httponly=True, samesite="lax")
     result = _lifecycle(identity, "logout", idem, now, deps=deps)
     result["data"]["session"].update({"authenticated": False, "fresh": False, "state": "logged_out", "logged_out_at": now})
     if record_key:
