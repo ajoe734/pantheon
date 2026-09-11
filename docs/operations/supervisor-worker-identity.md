@@ -44,8 +44,8 @@ invocation, rather than searching anywhere in argv:
   `.orchestrator` among `Path(argv[0]).parts`.
 - **Python interpreter execution**: `argv[0]` is a recognized Python or PyPy
   executable (e.g. `python3`, `python`, `python3.12`), followed by optional
-  Python interpreter flags (e.g. `-u`, `-B`, `-W ignore`, `-Wignore`, `-X dev`,
-  `-Xdev`, `--check-hash-based-pycs`; excluding stdin mode `-` and inline code/module
+  Python interpreter flags (e.g. `-u`, `-B`, `-W ignore`, `-Wignore`, `-W ""`, `-X dev`,
+  `-Xdev`, `-X ""`, `--check-hash-based-pycs`; excluding stdin mode `-` and inline code/module
   modes `-c`/`-m`), and the first positional script argument is path-shaped, contains no
   whitespace, has `Path(token).name == "worker_runner.py"`, and has
   `.orchestrator` among `Path(token).parts`.
@@ -63,7 +63,13 @@ This explicitly rejects:
   to that other script (e.g. `['python3', '/repo/other.py', '/repo/.../worker_runner.py']`).
 - Option-argument misattributions where `worker_runner.py` is consumed as the parameter
   to a preceding option (e.g. `['python3', '-W', '/repo/.../worker_runner.py']`).
+- Empty-script Python executions where `worker_runner.py` is an argument to an empty script token
+  (e.g. `['python3', '', '/repo/.../worker_runner.py']`).
 - Prompt text arguments merely quoting `worker_runner.py` as free text.
+
+Procfs `/proc/<pid>/cmdline` parsing strips only the single terminating NUL separator
+and preserves interior empty argv tokens so that option arguments like `-W ""` are retained
+and empty script tokens `""` are not skipped.
 
 Both capacity scanning and launch-recovery identification now use this one
 predicate, so a real wrapper is counted/identified exactly once and descendants
@@ -181,25 +187,26 @@ Focused procfs regressions (`.orchestrator/test_supervisor.py`):
 
 - `test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants`:
   verifies capacity scanning counts genuine wrapper executions (standard
-  python, python with `-u`, direct script invocation) while strictly rejecting
+  python, python with `-u`, direct script invocation, and python with empty option argument `-W ""`) while strictly rejecting
   provider arguments (`claude --prompt <path>`), sandbox bind operands
   (`bwrap --ro-bind <path>`), free-text prompt references, python running
   unrelated scripts, python `-c` code execution (including clustered `-uc<code>`),
-  python stdin mode (`-`), and non-orchestrator scripts.
+  python stdin mode (`-`), empty script arguments (`python3 "" <path>`), and non-orchestrator scripts.
+  PID membership comparison is order-independent and retains duplicate detection.
 - `test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands`:
   verifies recovery rejects provider arguments (`claude --prompt <path>`),
   sandbox bind operands (`bwrap --ro-bind <path>`), free text references,
-  python `-c` code execution (`-uc<code>`), and python stdin mode (`-`)
+  python `-c` code execution (`-uc<code>`), python stdin mode (`-`), and empty script arguments (`python3 "" <path>`)
   even when matching `ORCH_TASK_ID`/`ORCH_AGENT_ID`/`ORCH_RUN_ID` are present in
   the process environment.
-- `test_proc_worker_runner_launch_marker_recovers_real_wrapper`:
-  positive recovery coverage verifying a real python worker wrapper is
-  correctly identified, its start ticks validated against the prepared intent,
-  and a complete recovery marker dictionary returned.
+- `test_proc_worker_runner_launch_marker_recovers_real_wrapper` and `test_proc_worker_runner_launch_marker_recovers_with_empty_option_argument`:
+  positive recovery coverage verifying real python worker wrappers (including invocations with empty option arguments like `-W ""`)
+  are correctly identified, start ticks validated against the prepared intent,
+  and complete recovery marker dictionaries returned.
 - `test_cmdline_is_worker_runner_predicate_supported_and_rejected`:
   direct unit testing of the exact predicate against supported wrapper flags
-  (`-u`, `-B`, `-W`, `-X`, `--`) and rejected non-wrapper forms (stdin mode `-`,
-  `-c`, `-m`, clustered/attached `-uc`, `-um`, `-cimport`, `-mmod`, `-W <path>`).
+  (`-u`, `-B`, `-W`, `-X`, `--`, including empty option arguments like `-W ""` and `-X ""`) and rejected non-wrapper forms (stdin mode `-`,
+  `-c`, `-m`, clustered/attached `-uc`, `-um`, `-cimport`, `-mmod`, `-W <path>`, empty script invocations).
 - `test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch`:
   pre-existing zombie filtering continues to pass unchanged.
 

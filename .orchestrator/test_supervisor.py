@@ -13420,10 +13420,36 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             b"python3\x00-\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
         )
 
+        # 12) Supported variant: python3 with empty option argument (-W ""):
+        empty_opt_dir = mock_proc_dir / "900012"
+        empty_opt_dir.mkdir()
+        (empty_opt_dir / "cmdline").write_bytes(
+            b"python3\x00-W\x00\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 13) Python with empty script argument and worker_runner as downstream arg:
+        empty_script_dir = mock_proc_dir / "900013"
+        empty_script_dir.mkdir()
+        (empty_script_dir / "cmdline").write_bytes(
+            b"python3\x00\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 14) Python with flags and empty script argument:
+        empty_script_flag_dir = mock_proc_dir / "900014"
+        empty_script_flag_dir.mkdir()
+        (empty_script_flag_dir / "cmdline").write_bytes(
+            b"python3\x00-u\x00\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
         live_pids = supervisor.scan_live_worker_pids_by_agent(proc_root=mock_proc_dir)
 
-        # Only 900001, 900008, 900009 are real wrapper invocations
-        self.assertEqual(live_pids, {"Codex": [900001, 900008, 900009]})
+        # Compare PID membership without depending on filesystem order while retaining duplicate detection.
+        # Only 900001, 900008, 900009, 900012 are real wrapper invocations.
+        self.assertEqual(
+            {agent: sorted(pids) for agent, pids in live_pids.items()},
+            {"Codex": [900001, 900008, 900009, 900012]},
+        )
+        self.assertEqual(len(live_pids["Codex"]), len(set(live_pids["Codex"])))
 
     def test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands(self) -> None:
         """Recovery identity rejects provider arguments and bwrap bind operands.
@@ -13495,6 +13521,30 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             b"ORCH_RUN_ID=run-1\x00"
         )
 
+        # 6) Python with empty script argument and worker_runner as downstream arg
+        empty_script_dir = base_dir / "900026"
+        empty_script_dir.mkdir(parents=True)
+        (empty_script_dir / "cmdline").write_bytes(
+            b"python3\x00\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+        (empty_script_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
+        )
+
+        # 7) Python with flag and empty script argument
+        empty_script_u_dir = base_dir / "900027"
+        empty_script_u_dir.mkdir(parents=True)
+        (empty_script_u_dir / "cmdline").write_bytes(
+            b"python3\x00-u\x00\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+        (empty_script_u_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
+        )
+
         intent = {
             "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
             "agent_id": "Codex",
@@ -13506,6 +13556,8 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, prompt_dir))
         self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, uc_dir))
         self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, stdin_dir))
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, empty_script_dir))
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, empty_script_u_dir))
 
     def test_proc_worker_runner_launch_marker_recovers_real_wrapper(self) -> None:
         """Positive recovery coverage: real python wrapper is identified and recovered."""
@@ -13541,6 +13593,44 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         self.assertEqual(marker["task_id"], "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001")
         self.assertEqual(marker["agent"], "Codex")
         self.assertEqual(marker["pid"], 900030)
+        self.assertEqual(marker["pid_start_ticks"], 1000)
+        self.assertEqual(marker["launch_recovered_from"], "proc_environ")
+        self.assertEqual(marker["command"], ["echo", "hi"])
+
+    def test_proc_worker_runner_launch_marker_recovers_with_empty_option_argument(self) -> None:
+        """Positive recovery coverage: wrapper with empty option argument (-W "") is recovered."""
+        wrapper_dir = Path(self.temp.name) / "mock_proc_recovery_pos_empty_opt" / "900031"
+        wrapper_dir.mkdir(parents=True)
+        (wrapper_dir / "cmdline").write_bytes(
+            b"python3\x00-W\x00\x00/repo/.orchestrator/worker_runner.py\x00--run-id\x00run-rec-002\x00--\x00echo\x00hi\x00"
+        )
+        (wrapper_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-rec-002\x00"
+        )
+
+        intent = {
+            "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
+            "agent_id": "Codex",
+            "prepared_boottime_ticks": 1000,
+        }
+
+        with mock.patch.object(
+            supervisor, "worker_pid_start_ticks", return_value=1000
+        ), mock.patch.object(
+            supervisor, "_proc_process_started_epoch_seconds", return_value=1700000000.0
+        ), mock.patch.object(
+            supervisor, "_runtime_launch_prepared_epoch_seconds", return_value=1700000000.0
+        ):
+            recovered = supervisor._proc_worker_runner_launch_marker({}, intent, wrapper_dir)
+
+        self.assertIsNotNone(recovered)
+        marker, status_path = recovered
+        self.assertEqual(marker["run_id"], "run-rec-002")
+        self.assertEqual(marker["task_id"], "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001")
+        self.assertEqual(marker["agent"], "Codex")
+        self.assertEqual(marker["pid"], 900031)
         self.assertEqual(marker["pid_start_ticks"], 1000)
         self.assertEqual(marker["launch_recovered_from"], "proc_environ")
         self.assertEqual(marker["command"], ["echo", "hi"])
@@ -13586,6 +13676,18 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         ))
         self.assertTrue(supervisor.cmdline_is_worker_runner(
             ["python3", "-Bu", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-W", "", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-uW", "", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-X", "", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "--check-hash-based-pycs", "", "/repo/.orchestrator/worker_runner.py"]
         ))
 
         # Rejected provider arguments, bind operands, and non-script modes
@@ -13646,6 +13748,20 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         ))
         self.assertFalse(supervisor.cmdline_is_worker_runner(
             ["python3", "--"]
+        ))
+
+        # Empty script argument before worker_runner or empty tokens
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-u", "", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", ""]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            [""]
         ))
 
 

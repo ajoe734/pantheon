@@ -4436,7 +4436,8 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         # must instead require an exact argv path token whose basename is
         # worker_runner.py under an .orchestrator directory, bound to the actual
         # interpreter or script invocation (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
-        argv_parts = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\x00") if part]
+        raw_cmd = raw[:-1] if raw.endswith(b"\x00") else raw
+        argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
         if not cmdline_is_worker_runner(argv_parts):
             continue
         agent = match.group(1)
@@ -7132,7 +7133,8 @@ def _proc_worker_runner_launch_marker(
     raw_cmdline = (entry / "cmdline").read_bytes()
     if not raw_cmdline:
         return None
-    argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmdline.split(b"\x00") if part]
+    raw_cmd = raw_cmdline[:-1] if raw_cmdline.endswith(b"\x00") else raw_cmdline
+    argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
     if not cmdline_is_worker_runner(argv_parts):
         return None
     raw_environ = (entry / "environ").read_bytes()
@@ -7197,11 +7199,7 @@ def _proc_worker_runner_launch_marker(
     # process generations that are definitively earlier than the intent.
     if process_started_epoch + 1.0 < prepared_epoch:
         return None
-    argv = [
-        value.decode("utf-8", errors="ignore")
-        for value in raw_cmdline.split(b"\0")
-        if value
-    ]
+    argv = argv_parts
     run_id = str(env.get("ORCH_RUN_ID") or "")
     if not run_id and "--run-id" in argv:
         index = argv.index("--run-id") + 1
