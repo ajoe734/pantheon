@@ -151,6 +151,7 @@ components:
       - scripts/test_dev_deploy_worktree_isolation_contract.py
       - scripts/test_probe_agora_hosted_service_journey.py
       - docs/deployment/vm-dev-staging-prod-management-plan.md
+      - docs/deployment/nonprod-development-workflow.md
       - docs/frontend/execute-plans-dev-hosting.md
       - docs/remote-dev-gcp-vm.md
       - scripts/wait_for_bff_lifecycle_readiness.py
