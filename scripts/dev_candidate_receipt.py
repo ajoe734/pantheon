@@ -98,6 +98,8 @@ def validate_receipt(result: dict, context: dict) -> str:
             raise CaptureError("candidate service image/source ownership mismatch")
     override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
                              for service, row in record["services"].items()}}
+    override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": record["services"]["operator-bff"]["image_id"]}
     if record["image_override_sha256"] != digest(encoded(override)):
         raise CaptureError("candidate immutable override digest mismatch")
     if result["candidate_image_override_sha256"] != record["image_override_sha256"]:

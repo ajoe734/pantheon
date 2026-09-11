@@ -1,9 +1,9 @@
 """Named BFF auth router prepared for composition-root cutover."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Body, Cookie, Header, Query, Response
+from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query, Request, Response
 
 from .service import AuthFacadeService, ProviderReadinessCache
 
@@ -13,13 +13,29 @@ def _safe_provider_readiness(cache: ProviderReadinessCache) -> Dict[str, Any]:
     return cache.snapshot()
 
 
-def create_auth_router(*, service: AuthFacadeService) -> APIRouter:
+def create_auth_router(
+    *,
+    service: AuthFacadeService,
+    browser_origin_allowed: Callable[[Optional[str]], bool] = lambda origin: False,
+) -> APIRouter:
     """Create the seven-route auth/session facade from injected local services."""
     router = APIRouter(tags=["auth"])
 
     @router.post("/bff/auth/dev-login")
-    async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
-        return await service.invoke("bff_auth_dev_login", payload=payload)
+    async def bff_auth_dev_login(request: Request, response: Response, payload: Dict[str, Any] = Body(default_factory=dict)):
+        browser_session = payload.get("browser_session") is True
+        if browser_session and not browser_origin_allowed(request.headers.get("origin")):
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Browser login requires an allowed Origin"}})
+        result = await service.invoke("bff_auth_dev_login", payload=payload)
+        if browser_session:
+            response.set_cookie(
+                "pantheon_session", result["access_token"],
+                max_age=result["expires_in"], path="/bff",
+                secure=True, httponly=True, samesite="lax",
+            )
+            # The browser needs only session metadata, never a JS-readable JWT.
+            return {key: value for key, value in result.items() if key != "access_token"}
+        return result
 
     @router.get("/bff/me")
     async def bff_me(
@@ -131,4 +147,3 @@ def create_auth_router(*, service: AuthFacadeService) -> APIRouter:
         )
 
     return router
-

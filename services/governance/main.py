@@ -439,6 +439,28 @@ def accept_consultation_handoff(
     }
 
 
+@app.get(
+    "/api/governance/consultation-handoffs/{handoff_id}",
+    response_model=Dict[str, Any],
+    summary="Read the durable Governance receipt for a Consultation handoff",
+)
+def get_consultation_handoff(
+    handoff_id: str,
+    authorization: Optional[str] = Header(None),
+    service_actor: Optional[str] = Header(None, alias="X-Pantheon-Service-Actor"),
+    tenant_header: Optional[str] = Header(None, alias="X-Pantheon-Tenant-Id"),
+) -> Dict[str, Any]:
+    _, tenant_id = _authenticate_consultation_handoff_service(
+        authorization=authorization,
+        service_actor=service_actor,
+        tenant_id=tenant_header,
+    )
+    record = consultation_handoff_store.get(handoff_id)
+    if record is None or record.get("tenant_id") != tenant_id:
+        raise HTTPException(status_code=404, detail="Consultation handoff not found")
+    return record
+
+
 # ---------------------------------------------------------------------------
 # Routes — freeze-order and rollback write models
 # ---------------------------------------------------------------------------
@@ -564,7 +586,7 @@ def _authenticate_consultation_handoff_service(
 
     Consultation delivery is not a browser/user operation and must not depend
     on BFF or Governance user JWT configuration.  The dedicated credential is
-    accepted only on this intake route and is additionally bound to an exact
+    accepted only on these handoff routes and is additionally bound to an exact
     service actor and an explicit tenant allowlist.
     """
 

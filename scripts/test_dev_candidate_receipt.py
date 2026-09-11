@@ -24,6 +24,8 @@ def reseal(result):
     record = result["candidate_image_manifest"]
     override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
                              for service, row in record["services"].items()}}
+    override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": record["services"]["operator-bff"]["image_id"]}
     record["image_override_sha256"] = receiver.digest(receiver.encoded(override))
     result["candidate_image_override_sha256"] = record["image_override_sha256"]
     result["candidate_image_manifest_sha256"] = receiver.digest(receiver.encoded(record))

@@ -53,6 +53,8 @@ def case(tmp_path, monkeypatch):
                            for index, service in enumerate(e.candidate.SERVICES, 4)}}
     override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
                              for service, row in record["services"].items()}}
+    override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": record["services"]["operator-bff"]["image_id"]}
     record["image_override_sha256"] = e.capture.digest(e.capture.encoded(override))
     folder = e.capture.ARTIFACT_ROOT / f"baseline-123456-2-{identity['candidate_id']}"
     receipt = {"candidate_image_manifest_path": str(folder / "candidate-images.json"),
