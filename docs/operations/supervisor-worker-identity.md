@@ -44,8 +44,9 @@ invocation, rather than searching anywhere in argv:
   `.orchestrator` among `Path(argv[0]).parts`.
 - **Python interpreter execution**: `argv[0]` is a recognized Python or PyPy
   executable (e.g. `python3`, `python`, `python3.12`), followed by optional
-  Python interpreter flags (e.g. `-u`, `-B`, `-W ignore`; excluding `-c` and
-  `-m`), and the first positional script argument is path-shaped, contains no
+  Python interpreter flags (e.g. `-u`, `-B`, `-W ignore`, `-Wignore`, `-X dev`,
+  `-Xdev`, `--check-hash-based-pycs`; excluding stdin mode `-` and inline code/module
+  modes `-c`/`-m`), and the first positional script argument is path-shaped, contains no
   whitespace, has `Path(token).name == "worker_runner.py"`, and has
   `.orchestrator` among `Path(token).parts`.
 
@@ -54,9 +55,14 @@ This explicitly rejects:
   where `argv[0]` is the provider binary rather than Python.
 - Bubblewrap sandbox bind operands (e.g. `['/usr/bin/bwrap', '--ro-bind', '/repo/.orchestrator/worker_runner.py', '/tmp/ref.py', 'wake']`),
   where `argv[0]` is the sandbox binary and the script path is a mount argument.
-- Non-script Python modes (`-c` inline code, `-m` module execution).
+- Non-script Python modes:
+  - Stdin script execution (`-` and `-u -`).
+  - Inline code execution (`-c`, `-c<code>`, clustered/attached `-uc<code>`, etc.).
+  - Module execution (`-m`, `-m<mod>`, clustered/attached `-um<mod>`, etc.).
 - Python executions of other scripts where `worker_runner.py` is an argument
-  to that other script.
+  to that other script (e.g. `['python3', '/repo/other.py', '/repo/.../worker_runner.py']`).
+- Option-argument misattributions where `worker_runner.py` is consumed as the parameter
+  to a preceding option (e.g. `['python3', '-W', '/repo/.../worker_runner.py']`).
 - Prompt text arguments merely quoting `worker_runner.py` as free text.
 
 Both capacity scanning and launch-recovery identification now use this one
@@ -141,12 +147,12 @@ print(json.dumps(observation, indent=2))
 ```
 
 Observation result:
-- `observed_at`: `2026-09-11T00:37:19.408170+00:00`
+- `observed_at`: `2026-09-11T00:56:42.587896+00:00`
 - `read_only_health`:
   - `supervisor_pid`: 3325540
   - `lifecycle`: `"running"`
-  - `last_heartbeat_at`: `"2026-09-11T00:37:14Z"`
-  - `last_successful_loop_at`: `"2026-09-11T00:37:09Z"`
+  - `last_heartbeat_at`: `"2026-09-11T00:56:37Z"`
+  - `last_successful_loop_at`: `"2026-09-11T00:56:37Z"`
   - `command_runtime_healthy`: `true`
   - `command_runtime_reason`: `"healthy"`
 - `counts`:
@@ -163,8 +169,8 @@ Observation result:
   - `base_ref`: `"origin/dev"`
   - `coordination_status_root`: `"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root"`
 - `scheduler_workers`:
-  - `codex-20260911T002857Z-7b970405` (task: `OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001`, status: `running`)
-  - `antigravity-20260911T003028Z-b6c4b2ee` (task: `OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001`, status: `running`)
+  - `antigravity-20260911T004920Z-f8f9797d` (task: `OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001`, status: `running`)
+  - `codex-20260911T005555Z-14bce7df` (task: `OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001`, status: `running`)
 
 The running supervisor's source SHA predates this fix, so its live process
 image still runs the prior scan until an operator promotes the merged commit.
@@ -178,10 +184,12 @@ Focused procfs regressions (`.orchestrator/test_supervisor.py`):
   python, python with `-u`, direct script invocation) while strictly rejecting
   provider arguments (`claude --prompt <path>`), sandbox bind operands
   (`bwrap --ro-bind <path>`), free-text prompt references, python running
-  unrelated scripts, python `-c` code execution, and non-orchestrator scripts.
+  unrelated scripts, python `-c` code execution (including clustered `-uc<code>`),
+  python stdin mode (`-`), and non-orchestrator scripts.
 - `test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands`:
   verifies recovery rejects provider arguments (`claude --prompt <path>`),
-  sandbox bind operands (`bwrap --ro-bind <path>`), and free text references
+  sandbox bind operands (`bwrap --ro-bind <path>`), free text references,
+  python `-c` code execution (`-uc<code>`), and python stdin mode (`-`)
   even when matching `ORCH_TASK_ID`/`ORCH_AGENT_ID`/`ORCH_RUN_ID` are present in
   the process environment.
 - `test_proc_worker_runner_launch_marker_recovers_real_wrapper`:
@@ -189,8 +197,9 @@ Focused procfs regressions (`.orchestrator/test_supervisor.py`):
   correctly identified, its start ticks validated against the prepared intent,
   and a complete recovery marker dictionary returned.
 - `test_cmdline_is_worker_runner_predicate_supported_and_rejected`:
-  direct unit testing of the exact predicate against supported and rejected
-  argv token structures.
+  direct unit testing of the exact predicate against supported wrapper flags
+  (`-u`, `-B`, `-W`, `-X`, `--`) and rejected non-wrapper forms (stdin mode `-`,
+  `-c`, `-m`, clustered/attached `-uc`, `-um`, `-cimport`, `-mmod`, `-W <path>`).
 - `test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch`:
   pre-existing zombie filtering continues to pass unchanged.
 

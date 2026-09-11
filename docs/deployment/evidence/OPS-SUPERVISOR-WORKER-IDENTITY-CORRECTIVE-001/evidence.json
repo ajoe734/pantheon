@@ -12,9 +12,9 @@
     "implementation_commit": "f84d677a586732795f8a03853e6ed9a5ee4b9d07",
     "implementation_tree": "91b47ad74c38eb053e55da266e92b9e0598cafb9",
     "files_sha256": {
-      ".orchestrator/supervisor.py": "3fa33a53925499b2f6a3766d6d7014abda113398f9be7ffff70a245515ae2ba7",
-      ".orchestrator/test_supervisor.py": "b87cd87cc925cee0412b11f57f37c397a9b8365eab0740a09935964dd6a3741f",
-      "docs/operations/supervisor-worker-identity.md": "75c38d5b4f8917a26368620159800a566469b52fc083429206806984121ac18d"
+      ".orchestrator/supervisor.py": "18b12c5fe42bb6f56811fcb2ac0b0e17413ffa1090313680b6a874ac32506383",
+      ".orchestrator/test_supervisor.py": "0da364f83d94492ecbc3bd2fb5d35ebbac90e5f0edf76bcc2452ead73db8d684",
+      "docs/operations/supervisor-worker-identity.md": "76671ec58c0f0603c1e6143a7beb296b89326df6a0ac0b334493135b9d2d36a1"
     },
     "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
   },
@@ -23,10 +23,10 @@
     "source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"
   },
   "problem": {
-    "summary": "Two independent live audits found the scheduler identified a live worker_runner.py wrapper with a raw substring search (\"worker_runner.py\" in the whole /proc/<pid>/cmdline text) instead of an exact argv-path predicate. Provider CLI and bwrap sandbox descendants inherit the wake prompt as an argv value; when that inherited prompt text itself contains the literal string \"worker_runner.py\" (for example while quoting the task's own artifact path), the substring search matched the descendant too. An earlier candidate replaced this with a loose argv[0:4] check, but independent reproduction showed that provider arguments (e.g. claude --prompt /repo/.../worker_runner.py) and bubblewrap bind operands (bwrap --ro-bind /repo/.../worker_runner.py) were still mistakenly matched as worker wrappers. The predicate must be bound to the actual interpreter or script invocation."
+    "summary": "Two independent live audits found the scheduler identified a live worker_runner.py wrapper with a raw substring search (\"worker_runner.py\" in the whole /proc/<pid>/cmdline text) instead of an exact argv-path predicate. Provider CLI and bwrap sandbox descendants inherit the wake prompt as an argv value; when that inherited prompt text itself contains the literal string \"worker_runner.py\" (for example while quoting the task's own artifact path), the substring search matched the descendant too. An earlier candidate replaced this with a loose argv[0:4] check, but independent reproduction showed that provider arguments (e.g. claude --prompt /repo/.../worker_runner.py) and bubblewrap bind operands (bwrap --ro-bind /repo/.../worker_runner.py) were still mistakenly matched as worker wrappers. A subsequent review reproduction also revealed that generic dash-option parsing allowed non-wrapper Python invocations like clustered/attached inline code (-uc<code>) and stdin mode (-) to match when worker_runner.py appeared as a downstream option/operand. The predicate must parse Python CLI options conservatively and reject non-script modes."
   },
   "fix": {
-    "predicate": "supervisor.py defines cmdline_is_worker_runner, binding directly to the actual interpreter or direct script invocation instead of accepting any matching path token in argv[0:4]. For direct invocation, argv[0] must be worker_runner.py under .orchestrator. For Python interpreter invocation, argv[0] must be a Python/PyPy executable, followed by optional Python interpreter flags (excluding -c/-m), and the first positional script argument must be worker_runner.py under .orchestrator. Provider CLI arguments (claude --prompt ...) and bubblewrap mount operands (bwrap --ro-bind ...) are rejected.",
+    "predicate": "supervisor.py defines cmdline_is_worker_runner, binding directly to the actual interpreter or direct script invocation instead of accepting any matching path token in argv[0:4]. For direct invocation, argv[0] must be worker_runner.py under .orchestrator. For Python interpreter invocation, argv[0] must be a Python/PyPy executable, followed by optional Python interpreter flags (conservatively parsed, respecting option arguments like -W/-X and excluding stdin mode - and clustered/attached -c/-m), and the first positional script argument must be worker_runner.py under .orchestrator. Provider CLI arguments (claude --prompt ...), bubblewrap mount operands (bwrap --ro-bind ...), inline code (-c), module execution (-m), and stdin mode (-) are rejected.",
     "call_sites": [
       "supervisor.scan_live_worker_pids_by_agent (fleet capacity / live-worker count reconciliation)",
       "supervisor._proc_worker_runner_launch_marker (launch-recovery identity evidence)"
@@ -52,7 +52,7 @@
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_supervisor_watchdog.py",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "402 passed, 98 subtests passed in 103.71s (0:01:43)"
+      "summary": "402 passed, 98 subtests passed in 111.10s (0:01:51)"
     },
     {
       "name": "supervisor",
@@ -66,31 +66,31 @@
       "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "64 passed, 20 subtests passed in 6.59s"
+      "summary": "64 passed, 20 subtests passed in 7.93s"
     },
     {
       "name": "focused_identity_regressions",
       "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"worker_pid or worker_runner_launch_marker or zombie or cmdline_is_worker_runner\"",
       "exit_code": 0,
       "outcome": "passed",
-      "summary": "5 passed, 333 deselected in 1.96s"
+      "summary": "5 passed, 333 deselected in 2.03s"
     }
   ],
   "acceptance_evidence": {
     "exact_predicate": "Both scan_live_worker_pids_by_agent and _proc_worker_runner_launch_marker use the tightened cmdline_is_worker_runner predicate bound to the actual interpreter/script invocation.",
-    "focused_regressions": "test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants proves supported wrapper invocations (standard python3, python3 -u, direct script execution) are counted while provider arguments (claude --prompt), bwrap bind operands (bwrap --ro-bind), prompt text references, python running unrelated scripts, inline code (-c), and non-.orchestrator scripts are excluded. test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands proves launch recovery rejects provider arguments and bwrap operands even when ORCH_TASK_ID, ORCH_AGENT_ID, and ORCH_RUN_ID match in environ. test_proc_worker_runner_launch_marker_recovers_real_wrapper provides positive recovery coverage for a real python wrapper. test_cmdline_is_worker_runner_predicate_supported_and_rejected directly unit tests the predicate.",
+    "focused_regressions": "test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants proves supported wrapper invocations (standard python3, python3 -u, direct script execution) are counted while provider arguments (claude --prompt), bwrap bind operands (bwrap --ro-bind), prompt text references, python running unrelated scripts, inline code (-c, -uc), stdin mode (-), and non-.orchestrator scripts are excluded. test_proc_worker_runner_launch_marker_rejects_descendants_and_bind_operands proves launch recovery rejects provider arguments, bwrap operands, inline code (-uc), and stdin mode (-) even when ORCH_TASK_ID, ORCH_AGENT_ID, and ORCH_RUN_ID match in environ. test_proc_worker_runner_launch_marker_recovers_real_wrapper provides positive recovery coverage for a real python wrapper. test_cmdline_is_worker_runner_predicate_supported_and_rejected directly unit tests the predicate against supported and rejected options.",
     "preserved_behavior": "Pre-existing test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch continues to pass unchanged; full test_supervisor.py and test_supervisor_watchdog.py suites pass with 402 tests and 98 subtests green.",
     "documentation": "docs/operations/supervisor-worker-identity.md records the identity rule, interpreter/script binding, procfs boundaries, relation between watchdog and scheduler counts, and the reproducible timestamped runtime health/count observation.",
     "delivery_scope": "Only the declared tooling files (.orchestrator/supervisor.py, .orchestrator/test_supervisor.py, docs/operations/supervisor-worker-identity.md, this evidence file) changed; no product runtime behavior, hosted deployment, external branch protection, task state, or unrelated worktree was touched."
   },
   "runtime_observation": {
     "observation_command": "python3 -c 'import json, datetime; from pathlib import Path; status_root = Path(\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root\"); state_path = status_root / \".orchestrator/worker-runtime/state.json\"; watchdog_path = status_root / \".orchestrator/watchdog-state.json\"; state = json.loads(state_path.read_text()); watchdog = json.loads(watchdog_path.read_text()); sup = state.get(\"supervisor\", {}); cmd_health = sup.get(\"command_runtime_health\", {}); runtime_info = cmd_health.get(\"runtime\", {}); res = watchdog.get(\"last_decision\", {}).get(\"resource\", {}); print(json.dumps({\"observed_at\": datetime.datetime.now(datetime.timezone.utc).isoformat(), \"read_only_health\": {\"supervisor_pid\": sup.get(\"pid\"), \"lifecycle\": sup.get(\"lifecycle\"), \"last_heartbeat_at\": sup.get(\"last_heartbeat_at\"), \"last_successful_loop_at\": sup.get(\"last_successful_loop_at\"), \"command_runtime_healthy\": cmd_health.get(\"healthy\"), \"command_runtime_reason\": cmd_health.get(\"reason\")}, \"counts\": {\"watchdog_active_worker_count\": res.get(\"active_worker_count\"), \"watchdog_active_worker_live_count\": res.get(\"active_worker_live_count\"), \"watchdog_active_worker_runtime_state_count\": res.get(\"active_worker_runtime_state_count\"), \"watchdog_active_worker_count_source\": res.get(\"active_worker_count_source\"), \"scheduler_state_workers_count\": len(state.get(\"workers\", {}))}, \"identities\": {\"supervisor_pid\": sup.get(\"pid\"), \"command_root\": runtime_info.get(\"command_root\"), \"source_sha\": runtime_info.get(\"source_sha\"), \"remote\": runtime_info.get(\"remote\"), \"base_ref\": runtime_info.get(\"base_ref\"), \"coordination_status_root\": str(status_root)}, \"scheduler_workers\": {k: {\"status\": v.get(\"status\"), \"task_id\": v.get(\"task_id\")} for k, v in state.get(\"workers\", {}).items()}}, indent=2))'",
-    "observed_at": "2026-09-11T00:37:19.408170+00:00",
+    "observed_at": "2026-09-11T00:56:42.587896+00:00",
     "read_only_health": {
       "supervisor_pid": 3325540,
       "lifecycle": "running",
-      "last_heartbeat_at": "2026-09-11T00:37:14Z",
-      "last_successful_loop_at": "2026-09-11T00:37:09Z",
+      "last_heartbeat_at": "2026-09-11T00:56:37Z",
+      "last_successful_loop_at": "2026-09-11T00:56:37Z",
       "command_runtime_healthy": true,
       "command_runtime_reason": "healthy"
     },
@@ -110,13 +110,13 @@
       "coordination_status_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root"
     },
     "scheduler_workers": {
-      "codex-20260911T002857Z-7b970405": {
-        "status": "running",
-        "task_id": "OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001"
-      },
-      "antigravity-20260911T003028Z-b6c4b2ee": {
+      "antigravity-20260911T004920Z-f8f9797d": {
         "status": "running",
         "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001"
+      },
+      "codex-20260911T005555Z-14bce7df": {
+        "status": "running",
+        "task_id": "OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001"
       }
     }
   },

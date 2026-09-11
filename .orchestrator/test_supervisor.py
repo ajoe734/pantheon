@@ -13406,6 +13406,20 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             b"/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
         )
 
+        # 10) Python running clustered/attached -c code with worker_runner as downstream arg:
+        python_uc_dir = mock_proc_dir / "900010"
+        python_uc_dir.mkdir()
+        (python_uc_dir / "cmdline").write_bytes(
+            b"python3\x00-ucimport sys; print(repr(sys.argv))\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 11) Python reading from stdin (-):
+        python_stdin_dir = mock_proc_dir / "900011"
+        python_stdin_dir.mkdir()
+        (python_stdin_dir / "cmdline").write_bytes(
+            b"python3\x00-\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
         live_pids = supervisor.scan_live_worker_pids_by_agent(proc_root=mock_proc_dir)
 
         # Only 900001, 900008, 900009 are real wrapper invocations
@@ -13415,8 +13429,9 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         """Recovery identity rejects provider arguments and bwrap bind operands.
 
         Even with matching ORCH_TASK_ID/ORCH_AGENT_ID/ORCH_RUN_ID, descendant
-        processes (claude, bwrap) are rejected because they are not actual
-        interpreter or script invocations of worker_runner.py.
+        processes (claude, bwrap) and non-wrapper Python invocations (-c, -m, -)
+        are rejected because they are not actual interpreter or script invocations
+        of worker_runner.py.
         """
         base_dir = Path(self.temp.name) / "mock_proc_recovery_neg"
 
@@ -13456,6 +13471,30 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             b"ORCH_RUN_ID=run-1\x00"
         )
 
+        # 4) Python running clustered/attached -c code
+        uc_dir = base_dir / "900024"
+        uc_dir.mkdir(parents=True)
+        (uc_dir / "cmdline").write_bytes(
+            b"python3\x00-ucimport sys; print(repr(sys.argv))\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+        (uc_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
+        )
+
+        # 5) Python reading script from stdin (-)
+        stdin_dir = base_dir / "900025"
+        stdin_dir.mkdir(parents=True)
+        (stdin_dir / "cmdline").write_bytes(
+            b"python3\x00-\x00/repo/.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+        (stdin_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+            b"ORCH_RUN_ID=run-1\x00"
+        )
+
         intent = {
             "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
             "agent_id": "Codex",
@@ -13465,6 +13504,8 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, claude_dir))
         self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, bwrap_dir))
         self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, prompt_dir))
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, uc_dir))
+        self.assertIsNone(supervisor._proc_worker_runner_launch_marker({}, intent, stdin_dir))
 
     def test_proc_worker_runner_launch_marker_recovers_real_wrapper(self) -> None:
         """Positive recovery coverage: real python wrapper is identified and recovered."""
@@ -13528,6 +13569,24 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         self.assertTrue(supervisor.cmdline_is_worker_runner(
             ["python3", "-W", "ignore", "/repo/.orchestrator/worker_runner.py"]
         ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-Wignore", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-uWignore", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-uW", "ignore", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-Xdev", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-uX", "dev", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertTrue(supervisor.cmdline_is_worker_runner(
+            ["python3", "-Bu", "/repo/.orchestrator/worker_runner.py"]
+        ))
 
         # Rejected provider arguments, bind operands, and non-script modes
         self.assertFalse(supervisor.cmdline_is_worker_runner(
@@ -13556,6 +13615,38 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         ))
         self.assertFalse(supervisor.cmdline_is_worker_runner([]))
         self.assertFalse(supervisor.cmdline_is_worker_runner(["python3"]))
+
+        # Stdin mode (-) and clustered/attached -c / -m modes
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-ucimport sys; print(repr(sys.argv))", "/repo/.orchestrator/worker_runner.py", "auto worker 身分是：Codex"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-", "/repo/.orchestrator/worker_runner.py", "auto worker 身分是：Codex"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-u", "-", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-cimport sys", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-uc", "import sys", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-mpytest", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-um", "pytest", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-umpytest", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "-W", "/repo/.orchestrator/worker_runner.py"]
+        ))
+        self.assertFalse(supervisor.cmdline_is_worker_runner(
+            ["python3", "--"]
+        ))
 
 
 class SupervisorLaunchAuthorityTests(unittest.TestCase):
