@@ -9,6 +9,8 @@
     "repository": "ajoe734/pantheon",
     "branch": "task/OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001",
     "base_sha": "ee318eebcb1654a0ffb9e4809a51b3a20164a10a",
+    "implementation_commit": "0eb4f0fd1670eb5e2f21f9bf8bd4cd4f1ef29c3c",
+    "implementation_tree": "3986ac16b246669e18e757da3eaa07cd499a0161",
     "files_sha256": {
       ".orchestrator/supervisor.py": "47a99a1e2c1e03bb14df52f3489a7c33f82f6e9c40196c5632427b56461659e1",
       ".orchestrator/test_supervisor.py": "51175d97efd6dc7a4208d6a4a95858832111334af429ffe0cfbb6e374a759f37"
