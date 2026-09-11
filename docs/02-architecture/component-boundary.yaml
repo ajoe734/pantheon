@@ -48,6 +48,15 @@ components:
       - scripts/check_config_drift.py
       - scripts/test_check_config_drift.py
       - scripts/promote_supervisor_runtime.py
+      - scripts/test_promote_supervisor_runtime.py
+      - scripts/test_status_command_runtime_pin.py
+      # Retired tooling paths remain classified for deletion/history diffs.
+      - scripts/request_execution_grant.py
+      - scripts/test_request_execution_grant.py
+      - deploy/execution-grant-issuer/
+      - docs/operations/execution-grant-issuer.md
+      - docs/operations/development-tooling-mfa-retirement.md
+      - docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
       - scripts/provision_live_supervisor_config.py
       - scripts/supervisor_runtime_health.py
       - scripts/supervisor_watchdog.py
@@ -87,6 +96,7 @@ components:
     paths:
       - .orchestrator/development_bridge/
       - scripts/*assistant_dev_task_packet.py
+      - docs/operations/management-ai-openclaw-dev-bridge.md
     runtime_required: false
     removal_condition: "no external development-task ingress is required"
     boundary: "local transport only; excluded from every product container and deployment"
@@ -120,6 +130,7 @@ components:
     paths:
       - .github/workflows/
       - scripts/deploy_nonprod_vm.sh
+      - scripts/run-acceptance.sh
       - scripts/wait_for_bff_lifecycle_readiness.py
       - scripts/verify_hosted_scenarios.py
       - scripts/verify_e2e_fe_serving.py

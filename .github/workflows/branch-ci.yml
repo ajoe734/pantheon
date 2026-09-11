@@ -269,13 +269,6 @@ jobs:
           # Keep these explicit: requirements.txt intentionally does not pull
           # product service dependencies into a tooling-only change.
           python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
-          # scripts/run-acceptance.sh (invoked below for a mixed product+
-          # tooling diff) also runs the execution-grant-issuer suites; install
-          # their pinned deps here so that best-effort path does not
-          # silently fail closed on a missing firebase-admin/PyJWT import.
-          if [[ -f deploy/execution-grant-issuer/requirements.txt ]]; then
-            python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt || true
-          fi
 
       - name: Verify workflow contract
         run: |
@@ -332,34 +325,6 @@ jobs:
             echo "${field}=${value}" >> "$GITHUB_OUTPUT"
           done
 
-      - name: Detect execution-grant-issuer changes
-        id: issuer_boundary
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          # Independent of scripts/component_boundary.py's manifest-driven
-          # classification (which currently has no entry for this path set),
-          # so this dedicated tooling gate cannot silently stop running if
-          # the manifest ever falls behind these exact paths.
-          if [[ -n "$BASE_SHA" && "$BASE_SHA" != "0000000000000000000000000000000000000000" ]] \
-            && git cat-file -e "${BASE_SHA}^{commit}"; then
-            range="$BASE_SHA...$HEAD_SHA"
-          else
-            range="${HEAD_SHA}~1...$HEAD_SHA"
-          fi
-          changed="$(git diff --name-only $range -- \
-            .orchestrator/execution_grant_issuer \
-            scripts/request_execution_grant.py \
-            scripts/test_request_execution_grant.py \
-            deploy/execution-grant-issuer)"
-          if [[ -n "$changed" ]]; then
-            echo "$changed"
-            echo "touched=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "touched=false" >> "$GITHUB_OUTPUT"
-          fi
-
       # DTG-CI-01: these three gates are independent, not mutually exclusive.
       # A mixed tooling/product diff must run every applicable gate; an
       # unknown-only or delivery-only diff falls through to the product/mixed
@@ -394,16 +359,6 @@ jobs:
             scripts/test_auto_integrator_install.py \
             scripts/test_supervisor_launch_ownership.py \
             scripts/test_supervisor_watchdog_install.py
-
-      - name: Run execution-grant-issuer gate
-        if: steps.issuer_boundary.outputs.touched == 'true'
-        run: |
-          python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt
-          PYTHONPATH=.orchestrator python3 -m pytest -q \
-            .orchestrator/execution_grant_issuer/test_issuer.py \
-            deploy/execution-grant-issuer/test_run_server.py
-          PANTHEON_COMMAND_ROOT="$PWD" python3 -m pytest -q \
-            scripts/test_request_execution_grant.py
 
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')
