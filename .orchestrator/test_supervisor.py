@@ -13324,6 +13324,78 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         ):
             self.assertFalse(supervisor.pid_is_alive(816487))
 
+    def test_scan_live_worker_pids_excludes_prompt_text_and_bwrap_descendants(self) -> None:
+        """Only the real .orchestrator/worker_runner.py wrapper counts toward capacity.
+
+        Two independent live audits found the prior scan used a raw substring
+        search over the whole cmdline blob: a provider CLI descendant or a
+        bwrap sandbox child inherits the wake prompt as an argv value, and
+        that prompt text can itself contain "worker_runner.py" (for example
+        while quoting the task's own artifact path), which inflated the
+        scheduler's live-worker count relative to the watchdog's exact
+        argv-path predicate (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        """
+        mock_proc_dir = Path(self.temp.name) / "mock_proc_identity"
+        mock_proc_dir.mkdir(parents=True)
+
+        # 1) The real one-per-worker wrapper: argv path token is exactly
+        #    .orchestrator/worker_runner.py.
+        real_wrapper_dir = mock_proc_dir / "900001"
+        real_wrapper_dir.mkdir()
+        (real_wrapper_dir / "cmdline").write_bytes(
+            b"python3\x00.orchestrator/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 2) A bwrap sandbox descendant carrying the same wake prompt, but its
+        #    own argv path is the sandbox binary, not worker_runner.py.
+        bwrap_child_dir = mock_proc_dir / "900002"
+        bwrap_child_dir.mkdir()
+        (bwrap_child_dir / "cmdline").write_bytes(
+            b"/usr/bin/bwrap\x00--ro-bind\x00/\x00/\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # 3) A provider CLI descendant whose prompt argument merely quotes the
+        #    literal text "worker_runner.py" (e.g. an artifact path in the
+        #    task brief). It is not a path-shaped argv token, so the exact
+        #    predicate must reject it even though the raw substring is present.
+        provider_cli_dir = mock_proc_dir / "900003"
+        provider_cli_dir.mkdir()
+        (provider_cli_dir / "cmdline").write_bytes(
+            b"claude\x00--prompt\x00"
+            b"auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex "
+            b"see .orchestrator/worker_runner.py for details\x00"
+        )
+
+        live_pids = supervisor.scan_live_worker_pids_by_agent(proc_root=mock_proc_dir)
+
+        self.assertEqual(live_pids, {"Codex": [900001]})
+
+    def test_proc_worker_runner_launch_marker_rejects_prompt_text_match(self) -> None:
+        """Recovery identity must use the same exact argv-path predicate.
+
+        A descendant process whose prompt argument merely contains the text
+        "worker_runner.py" must not be treated as the launched wrapper during
+        recovery, even though ORCH_TASK_ID/ORCH_AGENT_ID happen to be present
+        in its environment.
+        """
+        mock_entry_dir = Path(self.temp.name) / "mock_proc_launch_marker" / "900004"
+        mock_entry_dir.mkdir(parents=True)
+        (mock_entry_dir / "cmdline").write_bytes(
+            b"claude\x00--prompt\x00see .orchestrator/worker_runner.py for details\x00"
+        )
+        (mock_entry_dir / "environ").write_bytes(
+            b"ORCH_TASK_ID=OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001\x00"
+            b"ORCH_AGENT_ID=Codex\x00"
+        )
+
+        result = supervisor._proc_worker_runner_launch_marker(
+            {},
+            {"task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001", "agent_id": "Codex"},
+            mock_entry_dir,
+        )
+
+        self.assertIsNone(result)
+
 
 class SupervisorLaunchAuthorityTests(unittest.TestCase):
     def test_repository_local_config_without_live_command_is_allowed(self) -> None:

@@ -4258,6 +4258,8 @@ def worker_process_activity_advanced(previous: dict[str, Any] | None, current: d
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
 def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
     """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
+    from supervisor_watchdog import cmdline_is_worker_runner
+
     root = proc_root if proc_root is not None else Path("/proc")
     result: dict[str, list[int]] = {}
     try:
@@ -4301,7 +4303,15 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
         # otherwise the live worker count is ~3x inflated and max_concurrent_workers
         # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
-        if "worker_runner.py" not in cmdline:
+        # A raw substring search over the whole cmdline blob is not an identity
+        # boundary: provider descendants inherit the wake prompt as an argv
+        # value and can carry the same "worker_runner.py" text, so the scan
+        # must instead require an exact argv path token whose basename is
+        # worker_runner.py under an .orchestrator directory, matching the
+        # watchdog's cmdline_is_worker_runner predicate exactly
+        # (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        argv_parts = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\x00") if part]
+        if not cmdline_is_worker_runner(argv_parts):
             continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
@@ -6993,8 +7003,13 @@ def _proc_worker_runner_launch_marker(
     published its first atomic JSON marker.
     """
 
+    from supervisor_watchdog import cmdline_is_worker_runner
+
     raw_cmdline = (entry / "cmdline").read_bytes()
-    if not raw_cmdline or b"worker_runner.py" not in raw_cmdline:
+    if not raw_cmdline:
+        return None
+    argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmdline.split(b"\x00") if part]
+    if not cmdline_is_worker_runner(argv_parts):
         return None
     raw_environ = (entry / "environ").read_bytes()
     env: dict[str, str] = {}
