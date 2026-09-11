@@ -4253,6 +4253,135 @@ def worker_process_activity_advanced(previous: dict[str, Any] | None, current: d
     )
 
 
+_PYTHON_EXE_RE = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|pypy(?:\d+(?:\.\d+)?)?)$")
+_PYTHON_NO_ARG_SHORT_FLAGS = frozenset("bBdEhiIOPqsuvVx?")
+
+
+def _is_worker_runner_script_token(token: str) -> bool:
+    """Return True if token is an exact path to worker_runner.py under .orchestrator."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    path = Path(token)
+    return path.name == "worker_runner.py" and ".orchestrator" in path.parts
+
+
+def _is_python_executable_token(token: str) -> bool:
+    """Return True if token is a python/pypy interpreter executable name or path."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    name = Path(token).name
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return bool(_PYTHON_EXE_RE.match(name))
+
+
+def cmdline_is_worker_runner(parts: list[str]) -> bool:
+    """Match only the real one-per-worker wrapper, never CLI children or prompts.
+
+    Binds the shared predicate to the actual interpreter/script invocation:
+    - Direct script execution: argv[0] is worker_runner.py under .orchestrator
+    - Python interpreter execution: argv[0] is Python, followed by optional
+      Python options (excluding stdin mode `-` and inline code/module `-c`/`-m`),
+      and the first positional script argument is worker_runner.py under .orchestrator.
+
+    Rejects:
+    - Provider CLI descendants whose arguments contain worker_runner.py (e.g.
+      ['claude', '--prompt', '/repo/.orchestrator/worker_runner.py', 'wake'])
+    - Sandbox shims whose bind operands contain worker_runner.py (e.g.
+      ['/usr/bin/bwrap', '--ro-bind', '/repo/.orchestrator/worker_runner.py', '/tmp/ref.py', 'wake'])
+    - Non-script python modes:
+      - stdin mode (`-`)
+      - inline code execution (`-c`, `-c<code>`, `-uc<code>`, etc.)
+      - module execution (`-m`, `-m<mod>`, `-um<mod>`, etc.)
+    - Unrelated scripts executed by python where worker_runner.py is a downstream option
+    """
+    if not parts:
+        return False
+
+    # 1. Direct script execution: argv[0] is the worker_runner script itself
+    if _is_worker_runner_script_token(parts[0]):
+        return True
+
+    # 2. Python interpreter execution: argv[0] is python, first positional arg is worker_runner
+    if not _is_python_executable_token(parts[0]):
+        return False
+
+    idx = 1
+    while idx < len(parts):
+        arg = parts[idx]
+
+        # Plain script path (does not begin with dash)
+        if not arg.startswith("-"):
+            return _is_worker_runner_script_token(arg)
+
+        # Stdin script execution: `python - [arg ...]` executes stdin, never worker_runner
+        if arg == "-":
+            return False
+
+        # End of options delimiter: `--` terminates option parsing
+        if arg == "--":
+            if idx + 1 < len(parts):
+                return _is_worker_runner_script_token(parts[idx + 1])
+            return False
+
+        # Long options starting with `--`
+        if arg.startswith("--"):
+            if arg == "--check-hash-based-pycs":
+                if idx + 1 >= len(parts):
+                    return False
+                idx += 2
+                continue
+            if arg.startswith("--check-hash-based-pycs="):
+                idx += 1
+                continue
+            if arg in ("--help", "--help-env", "--help-xoptions", "--help-all", "--version"):
+                idx += 1
+                continue
+            # Unknown long option
+            return False
+
+        # Short options cluster starting with single dash: e.g. -u, -Bu, -Wignore, -uc<code>
+        chars = arg[1:]
+        char_idx = 0
+        while char_idx < len(chars):
+            ch = chars[char_idx]
+
+            # -c and -m execute inline code or module, not a script file.
+            # Reject whether separate (-c "code"), attached (-cimport), or clustered (-ucimport).
+            if ch in ("c", "m"):
+                return False
+
+            # -W and -X take an option-argument (either attached or next token)
+            if ch in ("W", "X"):
+                rest = chars[char_idx + 1:]
+                if rest:
+                    # Attached argument (e.g. -Wignore, -uWignore, -Xdev)
+                    idx += 1
+                    break
+                else:
+                    # Separate argument token (e.g. -W ignore, -X dev)
+                    if idx + 1 >= len(parts):
+                        return False
+                    idx += 2
+                    break
+
+            if ch in _PYTHON_NO_ARG_SHORT_FLAGS:
+                char_idx += 1
+                continue
+
+            # Unrecognized short flag character
+            return False
+        else:
+            # All flags in this token were valid no-arg flags
+            idx += 1
+            continue
+
+        # W or X broke out after consuming their attached or separate argument
+        continue
+
+    return False
+
+
 # Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
 # scan /proc to recover the truth when state["workers"] bookkeeping drifts.
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
@@ -4301,7 +4430,15 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
         # otherwise the live worker count is ~3x inflated and max_concurrent_workers
         # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
-        if "worker_runner.py" not in cmdline:
+        # A raw substring search over the whole cmdline blob is not an identity
+        # boundary: provider descendants inherit the wake prompt as an argv
+        # value and can carry the same "worker_runner.py" text, so the scan
+        # must instead require an exact argv path token whose basename is
+        # worker_runner.py under an .orchestrator directory, bound to the actual
+        # interpreter or script invocation (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        raw_cmd = raw[:-1] if raw.endswith(b"\x00") else raw
+        argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
+        if not cmdline_is_worker_runner(argv_parts):
             continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
@@ -6994,7 +7131,11 @@ def _proc_worker_runner_launch_marker(
     """
 
     raw_cmdline = (entry / "cmdline").read_bytes()
-    if not raw_cmdline or b"worker_runner.py" not in raw_cmdline:
+    if not raw_cmdline:
+        return None
+    raw_cmd = raw_cmdline[:-1] if raw_cmdline.endswith(b"\x00") else raw_cmdline
+    argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
+    if not cmdline_is_worker_runner(argv_parts):
         return None
     raw_environ = (entry / "environ").read_bytes()
     env: dict[str, str] = {}
@@ -7058,11 +7199,7 @@ def _proc_worker_runner_launch_marker(
     # process generations that are definitively earlier than the intent.
     if process_started_epoch + 1.0 < prepared_epoch:
         return None
-    argv = [
-        value.decode("utf-8", errors="ignore")
-        for value in raw_cmdline.split(b"\0")
-        if value
-    ]
+    argv = argv_parts
     run_id = str(env.get("ORCH_RUN_ID") or "")
     if not run_id and "--run-id" in argv:
         index = argv.index("--run-id") + 1
