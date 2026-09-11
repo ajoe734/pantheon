@@ -9,7 +9,6 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +32,7 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     TASK_STATE_STORE_MODE_ENV,
     canonical_task_state_identity_from_environment,
     canonical_task_state_lock_file,
+    durable_write_bytes,
     read_regular_file_bytes,
     worker_process_generation_id,
     first_symlink_component as _first_symlink_component,
@@ -49,14 +49,8 @@ def utc_now() -> str:
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        handle.write(serialized)
-        handle.flush()
-        os.fsync(handle.fileno())
-        temp_path = Path(handle.name)
-    os.replace(temp_path, path)
+    durable_write_bytes(path, serialized.encode("utf-8"))
 
 
 def normalize_command(raw: list[str]) -> list[str]:
@@ -432,12 +426,6 @@ def _append_task_store_mounts(
             f"unqualified task-state layout: event log must reside in a dedicated 'task-state' directory: {parent}"
         )
 
-    allowed_names = {
-        event_path.name,
-        f"{event_path.name}.head.json",
-        f"{event_path.name}.lock",
-        f"{event_path.name}.legacy-anchor.json",
-    }
     for required in (
         event_path,
         parent / f"{event_path.name}.head.json",
@@ -446,38 +434,10 @@ def _append_task_store_mounts(
         if required.is_symlink() or not required.is_file():
             raise RuntimeError(f"task-state governed file is unavailable: {required}")
 
-    # Enforce that the dedicated task-state directory contains ONLY allowed task-state files
-    # and atomic publication temporary files. Any unrelated sibling file (e.g. live-supervisor.json)
-    # renders the layout unqualified and must be rejected.
-    import stat
-    for child in parent.iterdir():
-        if child.name in allowed_names:
-            if child.is_symlink():
-                raise RuntimeError(f"task-state governed file cannot be a symlink: {child}")
-            continue
-        if (
-            child.name.startswith(f"{event_path.name}.")
-            and (".tmp" in child.name or child.name.endswith(".tmp"))
-        ):
-            try:
-                st = child.lstat()
-            except FileNotFoundError:
-                # Disappeared during scan (e.g. published atomically via os.replace)
-                continue
-            if stat.S_ISREG(st.st_mode) and not stat.S_ISLNK(st.st_mode):
-                continue
-            raise RuntimeError(
-                f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
-            )
-        raise RuntimeError(
-            f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
-        )
-
-    # The dedicated task-state directory houses only task-state store files and
-    # their atomic replacement temporary files. Keep the outer runtime (config,
-    # keys, interpreter and unrelated entries) read-only at directory level,
-    # and bind only the dedicated data directory writable without enumerating
-    # transient publication temporary files.
+    # The dedicated task-state directory is the writable data boundary. New
+    # TaskStore sidecars and atomic publication files need no filename policy.
+    # Runtime configuration, keys and interpreters belong outside this data
+    # directory and remain protected by the read-only outer-runtime mount.
     outer_runtime = parent.parent
     outer_symlink = _first_symlink_component(outer_runtime)
     if outer_symlink is not None or outer_runtime.is_symlink():
@@ -1069,25 +1029,6 @@ def main(argv: list[str] | None = None) -> int:
     task_id = binding["task_id"]
     active_role = binding["role"]
     task_roles = {"owner": binding["owner"], "reviewer": binding["reviewer"]}
-    command = bind_relative_command_to_runtime(
-        command,
-        command_root,
-    )
-    sandboxed_command = bind_worker_sandbox(
-        command,
-        command_root=command_root,
-        workspace_path=workspace_path if isinstance(workspace_path, Path) else None,
-        coordination_root=coordination_root,
-        read_only_worktree=binding["read_only_worktree"],
-        extra_readonly_roots=binding["source_readonly_roots"],
-    )
-    if workspace_path:
-        try:
-            os.chdir(workspace_path)
-            print(f"worker_runner: isolated working directory to {workspace_path}", file=sys.stderr)
-        except OSError as exc:
-            print(f"worker_runner: failed to isolate working directory to {workspace_path}: {exc}", file=sys.stderr)
-
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
     binding_interval = min(interval, 15.0)
     started_at = utc_now()
@@ -1167,6 +1108,22 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, forward_signal)
 
     try:
+        # Only a canonically bound wrapper may publish this receipt. Once
+        # bound, startup failures use the same terminal path as child failures.
+        publish("starting")
+        command = bind_relative_command_to_runtime(command, command_root)
+        status["command"] = command
+        sandboxed_command = bind_worker_sandbox(
+            command,
+            command_root=command_root,
+            workspace_path=workspace_path if isinstance(workspace_path, Path) else None,
+            coordination_root=coordination_root,
+            read_only_worktree=binding["read_only_worktree"],
+            extra_readonly_roots=binding["source_readonly_roots"],
+        )
+        if workspace_path:
+            os.chdir(workspace_path)
+            print(f"worker_runner: isolated working directory to {workspace_path}", file=sys.stderr)
         assert coordination_root is not None
         validate_worker_entry_binding(coordination_root, **entry_arguments)
         publish("admission_wait")
@@ -1287,6 +1244,7 @@ def main(argv: list[str] | None = None) -> int:
             publish("failed")
             return int(status["exit_code"])
         status["status"] = "failed"
+        status["exit_code"] = 1
         status["finished_at"] = utc_now()
         status["error"] = f"{type(exc).__name__}: {exc}"
         if terminating_signal is not None:
@@ -1325,7 +1283,7 @@ def main(argv: list[str] | None = None) -> int:
                     except OSError:
                         pass
         try:
-            write_json(status_path, status)
+            publish("failed")
         except OSError:
             pass
         raise
