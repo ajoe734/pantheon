@@ -120,6 +120,12 @@ components:
     paths:
       - .github/workflows/
       - scripts/deploy_nonprod_vm.sh
+      - scripts/capture_dev_artifact_baseline.py
+      - scripts/dev_release_artifact_driver.py
+      - scripts/dev_release_artifacts.py
+      - scripts/test_capture_dev_artifact_baseline.py
+      - scripts/test_dev_release_artifact_driver.py
+      - scripts/test_dev_release_artifacts.py
       - scripts/wait_for_bff_lifecycle_readiness.py
       - scripts/verify_hosted_scenarios.py
       - scripts/verify_e2e_fe_serving.py

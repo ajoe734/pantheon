@@ -72,6 +72,23 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertTrue(result["development_tooling_touched"])
         self.assertTrue(result["tooling_only"])
 
+    def test_dev_release_artifact_scripts_are_delivery_only(self) -> None:
+        result = component_boundary.classify_paths(
+            self.manifest,
+            [
+                "scripts/capture_dev_artifact_baseline.py",
+                "scripts/dev_release_artifact_driver.py",
+                "scripts/dev_release_artifacts.py",
+                "scripts/test_capture_dev_artifact_baseline.py",
+                "scripts/test_dev_release_artifact_driver.py",
+                "scripts/test_dev_release_artifacts.py",
+            ],
+        )
+        self.assertEqual(result["unknown_paths"], [])
+        self.assertTrue(result["delivery_touched"])
+        self.assertFalse(result["product_touched"])
+        self.assertTrue(result["tooling_only"])
+
 
 TOOLING_PATH = ".orchestrator/supervisor.py"
 PRODUCT_PATH = "services/trade_journey/lifecycle_projector.py"
