@@ -1,0 +1,234 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "status": "blocked_contract_discrepancy",
+  "implementation_complete": false,
+  "source_base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "source_head_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "source_head_note": "Source audited before the evidence-only anchor commit; all seven source files are unchanged. The containing git commit identifies this manifest delivery.",
+  "branch": "task/BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001/evidence.json"
+  ],
+  "partition": {
+    "path": "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json",
+    "sha256": "16e4a9347ee6f78d0fd71d17d3fa998037a20ddfc26d687a9fc1ee1ee00f24bd",
+    "batch": "B05_governance_approvals"
+  },
+  "blocker": {
+    "kind": "external",
+    "waiting_for": "Human/Ops",
+    "declared_dependency_satisfied": true,
+    "reason": "Reviewed partition lists shared fixture files that are absent from current origin/dev. Task acceptance explicitly requires stopping and recording shared-file discrepancies for governed contract revision.",
+    "missing_shared_fixtures": [
+      "services/control-plane/bff/tests/fixtures/__init__.py",
+      "services/control-plane/bff/tests/fixtures/governance_fixture.py",
+      "services/control-plane/bff/tests/fixtures/research_fixture.py",
+      "services/control-plane/bff/tests/fixtures/training_fixture.py"
+    ],
+    "required_correction": "Governed revision of the reviewed shared-foundation contract, or separately authorized delivery of the missing foundation. Confirm the retained seam for B05 before redispatch; do not reopen or block the already completed PLAN-001 dependency.",
+    "acceptance_instruction": "If a shared file or dependency differs from the reviewed partition, stop and record the discrepancy for governed contract revision instead of silently widening scope."
+  },
+  "additional_seam_observation": {
+    "test": "services/control-plane/bff/governance/test_decision_journal_write_owner.py:1650",
+    "implementation": "services/control-plane/bff/main.py:22289",
+    "finding": "Journal context-ref parity directly exercises _resolve_agora_interaction_context_ref in main and patches its identity/read_store globals. The interaction router accepts a canonical_context_ref_resolver callback; replacing this callback with a test imitation would not preserve the existing production-resolver assertion. Resolve the intended retained seam in the contract revision."
+  },
+  "source_inventory": [
+    {
+      "file": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 1653,
+          "module": "services.control_plane.bff.main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [
+        {
+          "line": 549,
+          "call": "subprocess.run"
+        },
+        {
+          "line": 569,
+          "call": "subprocess.run"
+        },
+        {
+          "line": 584,
+          "call": "subprocess.run"
+        },
+        {
+          "line": 706,
+          "call": "subprocess.run"
+        },
+        {
+          "line": 1036,
+          "call": "subprocess.run"
+        },
+        {
+          "line": 1112,
+          "call": "subprocess.run"
+        },
+        {
+          "line": 1181,
+          "call": "subprocess.run"
+        }
+      ],
+      "test_count": 38,
+      "sha256": "e93dacef9e73b5b87e14d14bc5fa1119c416b2c4efb9a3a367564e438c1d9a8b",
+      "subprocess_main_references": [
+        {
+          "line": 1679,
+          "value": "services.control_plane.bff.main.read_store"
+        },
+        {
+          "line": 1680,
+          "value": "services.control_plane.bff.main._extract_identity"
+        }
+      ]
+    },
+    {
+      "file": "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 20,
+          "module": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "test_count": 21,
+      "sha256": "3fb89a877a04fe91fd759076a5613ad57432494d03df698eb402056fa26f0c2f",
+      "subprocess_main_references": []
+    },
+    {
+      "file": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 18,
+          "module": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "test_count": 25,
+      "sha256": "ed17e06fde5c60efa03fc7d2d46bb62d4c4474490004eeb35fe91e87275b95bc",
+      "subprocess_main_references": []
+    },
+    {
+      "file": "services/control-plane/bff/test_governance_command_submission.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 16,
+          "module": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "test_count": 23,
+      "sha256": "5b4853238e2a683c38427a1baed5e1d2c97fbdec2bd06ba472cf7f49a8db89d5",
+      "subprocess_main_references": []
+    },
+    {
+      "file": "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 11,
+          "module": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "test_count": 1,
+      "sha256": "44856aaf977ef42fc5e0739c9a8ab543dc098a990e796e2fb22057848198b4dd",
+      "subprocess_main_references": []
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 22,
+          "module": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "test_count": 7,
+      "sha256": "5f09e193250581ee1ad92183c7c91c146244d6696ce22083f36411d3c41fcd99",
+      "subprocess_main_references": []
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
+      "disposition": "PLANNED",
+      "main_imports": [
+        {
+          "line": 25,
+          "module": "main"
+        }
+      ],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "test_count": 14,
+      "sha256": "96ea973421f293d83c6c5a3a757eebceb24bb8a357ba39931f39ef0487f6c3e1",
+      "subprocess_main_references": []
+    }
+  ],
+  "inventory_summary": {
+    "files": 7,
+    "main_importers": 7,
+    "migrated": 0,
+    "test_functions": 129,
+    "dynamic_import_calls": 0,
+    "subprocess_calls": 7,
+    "subprocess_main_references": 2
+  },
+  "validation": [
+    {
+      "command": "git fetch origin dev && git rebase origin/dev",
+      "exit_code": 0,
+      "result": "Clean task branch already at current origin/dev e093ac6ccdd3b4c785da8d17154a34449b676a10"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable installation verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
+      "exit_code": 2,
+      "result": "3 collection errors in 28.70s; approvals_decide, promotion_review_governance and governance_command_submission import CommandStore via bare command_queue; relative .models import raises ImportError: attempted relative import with no known parent package. No focused tests passed; source unmodified.",
+      "log_sha256": "5b121224fecbbd850e3ba37fda859ca9018df25a72a38a9b37572198feeb3e2c"
+    },
+    {
+      "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed in 3.19s; existing parent gate unchanged; this does not establish migration completion."
+    },
+    {
+      "command": "git ls-tree -r --name-only HEAD services/control-plane/bff/tests/fixtures",
+      "exit_code": 0,
+      "result": "No tracked fixture files in this directory."
+    },
+    {
+      "method": "Python ast.parse/ast.walk on the seven exact partition source paths; inspect imports, importlib.import_module/__import__ calls, subprocess calls and literal main references. Compare declared shared paths with Path.is_file().",
+      "exit_code": 0,
+      "result": "7/7 direct main importers retained; zero dynamic import calls or embedded main references; 7 subprocess calls use sys.executable and domain-only snippets; 4/8 declared shared fixtures absent."
+    }
+  ],
+  "review": {
+    "decision": "not_requested_incomplete_scope",
+    "manifest_role": "Diagnostic evidence only; not a completed migration or approval."
+  },
+  "delivery": {
+    "merge_commit": null,
+    "note": "Evidence-only branch publication; task remains blocked pending governed contract correction."
+  }
+}
