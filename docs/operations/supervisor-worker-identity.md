@@ -153,20 +153,20 @@ print(json.dumps(observation, indent=2))
 ```
 
 Observation result:
-- `observed_at`: `2026-09-11T00:56:42.587896+00:00`
+- `observed_at`: `2026-09-11T01:20:38.054190+00:00`
 - `read_only_health`:
   - `supervisor_pid`: 3325540
   - `lifecycle`: `"running"`
-  - `last_heartbeat_at`: `"2026-09-11T00:56:37Z"`
-  - `last_successful_loop_at`: `"2026-09-11T00:56:37Z"`
+  - `last_heartbeat_at`: `"2026-09-11T01:20:14Z"`
+  - `last_successful_loop_at`: `"2026-09-11T01:20:09Z"`
   - `command_runtime_healthy`: `true`
   - `command_runtime_reason`: `"healthy"`
 - `counts`:
-  - `watchdog_active_worker_count`: 2
-  - `watchdog_active_worker_live_count`: 2
-  - `watchdog_active_worker_runtime_state_count`: 2
+  - `watchdog_active_worker_count`: 1
+  - `watchdog_active_worker_live_count`: 1
+  - `watchdog_active_worker_runtime_state_count`: 1
   - `watchdog_active_worker_count_source`: `"live_worker_runner_pid_identity"`
-  - `scheduler_state_workers_count`: 2
+  - `scheduler_state_workers_count`: 1
 - `identities`:
   - `supervisor_pid`: 3325540
   - `command_root`: `"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"`
@@ -175,8 +175,7 @@ Observation result:
   - `base_ref`: `"origin/dev"`
   - `coordination_status_root`: `"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root"`
 - `scheduler_workers`:
-  - `antigravity-20260911T004920Z-f8f9797d` (task: `OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001`, status: `running`)
-  - `codex-20260911T005555Z-14bce7df` (task: `OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001`, status: `running`)
+  - `antigravity-20260911T010623Z-ed546b0e` (task: `OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001`, status: `running`)
 
 The running supervisor's source SHA predates this fix, so its live process
 image still runs the prior scan until an operator promotes the merged commit.
