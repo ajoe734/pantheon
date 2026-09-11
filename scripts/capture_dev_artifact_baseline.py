@@ -244,12 +244,10 @@ def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None)
         raise CaptureError("capture timestamp is invalid") from exc
     for name in ("compose_sha256", "image_bundle_sha256"):
         matches(manifest[name], r"[0-9a-f]{64}")
-    config = manifest["baseline_nonsecret_config"]
-    expected_config = {"PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
-                       "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner"}
-    exact_keys(config, expected_config)
-    if any(config[key] not in (None, "", value) for key, value in expected_config.items()):
-        raise CaptureError("capture includes unsupported configuration")
+    try:
+        artifacts.validate_baseline_config(manifest["baseline_nonsecret_config"])
+    except artifacts.ArtifactError as exc:
+        raise CaptureError(str(exc)) from exc
     frontend = manifest["frontend"]
     exact_keys(frontend, ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"))
     for name in ("dist_sha256", "manifest_sha256"):

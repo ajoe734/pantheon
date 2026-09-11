@@ -3383,7 +3383,8 @@ ARTIFACT_PY
 
   # The trusted driver checks the external manifest seal, all exact identities,
   # immutable prior Compose bytes, guard pulses, image readbacks and owner
-  # preservation. It restores only its allowlisted baseline token-file paths;
+  # preservation. It restores allowlisted baseline paths and historical auth
+  # booleans from the sealed manifest, never from candidate defaults;
   # no issuer, source checkout, FE switch or Caddy write belongs in this lane.
   with_dev_bff_runtime_env "${runtime_sha}" false \
     python3 "${PANTHEON_DEV_ARTIFACT_DRIVER_PATH}" "${operation}" \

@@ -174,6 +174,18 @@ be used as evidence that an MFA-gated action passed. Explicitly enabling
 `PANTHEON_BFF_MFA_REQUIRED=true` still rejects a token without verified MFA;
 the deploy process does not manufacture that claim to make the gate green.
 
+Exact-artifact rollback is a historical compatibility exception, not new login
+configuration: the existing sealed baseline manifest captures the running BFF's
+MFA-required flag and six legacy dev-login MFA flags as nonsecret values. Only
+restore reapplies those captured values to the exact prior Compose/image pair,
+then verifies configuration and authenticated viewer readback. A read-only
+Compose preflight rejects values that the prior file cannot reproduce (including
+empty/absent values replaced by Compose defaults) before sealing/admitting a
+candidate or restoring images. This preserves
+old behavior without treating its static claim as genuine MFA evidence. Older
+manifests missing the auth fields cannot admit a candidate or restore with the
+updated controller; capture a new baseline while the prior pair is still running.
+
 The product login uses GCP Identity Platform. After Identity Platform
 authenticates the human, `execute-plans` registers the current short-lived ID
 token with the BFF request header provider and sends it as
