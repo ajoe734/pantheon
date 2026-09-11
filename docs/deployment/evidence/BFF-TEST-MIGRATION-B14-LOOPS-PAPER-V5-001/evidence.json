@@ -1,0 +1,456 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "delivery_state": "blocked_contract_discrepancy",
+  "implementation_complete": false,
+  "base_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "audited_source_head_sha": "e093ac6ccdd3b4c785da8d17154a34449b676a10",
+  "head_binding_note": "This artifact audits the unchanged source at audited_source_head_sha. Its publication commit is supplied by git/PR metadata; no self-referential commit hash is claimed.",
+  "changed_files": [
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json"
+  ],
+  "source_artifacts": [
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+    "services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+    "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+    "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py",
+    "services/control-plane/bff/test_loop_health_read_model_contract.py",
+    "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+    "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+    "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+    "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+    "services/control-plane/bff/test_v5_interventions.py",
+    "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py"
+  ],
+  "source_files_changed": [],
+  "blocker": {
+    "kind": "external",
+    "waiting_for": "Human/Ops",
+    "declared_dependency_satisfied": {
+      "BFF-TEST-MIGRATION-REPARTITION-PLAN-001": true
+    },
+    "summary": "Reviewed test-only partition does not provide the production projection seam needed to retain B14 paper honesty and source-health overlay assertions without importing main.",
+    "proof": [
+      "test_p0_tw_paper_activate_honesty.py imports and directly asserts _build_persona_health_items and _trading_performance_delta. Both are implemented in main.py.",
+      "test_loop_auto_bff004_cross_loop_drill.py directly calls _overlay_source_health_truth and patches its main-owned source provider.",
+      "runtime/router.py resolves _build_persona_health_items from an injected dependency mapping; runtime/service.py only supplies a fail-closed placeholder when absent. main.py supplies the real projection function at line 22069.",
+      "ControlLoopsService exposes read ports and provider injection, but these do not supply the main-owned persona-health projection under test."
+    ],
+    "required_correction": "Governed contract revision must assign extraction of the main-owned persona health and source-health projection implementations into an injectable production module, update main composition, and serialize B14 after that prerequisite; alternatively revise B14 acceptance explicitly. Do not silently expand the child grant or replace production assertions with fake provider output.",
+    "scope_rule": "Acceptance item 4 requires stopping and recording shared dependency discrepancies for governed contract revision."
+  },
+  "audit": {
+    "partition": {
+      "b14_files": 11,
+      "total_files": 184,
+      "pairwise_disjoint": true
+    },
+    "importer_count": 11,
+    "importers": [
+      {
+        "path": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 23,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          21
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 14,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          12
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 43,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          59,
+          41
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 15,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          13
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 22,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          20
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 17,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          15
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 17,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          15
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 28,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          24
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 3,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": []
+      },
+      {
+        "path": "services/control-plane/bff/test_v5_interventions.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 21,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          19
+        ]
+      },
+      {
+        "path": "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py",
+        "disposition": "blocked_unmigrated",
+        "ast_imports": [
+          {
+            "line": 23,
+            "module": "main"
+          }
+        ],
+        "dynamic_imports": [],
+        "subprocess_main_references": [],
+        "sys_path_mutations": [
+          21
+        ]
+      }
+    ],
+    "main_owned_definitions": {
+      "_trading_performance_delta": {
+        "path": "services/control-plane/bff/main.py",
+        "line": 19957
+      },
+      "_overlay_source_health_truth": {
+        "path": "services/control-plane/bff/main.py",
+        "line": 20186
+      },
+      "_build_persona_health_items": {
+        "path": "services/control-plane/bff/main.py",
+        "line": 20468
+      }
+    },
+    "runtime_seam_probe": {
+      "expected_missing_dependency_confirmed": true,
+      "message": "Runtime router dependency '_build_persona_health_items' was not supplied by the BFF composition root."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 /tmp/b14-audit.py",
+      "reproduction": "Write audit_script below to /tmp/b14-audit.py and run from repository root.",
+      "exit_code": 0,
+      "result": "passed discrepancy confirmation and exact-scope inventory; migration remains blocked",
+      "terminal_output": {
+        "partition": {
+          "b14_files": 11,
+          "total_files": 184,
+          "pairwise_disjoint": true
+        },
+        "importer_count": 11,
+        "importers": [
+          {
+            "path": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 23,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              21
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 14,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              12
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 43,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              59,
+              41
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 15,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              13
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_loop_health_read_model_contract.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 22,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              20
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 17,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              15
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 17,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              15
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 28,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              24
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 3,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": []
+          },
+          {
+            "path": "services/control-plane/bff/test_v5_interventions.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 21,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              19
+            ]
+          },
+          {
+            "path": "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py",
+            "disposition": "blocked_unmigrated",
+            "ast_imports": [
+              {
+                "line": 23,
+                "module": "main"
+              }
+            ],
+            "dynamic_imports": [],
+            "subprocess_main_references": [],
+            "sys_path_mutations": [
+              21
+            ]
+          }
+        ],
+        "main_owned_definitions": {
+          "_trading_performance_delta": {
+            "path": "services/control-plane/bff/main.py",
+            "line": 19957
+          },
+          "_overlay_source_health_truth": {
+            "path": "services/control-plane/bff/main.py",
+            "line": 20186
+          },
+          "_build_persona_health_items": {
+            "path": "services/control-plane/bff/main.py",
+            "line": 20468
+          }
+        },
+        "runtime_seam_probe": {
+          "expected_missing_dependency_confirmed": true,
+          "message": "Runtime router dependency '_build_persona_health_items' was not supplied by the BFF composition root."
+        }
+      }
+    },
+    {
+      "command": "python3 -m pytest --version",
+      "exit_code": 1,
+      "result": "runner unavailable in system Python; not a test pass",
+      "terminal_output": "/usr/bin/python3: No module named pytest"
+    }
+  ],
+  "audit_script": "import ast\nimport importlib.util\nimport json\nfrom pathlib import Path\n\npartition = json.loads(Path('docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json').read_text())\nchild = next(c for c in partition['candidate_children'] if c['task_id'] == 'BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001')\nfiles = child['source_artifacts']\nall_files = [f for c in partition['candidate_children'] for f in c['source_artifacts']]\nassert len(files) == 11 and len(all_files) == len(set(all_files)) == 184\nresults = []\nfor path in files:\n    tree = ast.parse(Path(path).read_text(), filename=path)\n    hits = {'ast_imports': [], 'dynamic_imports': [], 'subprocess_main_references': [], 'sys_path_mutations': []}\n    for node in ast.walk(tree):\n        if isinstance(node, ast.Import):\n            for alias in node.names:\n                if alias.name in ('main', 'services.control_plane.bff.main'):\n                    hits['ast_imports'].append({'line': node.lineno, 'module': alias.name})\n        elif isinstance(node, ast.ImportFrom):\n            if node.module in ('main', 'services.control_plane.bff.main') or (node.module == 'services.control_plane.bff' and any(a.name == 'main' for a in node.names)):\n                hits['ast_imports'].append({'line': node.lineno, 'module': node.module})\n        elif isinstance(node, ast.Call):\n            name = ast.unparse(node.func)\n            literals = [n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)]\n            if name.endswith('import_module') or name == '__import__':\n                if any(s in ('main', 'services.control_plane.bff.main') for s in literals):\n                    hits['dynamic_imports'].append(node.lineno)\n            if name.startswith('subprocess.') and any('main.py' in s or 'import main' in s for s in literals):\n                hits['subprocess_main_references'].append(node.lineno)\n            if name in ('sys.path.insert', 'sys.path.append', 'sys.path.remove'):\n                hits['sys_path_mutations'].append(node.lineno)\n    assert hits['ast_imports'], path\n    results.append({'path': path, 'disposition': 'blocked_unmigrated', **hits})\nmain_tree = ast.parse(Path('services/control-plane/bff/main.py').read_text())\nnames = {'_build_persona_health_items', '_trading_performance_delta', '_overlay_source_health_truth'}\ndefinitions = {n.name: {'path': 'services/control-plane/bff/main.py', 'line': n.lineno} for n in main_tree.body if isinstance(n, ast.FunctionDef) and n.name in names}\nassert set(definitions) == names\nspec = importlib.util.spec_from_file_location('b14_runtime_service_probe', 'services/control-plane/bff/runtime/service.py')\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\ntry:\n    module.RuntimeRouterService().dependency('_build_persona_health_items')('2026-07-26T00:00:00Z', include_market_persona_defaults=True)\nexcept RuntimeError as exc:\n    missing_dependency = str(exc)\n    assert 'was not supplied' in missing_dependency\nelse:\n    raise AssertionError('Expected the missing runtime projection dependency to fail closed')\nprint(json.dumps({'partition': {'b14_files': 11, 'total_files': 184, 'pairwise_disjoint': True}, 'importer_count': len(results), 'importers': results, 'main_owned_definitions': definitions, 'runtime_seam_probe': {'expected_missing_dependency_confirmed': True, 'message': missing_dependency}}, indent=2))\n",
+  "focused_tests": {
+    "status": "not_run",
+    "reason": "Stopped on explicit contract discrepancy before source edits; system Python also lacks pytest. No behavior validation or migration pass claimed."
+  },
+  "review_decision": {
+    "status": "not_requested_incomplete_implementation",
+    "reviewer": "Antigravity"
+  },
+  "delivery": {
+    "purpose": "Durable blocker evidence only; source migration, independent review, merge and task done remain incomplete.",
+    "auto_merge": false
+  }
+}
