@@ -1,23 +1,19 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-BFF_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(BFF_ROOT))
-
-from scripts import project_consultation_to_bff_agora_surfaces as projector  # noqa: E402
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from scripts import project_consultation_to_bff_agora_surfaces as projector
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.auth.policy import bff_error
+from services.control_plane.bff.models import OperatorIdentity, utc_now
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -150,7 +146,6 @@ def _projected_agora_bff(monkeypatch) -> Iterator[TestClient]:
         for key, value in store_env.items():
             monkeypatch.setenv(key, str(value))
 
-        original_store = bff_main.read_store
         ports = create_in_memory_read_surface_ports(
             research_knowledge_source_kwargs={
                 "research_tickets_store": stores["research_tickets"],
@@ -161,24 +156,33 @@ def _projected_agora_bff(monkeypatch) -> Iterator[TestClient]:
                 "postmortems": stores["postmortems"],
             },
         )
-        # Agora's projected records have their own typed contracts which are
-        # intentionally narrower than the generic consultation/read models.
-        # Bind only those test-owned read projections to the actual ports
-        # container; no product store compatibility layer is involved.
         ports.list_agora_signals = lambda **_kwargs: list(stores["agora_signals"].values())
         ports.list_agora_sessions = lambda **_kwargs: list(stores["agora_sessions"].values())
         ports.list_agora_insights = lambda **_kwargs: list(stores["insight_cards"].values())
         ports.list_agora_notes = lambda **_kwargs: list(stores["research_notes"].values())
         ports.list_agora_handoffs = lambda **_kwargs: list(stores["agora_handoffs"].values())
         ports.list_agora_training_examples = lambda **_kwargs: list(stores["agora_training_examples"].values())
-        ports.list_decision_journal_entries = lambda **_kwargs: list(stores["decision_journal_entries"].values())
+        ports.list_decision_journal_entries = lambda **_kwargs: [
+            {**v, "tenant_id": "pantheon-dev", "visibility": "public"}
+            for v in stores["decision_journal_entries"].values()
+        ]
         ports._read_dataset_records = lambda dataset: list(stores.get(dataset, {}).values())
         ports.dataset_source = lambda _dataset: "test_projection"
-        bff_main.read_store = ports
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
+        ports.dataset_surface_status = lambda dataset, **kwargs: {"status": "ok", "source": "test_projection"}
+
+        app = FastAPI()
+        router = create_agora_router(
+            extract_identity=lambda auth=None: OperatorIdentity(operator_id="op-dev", roles=["admin", "operator"]),
+            require_read_role=lambda id: None,
+            require_write_role=lambda id: None,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            read_surface=ports,
+            get_read_store=lambda: ports,
+            sync_servant_agent=lambda payload: payload,
+        )
+        app.include_router(router)
+        yield TestClient(app)
 
 
 def _assert_ok_list(client: TestClient, path: str, surface_key: str) -> dict:
