@@ -27,6 +27,7 @@ from agora.governance.store import (  # noqa: E402
 )
 from agora.strategy_workshop.store import (  # noqa: E402
     BACKEND_ENV as WORKSHOP_BACKEND_ENV,
+    PostgresWorkshopStore,
     make_workshop_store,
 )
 from agora.dataset_extraction.extractor import (  # noqa: E402
@@ -45,6 +46,34 @@ def require_postgres_backends() -> None:
                 f"restart-persistence smoke requires {env_name}=postgres; "
                 f"got {backend or '<unset>'}"
             )
+
+
+def resolved_store_backends(
+    workshop_store: Any,
+    proposal_store: ProposalStore,
+    dataset_store: AgoraDatasetStore,
+) -> dict[str, str]:
+    """Report the backend each constructed store actually resolved to.
+
+    ``require_postgres_backends`` only proves the environment asked for
+    postgres.  These values come from the store objects the service itself
+    builds, so a store that resolved to memory is caught directly instead of
+    being inferred from container log text the runtime may never emit.
+    """
+    return {
+        "workshop": "postgres" if isinstance(workshop_store, PostgresWorkshopStore) else "memory",
+        "governance": proposal_store.backend,
+        "dataset": dataset_store.backend,
+    }
+
+
+def assert_postgres_store_backends(resolved: dict[str, str]) -> None:
+    wrong = sorted((name, value) for name, value in resolved.items() if value != "postgres")
+    if wrong:
+        raise RuntimeError(
+            "restart-persistence smoke requires postgres-backed Agora stores; resolved "
+            + ", ".join(f"{name}={value}" for name, value in wrong)
+        )
 
 
 def proposal_id_for(workshop_id: str) -> str:
@@ -376,11 +405,24 @@ def verify(
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("seed", "verify"))
-    parser.add_argument("--workshop-id", required=True)
-    parser.add_argument("--tenant-id", required=True)
-    parser.add_argument("--user-id", required=True)
-    return parser.parse_args(argv)
+    parser.add_argument("action", choices=("seed", "verify", "assert-backends"))
+    parser.add_argument("--workshop-id")
+    parser.add_argument("--tenant-id")
+    parser.add_argument("--user-id")
+    args = parser.parse_args(argv)
+    if args.action != "assert-backends":
+        missing = [
+            name
+            for name, value in (
+                ("--workshop-id", args.workshop_id),
+                ("--tenant-id", args.tenant_id),
+                ("--user-id", args.user_id),
+            )
+            if not value
+        ]
+        if missing:
+            parser.error(f"{args.action} requires {', '.join(missing)}")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -389,6 +431,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     workshop_store = make_workshop_store()
     proposal_store = ProposalStore()
     dataset_store = AgoraDatasetStore()
+    resolved = resolved_store_backends(workshop_store, proposal_store, dataset_store)
+    assert_postgres_store_backends(resolved)
+
+    if args.action == "assert-backends":
+        report = " ".join(f"{name}={value}" for name, value in sorted(resolved.items()))
+        print(f"assert-backends ok: {report}")
+        return 0
 
     operation = seed if args.action == "seed" else verify
     operation(

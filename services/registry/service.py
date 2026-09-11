@@ -53,6 +53,10 @@ from .strategy_artifact import (
 )
 from .paper_strategy_spec import validate_strategy_spec
 
+# Uvicorn attaches handlers only to its own loggers, so without this the root
+# logger keeps its default WARNING level and no handler at all: every
+# application INFO record is dropped before it reaches the container log.
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
