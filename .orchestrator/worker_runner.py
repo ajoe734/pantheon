@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import shutil
@@ -432,6 +433,53 @@ def _append_task_store_mounts(
         raise RuntimeError(
             f"unqualified task-state layout: event log must reside in a dedicated 'task-state' directory: {parent}"
         )
+
+    # Older runtimes derived the lock name by replacing the journal suffix
+    # (``events.lock``) instead of appending ``.lock`` to the journal name
+    # (``events.jsonl.lock``).  That sidecar is not part of TaskStore V2 and
+    # must not remain in the writable sandbox directory.  Retire only an
+    # empty, regular, currently-unlocked legacy file; any other shape is
+    # rejected below as an unqualified layout.
+    canonical_lock = parent / f"{event_path.name}.lock"
+    legacy_lock = event_path.with_suffix(".lock")
+    if legacy_lock != canonical_lock and legacy_lock.exists():
+        if legacy_lock.is_symlink() or not legacy_lock.is_file():
+            raise RuntimeError(
+                f"unqualified task-state layout: legacy lock is not a regular file: {legacy_lock}"
+            )
+        descriptor = None
+        try:
+            descriptor = os.open(
+                legacy_lock,
+                os.O_RDWR
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError) as exc:
+                raise RuntimeError(
+                    f"unqualified task-state layout: legacy lock is held: {legacy_lock}"
+                ) from exc
+            if os.fstat(descriptor).st_size != 0:
+                raise RuntimeError(
+                    f"unqualified task-state layout: legacy lock is not empty: {legacy_lock}"
+                )
+            os.unlink(legacy_lock)
+            directory_fd = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if descriptor is not None:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
 
     allowed_names = {
         event_path.name,

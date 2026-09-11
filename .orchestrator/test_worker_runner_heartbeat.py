@@ -2221,6 +2221,39 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                         sandbox_binary="/usr/bin/bwrap",
                     )
 
+    def test_bind_worker_sandbox_retires_empty_legacy_task_state_lock(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-legacy-lock-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            task_state_dir = root / "runtime" / "task-state"
+            task_state_dir.mkdir(parents=True)
+            event_log = task_state_dir / "task-state-events-v2.jsonl"
+            event_log.write_text("event\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / f"{event_log.name}.lock").touch()
+            legacy_lock = event_log.with_suffix(".lock")
+            legacy_lock.touch()
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                wr.bind_worker_sandbox(
+                    ["python3", "-c", "pass"],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+
+            self.assertFalse(legacy_lock.exists())
+
     @unittest.skipUnless(
         _FUNCTIONAL_BWRAP,
         "Functional bubblewrap with user namespace support is required for sandbox execution tests",
