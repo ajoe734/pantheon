@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import stat
+import uuid
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -54,6 +56,7 @@ def default_state() -> dict[str, Any]:
             "events": {},
         },
         "workers": {},
+        "promotion": {},
         # Canonical receipt authority lives in TaskStore.  This bounded cache
         # binds its current rows to queue/worker runtime ids for restart
         # adoption without inventing a second recovery authority.
@@ -143,6 +146,8 @@ def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
         raise RuntimeStateSchemaError("runtime cache is not a V2 object")
     if not isinstance(raw.get("workers"), dict):
         raise RuntimeStateSchemaError("runtime cache workers must be an object")
+    if "promotion" in raw and not isinstance(raw["promotion"], dict):
+        raise RuntimeStateSchemaError("runtime promotion fence must be an object")
     queue = raw.get("queue")
     if not isinstance(queue, dict) or not isinstance(queue.get("events"), dict):
         raise RuntimeStateSchemaError("runtime cache queue.events must be an object")
@@ -685,6 +690,129 @@ def load_runtime_state_snapshot(config: dict[str, Any]) -> dict[str, Any]:
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     with runtime_state_lock(config, shared=False):
         _save_runtime_state_unlocked(config, state)
+
+
+def promotion_runtime(identity: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "command_root": str(identity.get("command_root") or identity.get("root") or ""),
+        "source_sha": str(identity.get("source_sha") or identity.get("head") or ""),
+    }
+
+
+def promotion_admission_allowed(state: Mapping[str, Any], runtime: Mapping[str, Any]) -> bool:
+    fence = state.get("promotion", {})
+    if not isinstance(fence, dict):
+        return False
+    if not fence:
+        return True
+    if not isinstance(fence, dict) or fence.get("phase") not in {"ready", "rolled_back"}:
+        return False
+    return promotion_runtime(runtime) == fence.get("admitted_runtime")
+
+
+def promotion_launch_allowed(state: Mapping[str, Any], runtime: Mapping[str, Any], task_id: str | None = None) -> bool:
+    if not promotion_admission_allowed(state, runtime):
+        return False
+    return all(receipt.get("status") == "consumed"
+               for receipt in state.get("promotion", {}).get("receipts", {}).values()
+               if task_id is None or receipt.get("worker", {}).get("task_id") == task_id)
+
+
+def begin_promotion(state: dict[str, Any], incumbent: Mapping[str, Any], candidate: Mapping[str, Any]) -> str:
+    previous = state.get("promotion", {})
+    if previous and previous.get("phase") not in {"ready", "rolled_back"}:
+        raise RuntimeError("promotion admission fence is already active")
+    if previous and any(r.get("status") != "consumed" for r in previous.get("receipts", {}).values()):
+        raise RuntimeError("previous promotion has unconsumed drain receipts")
+    old, new = promotion_runtime(incumbent), promotion_runtime(candidate)
+    if not all(old.values()) or not all(new.values()):
+        raise RuntimeError("promotion requires exact incumbent and candidate identities")
+    if previous and previous.get("admitted_runtime") != old:
+        raise RuntimeError("promotion incumbent does not own admission")
+    epoch = uuid.uuid4().hex
+    state["promotion"] = {
+        "schema_version": 1, "epoch": epoch, "phase": "draining",
+        "incumbent": old, "candidate": new, "started_at": utc_now(),
+        "admitted_runtime": None, "receipts": {},
+    }
+    return epoch
+
+
+def promotion_worker_binding(worker: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: deepcopy(worker.get(key)) for key in (
+        "run_id", "task_id", "task_generation", "queue_event_id",
+        "pid", "pid_start_ticks", "process_generation", "lease_acquired_at",
+        "status_command_runtime",
+    )}
+
+
+def promotion_receipt_digest(receipt: Mapping[str, Any]) -> str:
+    basis = {key: receipt.get(key) for key in (
+        "schema_version", "epoch", "worker", "incumbent", "candidate", "reason", "terminal_signal",
+    )}
+    return hashlib.sha256(json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def prepare_promotion_drain(state: dict[str, Any], worker: Mapping[str, Any]) -> dict[str, Any]:
+    fence = state["promotion"]
+    binding = promotion_worker_binding(worker)
+    if (fence.get("phase") != "draining" or any(value is None or value == "" for value in binding.values())
+            or promotion_runtime(worker.get("status_command_runtime") or {}) != fence["incumbent"]):
+        raise RuntimeError("promotion drain requires a complete incumbent worker lease binding")
+    receipt = {
+        "schema_version": 1, "epoch": fence["epoch"], "worker": binding,
+        "incumbent": fence["incumbent"], "candidate": fence["candidate"],
+        "reason": "supervisor_runtime_promotion", "terminal_signal": 15,
+        "status": "prepared", "prepared_at": utc_now(),
+    }
+    receipt["digest"] = promotion_receipt_digest(receipt)
+    fence["receipts"][str(worker["run_id"])] = receipt
+    return receipt
+
+
+def valid_promotion_drain(state: Mapping[str, Any], worker: Mapping[str, Any], *, terminal: bool = True) -> dict[str, Any] | None:
+    fence = state.get("promotion", {})
+    receipt = fence.get("receipts", {}).get(str(worker.get("run_id") or ""))
+    if not isinstance(receipt, dict):
+        return None
+    if (receipt.get("schema_version") != 1 or receipt.get("epoch") != fence.get("epoch")
+            or receipt.get("worker") != promotion_worker_binding(worker)
+            or receipt.get("incumbent") != fence.get("incumbent")
+            or receipt.get("candidate") != fence.get("candidate")
+            or receipt.get("incumbent") != promotion_runtime(worker.get("status_command_runtime") or {})
+            or receipt.get("reason") != "supervisor_runtime_promotion"
+            or receipt.get("terminal_signal") != 15
+            or receipt.get("digest") != promotion_receipt_digest(receipt)):
+        return None
+    if terminal:
+        if receipt.get("status") not in {"drained", "consumed"}:
+            return None
+        marker = receipt.get("terminal", {})
+        if (marker.get("promotion_drain_digest") != receipt["digest"] or marker.get("signal") != 15
+                or marker.get("run_id") != worker.get("run_id") or marker.get("pid") != worker.get("pid")
+                or marker.get("status_command_runtime") != worker.get("status_command_runtime")
+                or not marker.get("finished_at") or marker.get("exit_code") not in {143, -15}):
+            return None
+    elif receipt.get("status") != "prepared" or fence.get("phase") != "draining":
+        return None
+    return receipt
+
+
+def finish_promotion(state: dict[str, Any], epoch: str, *, rollback: bool = False) -> None:
+    fence = state.get("promotion", {})
+    if fence.get("epoch") != epoch or fence.get("phase") not in {"draining", "verifying"}:
+        raise RuntimeError("stale promotion epoch")
+    if not rollback and any(receipt.get("status") not in {"drained", "consumed"}
+                            for receipt in fence["receipts"].values()):
+        raise RuntimeError("unconfirmed drain receipt prevents promotion admission")
+    fence["phase"] = "rolled_back" if rollback else "ready"
+    if rollback:
+        # Unconfirmed signals remain ordinary crash recovery. They are never
+        # promoted into planned receipts merely because rollback succeeded.
+        fence["receipts"] = {run: receipt for run, receipt in fence["receipts"].items()
+                             if receipt.get("status") in {"drained", "consumed"}}
+    fence["admitted_runtime"] = fence["incumbent" if rollback else "candidate"]
+    fence["finished_at"] = utc_now()
 
 
 def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:

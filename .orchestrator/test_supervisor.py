@@ -6872,6 +6872,106 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         state["queue"]["events"][event_id]["status"] = "started"
         state["workers"][str(worker["run_id"])] = worker
 
+    def _planned_drain(self, state, worker, *, rollback=False):
+        old = {"command_root": "/incumbent", "source_sha": "a" * 40}
+        new = {"command_root": "/candidate", "source_sha": "b" * 40}
+        worker["status_command_runtime"] = old
+        epoch = runtime_state.begin_promotion(state, old, new)
+        receipt = runtime_state.prepare_promotion_drain(state, worker)
+        receipt["status"] = "drained"
+        receipt["terminal"] = {"run_id": worker["run_id"], "pid": worker["pid"],
+                               "signal": 15, "exit_code": 143, "finished_at": "now",
+                               "status_command_runtime": old,
+                               "promotion_drain_digest": receipt["digest"]}
+        runtime_state.finish_promotion(state, epoch, rollback=rollback)
+        runtime = old if rollback else new
+        return {"PANTHEON_COMMAND_ROOT": runtime["command_root"],
+                "PANTHEON_COMMAND_RUNTIME_SHA": runtime["source_sha"]}
+
+    def test_promotion_continuation_replays_once_and_preserves_assignment(self):
+        for rollback in (False, True):
+            with self.subTest(rollback=rollback):
+                # Separate canonical fixture for each successful/rollback cutover.
+                if rollback:
+                    supervisor.write_status(self.config, self.status, source="test-rollback-seed")
+                state = self._state()
+                worker = self._worker(run_id="planned-rollback" if rollback else "planned")
+                self._store_started(state, worker)
+                environment = self._planned_drain(state, worker, rollback=rollback)
+                stale_runtime = copy.deepcopy(state)
+                with (
+                    mock.patch.object(supervisor, "status_command_runtime_env", return_value=environment),
+                    mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox),
+                    mock.patch.object(supervisor, "write_activity_log") as activity,
+                ):
+                    self.assertTrue(supervisor.recover_lost_worker_lease(
+                        self.config, state, worker, reason_kind="worker_process_missing", reason="detected"))
+                    canonical = supervisor.load_status(self.config)
+                    task = canonical["tasks"][0]
+                    self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Codex2"))
+                    receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+                    receipt = canonical[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+                    self.assertEqual(receipt["type"], "worker_promotion_drained")
+                    self.assertEqual(receipt["reason_kind"], "promotion_drained")
+                    generation = task["generation"]
+                    # Crash between canonical CAS and runtime CAS: replay stale
+                    # runtime against the updated journal, then reconcile twice.
+                    self.assertTrue(supervisor.recover_lost_worker_lease(
+                        self.config, stale_runtime, stale_runtime["workers"][worker["run_id"]],
+                        reason_kind="promotion_drained", reason="replay"))
+                    for _ in range(2):
+                        supervisor.reconcile_pending_worker_recoveries(self.config, stale_runtime)
+                    latest = supervisor.load_status(self.config)
+                    self.assertEqual(latest["tasks"][0]["generation"], generation)
+                    events = [event for event in supervisor.queue_events(stale_runtime)
+                              if event.get("recovery_receipt_id") == receipt_id]
+                    self.assertEqual(len(events), 1)
+                    self.assertEqual(stale_runtime["promotion"]["receipts"][worker["run_id"]]["status"], "consumed")
+                    self.assertFalse(any(call.args[1].get("type") == "worker_lost_lease" for call in activity.call_args_list))
+
+    def test_invalid_drain_uses_ordinary_recovery_without_stranding_admission(self):
+        state = self._state()
+        worker = self._worker()
+        self._store_started(state, worker)
+        self._planned_drain(state, worker)
+        state["promotion"]["receipts"][worker["run_id"]]["terminal"]["promotion_drain_digest"] = "wrong"
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox):
+            self.assertTrue(supervisor.recover_lost_worker_lease(
+                self.config, state, worker, reason_kind="worker_process_missing", reason="unverified disappearance"))
+        status = supervisor.load_status(self.config)
+        receipt_id = status["tasks"][0][supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        receipt = status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+        self.assertEqual(receipt["type"], "worker_lost_lease")
+        self.assertEqual(receipt["reason_kind"], "worker_process_missing")
+        rejected = state["promotion"]["receipts"][worker["run_id"]]
+        self.assertEqual(rejected["status"], "consumed")
+        self.assertEqual(rejected["resolution"], "rejected_unverified_drain_ordinary_recovery")
+
+    def test_stale_task_generation_consumes_drain_without_replacement(self):
+        state = self._state()
+        worker = self._worker()
+        self._store_started(state, worker)
+        environment = self._planned_drain(state, worker)
+        status = supervisor.load_status(self.config)
+        status["tasks"][0]["generation"] = 9
+        supervisor.write_status(self.config, status, source="test-concurrent-generation")
+        with mock.patch.object(supervisor, "status_command_runtime_env", return_value=environment):
+            self.assertTrue(supervisor.recover_lost_worker_lease(
+                self.config, state, worker, reason_kind="promotion_drained", reason="stale"))
+        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, supervisor.load_status(self.config)["tasks"][0])
+        self.assertEqual(state["promotion"]["receipts"][worker["run_id"]]["status"], "consumed")
+
+    def test_promotion_pending_health_blocks_queue_launch_and_boot_recovery(self):
+        state = self._state()
+        runtime_state.begin_promotion(state, {"root": "/old", "head": "a" * 40},
+                                      {"root": "/new", "head": "b" * 40})
+        with mock.patch.object(supervisor, "load_runtime_state", return_value=state), mock.patch.object(supervisor, "status_command_runtime_env", return_value={}):
+            self.assertFalse(supervisor.process_queue(self.config, state))
+            self.assertFalse(supervisor.reconcile_runtime_on_boot(self.config, state))
+            self.assertFalse(supervisor.poll_workers(self.config, state))
+            result = supervisor.start_worker_for_request(self.config, state, None)
+            self.assertEqual(result, (False, "runtime_promotion_fenced", None))
+
     def test_loss_fences_generation_reassigns_and_backfills_materialized_ids(self) -> None:
         seeded = supervisor.load_status(self.config)
         seeded["tasks"][0][supervisor.REVIEW_REQUEUE_INTENT_KEY] = {
