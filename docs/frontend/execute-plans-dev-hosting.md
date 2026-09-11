@@ -159,6 +159,21 @@ never be called from browser code.
 
 ## Strict browser session contract
 
+Ordinary Dev access uses a configured account/password with strict, short-lived
+JWT authentication; it does not need the retired development MFA issuer.
+The Dev deploy default is `DEV_BFF_MFA_REQUIRED=false`. The server-only
+`/bff/auth/dev-login` credential exchange retains per-identity roles and tenant
+bindings, but never claims that a second factor was verified. Old
+`PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_MFA_VERIFIED=true` settings are ignored and
+are no longer forwarded by Compose or deployment workflows.
+
+This is not an exemption for staging/production: dev-login remains unavailable
+there. Genuine IdP MFA validation and action-specific MFA requirements remain
+in force. A password-only Dev session reports `mfa_verified=false` and cannot
+be used as evidence that an MFA-gated action passed. Explicitly enabling
+`PANTHEON_BFF_MFA_REQUIRED=true` still rejects a token without verified MFA;
+the deploy process does not manufacture that claim to make the gate green.
+
 The product login uses GCP Identity Platform. After Identity Platform
 authenticates the human, `execute-plans` registers the current short-lived ID
 token with the BFF request header provider and sends it as
@@ -208,7 +223,8 @@ for effective user, roles, tenant, capabilities and session kind.
 The operator-live readiness sequence is:
 
 1. GCP Identity login/refresh produces a short-lived ID token with verified
-   email and TOTP second-factor claims.
+   email. A real second-factor claim is required only when the selected
+   environment or action policy requires MFA; ordinary Dev login is password-only.
 2. The frontend registers that in-memory JWT with the shared BFF auth provider.
 3. `GET /bff/me` must report `authenticated=true`, `session_kind=bearer` (or
    `cookie`), an operator-level role, the exact tenant and Agora capability.

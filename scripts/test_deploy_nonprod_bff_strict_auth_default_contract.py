@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import subprocess
@@ -119,6 +120,8 @@ def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
         'case "${DEV_AUTH_PROFILE}" in',
         'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"',
         'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"',
+        'DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-false}"',
+        'assert "mfa_verified" not in claims',
         "no governed verifier/dev-login credentials",
         "assert_bff_auth_gate",
     ):
@@ -398,7 +401,7 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
     assert "assert_dedicated_dev_login_identity" in script
     assert "for identity in viewer approver risk_owner operator_a operator_b" in script
     assert 'assert set(claims.get("roles") or []) == {expected_role}' in script
-    assert 'assert claims.get("mfa_verified") is True' in script
+    assert 'assert "mfa_verified" not in claims' in script
     assert "len(set(subjects)) == len(subjects)" in script
     assert (
         '"${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" '
@@ -410,14 +413,14 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         '"${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}"'
         not in script[script.index("assert_bff_auth_gate()") : script.index("snapshot_remote_state()")]
     )
-    assert 'DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-true}"' in script
-    assert "PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED=" in script
-    assert 'PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}"' in script
-    assert (
-        "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: "
-        "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}"
-        in workflow
-    )
+    assert 'DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-false}"' in script
+    assert "vars.DEV_BFF_MFA_REQUIRED || 'false'" in workflow
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    for identity in ("OPERATOR", "VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
+        static_claim = f"DEV_LOGIN_{identity}_MFA_VERIFIED"
+        assert static_claim not in script
+        assert static_claim not in workflow
+        assert static_claim not in compose
     auth_floor = workflow[
         workflow.index("- name: Enforce dev auth deployment floor") :
         workflow.index(
@@ -506,6 +509,30 @@ def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
     assert "DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true'" in workflow
     assert "supabase.co/auth/v1" not in workflow
     assert "user_metadata.roles" not in workflow
+
+
+def test_dev_identity_gate_accepts_password_token_and_rejects_fake_mfa() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("  python3 -c '\n", script.index("assert_dedicated_dev_login_identity()"))
+    start += len("  python3 -c '")
+    end = script.index("\n' \"$expected_identity\"", start)
+    verifier = script[start:end]
+    for fake_mfa in (False, True):
+        claims = {"sub": "test-viewer", "roles": ["viewer"]}
+        if fake_mfa:
+            claims["mfa_verified"] = True
+        encoded = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        payload = {"meta": {"identity": "viewer"}, "access_token": f"header.{encoded}.signature"}
+        result = subprocess.run(
+            ["python3", "-c", verifier, "viewer", "viewer", json.dumps(payload)],
+            check=False, capture_output=True, text=True,
+        )
+        if fake_mfa:
+            assert result.returncode != 0
+            assert "password-only dev login must not claim MFA verification" in result.stderr
+        else:
+            assert result.returncode == 0, result.stderr
+            assert result.stdout.strip() == "test-viewer"
 
 
 def test_auth_gate_posture_assertion_is_valid_python() -> None:
@@ -634,7 +661,6 @@ class _MockBffHandler(BaseHTTPRequestHandler):
             claims = {
                 "sub": f"sub-{identity}",
                 "roles": [role],
-                "mfa_verified": True,
             }
             claims_b64 = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).decode("utf-8").rstrip("=")
             token = f"eyJhbGciOiJIUzI1NiJ9.{claims_b64}.sig"

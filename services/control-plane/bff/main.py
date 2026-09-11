@@ -938,7 +938,6 @@ def _retryable_terminal_capital_command(record: Dict[str, Any]) -> bool:
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 _DEV_LOGIN_IDENTITY_DEFS = auth_policy._DEV_LOGIN_IDENTITY_DEFS
 _dev_login_forbidden_environment = auth_policy.dev_login_forbidden_environment
-_dev_login_bool_env = auth_policy.dev_login_bool_env
 _dev_login_identity_registry = auth_policy.dev_login_identity_registry
 _dev_login_enabled = auth_policy.dev_login_enabled
 
