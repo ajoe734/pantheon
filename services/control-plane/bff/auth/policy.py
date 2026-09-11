@@ -346,11 +346,8 @@ def bff_source_commit() -> str:
 def dev_login_forbidden_environment() -> bool:
     env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
     deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
-    return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-
-
-def dev_login_bool_env(name: str, *, default: bool) -> bool:
-    return bool_from_env(name, default=default)
+    forbidden = _PRODUCTION_STRICT_ENVIRONMENTS | {"staging"}
+    return env_name in forbidden or deployment_stage in forbidden
 
 
 def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
@@ -382,8 +379,6 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
         if tenant_id not in allowed_tenants:
             allowed_tenants = [tenant_id] + list(allowed_tenants)
 
-        mfa_verified = dev_login_bool_env(f"{env_prefix}_MFA_VERIFIED", default=False)
-
         registry[name] = {
             "identity": name,
             "client_id": client_id,
@@ -392,7 +387,6 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
             "subject": f"pantheon-dev-{base['subject_suffix']}",
             "tenant_id": tenant_id,
             "allowed_tenants": allowed_tenants,
-            "mfa_verified": mfa_verified,
         }
     return registry
 

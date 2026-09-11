@@ -1155,6 +1155,9 @@ def install_compensation_artifact_fixture(
         "baseline_nonsecret_config": {
             "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
             "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
+            "PANTHEON_BFF_MFA_REQUIRED": "false",
+            **{f"PANTHEON_BFF_DEV_LOGIN_{identity}_MFA_VERIFIED": None
+               for identity in ("OPERATOR", "VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B")},
         },
     }
     baseline_raw = canonical(baseline)

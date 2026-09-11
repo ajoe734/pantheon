@@ -62,7 +62,8 @@ def manifest(identity=None):
                          "backend_sha": identity["previous_backend_sha"]},
             "baseline_nonsecret_config": {
                 "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
-                "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner"}}
+                "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
+                **dict.fromkeys(primitive.BASELINE_AUTH_FLAGS, "true")}}
 
 
 def result(identity=None):
@@ -144,6 +145,33 @@ def test_duplicate_keys_are_rejected_before_becoming_an_external_seal():
     raw = json.dumps(result()).encode()
     raw = b'{"manifest_path":"/ignored-invalid-path",' + raw[1:]
     with pytest.raises(c.CaptureError): c.seal_result(raw, IDENTITY)
+
+
+@pytest.mark.parametrize("key", primitive.BASELINE_AUTH_FLAGS)
+@pytest.mark.parametrize("value", [None, "", "true", "false", "TRUE", "1", "0", "yes", "no", "on", "off"])
+def test_seal_preserves_exact_captured_auth_values(key, value):
+    emitted = result()
+    emitted["manifest"]["baseline_nonsecret_config"][key] = value
+    emitted["manifest_sha256"] = c.digest(c.encoded(emitted["manifest"]))
+    raw, _ = c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+    assert json.loads(raw)["baseline_nonsecret_config"][key] == value
+
+
+@pytest.mark.parametrize("failure", ["old_two_field_manifest", "missing_auth_flag", "not_a_boolean"])
+def test_unknown_auth_baseline_cannot_be_sealed(failure):
+    emitted = result()
+    config = emitted["manifest"]["baseline_nonsecret_config"]
+    if failure == "old_two_field_manifest":
+        for key in primitive.BASELINE_AUTH_FLAGS:
+            del config[key]
+    elif failure == "missing_auth_flag":
+        del config[primitive.BASELINE_AUTH_FLAGS[0]]
+    else:
+        config[primitive.BASELINE_AUTH_FLAGS[0]] = "fixture-private-unsupported"
+    emitted["manifest_sha256"] = c.digest(c.encoded(emitted["manifest"]))
+    with pytest.raises(c.CaptureError) as error:
+        c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+    assert "fixture-private" not in str(error.value)
 
 
 def test_read_implementation_requires_exact_committed_bytes(tmp_path):

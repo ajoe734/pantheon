@@ -53,6 +53,7 @@ with events.open("a") as out:
             "GIT_SHA", "PANTHEON_ENV", "PANTHEON_CANARY_EXECUTION_ENABLED",
             "PANTHEON_LIVE_BROKER_ENABLED", "BROKER_PAPER_ENABLED",
             "PANTHEON_BFF_AUTH_MODE", "PANTHEON_BFF_AUTH_STUB",
+            "PANTHEON_BFF_MFA_REQUIRED", "PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED",
             "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED",
             "PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID",
             "PANTHEON_BFF_GOVERNANCE_SERVICE_TOKEN_FILE")}}) + "\\n")
@@ -107,6 +108,7 @@ def fixture(tmp_path: Path):
         "PANTHEON_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
         "PANTHEON_DEV_ARTIFACT_RESTORE": "true", "PANTHEON_DEV_BFF_AUTH_MODE": "strict",
         "PANTHEON_DEV_BFF_AUTH_STUB": "false", "PANTHEON_DEV_BFF_PUBLIC_HOST": "api.dev.mvl-cap.tw",
+        "PANTHEON_DEV_BFF_MFA_REQUIRED": "false",
         "PANTHEON_DEV_FE_PUBLIC_HOST": "app.dev.mvl-cap.tw",
         "PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "fixture-viewer",
         "PANTHEON_BFF_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/fixture.jwt",
@@ -207,10 +209,23 @@ def test_external_restore_executes_real_payload_without_checkout_or_other_mutati
         "GIT_SHA": PRIOR, "PANTHEON_ENV": "dev", "PANTHEON_CANARY_EXECUTION_ENABLED": "false",
         "PANTHEON_LIVE_BROKER_ENABLED": "false", "BROKER_PAPER_ENABLED": "true",
         "PANTHEON_BFF_AUTH_MODE": "strict", "PANTHEON_BFF_AUTH_STUB": "false",
+        "PANTHEON_BFF_MFA_REQUIRED": "false", "PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED": None,
         "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED": "false",
         "PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "fixture-viewer",
         "PANTHEON_BFF_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/fixture.jwt",
     }
+
+
+def test_restore_shell_leaves_legacy_auth_to_sealed_driver_not_candidate_flags(fixture):
+    env, recorder, *_ = fixture
+    env["PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED"] = "true"
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    runtime = _events(recorder)[0]["runtime"]
+    assert runtime["PANTHEON_BFF_MFA_REQUIRED"] == "false"
+    assert runtime["PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED"] is None
+    # The real driver's capture/restore tests separately require the sealed
+    # baseline override before old Compose recreation, not this fake driver.
 
 
 @pytest.mark.parametrize("variable,value", [

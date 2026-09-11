@@ -26,6 +26,17 @@ DIGEST = re.compile(r"[0-9a-f]{64}")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
 IMAGE_FORMAT = '{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"repo_digests":{{json .RepoDigests}}}'
 CONTAINER_FORMAT = '{"image_id":{{json .Image}},"status":{{json .State.Status}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
+BASELINE_PRINCIPAL_CONFIG = {
+    "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
+    "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
+}
+# Historical auth configuration, not defaults for new candidate token issuance.
+# Keep the exact strings (including absence/empty) in the existing sealed manifest.
+BASELINE_AUTH_FLAGS = ("PANTHEON_BFF_MFA_REQUIRED", *(
+    f"PANTHEON_BFF_DEV_LOGIN_{identity}_MFA_VERIFIED"
+    for identity in ("OPERATOR", "VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B")
+))
+BASELINE_CONFIG_KEYS = (*BASELINE_PRINCIPAL_CONFIG, *BASELINE_AUTH_FLAGS)
 
 
 class ArtifactError(RuntimeError):
@@ -130,6 +141,20 @@ def _match(value, pattern, label):
 def _keys(value, names, label):
     if not isinstance(value, dict) or set(value) != set(names):
         raise ArtifactError(f"invalid {label} fields")
+
+
+def validate_baseline_config(value):
+    # Earlier two-field manifests cannot prove the prior auth settings. Refuse
+    # them before candidate admission/restore; recapture while prior still runs.
+    _keys(value, BASELINE_CONFIG_KEYS, "baseline nonsecret configuration (auth capture required)")
+    if any(value[key] not in (None, "", expected) for key, expected in BASELINE_PRINCIPAL_CONFIG.items()):
+        raise ArtifactError("baseline configuration is outside the fixed allowlist")
+    for key in BASELINE_AUTH_FLAGS:
+        setting = value[key]
+        if setting is not None and (not isinstance(setting, str) or
+                setting.lower() not in ("", "true", "false", "1", "0", "yes", "no", "on", "off")):
+            raise ArtifactError("baseline auth configuration must be a bounded boolean string")
+    return value
 
 
 def _no_duplicates(pairs):
