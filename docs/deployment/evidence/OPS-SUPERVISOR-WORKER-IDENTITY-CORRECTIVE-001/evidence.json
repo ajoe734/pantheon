@@ -2,8 +2,8 @@
   "schema_version": 1,
   "task_id": "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001",
   "scope": "development tooling: exact worker-wrapper identity predicate for supervisor capacity scanning and launch recovery",
-  "owner": "Claude",
-  "reviewer": "Antigravity",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
   "review_status": "pending_independent_exact_head_review",
   "source": {
     "repository": "ajoe734/pantheon",
