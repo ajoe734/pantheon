@@ -149,6 +149,7 @@ components:
       - scripts/migrate_to_benjamin_cutover.sh
       - scripts/test_dev_direct_ssh_workflow_contract.py
       - scripts/test_dev_deploy_worktree_isolation_contract.py
+      - scripts/test_probe_agora_hosted_service_journey.py
       - docs/deployment/vm-dev-staging-prod-management-plan.md
       - docs/frontend/execute-plans-dev-hosting.md
       - docs/remote-dev-gcp-vm.md
