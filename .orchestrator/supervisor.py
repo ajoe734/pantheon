@@ -9137,6 +9137,40 @@ def owner_worker_canonical_handoff_status(
     )
 
 
+def _coerce_observed_worker_task_generation(raw_gen: Any) -> int | None:
+    """Parse a worker-observed task generation without ever guessing one.
+
+    Returns ``None`` for anything that is not an unambiguous positive
+    generation value: absent, non-numeric, boolean, or non-positive. A
+    missing or malformed observation must never fall back to the task's
+    current generation and must never raise -- callers treat ``None`` as
+    "no valid observed binding" and refuse the write entirely.
+    """
+    if raw_gen is None or isinstance(raw_gen, bool):
+        return None
+    try:
+        generation = int(raw_gen)
+    except (TypeError, ValueError):
+        return None
+    return generation if generation >= 1 else None
+
+
+def observed_worker_task_generation(worker: dict[str, Any]) -> int | None:
+    """Extract the exact task generation this worker was dispatched against.
+
+    Checks the worker's own ``task_generation`` field, then its dispatch
+    ``request_snapshot`` and that snapshot's ``metadata``, in that order.
+    Returns ``None`` (never a substitute value) when no field carries a
+    valid positive generation.
+    """
+    raw_gen = worker.get("task_generation")
+    if raw_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
+        raw_gen = (worker["request_snapshot"] or {}).get("task_generation")
+    if raw_gen is None and isinstance((worker.get("request_snapshot") or {}).get("metadata"), Mapping):
+        raw_gen = ((worker.get("request_snapshot") or {}).get("metadata") or {}).get("task_generation")
+    return _coerce_observed_worker_task_generation(raw_gen)
+
+
 def _prepare_missing_handoff_blocker_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -9179,16 +9213,11 @@ def _prepare_missing_handoff_blocker_locked(
     old_generation = task_generation(task)
 
     if expected_generation is None:
-        raw_gen = worker.get("task_generation")
-        if raw_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
-            raw_gen = (worker["request_snapshot"] or {}).get("task_generation")
-        if raw_gen is None and isinstance((worker.get("request_snapshot") or {}).get("metadata"), Mapping):
-            raw_gen = ((worker.get("request_snapshot") or {}).get("metadata") or {}).get("task_generation")
-        if raw_gen is not None:
-            try:
-                expected_generation = int(raw_gen)
-            except (TypeError, ValueError):
-                pass
+        expected_generation = observed_worker_task_generation(worker)
+    if expected_generation is None:
+        # No valid observed worker binding: refuse the write rather than
+        # substitute the task's current generation or skip the fence.
+        return None
 
     if expected_owner is not None:
         if (
@@ -11701,12 +11730,11 @@ def poll_worker_completion_stage(
             # handoff, not a provider failure. Reassigning or redispatching the
             # same owner reproduces the same clean exit every tick; surface the
             # concrete blocker instead and take the task out of owner dispatch.
-            raw_worker_gen = worker.get("task_generation")
-            if raw_worker_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
-                raw_worker_gen = (worker["request_snapshot"] or {}).get("task_generation")
-            if raw_worker_gen is None and isinstance((worker.get("request_snapshot") or {}).get("metadata"), Mapping):
-                raw_worker_gen = ((worker.get("request_snapshot") or {}).get("metadata") or {}).get("task_generation")
-            worker_task_gen = int(raw_worker_gen) if raw_worker_gen is not None else (task_generation(task) if task else None)
+            # Never substitute the task's current generation here: only an
+            # exact, validly-typed generation observed on this worker's own
+            # dispatch record may fence the write. record_missing_handoff_blocker
+            # refuses (no write) when this is None.
+            worker_task_gen = observed_worker_task_generation(worker)
             blocker = record_missing_handoff_blocker(
                 config,
                 worker,

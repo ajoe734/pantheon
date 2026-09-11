@@ -18803,6 +18803,235 @@ class SupervisorBlockerTransitionCorrectiveTests(unittest.TestCase):
             self.assertEqual(persisted["tasks"][0]["generation"], 2)
             self.assertEqual(len(persisted.get("blockers") or []), 0)
 
+    def test_observed_worker_task_generation_never_substitutes_or_raises(self) -> None:
+        # Absent: no task_generation anywhere on the worker or its snapshots
+        self.assertIsNone(supervisor.observed_worker_task_generation({}))
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"request_snapshot": {}})
+        )
+        # Malformed: non-numeric strings and containers must not raise
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": "not-a-number"})
+        )
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation(
+                {"request_snapshot": {"metadata": {"task_generation": "abc"}}}
+            )
+        )
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": None})
+        )
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": []})
+        )
+        # Bool must never coerce through int() into a valid generation
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": True})
+        )
+        # Non-positive is invalid
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": 0})
+        )
+        self.assertIsNone(
+            supervisor.observed_worker_task_generation({"task_generation": -1})
+        )
+        # Valid direct field
+        self.assertEqual(
+            supervisor.observed_worker_task_generation({"task_generation": 3}), 3
+        )
+        # Valid via request_snapshot fallback
+        self.assertEqual(
+            supervisor.observed_worker_task_generation(
+                {"request_snapshot": {"task_generation": 4}}
+            ),
+            4,
+        )
+        # Valid via request_snapshot.metadata fallback
+        self.assertEqual(
+            supervisor.observed_worker_task_generation(
+                {"request_snapshot": {"metadata": {"task_generation": 5}}}
+            ),
+            5,
+        )
+
+    def test_missing_handoff_blocker_absent_generation_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-GEN-ABSENT",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            task["generation"] = 2
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            # Worker carries no generation information at all (no top-level
+            # field, no request_snapshot, no request_snapshot.metadata).
+            worker_no_gen = {
+                "task_id": "TASK-GEN-ABSENT",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-no-gen",
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/7",
+            }
+
+            event = supervisor.record_missing_handoff_blocker(config, worker_no_gen)
+            self.assertIsNone(event)
+
+            persisted = supervisor.load_status(config)
+            self.assertEqual(persisted["tasks"][0]["status"], "in_progress")
+            self.assertEqual(persisted["tasks"][0]["generation"], 2)
+            self.assertEqual(len(persisted.get("blockers") or []), 0)
+
+            # poll_worker_completion_stage must also make no write and no
+            # lease/status change when the observed generation is absent,
+            # even though owner/reviewer/status all match the live task.
+            state = {"workers": {worker_no_gen["run_id"]: worker_no_gen}, "queue": {"events": {}}}
+            with mock.patch.object(supervisor, "worker_prepared_review_head", return_value=True):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    worker_no_gen,
+                    task_map={"TASK-GEN-ABSENT": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertNotEqual(worker_no_gen.get("status"), "failed")
+            persisted_after = supervisor.load_status(config)
+            self.assertEqual(persisted_after["tasks"][0]["status"], "in_progress")
+            self.assertEqual(len(persisted_after.get("blockers") or []), 0)
+
+    def test_missing_handoff_blocker_malformed_generation_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-GEN-BAD",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            worker_bad_gen = {
+                "task_id": "TASK-GEN-BAD",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-bad-gen",
+                "task_generation": "not-a-number",
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/8",
+            }
+
+            # Must not raise ValueError; must be a clean fail-closed no-op.
+            event = supervisor.record_missing_handoff_blocker(config, worker_bad_gen)
+            self.assertIsNone(event)
+
+            persisted = supervisor.load_status(config)
+            self.assertEqual(persisted["tasks"][0]["status"], "in_progress")
+            self.assertEqual(len(persisted.get("blockers") or []), 0)
+
+            state = {"workers": {worker_bad_gen["run_id"]: worker_bad_gen}, "queue": {"events": {}}}
+            with mock.patch.object(supervisor, "worker_prepared_review_head", return_value=True):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    worker_bad_gen,
+                    task_map={"TASK-GEN-BAD": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertNotEqual(worker_bad_gen.get("status"), "failed")
+
+    def test_missing_handoff_blocker_same_owner_successor_generation_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Same owner/reviewer/status as the stale worker, but the task
+            # already advanced to a successor generation (e.g. reopened and
+            # redispatched to the same agent). Owner/reviewer/status checks
+            # alone would pass; only the generation fence should reject this.
+            task = task_fixture(
+                task_id="TASK-GEN-SAME-OWNER",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            task["generation"] = 2
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            stale_same_owner_worker = {
+                "task_id": "TASK-GEN-SAME-OWNER",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-same-owner-stale",
+                "task_generation": 1,
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/9",
+            }
+
+            event = supervisor.record_missing_handoff_blocker(config, stale_same_owner_worker)
+            self.assertIsNone(event)
+
+            persisted = supervisor.load_status(config)
+            self.assertEqual(persisted["tasks"][0]["status"], "in_progress")
+            self.assertEqual(persisted["tasks"][0]["generation"], 2)
+            self.assertEqual(len(persisted.get("blockers") or []), 0)
+
+            state = {
+                "workers": {stale_same_owner_worker["run_id"]: stale_same_owner_worker},
+                "queue": {"events": {}},
+            }
+            with mock.patch.object(supervisor, "worker_prepared_review_head", return_value=True):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    stale_same_owner_worker,
+                    task_map={"TASK-GEN-SAME-OWNER": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertNotEqual(stale_same_owner_worker.get("status"), "failed")
+            persisted_after = supervisor.load_status(config)
+            self.assertEqual(persisted_after["tasks"][0]["status"], "in_progress")
+            self.assertEqual(len(persisted_after.get("blockers") or []), 0)
+
+    def test_missing_handoff_blocker_valid_generation_still_persists(self) -> None:
+        # Sanity check that the fix did not turn the fence into an
+        # always-reject: a worker with a genuinely valid, matching observed
+        # generation and no explicit expected_generation override must still
+        # persist the hold through the caller-derivation path.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            task = task_fixture(
+                task_id="TASK-GEN-VALID",
+                status="in_progress",
+                owner="Codex",
+                reviewer="Codex2",
+            )
+            config = self._setup_env(tmp_dir, {"tasks": [task], "blockers": []})
+
+            worker = {
+                "task_id": "TASK-GEN-VALID",
+                "agent_id": "codex",
+                "provider": "codex",
+                "run_id": "run-valid-gen",
+                "task_generation": 1,
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/10",
+            }
+
+            state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+            with mock.patch.object(
+                supervisor, "worker_prepared_review_head", return_value=True
+            ), mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+                result = supervisor.poll_worker_completion_stage(
+                    config,
+                    state,
+                    worker,
+                    task_map={"TASK-GEN-VALID": task},
+                    redispatch_statuses={"in_progress"},
+                )
+            self.assertEqual(result, {"changed": True, "stop": True})
+            self.assertEqual(worker.get("status"), "failed")
+
+            persisted = supervisor.load_status(config)
+            self.assertEqual(persisted["tasks"][0]["status"], "blocked")
+            self.assertEqual(len(persisted.get("blockers") or []), 1)
+            self.assertEqual(persisted["blockers"][0]["blocker_kind"], "missing_handoff")
+
     def test_missing_handoff_fail_closed_guards(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base_task = task_fixture(
