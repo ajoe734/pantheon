@@ -1,6 +1,6 @@
 # Execute-Plans Dev Frontend Hosting
 
-Last updated: 2026-07-19
+Last updated: 2026-09-11
 
 This is the canonical frontend hosting rule for Pantheon dev.
 
@@ -18,7 +18,8 @@ but they are not the dev frontend hosting source of truth.
 ## Source Repository
 
 - Active frontend repo: `ajoe734/execute-plans`
-- Local checkout: `/home/lupin/code/execute-plans`
+- Local checkout: the active `execute-plans` checkout on the current development
+  host; verify its Git remote. Do not assume a retired account's home directory.
 - Preferred work location for risky edits: a clean task worktree outside the
   dirty checkout, for example `/tmp/execute-plans-<task>`
 - Delivery base as of 2026-07-13: `dev` (also the GitHub default branch)
@@ -42,21 +43,23 @@ Do not ask the operator to press Lovable publish for Pantheon dev delivery, and
 do not block on Lovable connector authorization. Current dev deployment flows
 through GitHub PRs, an `execute-plans` build, and Pantheon-owned HTTPS hosting.
 
-The dev frontend should be served by Pantheon-owned infrastructure from the
-recorded `execute-plans` commit. The intended host is:
+The dev frontend must be served by Pantheon-owned infrastructure from the
+recorded `execute-plans` commit. The current VM identity, FE/BFF origins and
+GitHub variable names are maintained only in
+[the environment plan § 3.1](../deployment/vm-dev-staging-prod-management-plan.md#31-dev).
+Read those variables for the current deployment; do not reuse historical
+sslip.io examples or named-user paths. A configured origin is not proof of
+DNS, HTTPS or a successfully served release.
 
-- FE: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
-- BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
-
-The prior project `pantheon-benjamin-20260528` and IP `35.201.239.38` are
-retired from active dev routing because the project is suspended. The
-replacement VM is `pantheon-lupin-dev` in project
-`pantheon-lupin-dev-20260719`; its backend checkout is `/home/lupin/pantheon`.
-
-If the FE hostname or VM IP changes, update this document and `AGENTS.md`
-before routing work to the new target.
+If the target changes, update the environment plan and repository variables;
+this document and `AGENTS.md` reference that authority rather than carrying
+another operational target list.
 
 ## Historical Verified Dev Deployment
+
+The records below describe retired environments only. Their URLs must not be
+probed or used in configuration, and their manifests are not acceptance
+evidence for the current environment.
 
 Verified on 2026-08-27 (Product Functional Closure / Wave 6 PFG-HOSTED-ACCEPT-20260820):
 
@@ -125,8 +128,8 @@ Verified on 2026-06-11:
   `VITE_BFF_REAL_WRITES=false`.
 
 If an agent sees a different Lovable bundle, that is not the Pantheon dev FE.
-Validate the Pantheon-owned host and the GitHub commits above before changing
-code.
+Validate the current Pantheon-owned host and exact current GitHub pair, not
+the historical hosts or commits above, before changing code.
 
 ## Required Frontend Build Env
 
@@ -134,7 +137,7 @@ Build the dev frontend with live BFF wiring:
 
 ```sh
 VITE_BFF_MODE=live
-VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
+VITE_BFF_BASE_URL="$DEV_BFF_URL"
 VITE_BFF_FALLBACK=strict
 ```
 
@@ -181,13 +184,14 @@ PANTHEON_BFF_ROLE_MAP=<external-operator=operator;external-viewer=viewer;...>
 PANTHEON_BFF_DEFAULT_ROLE=viewer
 ```
 
-The current Pantheon dev GCP Identity verifier uses public, non-secret
-metadata:
+For GCP Identity login, use the current configured project from the environment
+plan and the following public, non-secret metadata. Do not reuse the retired
+project's issuer/audience:
 
 ```sh
 PANTHEON_BFF_JWKS_URI=https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
-PANTHEON_BFF_OIDC_ISSUER=https://securetoken.google.com/pantheon-lupin-dev-20260719
-PANTHEON_BFF_OIDC_AUDIENCE=pantheon-lupin-dev-20260719
+PANTHEON_BFF_OIDC_ISSUER="https://securetoken.google.com/$DEV_GCP_DEPLOY_PROJECT_ID"
+PANTHEON_BFF_OIDC_AUDIENCE="$DEV_GCP_DEPLOY_PROJECT_ID"
 PANTHEON_BFF_MFA_CLAIMS=amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor
 PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED=true
 ```
@@ -234,7 +238,7 @@ Before browser smoke tests, the running dev BFF must allow the Pantheon-owned FE
 origin and use the same tenant scope as the FE dev gate:
 
 ```sh
-PANTHEON_BFF_CORS_ORIGINS=...,https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io
+PANTHEON_BFF_CORS_ORIGINS="$DEV_FE_URL"
 PANTHEON_BFF_TENANT_ID=tenant-dev
 PANTHEON_BFF_ALLOWED_TENANTS=tenant-dev,pantheon-dev
 ```
@@ -266,10 +270,12 @@ For an actual dev deployment, pending status is not enough. The deployment gate
 must pass against the immutable backend commit and, when available, the matching
 execute-plans manifest from the frontend repo:
 
+Set `EXECUTE_PLANS_ROOT` to that verified separate checkout before this command.
+
 ```sh
 python3 scripts/agora_compat_manifest.py deployment-gate \
   --manifest docs/contracts/agora/dev-compatibility-manifest.json \
-  --frontend-manifest /home/lupin/code/execute-plans/docs/contracts/agora/dev-compatibility-manifest.json \
+  --frontend-manifest "$EXECUTE_PLANS_ROOT/docs/contracts/agora/dev-compatibility-manifest.json" \
   --backend-runtime-commit <pantheon-backend-commit>
 ```
 

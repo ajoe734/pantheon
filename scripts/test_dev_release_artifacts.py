@@ -326,3 +326,50 @@ def test_canonical_dist_matches_separate_frontend_helper(frontend_case):
     result = subprocess.run(["node", "--input-type=module", "-e", script,
                              Path(helper).resolve().as_uri(), str(release)], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == artifacts.frontend_dist_digest(release)
+
+
+@pytest.mark.parametrize("field", ["failure_stage", "failure_kind", "failure_location", "exit_code"])
+@pytest.mark.parametrize("invalid", [None, [], {}, True, "fixture-secret", 0, -1])
+def test_malformed_failure_metadata_is_ignored_without_secondary_exception(field, invalid):
+    row = artifacts.failure_record(artifacts.ArtifactError("fixture-secret"), "capture")
+    row[field] = invalid
+    assert artifacts.remote_failure_record(json.dumps(row).encode()) is None
+
+
+def test_diagnostic_parser_ignores_duplicate_keys_untrusted_fields_and_bounded_noise():
+    row = artifacts.failure_record(artifacts.ArtifactError("fixture-secret"), "capture")
+    valid = json.dumps(row).encode()
+    assert artifacts.remote_failure_record(b"private raw stderr\n" + valid) == row
+    assert artifacts.remote_failure_record(b'{"status":"error",' + valid[1:]) is None
+    assert artifacts.remote_failure_record(json.dumps({**row, "stderr": "fixture-secret"}).encode()) is None
+    assert artifacts.remote_failure_record(b"[" * 2000) is None
+    assert artifacts.remote_failure_record(b"x" * (1024 * 1024 + 1)) is None
+    assert artifacts.remote_failure_record(b"\xff") is None
+
+
+@pytest.mark.parametrize("status", [1, 37, 124, 255, -15])
+def test_failure_record_preserves_innermost_subprocess_status_and_never_message(status):
+    def call(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(status, ["fixture-secret-command"], stderr="fixture-secret-stderr")
+    original = subprocess.run
+    subprocess.run = call
+    try:
+        with pytest.raises(artifacts.ArtifactError) as caught:
+            artifacts.Docker().call("inspect", "fixture-secret-image")
+    finally:
+        subprocess.run = original
+    row = artifacts.failure_record(caught.value, "capture")
+    assert row["exit_code"] == (status if status > 0 else 128 - status)
+    assert row["failure_kind"] == "subprocess"
+    assert row["failure_location"].startswith("dev_release_artifacts.py:")
+    assert "fixture-secret" not in json.dumps(row)
+    assert artifacts.remote_failure_record(json.dumps(row).encode()) == row
+
+
+def test_unexpected_data_error_retains_checked_in_source_location():
+    with pytest.raises(artifacts.ArtifactError) as caught:
+        artifacts._json(b"not json fixture-secret")
+    row = artifacts.failure_record(caught.value, "capture")
+    assert row["failure_kind"] == "invalid-data"
+    assert row["failure_location"].startswith("dev_release_artifacts.py:")
+    assert "fixture-secret" not in json.dumps(row)

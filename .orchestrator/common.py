@@ -44,6 +44,140 @@ CANONICAL_REVIEW_GATE_CONTEXT = "Pantheon canonical review gate"
 CANONICAL_REVIEW_CONTEXT = CANONICAL_REVIEW_GATE_CONTEXT
 
 
+_PYTHON_EXE_RE = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|pypy(?:\d+(?:\.\d+)?)?)$")
+_PYTHON_NO_ARG_SHORT_FLAGS = frozenset("bBdEhiIOPqsuvVx?")
+
+
+def _is_worker_runner_script_token(token: str) -> bool:
+    """Return True if token is an exact path to worker_runner.py under .orchestrator."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    path = Path(token)
+    return path.name == "worker_runner.py" and ".orchestrator" in path.parts
+
+
+def _is_python_executable_token(token: str) -> bool:
+    """Return True if token is a python/pypy interpreter executable name or path."""
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    name = Path(token).name
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return bool(_PYTHON_EXE_RE.match(name))
+
+
+def worker_runner_script(parts: list[str]) -> str | None:
+    """Return the executable worker script, never a path appearing in a prompt or bind operand.
+
+    Binds the shared predicate to the actual interpreter/script invocation:
+    - Direct script execution: argv[0] is worker_runner.py under .orchestrator
+    - Python interpreter execution: argv[0] is Python, followed by optional
+      Python options (excluding stdin mode `-` and inline code/module `-c`/`-m`),
+      and the first positional script argument is worker_runner.py under .orchestrator.
+
+    Rejects:
+    - Provider CLI descendants whose arguments contain worker_runner.py (e.g.
+      ['claude', '--prompt', '/repo/.orchestrator/worker_runner.py', 'wake'])
+    - Sandbox shims whose bind operands contain worker_runner.py (e.g.
+      ['/usr/bin/bwrap', '--ro-bind', '/repo/.orchestrator/worker_runner.py', '/tmp/ref.py', 'wake'])
+    - Non-script python modes:
+      - stdin mode (`-`)
+      - inline code execution (`-c`, `-c<code>`, `-uc<code>`, etc.)
+      - module execution (`-m`, `-m<mod>`, `-um<mod>`, etc.)
+    - Unrelated scripts executed by python where worker_runner.py is a downstream option
+    """
+    if not parts:
+        return None
+
+    # 1. Direct script execution: argv[0] is the worker_runner script itself
+    if _is_worker_runner_script_token(parts[0]):
+        return parts[0]
+
+    # 2. Python interpreter execution: argv[0] is python, first positional arg is worker_runner
+    if not _is_python_executable_token(parts[0]):
+        return None
+
+    idx = 1
+    while idx < len(parts):
+        arg = parts[idx]
+
+        # Plain script path (does not begin with dash)
+        if not arg.startswith("-"):
+            return arg if _is_worker_runner_script_token(arg) else None
+
+        # Stdin script execution: `python - [arg ...]` executes stdin, never worker_runner
+        if arg == "-":
+            return None
+
+        # End of options delimiter: `--` terminates option parsing
+        if arg == "--":
+            if idx + 1 < len(parts):
+                return parts[idx + 1] if _is_worker_runner_script_token(parts[idx + 1]) else None
+            return None
+
+        # Long options starting with `--`
+        if arg.startswith("--"):
+            if arg == "--check-hash-based-pycs":
+                if idx + 1 >= len(parts):
+                    return None
+                idx += 2
+                continue
+            if arg.startswith("--check-hash-based-pycs="):
+                idx += 1
+                continue
+            if arg in ("--help", "--help-env", "--help-xoptions", "--help-all", "--version"):
+                idx += 1
+                continue
+            # Unknown long option
+            return None
+
+        # Short options cluster starting with single dash: e.g. -u, -Bu, -Wignore, -uc<code>
+        chars = arg[1:]
+        char_idx = 0
+        while char_idx < len(chars):
+            ch = chars[char_idx]
+
+            # -c and -m execute inline code or module, not a script file.
+            # Reject whether separate (-c "code"), attached (-cimport), or clustered (-ucimport).
+            if ch in ("c", "m"):
+                return None
+
+            # -W and -X take an option-argument (either attached or next token)
+            if ch in ("W", "X"):
+                rest = chars[char_idx + 1:]
+                if rest:
+                    # Attached argument (e.g. -Wignore, -uWignore, -Xdev)
+                    idx += 1
+                    break
+                else:
+                    # Separate argument token (e.g. -W ignore, -X dev)
+                    if idx + 1 >= len(parts):
+                        return None
+                    idx += 2
+                    break
+
+            if ch in _PYTHON_NO_ARG_SHORT_FLAGS:
+                char_idx += 1
+                continue
+
+            # Unrecognized short flag character
+            return None
+        else:
+            # All flags in this token were valid no-arg flags
+            idx += 1
+            continue
+
+        # W or X broke out after consuming their attached or separate argument
+        continue
+
+    return None
+
+
+def cmdline_is_worker_runner(parts: list[str]) -> bool:
+    """Shared supervisor/watchdog identity for the one-per-worker wrapper."""
+    return worker_runner_script(parts) is not None
+
+
 def validate_review_bridge_policy(
     config: Mapping[str, Any],
 ) -> tuple[bool, tuple[str, ...]]:

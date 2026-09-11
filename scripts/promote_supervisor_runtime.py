@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Replace the supervisor with one exact authoritative-V2 runtime.
 
-This command intentionally has no incumbent compatibility path.  A promotion
-is a short replacement operation: render the candidate's V2 config, stop the
-existing supervisor, atomically install that config, and launch the candidate.
-It never reconstructs a retired runtime or tries to restore one.
+An ordinary promotion replaces executable code and config while keeping the
+same durable storage paths. Failed launch restores the qualified incumbent.
+Moving storage is a separate, explicitly selected --migrate-storage operation.
 """
 from __future__ import annotations
 
@@ -567,6 +566,26 @@ def _fsync_dir(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def require_unchanged_storage(
+    incumbent: Mapping[str, Any] | None, rendered: Mapping[str, Any],
+) -> None:
+    """Keep a code update from implicitly becoming a data migration."""
+    if not incumbent:
+        return
+    for section, key in (
+        ("task_state_store", "event_log"),
+        ("paths", "state_file"),
+        ("paths", "approval_queue"),
+    ):
+        old_path = (incumbent.get(section) or {}).get(key)
+        new_path = (rendered.get(section) or {}).get(key)
+        if old_path != new_path:
+            raise ValueError(
+                f"ordinary promotion cannot change {section}.{key}; "
+                "keep the installed data path or explicitly select --migrate-storage"
+            )
 
 
 def _preflight_storage_migration(
@@ -1253,6 +1272,7 @@ def _replace_supervisor_locked(
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
     requirements_path: Path | None = None,
+    migrate_storage: bool = False,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
@@ -1277,6 +1297,8 @@ def _replace_supervisor_locked(
         raise ValueError("rendered V2 config must define paths.approval_queue")
     approval_queue_path = Path(approval_queue_value).expanduser().absolute()
     incumbent = _load_json(live_config_path, label="installed live config") if live_config_path.exists() else None
+    if not migrate_storage:
+        require_unchanged_storage(incumbent, rendered)
     incumbent_pid_path = _incumbent_pid_path(live_config_path, rendered)
     result: dict[str, Any] = {
         "schema_version": 2,
@@ -1391,7 +1413,11 @@ def _replace_supervisor_locked(
         restoration_verified = False
         launch_succeeded = False
         try:
-            migration_record = _migrate_storage_paths(incumbent, rendered, keep_lock=True)
+            migration_record = (
+                _migrate_storage_paths(incumbent, rendered, keep_lock=True)
+                if migrate_storage
+                else {"migrated": False, "files": []}
+            )
             lock_fd = migration_record.get("lock_fd")
             result["storage_migration"] = {
                 "migrated": migration_record["migrated"],
@@ -1579,6 +1605,7 @@ def replace_supervisor(
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
     requirements_path: Path | None = None,
+    migrate_storage: bool = False,
 ) -> dict[str, Any]:
     """Validate and switch config while excluding the canonical merge owner."""
 
@@ -1594,6 +1621,7 @@ def replace_supervisor(
             repository_source_roots=repository_source_roots,
             repository_integration_roots=repository_integration_roots,
             requirements_path=requirements_path,
+            migrate_storage=migrate_storage,
         )
 
 
@@ -1636,6 +1664,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Render a dedicated clean merge checkout into coordination.repositories.",
     )
     parser.add_argument("--promote", action="store_true", help="Stop and replace the runtime.")
+    parser.add_argument(
+        "--migrate-storage", action="store_true",
+        help="Explicitly move durable task/runtime data to the rendered paths during promotion.",
+    )
     parser.add_argument("--discover-only", action="store_true", help="Render and validate only.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -1679,6 +1711,9 @@ def main(argv: list[str] | None = None) -> int:
                 repository_integration_roots=repository_integration_roots,
                 requirements_path=requirements_path,
             )
+            incumbent = _load_json(live_config_path, label="installed live config") if live_config_path.exists() else None
+            if not args.migrate_storage:
+                require_unchanged_storage(incumbent, rendered)
             result: dict[str, Any] = {
                 "schema_version": 2,
                 "kind": "supervisor_v2_replacement_preflight",
@@ -1718,6 +1753,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
                 requirements_path=requirements_path,
+                migrate_storage=args.migrate_storage,
             )
     except (OSError, ValueError, auto_integrator.IntegrationLockError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}

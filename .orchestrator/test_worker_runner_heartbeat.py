@@ -145,7 +145,7 @@ def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None
 
 
 _CLEANUP_BINDING = {"agent": "codex", "task_id": "CLEANUP-FIXTURE", "role": "owner",
-                    "owner": "Codex", "reviewer": "Claude", "authorization_run_id": "",
+                    "owner": "Codex", "reviewer": "Claude",
                     "read_only_worktree": False, "source_readonly_roots": []}
 
 def _probe_bwrap() -> str | None:
@@ -1937,6 +1937,11 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
 
             live_config = runtime / "live-supervisor.json"
             live_config.write_text('{"live": true}\n', encoding="utf-8")
+            # Task data may grow sidecars without blocking worker startup.
+            # Symlinks in that writable data directory cannot make the target
+            # outside its mount boundary writable.
+            (task_state_dir / "compaction-progress.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / "config-link").symlink_to(live_config)
             coord_config = central / ".orchestrator" / "config.json"
 
             program = (
@@ -1989,7 +1994,11 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "    coord_conf.write_text('mutated')\n"
                 "except OSError:\n"
                 "    denied += 1\n"
-                "sys.exit(0 if denied == 6 else 43)\n"
+                "try:\n"
+                "    (event_log_path.parent / 'config-link').write_text('mutated through task data')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "sys.exit(0 if denied == 7 else 43)\n"
             )
 
             orch_dir = str(Path(__file__).resolve().parent)
@@ -2187,7 +2196,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                         sandbox_binary="/usr/bin/bwrap",
                     )
 
-    def test_bind_worker_sandbox_rejects_unqualified_layout_with_extraneous_files(self):
+    def test_bind_worker_sandbox_accepts_task_data_without_a_sibling_name_registry(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-unqualified-extra-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
@@ -2204,22 +2213,25 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             event_log.write_text("event\n", encoding="utf-8")
             (task_state_dir / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
             (task_state_dir / f"{event_log.name}.lock").touch()
-            # Extraneous non-task-state sibling inside task-state directory
-            (task_state_dir / "live-supervisor.json").write_text("{}\n", encoding="utf-8")
+            # TaskStore owns this data directory, including future sidecars.
+            (task_state_dir / "compaction-progress.json").write_text("{}\n", encoding="utf-8")
+            (task_state_dir / "archive").mkdir()
 
             with mock.patch.dict(
                 os.environ,
                 {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
                 clear=False,
             ):
-                with self.assertRaisesRegex(RuntimeError, "unqualified task-state layout: directory .* contains non-task-state entry"):
-                    wr.bind_worker_sandbox(
-                        ["python3", "-c", "pass"],
-                        command_root=command_root,
-                        workspace_path=worktree,
-                        coordination_root=central,
-                        sandbox_binary="/usr/bin/bwrap",
-                    )
+                command = wr.bind_worker_sandbox(
+                    ["python3", "-c", "pass"],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+            mounts = [command[i:i + 3] for i in range(len(command) - 2)]
+            self.assertIn(["--bind", str(task_state_dir), str(task_state_dir)], mounts)
+            self.assertIn(["--ro-bind-try", str(runtime), str(runtime)], mounts)
 
     @unittest.skipUnless(
         _FUNCTIONAL_BWRAP,
@@ -2543,6 +2555,52 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(self.marker.exists())
 
+    def test_authenticated_sandbox_setup_failure_has_terminal_receipt_after_reload(self):
+        def invalid_mount_layout(_journal):
+            (self.central / "unrelated-symlink").symlink_to(self.workspace)
+        proc = self.run_worker(local_stub=False, mutate_store=invalid_mount_layout)
+        self.assertNotEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("coordination sibling cannot be a symlink", proc.stderr)
+        self.assertFalse(self.marker.exists())
+        # Independent process reloads both durable receipts and canonical task
+        # state: startup failed, not an unrecorded/vanished worker or task success.
+        program = (
+            "import json,sys; from pathlib import Path; "
+            "from rewrite.task_state_store import load_snapshot; "
+            "print(json.dumps({'status':json.loads(Path(sys.argv[1]).read_text()), "
+            "'heartbeat':json.loads(Path(sys.argv[2]).read_text()), "
+            "'task':load_snapshot(sys.argv[3],refresh_checkpoint=False)['state']['tasks'][0]}))"
+        )
+        reload_result = subprocess.run(
+            [sys.executable, "-B", "-c", program, str(self.runner_status), str(self.heartbeat),
+             str(self.root / "runtime/task-state/events.jsonl")],
+            env={**os.environ, "PYTHONPATH": str(Path(_P).resolve().parent)},
+            text=True, capture_output=True, check=True,
+        )
+        readback = json.loads(reload_result.stdout)
+        terminal = readback["status"]
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["exit_code"], proc.returncode)
+        self.assertEqual(terminal["task_id"], self.task["id"])
+        self.assertEqual(terminal["agent"].casefold(), self.task["owner"].casefold())
+        self.assertIsNotNone(terminal["finished_at"])
+        self.assertIsNone(terminal["child_pid"])
+        self.assertIn("coordination sibling cannot be a symlink", terminal["error"])
+        self.assertEqual(readback["heartbeat"]["status"], "failed")
+        self.assertEqual(readback["heartbeat"]["run_id"], terminal["run_id"])
+        self.assertEqual(readback["task"]["status"], "in_progress")
+
+    def test_authenticated_missing_sandbox_executable_has_terminal_receipt(self):
+        self.env["PANTHEON_SANDBOX_BINARY"] = str(self.root / "no-such-bwrap")
+        proc = self.run_worker(local_stub=False)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertFalse(self.marker.exists())
+        terminal = json.loads(self.runner_status.read_text())
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["exit_code"], 1)
+        self.assertIn("FileNotFoundError", terminal["error"])
+        self.assertEqual(json.loads(self.heartbeat.read_text())["status"], "failed")
+
     def test_corrupt_authoritative_head_has_zero_launch(self):
         self.assert_denied(self.run_worker(mutate_store=lambda journal: Path(str(journal) + ".head.json").write_text("{broken")),
                            "task-state")
@@ -2696,7 +2754,7 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("task is on an explicit hold", proc.stderr)
         self.assertFalse(self.marker.exists())
-        self.assertFalse(self.heartbeat.exists())
+        self.assertEqual(json.loads(self.heartbeat.read_text())["status"], "failed")
         status = json.loads(self.runner_status.read_text())
         self.assertIsNone(status["child_pid"])
         self.assertEqual(status["status"], "failed")

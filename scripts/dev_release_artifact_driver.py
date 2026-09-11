@@ -140,7 +140,7 @@ class GuardedDocker(a.Docker):
                         continue
                 self.barrier.check()
                 if process.returncode:
-                    raise a.ArtifactError("Docker artifact operation failed")
+                    raise a.ArtifactError("Docker artifact operation failed") from subprocess.CalledProcessError(process.returncode, command)
                 return output
             except BaseException:
                 # Stay in the remote watchdog's PGID so its STOP/TERM contains
@@ -689,16 +689,19 @@ def parse_args(argv=None):
 def main(argv=None):
     def cancelled(_signal, _frame): raise a.ArtifactError("guarded operation cancelled")
     for name in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(name, cancelled)
+    stage = "initialize"
     try:
         args = parse_args(argv)
+        stage = args.command
         barrier = CancellationBarrier(args.guard_channel_fd, max_silence=args.guard_max_silence_seconds)
         result = run(args, docker=GuardedDocker(barrier), http=HTTP(), barrier=barrier)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except Exception:
+    except Exception as error:
         # HTTP bodies, credentials and subprocess stderr are not diagnostics.
-        print('{"status":"error","error_code":"DEV_ARTIFACT_DRIVER_FAILED"}', file=__import__("sys").stderr)
-        return 75
+        record = a.failure_record(error, stage)
+        print(json.dumps(record, sort_keys=True), file=__import__("sys").stderr)
+        return record["exit_code"]
 
 
 if __name__ == "__main__":

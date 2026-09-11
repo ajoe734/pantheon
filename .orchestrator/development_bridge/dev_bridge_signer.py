@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from .dev_bridge_models import DevTaskPacket, PacketSignature
+from . import canonical_packet_bytes
 
 # ---------------------------------------------------------------------------
 # Key management
@@ -150,9 +151,7 @@ def _canonical_payload(packet: DevTaskPacket) -> bytes:
     The signature field is excluded from the payload so the signature covers
     the packet content but not itself.
     """
-    data = packet.model_dump(by_alias=False, mode="json")
-    data.pop("signature", None)
-    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return canonical_packet_bytes(packet.model_dump(by_alias=False, mode="json"))
 
 
 def packet_digest(packet: DevTaskPacket) -> str:

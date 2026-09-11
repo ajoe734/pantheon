@@ -645,7 +645,37 @@ def test_cli_errors_are_sanitized_and_never_claim_completion(monkeypatch, capsys
     assert d.main([]) == 75
     output = capsys.readouterr()
     assert output.out == ""
-    assert json.loads(output.err) == {"status": "error", "error_code": "DEV_ARTIFACT_DRIVER_FAILED"}
+    record = json.loads(output.err)
+    assert record["status"] == "error"
+    assert record["error_code"] == d.a.FAILURE_CODE
+    assert record["failure_stage"] == "initialize"
+    assert record["failure_kind"] == "unexpected"
+    assert record["failure_location"].startswith("dev_release_artifact_driver.py:")
+    assert "fixture-private" not in output.err and "subprocess-secret" not in output.err
+
+
+@pytest.mark.parametrize("failure,kind", [("public-health", "contract"), ("json-body", "invalid-data")])
+def test_main_reports_actual_capture_failure_location_without_namespace_stage(case, monkeypatch, capsys, failure, kind):
+    case.args.guard_channel_fd = 9
+    case.args.guard_max_silence_seconds = 10
+    monkeypatch.setattr(d, "parse_args", lambda _argv: case.args)
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: case.barrier)
+    monkeypatch.setattr(d, "GuardedDocker", lambda _barrier: case.docker)
+    monkeypatch.setattr(d, "HTTP", lambda: case.http)
+    if failure == "public-health":
+        case.http.fail = "/health"
+    else:
+        case.http.version_failure = (200, b"invalid fixture-private-body")
+    assert d.main([]) == 75
+    output = capsys.readouterr()
+    row = json.loads(output.err)
+    assert row["failure_stage"] == "capture" and row["failure_kind"] == kind
+    expected_source = "dev_release_artifact_driver.py:" if failure == "public-health" else "dev_release_artifacts.py:"
+    assert row["failure_location"].startswith(expected_source)
+    assert not hasattr(case.args, "_diagnostic_stage")
+    assert "fixture-private" not in output.err and "fixture-error-body" not in output.err
+    assert output.out == "" and not list(d.ROOT.rglob("manifest.json"))
+    no_replacement(case)
 
 
 def test_cancellation_before_capture_never_seals(case):

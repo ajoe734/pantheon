@@ -20,19 +20,19 @@ domains:
 
 runtime_roots:
   command_runtime:
-    path: "/home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha>"
+    path: "<PANTHEON_DEPLOY_ROOT>/command-runtimes/<exact-commit-sha>"
     authority: "immutable supervisor source only"
     must_not_contain: ["runtime state", "queue", "approvals", "canonical projection"]
   coordination_root:
-    path: "/home/lupin/pantheon-ci-deploy/coordination-root"
+    path: "<PANTHEON_DEPLOY_ROOT>/coordination-root"
     authority: "development-tool canonical projection, leases, queue, approvals, and archive"
     required: ["Git worktree", "ai-status.json", ".orchestrator/"]
   staging_root:
-    path: "/home/lupin/pantheon-ci-deploy/dev-root"
+    path: "<PANTHEON_DEPLOY_ROOT>/dev-root"
     authority: "mutable source staging only"
     must_not_be: ["supervisor command root", "coordination root", "product runtime cwd"]
   product_root:
-    path: "/home/lupin/pantheon"
+    path: "<DEV_REMOTE_DIR>"
     authority: "product source only"
     must_not_contain: ["supervisor PID", "supervisor state", "task queue", "approval queue"]
 
@@ -43,6 +43,8 @@ components:
       - .orchestrator/
       - scripts/ai_status.py
       - scripts/human-ops-status.sh
+      - scripts/test_human_ops_status.py
+      - AGENTS.md
       - scripts/component_boundary.py
       - scripts/test_component_boundary.py
       - scripts/check_config_drift.py
@@ -56,6 +58,7 @@ components:
       - deploy/execution-grant-issuer/
       - docs/operations/execution-grant-issuer.md
       - docs/operations/development-tooling-mfa-retirement.md
+      - docs/operations/development-tooling-cleanup-20260911.md
       - docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
       - scripts/provision_live_supervisor_config.py
       - scripts/supervisor_runtime_health.py
@@ -131,6 +134,26 @@ components:
       - .github/workflows/
       - scripts/deploy_nonprod_vm.sh
       - scripts/run-acceptance.sh
+      - scripts/test_run_acceptance.py
+      - scripts/capture_dev_artifact_baseline.py
+      - scripts/test_capture_dev_artifact_baseline.py
+      - scripts/dev_release_artifact_driver.py
+      - scripts/test_dev_release_artifact_driver.py
+      - scripts/dev_release_artifacts.py
+      - scripts/test_dev_release_artifacts.py
+      - scripts/dev_remote_guarded_exec.py
+      - scripts/test_dev_remote_guarded_exec.py
+      - scripts/dev_vm_ssh.sh
+      - scripts/test_dev_vm_ssh.py
+      - scripts/gcp_dev_vm_migrate.sh
+      - scripts/migrate_to_benjamin_cutover.sh
+      - scripts/test_dev_direct_ssh_workflow_contract.py
+      - scripts/test_dev_deploy_worktree_isolation_contract.py
+      - scripts/test_probe_agora_hosted_service_journey.py
+      - docs/deployment/vm-dev-staging-prod-management-plan.md
+      - docs/deployment/nonprod-development-workflow.md
+      - docs/frontend/execute-plans-dev-hosting.md
+      - docs/remote-dev-gcp-vm.md
       - scripts/wait_for_bff_lifecycle_readiness.py
       - scripts/verify_hosted_scenarios.py
       - scripts/verify_e2e_fe_serving.py

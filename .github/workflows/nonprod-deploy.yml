@@ -147,7 +147,7 @@ jobs:
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
       BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'chloe_ong_dev_cctech_support_com' }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
       BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ inputs.bootstrap_predecessor_backend_sha || '' }}
       BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ inputs.bootstrap_predecessor_frontend_sha || '' }}
@@ -1200,11 +1200,11 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
           GITHUB_TOKEN: ${{ github.token }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
@@ -1388,7 +1388,7 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
@@ -1468,10 +1468,10 @@ jobs:
         id: evolution-dispatch-probe
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
         env:
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         run: |
@@ -1510,10 +1510,10 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' }}
         working-directory: .target
         env:
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://api.dev.mvl-cap.tw' }}
           # The generic operator identity is intentionally not MFA-verified.
@@ -1609,7 +1609,7 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
@@ -1704,7 +1704,7 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
@@ -1757,10 +1757,10 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}
@@ -1836,11 +1836,11 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
           GITHUB_TOKEN: ${{ github.token }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
@@ -2404,7 +2404,7 @@ jobs:
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
       FRONTEND_REF: ${{ needs.deploy-dev.outputs.frontend_ref }}
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'chloe_ong_dev_cctech_support_com' }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
     steps:
       - name: Checkout pinned lease controller
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -2574,12 +2574,12 @@ jobs:
           PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_candidate_id }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_candidate_digest }}
           GITHUB_TOKEN: ${{ github.token }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}

@@ -23,6 +23,11 @@ import time
 import uuid
 from typing import Callable
 
+if __package__:
+    from . import dev_release_artifacts as artifacts
+else:
+    import dev_release_artifacts as artifacts
+
 
 FAILURE = 75
 MAX_SCRIPT_BYTES = 512 * 1024
@@ -48,7 +53,7 @@ exec(compile(source,'<artifact-watchdog>','exec'),{'__name__':'__main__'})
 REMOTE_COMMAND = "python3 -I -S -c " + shlex.quote(BOOTSTRAP)
 
 
-class TransportError(Exception):
+class TransportError(artifacts.ArtifactError):
     pass
 
 
@@ -194,8 +199,13 @@ def execute(ssh_helper: Path, script_file: Path, deadline_seconds: int, *,
         os.set_blocking(fd, False)
         offset = 0
         while offset < len(initial):
-            if interrupted or time.monotonic() >= deadline or child.poll() is not None:
+            if interrupted or time.monotonic() >= deadline:
                 raise TransportError("startup interrupted")
+            status = child.poll()
+            if status is not None:
+                if status != 0:
+                    raise subprocess.CalledProcessError(status, [])
+                raise TransportError("remote exited before receiving startup context")
             _, writable, _ = select.select([], [fd], [], poll_seconds)
             if writable:
                 try:
@@ -214,7 +224,9 @@ def execute(ssh_helper: Path, script_file: Path, deadline_seconds: int, *,
                 if output is None or output.done:
                     if output is not None and output.pending_receipt is not None:
                         raise TransportError("receipt arrived after remote exit")
-                    return result if 0 <= result < 255 else FAILURE
+                    if result < 0:
+                        raise subprocess.CalledProcessError(result, [])
+                    return result if 0 <= result <= 255 else FAILURE
                 time.sleep(poll_seconds)
                 continue
             now = time.monotonic()
@@ -229,9 +241,12 @@ def execute(ssh_helper: Path, script_file: Path, deadline_seconds: int, *,
                     output.pending_receipt = None
                 last_sent = now  # no catch-up loop after a guard freeze
             time.sleep(poll_seconds)
-    except (TransportError, OSError, ValueError, subprocess.SubprocessError):
-        print("[artifact-transport] guarded execution failed", file=sys.stderr)
-        return 128 + interrupted if interrupted in (signal.SIGINT, signal.SIGTERM) else FAILURE
+    except Exception as error:
+        record = artifacts.failure_record(error, "transport")
+        if interrupted in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            record["exit_code"] = 128 + interrupted
+        print(json.dumps(record, sort_keys=True), file=sys.stderr)
+        return record["exit_code"]
     finally:
         if child is not None:
             if child.stdin is not None:

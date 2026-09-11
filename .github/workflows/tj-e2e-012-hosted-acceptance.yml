@@ -4,14 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       bff_base_url:
-        description: "Pantheon dev BFF base URL"
-        required: true
-        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        description: "Optional dev BFF override; defaults to DEV_BFF_URL"
+        required: false
         type: string
       fe_deployment_url:
-        description: "Pantheon dev frontend deployment manifest URL"
-        required: true
-        default: "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json"
+        description: "Optional dev FE manifest override; defaults to DEV_FE_URL/deployment.json"
+        required: false
         type: string
       expected_bff_sha:
         description: "Exact deployed Pantheon BFF commit SHA"
@@ -61,10 +59,10 @@ jobs:
     environment: dev
     timeout-minutes: 20
     env:
-      BFF_BASE: ${{ inputs.bff_base_url }}
-      TJ_E2E_FE_DEPLOYMENT_URL: ${{ inputs.fe_deployment_url }}
-      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      BFF_BASE: ${{ inputs.bff_base_url || vars.DEV_BFF_URL }}
+      TJ_E2E_FE_DEPLOYMENT_URL: ${{ inputs.fe_deployment_url || format('{0}/deployment.json', vars.DEV_FE_URL) }}
+      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL }}
+      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL }}
       TJ_E2E_EXPECTED_BFF_SHA: ${{ inputs.expected_bff_sha }}
       TJ_E2E_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
       TJ_E2E_TENANT_ID: ${{ inputs.tenant_id }}
@@ -76,8 +74,8 @@ jobs:
       TJ_E2E_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
       TJ_E2E_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
       TJ_E2E_EVIDENCE_DIR: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
     steps:
       - name: Checkout dispatched revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -94,8 +92,8 @@ jobs:
       - name: Materialize explicitly authorized dev-only source scenarios
         if: ${{ inputs.seed_scenarios }}
         env:
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
         run: |
           set -euo pipefail
           [[ "${TJ_E2E_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]

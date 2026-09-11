@@ -23,6 +23,11 @@ import tempfile
 import time
 import uuid
 
+if __package__:
+    from . import dev_release_artifacts as artifacts
+else:
+    import dev_release_artifacts as artifacts
+
 
 ROOT = Path(__file__).resolve().parents[1]
 VM_HOME = Path("/home/chloe_ong_dev_cctech_support_com")
@@ -32,7 +37,7 @@ FIELDS = ("candidate_id", "run_id", "attempt", "controller_sha", "candidate_back
 IMPLEMENTATIONS = ("dev_release_artifact_driver.py", "dev_release_artifacts.py")
 
 
-class CaptureError(RuntimeError):
+class CaptureError(artifacts.ArtifactError):
     pass
 
 
@@ -203,8 +208,14 @@ def remote_script(identity: dict[str, str], implementations: dict[str, bytes],
     lines = ["set -euo pipefail", "umask 077",
              ': "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD:?remote watchdog channel required}"']
     lines.extend("export " + key + "=" + shlex.quote(value) for key, value in exports.items())
-    lines.append("python3 - " + shlex.quote(base64.b64encode(encoded(payload)).decode()) + " <<'INSTALL_ARTIFACT_CONTROLLER'")
-    lines.extend((INSTALLER, "INSTALL_ARTIFACT_CONTROLLER"))
+    # Installer failure happens before the driver exists. Preserve its status
+    # with one fixed diagnostic, never the installer/shell's raw stderr.
+    install_failure = artifacts.failure_record(subprocess.CalledProcessError(1, []), "install")
+    install_failure["exit_code"] = 0
+    failure_format = json.dumps(install_failure, sort_keys=True).replace('"exit_code": 0', '"exit_code": %d') + "\n"
+    lines.append("if python3 - " + shlex.quote(base64.b64encode(encoded(payload)).decode()) + " 2>/dev/null <<'INSTALL_ARTIFACT_CONTROLLER'")
+    lines.extend((INSTALLER, "INSTALL_ARTIFACT_CONTROLLER", "then :", "else",
+                  "  rc=$?", "  printf " + shlex.quote(failure_format) + ' "$rc" >&2', '  exit "$rc"', "fi"))
     lines.append("exec " + shlex.join(args) + ' --guard-channel-fd "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}"')
     return "\n".join(lines) + "\n"
 
@@ -289,6 +300,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     args = parser.parse_args()
+    stage = "initialize"
     try:
         env = dict(os.environ)
         guard = require_guarded_dev(env)
@@ -314,14 +326,26 @@ def main() -> int:
             with script.open("x", encoding="utf-8") as handle:
                 os.chmod(script, 0o600)
                 handle.write(remote_script(identity, implementations, env, guard))
+            stage = "transport"
             result = subprocess.run([sys.executable, str(ROOT / "scripts/dev_remote_guarded_exec.py"),
                                      "--ssh-helper", str(ROOT / "scripts/dev_vm_ssh.sh"),
                                      "--script-file", str(script), "--deadline-seconds", "1200"],
                                     capture_output=True, timeout=1230)
             if result.returncode:
                 # Neither the private script nor remote raw diagnostics are evidence.
-                raise CaptureError("guarded artifact capture failed")
+                record = artifacts.remote_failure_record(result.stderr)
+                transport_error = subprocess.CalledProcessError(result.returncode, [])
+                code = artifacts.failure_record(transport_error, stage)["exit_code"]
+                if record is None:
+                    record = artifacts.failure_record(transport_error, stage)
+                # Remote metadata is diagnostic only; the observed process exit
+                # remains authoritative even if the record claims another code.
+                record["exit_code"] = code
+                print(json.dumps(record, sort_keys=True), file=sys.stderr)
+                return code
+        stage = "seal-result"
         manifest_raw, outputs = seal_result(result.stdout, identity, expected_lease_id=guard)
+        stage = "publish-evidence"
         for name, data in (("artifact-baseline.json", manifest_raw),
                            ("SHA256SUMS", (outputs["manifest_sha256"] + "  artifact-baseline.json\n").encode())):
             destination = directory / name
@@ -347,9 +371,10 @@ def main() -> int:
                     handle.write(f"{key}={value}\n")
         print(json.dumps(outputs, sort_keys=True))
         return 0
-    except (CaptureError, OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
-        print("[dev-artifact-capture] failed closed; no sealed baseline accepted", file=sys.stderr)
-        return 75
+    except Exception as error:
+        record = artifacts.failure_record(error, stage)
+        print(json.dumps(record, sort_keys=True), file=sys.stderr)
+        return record["exit_code"]
 
 
 if __name__ == "__main__":

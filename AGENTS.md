@@ -114,8 +114,8 @@ or any action outside the stated development objective.
 ## Frontend Repository And Dev Hosting
 
 The active frontend system is `execute-plans`, not `front-ai-trading-system`.
-Use repository `ajoe734/execute-plans` and local checkout
-`/home/lupin/code/execute-plans` or a clean task worktree created from it. Do
+Use repository `ajoe734/execute-plans` and its checkout on the current
+development host, or a clean task worktree created from it. Do
 not create, revive, mirror to, or assign new work to `front-ai-trading-system`;
 that name is legacy-only and must not be used for current development.
 
@@ -141,16 +141,19 @@ target or treat a main-only merge as deployed dev evidence.
 Do not treat Lovable publish status as the dev frontend host or as the release
 truth for Pantheon dev. Lovable URLs may remain historical evidence or an
 external reference, but current dev frontend delivery must be served by the
-Pantheon dev environment from an `execute-plans` commit. The intended dev host
-is Pantheon-owned, for example
-`https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`, with the BFF target
-`https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`.
+Pantheon dev environment from an `execute-plans` commit.
 
-As of 2026-07-19 the prior GCP project `pantheon-benjamin-20260528` is
-suspended. The replacement dev VM is `pantheon-lupin-dev` in project
-`pantheon-lupin-dev-20260719`, external IP `35.201.204.12`, and the backend
-source checkout is `/home/lupin/pantheon`. Do not deploy dev to the suspended
-project, the old `35.201.239.38` host, or `/home/lupin/code/pantheon`.
+Read `docs/deployment/vm-dev-staging-prod-management-plan.md` § 3.1 for the
+single current environment identity and named GitHub deployment variables.
+Do not copy hostnames or account paths from older runbooks or evidence.
+The configured FE/BFF origins are not evidence that an accepted pair is served;
+that requires the hosted manifest and deployment checks below.
+
+Both former dev projects `pantheon-lupin-dev-20260719` and
+`pantheon-benjamin-20260528` are retired. Do not deploy to or probe their old
+addresses (`35.201.204.12`, `35.201.239.38`, `34.81.75.241`) or reuse
+`/home/lupin/...` paths as current defaults. The old migration/cutover scripts
+have been removed; historical source remains recoverable in Git.
 
 Historical verified dev deployment, 2026-06-08:
 

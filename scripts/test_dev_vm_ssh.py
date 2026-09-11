@@ -5,6 +5,7 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TRANSPORT = ROOT / "scripts" / "dev_vm_ssh.sh"
@@ -108,23 +109,35 @@ def test_copy_from_uses_same_pinned_transport(tmp_path: Path) -> None:
             **prepared,
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "DEV_DEPLOY_SSH_HOST": host,
-            "REMOTE_USER": "lupin",
+            "REMOTE_USER": "deploy-user",
         },
     )
 
     assert result.returncode == 0, result.stderr
     args = Path(f"{capture}.args").read_text(encoding="utf-8").splitlines()
-    assert "lupin@203.0.113.11:/tmp/evidence.json" in args
+    assert "deploy-user@203.0.113.11:/tmp/evidence.json" in args
     assert args[-1] == str(tmp_path / "evidence.json")
 
 
-def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path) -> None:
+def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path, monkeypatch) -> None:
+    # CI supplies both explicit paths and an implicit per-run credential path.
+    # This case tests absent credentials, independently of both sources.
+    monkeypatch.setenv("DEV_DEPLOY_SSH_KEY_FILE", str(tmp_path / "ambient-ci-key"))
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "ambient-ci-runner"))
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     missing = subprocess.run(
         [str(TRANSPORT), "exec", "true"],
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "DEV_DEPLOY_SSH_HOST": "203.0.113.12"},
+        env={
+            **os.environ,
+            "DEV_DEPLOY_SSH_HOST": "203.0.113.12",
+            "DEV_DEPLOY_SSH_USER": "deploy-user",
+            "DEV_DEPLOY_SSH_KEY_FILE": "",
+            "RUNNER_TEMP": "",
+        },
     )
     assert missing.returncode == 2
     assert "DEV_DEPLOY_SSH_KEY_FILE is required" in missing.stderr
@@ -140,6 +153,7 @@ def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path) -> None:
             **os.environ,
             **prepared,
             "DEV_DEPLOY_SSH_HOST": "203.0.113.12",
+            "DEV_DEPLOY_SSH_USER": "deploy-user",
         },
     )
     assert permissive.returncode == 2
@@ -162,3 +176,37 @@ def test_prepare_rejects_known_hosts_for_a_different_host(tmp_path: Path) -> Non
     )
     assert result.returncode == 2
     assert "has no pinned entry for 203.0.113.14" in result.stderr
+
+
+@pytest.mark.parametrize("command", ["exec", "copy-from"])
+@pytest.mark.parametrize("missing", ["host", "user"])
+def test_transport_never_falls_back_to_retired_host_or_user(
+    tmp_path: Path, command: str, missing: str
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture = tmp_path / "transport-capture"
+    _fake_command(fake_bin / "ssh", capture)
+    _fake_command(fake_bin / "scp", capture)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("DEV_DEPLOY_SSH_") and key != "REMOTE_USER"}
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+    if missing == "host":
+        env["DEV_DEPLOY_SSH_USER"] = "deploy-user"
+        expected = "DEV_DEPLOY_SSH_HOST is required"
+    else:
+        env["DEV_DEPLOY_SSH_HOST"] = "203.0.113.10"
+        expected = "DEV_DEPLOY_SSH_USER or REMOTE_USER is required"
+    args = ["true"] if command == "exec" else ["/tmp/remote", str(tmp_path / "local")]
+    result = subprocess.run(
+        [str(TRANSPORT), command, *args],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 2
+    assert expected in result.stderr
+    assert not Path(f"{capture}.args").exists()
+
+
+def test_retired_vm_migration_entry_points_are_removed() -> None:
+    for name in ("gcp_dev_vm_migrate.sh", "migrate_to_benjamin_cutover.sh"):
+        assert not (ROOT / "scripts" / name).exists()
