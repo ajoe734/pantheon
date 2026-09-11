@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-SUPERVISOR-SHARED-QUOTA-HEALTH-GROUP-CORRECTIVE-001",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "owner_validation_complete_review_pending",
+  "identities": {
+    "base_sha": "e3ef0a4b6c8500f19019196e67fcbd5df6df67dc",
+    "validated_source_sha": "6bf6c995d1641b75ca59eba13c19107e776213f7",
+    "command_runtime_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+    "review_head_binding": "Exact PR head and manifest blob are bound by governed handoff; this manifest does not self-certify review."
+  },
+  "scope": {
+    "only_source_config_change": "Secondary verified provider account references the primary existing opaque account value",
+    "before_shared": false,
+    "after_shared": true,
+    "providers_agents_adapters_credentials_slots_preserved": true,
+    "all_account_limits_preserved": true,
+    "all_fallbacks_preserved": true,
+    "account_values_and_credential_paths": "omitted",
+    "adjacent_test_update": ".orchestrator/test_supervisor.py formerly asserted isolated accounts; updated only that obsolete contract test"
+  },
+  "file_sha256": {
+    ".orchestrator/config.json": "d12db6ad041cdac0dbca38a962f384532d4fcffd218d32087e76dc59bf02edf2",
+    ".orchestrator/test_shared_quota_config.py": "89e236123681c5ee08af2505b715bd9e45f30dfbb51f09e1ae384dad775708e2",
+    ".orchestrator/test_supervisor.py": "60a224ba0e056f77a91cc32dcc1dc8e1a9367dc3cd5412dfa313284cfa8f14bd",
+    "docs/operations/supervisor-shared-quota-health.md": "08e24a120bf4458e23df4ca5050b7e3e9a70c73d9d891255b5181b375606fc2d"
+  },
+  "validation": [
+    {
+      "command": "timeout 120 python3 -m unittest discover -s .orchestrator -p test_shared_quota_config.py -v",
+      "exit_code": 0,
+      "tests": 6,
+      "after_rebase": true
+    },
+    {
+      "command": "timeout 120 python3 -m unittest discover -s .orchestrator/rewrite -p test_provider_health.py -v",
+      "exit_code": 0,
+      "tests": 6
+    },
+    {
+      "command": "timeout 120 python3 -m unittest discover -s .orchestrator/rewrite -p test_dispatch_admission.py -v",
+      "exit_code": 0,
+      "tests": 26
+    },
+    {
+      "command": "timeout 180 python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k DurableWorkerRecoveryTests -v",
+      "exit_code": 0,
+      "tests": 24
+    },
+    {
+      "command": "timeout 180 python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k RuntimeConfigurationContractTests -v",
+      "exit_code": 0,
+      "tests": 10
+    },
+    {
+      "command": "timeout 180 python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k AccountHealthAndRecoveryContractTests -v",
+      "exit_code": 0,
+      "tests": 22
+    },
+    {
+      "command": "timeout 120 /tmp/shared-quota-venv/bin/python -m pytest -q scripts/test_provision_live_supervisor_config.py",
+      "exit_code": 0,
+      "tests": 58
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "check": "Compare parsed base config with candidate after only authorized account relation substitution",
+      "exit_code": 0,
+      "other_changes": false
+    },
+    {
+      "check": "In-memory Path.read_text substitution of base config in new identity regression",
+      "exit_code": 0,
+      "expected_failures": 1,
+      "errors": 0
+    }
+  ],
+  "environment_attempts": [
+    {
+      "command": "timeout 180 scripts/run-acceptance.sh smoke",
+      "exit_code": 1,
+      "reason": "System Python rejects baseline pip install as externally managed; rerun in isolated venv."
+    },
+    {
+      "command": "timeout 120 python3 -m pytest -q scripts/test_provision_live_supervisor_config.py",
+      "exit_code": 1,
+      "reason": "System Python lacks pytest; isolated venv rerun passed."
+    },
+    {
+      "command": "PATH=\"/tmp/shared-quota-venv/bin:$PATH\" PYTHON=/tmp/shared-quota-venv/bin/python timeout 240 scripts/run-acceptance.sh smoke",
+      "exit_code": 1,
+      "reason": "Baseline and diagnostics passed; grant-issuer suite required PyJWT. Installed repository deploy/execution-grant-issuer/requirements.txt in isolated venv before final rerun."
+    }
+  ],
+  "proof_boundaries": {
+    "observations": "Synthetic health observations and temporary authoritative TaskStore; no provider calls or worker launches",
+    "canonical_recovery": "Terminal quota retains pending fence; healthy eligible fallback gets one reassigned receipt and one replacement queue intent across repeated reconciliation",
+    "independent_review": "pending",
+    "ci": "pending PR creation",
+    "merge": "pending"
+  },
+  "live_before": {
+    "readable": true,
+    "post_promotion": false,
+    "shared_account": false,
+    "distinct_provider_keys": true,
+    "command_runtime_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"
+  },
+  "rollout": {
+    "status": "pending independent review and governed merge",
+    "authority": "Existing sealed supervisor promotion flow; request after merge",
+    "required_evidence": [
+      "terminal promotion exit",
+      "merged source and accepted runtime SHA",
+      "redacted rendered shared-account equality with distinct provider and agent identities",
+      "watchdog health",
+      "naturally observed recovery receipt and at-most-one replacement queue/lease"
+    ]
+  },
+  "rollback": {
+    "status": "not executed",
+    "procedure": "Use existing promoter rollback on failed activation; later semantic rollback requires reviewed source revert and promotion. Record exact restored runtime SHA and rollback health.",
+    "risk": "Returning to split account topology restores known same-session reassignment risk."
+  }
+}
