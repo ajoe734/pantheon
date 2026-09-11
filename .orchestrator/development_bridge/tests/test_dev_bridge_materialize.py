@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import unittest
 from copy import deepcopy
@@ -27,6 +28,24 @@ from development_bridge import dev_bridge_materialize
 
 
 class DevBridgeMaterializeModuleTests(unittest.TestCase):
+
+    def test_local_materializer_does_not_require_pydantic(self):
+        program = '''
+import builtins, sys
+original = builtins.__import__
+def without_models(name, *args, **kwargs):
+    if name == "pydantic" or name.startswith("pydantic."):
+        raise ImportError("local task maintenance must not require packet models")
+    return original(name, *args, **kwargs)
+builtins.__import__ = without_models
+sys.path.insert(0, sys.argv[1])
+from development_bridge import dev_bridge_materialize
+assert callable(dev_bridge_materialize.verify_signed_dev_bridge_packet)
+'''
+        result = subprocess.run([sys.executable, "-B", "-c", program,
+                                 str(REPO_ROOT / ".orchestrator")],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_wire_canonicalization_keeps_legacy_fields_without_model_defaults(self):
         from development_bridge.dev_bridge_signer import canonical_packet_bytes

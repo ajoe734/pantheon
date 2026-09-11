@@ -58,7 +58,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from common import utc_now as iso_now
-from .dev_bridge_signer import canonical_packet_bytes
+from . import canonical_packet_bytes
 
 # Canonical home of the materialization re-entrancy guard (see module
 # docstring) -- ai_status.py imports this exact instance rather than owning

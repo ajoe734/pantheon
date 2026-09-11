@@ -21,7 +21,7 @@ import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Mapping, Optional
+from typing import Dict, Iterator, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from .dev_bridge_models import DevTaskPacket, PacketSignature
+from . import canonical_packet_bytes
 
 # ---------------------------------------------------------------------------
 # Key management
@@ -143,13 +144,6 @@ def validate_signing_key_pair() -> None:
 # ---------------------------------------------------------------------------
 # Canonical payload
 # ---------------------------------------------------------------------------
-
-def canonical_packet_bytes(packet: Mapping[str, Any]) -> bytes:
-    """Encode the original signed wire content without adding model defaults."""
-    data = dict(packet)
-    data.pop("signature", None)
-    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-
 
 def _canonical_payload(packet: DevTaskPacket) -> bytes:
     """Return the canonical bytes to sign.
