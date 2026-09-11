@@ -11,6 +11,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import shlex
 import shutil
@@ -60,6 +61,10 @@ DEPLOY_ROOT = Path(
 LIVE_SUPERVISOR_CONFIG_PATH = DEPLOY_ROOT / "runtime" / "live-supervisor-mainroot-config.json"
 COMMAND_RUNTIME_PARENT = DEPLOY_ROOT / "command-runtimes"
 TASK_STATE_MODE = "authoritative"
+# A first cycle may run four serial provider probes (up to 120 seconds each)
+# before publishing fresh canonical projection health. This is independent of
+# the much shorter deadline for stopping one exact process generation.
+DEFAULT_HEALTH_TIMEOUT_SECONDS = 600.0
 SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES = (
     "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
 )
@@ -296,12 +301,31 @@ def _process_is_supervisor(pid: int) -> bool:
 
 
 def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        # A launched candidate is our direct child. kill(pid, 0) alone counts
+        # its unreaped zombie as alive forever while this promoter is running.
+        exited_pid, _status = os.waitpid(pid, os.WNOHANG)
+        if exited_pid == pid:
+            return False
+    except ChildProcessError:
+        pass  # Incumbents and workers may belong to another parent.
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    try:
+        raw_stat = (Path("/proc") / str(pid) / "stat").read_text()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    fields = raw_stat[raw_stat.rfind(")") + 2 :].split()
+    if fields and fields[0] in {"Z", "X"}:
+        return False
     return True
 
 
@@ -1208,6 +1232,8 @@ def _migrate_storage_paths(
 
 def verify_promotion_health(config: dict[str, Any], identity: Mapping[str, str], pid: int, *, timeout_seconds: float) -> dict[str, Any]:
     """Wait boundedly for the exact child and its canonical TaskStore readback."""
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("health timeout must be finite and positive")
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if not _pid_alive(pid):
@@ -1225,7 +1251,7 @@ def verify_promotion_health(config: dict[str, Any], identity: Mapping[str, str],
                 and str(projection.get("last_checked_at") or "") > str(fence.get("started_at") or "")):
             return {"pid": pid, "runtime": runtime_state.promotion_runtime(identity),
                     "health": health, "canonical_readback": projection}
-        time.sleep(0.1)
+        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
     raise RuntimeError("promoted supervisor health/canonical readback timed out")
 
 
@@ -1267,6 +1293,7 @@ def _replace_supervisor_locked(
     live_config_path: Path,
     python_executable: Path,
     termination_timeout: float,
+    health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     evidence_path: Path | None = None,
     authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
@@ -1276,8 +1303,10 @@ def _replace_supervisor_locked(
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
-    if termination_timeout <= 0:
-        raise ValueError("termination timeout must be positive")
+    if not math.isfinite(termination_timeout) or termination_timeout <= 0:
+        raise ValueError("termination timeout must be finite and positive")
+    if not math.isfinite(health_timeout) or health_timeout <= 0:
+        raise ValueError("health timeout must be finite and positive")
     rendered, identity = render_v2_config(
         repo_root,
         status_root=status_root,
@@ -1327,6 +1356,8 @@ def _replace_supervisor_locked(
         "incumbent_pid_file": str(incumbent_pid_path),
         "stopped_pid": None,
         "launched_pid": None,
+        "termination_timeout_seconds": termination_timeout,
+        "health_timeout_seconds": health_timeout,
         "outcome": "failed",
     }
     # Runtime promotion and supervisor reservation recovery share one
@@ -1343,7 +1374,7 @@ def _replace_supervisor_locked(
         admission_lock_entered = False
         try:
             return verify_promotion_health(config, runtime_identity, pid,
-                                           timeout_seconds=max(30.0, termination_timeout))
+                                           timeout_seconds=health_timeout)
         finally:
             admission_lock = runtime_state.runtime_state_lock(dict(config))
             admission_lock.__enter__()
@@ -1444,9 +1475,16 @@ def _replace_supervisor_locked(
                 runtime_state.finish_promotion(candidate_state, fence_epoch)
             launch_succeeded = True
         except Exception as launch_exc:
+            result["launch_error"] = f"{type(launch_exc).__name__}: {launch_exc}"
             if result.get("launched_pid"):
                 # Candidate must stop before restoring/moving any authority files.
-                stop_unaccepted_candidate(result["launched_pid"], timeout_seconds=termination_timeout)
+                try:
+                    stop_unaccepted_candidate(result["launched_pid"], timeout_seconds=termination_timeout)
+                except Exception as stop_exc:
+                    result["rollback_stop_error"] = f"{type(stop_exc).__name__}: {stop_exc}"
+                    raise RuntimeError(
+                        f"{result['launch_error']}; rollback stop failed: {result['rollback_stop_error']}"
+                    ) from stop_exc
             if lock_fd is not None:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             rollback_errors: list[str] = []
@@ -1600,6 +1638,7 @@ def replace_supervisor(
     live_config_path: Path,
     python_executable: Path,
     termination_timeout: float,
+    health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     evidence_path: Path | None = None,
     authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
@@ -1616,6 +1655,7 @@ def replace_supervisor(
             live_config_path=live_config_path,
             python_executable=python_executable,
             termination_timeout=termination_timeout,
+            health_timeout=health_timeout,
             evidence_path=evidence_path,
             authority_env_file=authority_env_file,
             repository_source_roots=repository_source_roots,
@@ -1641,6 +1681,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--termination-timeout", type=float, default=15.0)
+    parser.add_argument(
+        "--health-timeout", type=float, default=DEFAULT_HEALTH_TIMEOUT_SECONDS,
+        help="Seconds to wait for exact runtime and fresh canonical projection health; independent of process termination.",
+    )
     parser.add_argument("--evidence-path")
     parser.add_argument(
         "--authority-env-file",
@@ -1748,6 +1792,7 @@ def main(argv: list[str] | None = None) -> int:
                 live_config_path=live_config_path,
                 python_executable=python_executable,
                 termination_timeout=args.termination_timeout,
+                health_timeout=args.health_timeout,
                 evidence_path=evidence_path,
                 authority_env_file=authority_env_file,
                 repository_source_roots=repository_source_roots,

@@ -7,6 +7,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -2380,7 +2381,8 @@ def test_health_requires_exact_pid_runtime_and_fresh_canonical_readback(tmp_path
         _REAL_VERIFY_PROMOTION_HEALTH(config, candidate, 456, timeout_seconds=.01)
 
 
-def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stop_fails", [False, True])
+def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_path, monkeypatch, stop_fails):
     def unexpected_migration(*args, **kwargs):
         pytest.fail("ordinary source update entered storage migration")
     monkeypatch.setattr(promotion, "_migrate_storage_paths", unexpected_migration)
@@ -2399,16 +2401,31 @@ def test_failed_candidate_health_stops_before_rollback_and_restores_fence(tmp_pa
         return 43 if old else 42
     monkeypatch.setattr(promotion, "launch_v2_supervisor", launch)
     def health(config, identity, pid, **kwargs):
+        assert kwargs["timeout_seconds"] == 123
         events.append("health-old" if pid == 43 else "health-new")
         if pid == 42:
             raise RuntimeError("candidate canonical readback failed")
         return {"pid": pid, "verified": True}
     monkeypatch.setattr(promotion, "verify_promotion_health", health)
-    monkeypatch.setattr(promotion, "stop_unaccepted_candidate", lambda *a, **k: events.append("stop-new"))
+    def stop_candidate(pid, *, timeout_seconds):
+        assert timeout_seconds == 1
+        events.append("stop-new")
+        if stop_fails:
+            raise RuntimeError("candidate stop timed out")
+    monkeypatch.setattr(promotion, "stop_unaccepted_candidate", stop_candidate)
     result = promotion.replace_supervisor(candidate, status_root=status_root, live_config_path=live,
-        python_executable=Path(sys.executable), termination_timeout=1)
+        python_executable=Path(sys.executable), termination_timeout=1, health_timeout=123)
     assert result["outcome"] == "failed"
     assert "canonical readback failed" in result["error"]
+    assert result["launch_error"] == "RuntimeError: candidate canonical readback failed"
+    assert result["health_timeout_seconds"] == 123
+    assert result["termination_timeout_seconds"] == 1
+    if stop_fails:
+        assert events == ["stop-old", "launch-new", "health-new", "stop-new"]
+        assert result["rollback_stop_error"] == "RuntimeError: candidate stop timed out"
+        assert "candidate stop timed out" in result["error"]
+        assert promotion.runtime_state.load_runtime_state(incumbent)["promotion"]["phase"] == "verifying"
+        return
     assert events == ["stop-old", "launch-new", "health-new", "stop-new", "restart-old", "health-old"]
     state = promotion.runtime_state.load_runtime_state(incumbent)
     assert state["promotion"]["phase"] == "rolled_back"
@@ -2440,6 +2457,98 @@ def test_ordinary_promotion_rejects_data_movement_before_stopping(tmp_path, monk
 def test_storage_migration_is_explicit_cli_selection():
     assert not promotion.parse_args(["--status-root", "/tmp/status", "--promote"]).migrate_storage
     assert promotion.parse_args(["--status-root", "/tmp/status", "--promote", "--migrate-storage"]).migrate_storage
+
+
+def test_health_and_termination_cli_budgets_are_independent():
+    basic = ["--status-root", "/tmp/status", "--promote"]
+    defaults = promotion.parse_args(basic)
+    assert defaults.termination_timeout == 15
+    assert defaults.health_timeout == promotion.DEFAULT_HEALTH_TIMEOUT_SECONDS == 600
+    explicit = promotion.parse_args(basic + ["--health-timeout", "321", "--termination-timeout", "2"])
+    assert explicit.health_timeout == 321
+    assert explicit.termination_timeout == 2
+
+
+def test_main_forwards_explicit_health_budget(tmp_path, monkeypatch):
+    candidate, status_root = _candidate(tmp_path)
+    with mock.patch.object(promotion, "replace_supervisor", return_value={
+        "outcome": "launched", "exit_code": 0,
+    }) as replace:
+        assert promotion.main([
+            "--repo", str(candidate), "--status-root", str(status_root),
+            "--live-config", str(tmp_path / "live.json"), "--promote", "--json",
+            "--python", sys.executable, "--health-timeout", "321", "--termination-timeout", "2",
+        ]) == 0
+    assert replace.call_args.kwargs["health_timeout"] == 321
+    assert replace.call_args.kwargs["termination_timeout"] == 2
+
+
+@pytest.mark.parametrize("budget", [0, -1, float("inf"), float("nan")])
+def test_invalid_health_budget_fails_before_render_or_stop(tmp_path, monkeypatch, budget):
+    with mock.patch.object(promotion, "render_v2_config") as render, mock.patch.object(
+        promotion, "stop_existing_supervisor"
+    ) as stop:
+        with pytest.raises(ValueError, match="health timeout must be finite and positive"):
+            promotion.replace_supervisor(tmp_path, status_root=tmp_path,
+                live_config_path=tmp_path / "live.json", python_executable=Path(sys.executable),
+                termination_timeout=1, health_timeout=budget)
+    render.assert_not_called()
+    stop.assert_not_called()
+
+
+def test_pid_alive_reaps_an_actual_exited_direct_child():
+    child = subprocess.Popen([sys.executable, "-B", "-c", "pass"])
+    try:
+        # Observe an unreaped child without Popen.poll()/wait() consuming it.
+        deadline = time.monotonic() + 5
+        while True:
+            raw = Path(f"/proc/{child.pid}/stat").read_text()
+            if raw[raw.rfind(")") + 2 :].split()[0] == "Z":
+                break
+            assert time.monotonic() < deadline, "fixture child did not exit"
+            time.sleep(.01)
+        os.kill(child.pid, 0)  # This succeeds for a zombie, the original defect.
+        assert not promotion._pid_alive(child.pid)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+    finally:
+        child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("process_state", ["Z", "X"])
+def test_pid_alive_rejects_terminal_nonchild(process_state, monkeypatch):
+    with mock.patch.object(promotion.os, "waitpid", side_effect=ChildProcessError), mock.patch.object(
+        promotion.os, "kill"
+    ), mock.patch.object(promotion.Path, "read_text", return_value=f"123 (child) {process_state} 1"):
+        assert not promotion._pid_alive(123)
+
+
+def test_stop_unaccepted_candidate_reaps_actual_sigterm_child(tmp_path):
+    script = tmp_path / "supervisor.py"
+    script.write_text("import time\ntime.sleep(60)\n")
+    child = subprocess.Popen([sys.executable, "-B", str(script)])
+    try:
+        assert promotion._pid_alive(child.pid)
+        promotion.stop_unaccepted_candidate(child.pid, timeout_seconds=2)
+        assert not promotion._pid_alive(child.pid)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+
+
+def test_health_timeout_remains_bounded_with_missing_projection(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(promotion.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(promotion.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(promotion, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(promotion.runtime_state, "load_runtime_state", lambda config: {})
+    with pytest.raises(RuntimeError, match="health/canonical readback timed out"):
+        _REAL_VERIFY_PROMOTION_HEALTH({}, {"root": "/candidate", "head": "a" * 40}, 123,
+            timeout_seconds=.25)
+    assert clock[0] == .25
 
 
 def test_stop_failure_restores_prior_admission_without_signalling_workers(tmp_path, monkeypatch):
