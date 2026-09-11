@@ -120,9 +120,12 @@ def test_copy_from_uses_same_pinned_transport(tmp_path: Path) -> None:
 
 
 def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path, monkeypatch) -> None:
-    # Earlier CI transport setup may export a key path. This case explicitly
-    # tests an absent input, independently of that job-wide environment.
+    # CI supplies both explicit paths and an implicit per-run credential path.
+    # This case tests absent credentials, independently of both sources.
     monkeypatch.setenv("DEV_DEPLOY_SSH_KEY_FILE", str(tmp_path / "ambient-ci-key"))
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "ambient-ci-runner"))
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     missing = subprocess.run(
         [str(TRANSPORT), "exec", "true"],
         check=False,
@@ -133,6 +136,7 @@ def test_exec_rejects_missing_or_permissive_private_key(tmp_path: Path, monkeypa
             "DEV_DEPLOY_SSH_HOST": "203.0.113.12",
             "DEV_DEPLOY_SSH_USER": "deploy-user",
             "DEV_DEPLOY_SSH_KEY_FILE": "",
+            "RUNNER_TEMP": "",
         },
     )
     assert missing.returncode == 2
