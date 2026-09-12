@@ -13615,6 +13615,12 @@ def _mgmt_nl_action_params_valid(kind: str, params: Dict[str, Any]) -> bool:
     if kind == "refreshCurrentView":
         return True
     if kind == "runBffAction":
+        if (
+            params.get("entityType") == "Runtime"
+            and params.get("actionId") in {"PausePaperRuntime", "ResumePaperRuntime"}
+            and str(params.get("entityId") or "").strip()
+        ):
+            return True
         endpoint = str(params.get("endpoint") or "").strip()
         return endpoint.startswith("/bff/") or endpoint.startswith("/api/v1/")
     return False
@@ -15640,6 +15646,9 @@ def _mgmt_nl_provider_prompt(
         "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
         "Treat backend.management_nl.data.conversation.client_hint as a frontend hint, never as the conversation source of truth.",
         "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
+        'For an action proposal, return a JSON object {"answer": "...", "actions": '
+        '[{"id": "...", "kind": "...", "label": "...", "params": {}, "requiresConfirmation": true}]} '
+        "without markdown fences; use the advertised paramsSchema. Plain answers may remain text.",
         "Any runBffAction or write-style action must require confirmation.",
         "If evidence is missing or stale, say so and keep the answer concise.",
         f"Focus: {focus}",
@@ -16962,6 +16971,7 @@ def bff_management_nl_ask_stream(
         )
         chunks: List[str] = []
         final_text: Optional[str] = None
+        final_event: Dict[str, Any] = {}
         had_error = False
         failure_event: Optional[Dict[str, Any]] = None
         try:
@@ -16978,6 +16988,9 @@ def bff_management_nl_ask_stream(
                     chunks.append(str(evt.get("text") or ""))
                 elif evt.get("type") == "done":
                     final_text = str(evt.get("text") or "")
+                    final_event = dict(evt)
+                    # Only emit the BFF's filtered, persisted completion below.
+                    continue
                 elif evt.get("type") == "error":
                     had_error = True
                     failure_event = {
@@ -17033,8 +17046,27 @@ def bff_management_nl_ask_stream(
             yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
             )
-        answer = "".join(chunks).strip() or (final_text or "").strip()
+        raw_answer = (final_text or "").strip() or "".join(chunks).strip()
+        answer = _mgmt_nl_text_from_provider_value(_mgmt_nl_jsonish(raw_answer)) or raw_answer
+        if not final_event and not had_error:
+            had_error = True
+            failure_event = {
+                "event_type": "management_ai.provider.failed",
+                "session_id": session_id, "message_id": message_id, "trace_id": trace_id,
+                "provider_run_id": provider_run_id, "actor_id": identity.operator_id,
+                "provider": "openclaw", "mode": provider_mode,
+                "error_code": "OPENCLAW_STREAM_INCOMPLETE",
+                "error_message": "Provider stream ended without a terminal result.",
+            }
+            yield _mgmt_nl_sse_frame({
+                "type": "error", "error_code": failure_event["error_code"],
+                "message": failure_event["error_message"],
+            })
         if answer and not had_error:
+            actions = _mgmt_nl_extract_provider_actions(
+                {**final_event, "text": raw_answer},
+                allowed_action_kinds=_mgmt_nl_allowed_action_kinds(ui_snapshot),
+            )
             duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
             _management_ai_record_event(
                 {
@@ -17046,6 +17078,7 @@ def bff_management_nl_ask_stream(
                     "actor_id": identity.operator_id,
                     "provider": "openclaw",
                     "provider_state": "completed",
+                    "action_count": len(actions),
                     "mode": provider_mode,
                     "duration_ms": duration_ms,
                     "output_summary": {
@@ -17069,8 +17102,12 @@ def bff_management_nl_ask_stream(
                 created_at=utc_now(),
                 trace_id=trace_id,
                 provider_status=provider_status,
+                ui_actions=actions,
             )
-            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "provider_status": provider_status})
+            yield _mgmt_nl_sse_frame({
+                "type": "done", "text": answer,
+                "provider_status": provider_status, "ui_actions": actions,
+            })
         elif failure_event is not None:
             _management_ai_record_event(failure_event)
         yield _mgmt_nl_sse_frame("[DONE]")
