@@ -290,6 +290,34 @@ class TestPolicyEnvelope(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestToDictShape(unittest.TestCase):
+    def test_http_projection_retains_execution_and_resume_metadata(self):
+        import json
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import (
+            InMemoryFencedLeaderStore, PaperFleetReconciler, _binding_persona_id, validate_executable_binding,
+        )
+        active = _b(metadata={"persona_id": "persona-unit", "tenant_id": "tenant-unit"})
+        paused = _b(binding_id="rb-paused", status="paused", metadata={
+            "session_admission": {"status": "stale", "max_age_seconds": 86400},
+        })
+        wire = json.loads(json.dumps(build_fleet_desired_state([active, paused]).to_dict(include_excluded=True)))
+        binding = wire["bindings"][0]
+        self.assertEqual(binding["metadata"], active["metadata"])
+        self.assertEqual(_binding_persona_id(binding), "persona-unit")
+        self.assertEqual(wire["excluded"][0]["metadata"]["session_admission"], paused["metadata"]["session_admission"])
+        resumed = {**wire["excluded"][0], "status": "active"}
+        self.assertEqual(validate_executable_binding(resumed), (True, None))
+        fleet = PaperFleetReconciler(leader_store=InMemoryFencedLeaderStore(), source_ingest_url="")
+        decision = fleet._check_market_admission(binding)
+        self.assertIsNotNone(decision)
+        self.assertFalse(decision.admitted)  # complete artifact metadata does not invent a Source snapshot
+
+    def test_malformed_historical_metadata_is_excluded_without_crashing_query(self):
+        binding = _b()
+        binding["metadata"] = "malformed"
+        result = build_fleet_desired_state([binding]).to_dict(include_excluded=True)
+        self.assertEqual(result["active_count"], 0)
+        self.assertEqual(result["excluded"][0]["exclusion_reason"], "non_executable_missing_runtime_metadata")
+
     def test_default_excludes_excluded_list(self):
         state = build_fleet_desired_state([_b(), _b(binding_id="rb-2", status="retired")])
         d = state.to_dict()
