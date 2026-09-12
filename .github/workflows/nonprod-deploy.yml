@@ -1797,6 +1797,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 60
         env:
+          EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
