@@ -16,12 +16,10 @@ from unittest import mock
 # Ensure runtime-manager modules are importable
 SERVICES_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = SERVICES_DIR.parent
-RM_DIR = SERVICES_DIR / "execution" / "runtime-manager"
-sys.path.insert(0, str(RM_DIR))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from kill_switch_controller import (
+from services.runtime_manager.kill_switch_controller import (
     KillSwitchController,
     EmergencyTrigger,
     KillSwitchActionType,
@@ -30,7 +28,7 @@ from kill_switch_controller import (
     SoftTriggerReason,
     KillSwitchError,
 )
-from runtime_binding import (
+from services.runtime_manager.runtime_binding import (
     RuntimeBindingStore,
     RuntimeBindingStatus,
     RollbackActionType,
@@ -79,10 +77,12 @@ class FakeRuntimeManagerClient:
         binding = self.bindings.get(binding_id)
         return dict(binding) if binding is not None else None
 
-    def transition(self, binding_id: str, new_status: str):
+    def transition(self, binding_id: str, new_status: str, *, metadata_patch=None):
         self.calls.append(("transition", binding_id, new_status))
         binding = dict(self.bindings[binding_id])
         binding["status"] = new_status
+        if metadata_patch:
+            binding.setdefault("metadata", {}).update(metadata_patch)
         self.bindings[binding_id] = binding
         return dict(binding)
 
@@ -189,7 +189,6 @@ class TestRuntimeBindingTransitions(unittest.TestCase):
 
     def _create_active_binding(self, binding_id="test-binding"):
         """Create an active binding for testing."""
-        from runtime_binding import RuntimeBinding
         binding = RuntimeBinding(
             binding_id=binding_id,
             runtime_id=f"runtime-{binding_id}",
@@ -298,7 +297,6 @@ class TestIncidentControlPathIntegration(unittest.TestCase):
 
     def test_full_pause_path(self):
         """Pause command flows through RuntimeBinding state machine."""
-        from runtime_binding import RuntimeBinding
         binding_id = "pause-integration-test"
         binding = RuntimeBinding(
             binding_id=binding_id,
@@ -343,7 +341,6 @@ class TestIncidentControlPathIntegration(unittest.TestCase):
 
     def test_full_rollback_path(self):
         """Rollback command flows through RuntimeBinding state machine."""
-        from runtime_binding import RuntimeBinding
         binding_id = "rollback-integration-test"
         binding = RuntimeBinding(
             binding_id=binding_id,
@@ -449,6 +446,21 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertTrue(payload["degraded_mode"])
         self.assertEqual(self.fake_client.calls, [("get", "missing-binding")])
+
+    def test_operator_pause_replaces_prior_stale_auto_resume_marker(self):
+        for prior_status in ("active", "pending_pause", "paused"):
+            with self.subTest(prior_status=prior_status):
+                binding_id = "binding-prior-stale-" + prior_status
+                self.fake_client.seed(binding_id, status=prior_status)
+                self.fake_client.bindings[binding_id]["metadata"] = {"session_admission": {
+                    "reason_code": "market_input_stale", "resumed_at": "2026-09-12T10:00:00Z",
+                }}
+                response = self.client.post(f"/api/internal/v1/runtimes/{binding_id}/pause",
+                    headers=self._headers(), json={"pause_action": "pause", "reason": "operator pause"})
+                self.assertEqual(response.status_code, 202)
+                binding = self.fake_client.bindings[binding_id]
+                self.assertEqual(binding["status"], "paused")
+                self.assertEqual(binding["metadata"]["session_admission"]["reason_code"], "operator_requested_pause")
 
     def test_rollback_route_requires_canonical_runtime_manager_endpoint(self):
         binding_id = "binding-rollback-001"

@@ -388,3 +388,82 @@ def test_controller_registry_failure_is_durable_and_fail_closed(tmp_path) -> Non
     assert "registry unavailable" in str(persisted.last_failure_reason)
     assert authority.tasks == {}
     assert authority.runs == {}
+
+
+def test_alpha_replication_registry_list_authorization_and_rotation(tmp_path, monkeypatch) -> None:
+    from services.research.alpha_replication.replication_controller import _get_approved_specs_for_strategy
+    from unittest.mock import MagicMock
+
+    token_file = tmp_path / "alpha_token"
+    token_file.write_text("token-alpha-1\n", encoding="utf-8")
+    token_file.chmod(0o600)
+
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", "stale-env-token")
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=5):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'[{"entry": {"strategy_spec_id": "spec-1"}}]'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. GET list request with token-alpha-1
+    res1 = _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert res1 == [{"strategy_spec_id": "spec-1"}]
+    req1 = captured_requests[-1]
+    assert req1.get_method() == "GET"
+    assert req1.get_header("Authorization") == "Bearer token-alpha-1"
+    assert req1.full_url == "http://registry:8087/api/registry/strategies/strat-1/strategy-specs?artifact_state=approved"
+
+    # 2. Rotate token in file: next call sees rotated token immediately
+    token_file.write_text("token-alpha-2\n", encoding="utf-8")
+
+    res2 = _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert res2 == [{"strategy_spec_id": "spec-1"}]
+    req2 = captured_requests[-1]
+    assert req2.get_header("Authorization") == "Bearer token-alpha-2"
+
+
+def test_alpha_replication_registry_list_missing_blank_and_file_error(tmp_path, monkeypatch) -> None:
+    from services.research.alpha_replication.replication_controller import _get_approved_specs_for_strategy
+    from unittest.mock import MagicMock
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=5):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'[]'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. Missing / unconfigured: preserves unauthenticated test/local behavior
+    monkeypatch.delenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", raising=False)
+
+    _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 2. Blank env token: no header
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", "   ")
+    _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 3. File error: raises RuntimeError and does not log credentials
+    bad_token_file = tmp_path / "bad_token"
+    bad_token_file.write_text("secret-token-value", encoding="utf-8")
+    bad_token_file.chmod(0o644)
+
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", str(bad_token_file))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert "Configured service credential unavailable" in str(exc_info.value)
+    assert "secret-token-value" not in str(exc_info.value)

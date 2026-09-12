@@ -942,6 +942,14 @@ class RuntimeManagerServiceTests(unittest.TestCase):
 
 
 class RuntimeManagerClientTests(unittest.TestCase):
+    def test_remote_transition_forwards_operator_pause_metadata(self):
+        client = RuntimeManagerClient(base_url="http://runtime-manager.invalid", bearer_token="unit-only")
+        patch = {"session_admission": {"reason_code": "operator_requested_pause"}}
+        with mock.patch.object(client, "_request_json", return_value={"binding_id": "rb-unit", "status": "paused"}) as request:
+            result = client.transition("rb-unit", "paused", metadata_patch=patch)
+        request.assert_called_once_with("POST", "/api/runtime-bindings/rb-unit/transition", {"new_status": "paused", "metadata_patch": patch})
+        self.assertEqual(result["status"], "paused")
+
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tempdir.name) / "bindings.json"

@@ -32,6 +32,8 @@ services:
       - dev-paper-governance-tokens:/issued/governance
       - dev-paper-runtime-tokens:/issued/runtime-manager
       - dev-paper-bff-tokens:/issued/operator-bff
+      - dev-paper-distillation-tokens:/issued/strategy-distillation-worker
+      - dev-paper-alpha-replication-tokens:/issued/alpha-replication-worker
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -360,12 +362,15 @@ services:
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      DISTILLATION_REGISTRY_SERVICE_TOKEN: ${DISTILLATION_REGISTRY_SERVICE_TOKEN:-}
+      DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE: ${DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE:-}
       PANTHEON_LOOP_ID: strategy_distillation
       PANTHEON_CONTROLLER_NAME: strategy-distillation-controller
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       GIT_SHA: ${GIT_SHA:-local-dev}
     volumes:
+      - dev-paper-distillation-tokens:/run/pantheon-principals:ro
       - source-ingest-data:/data/source-ingest
     depends_on:
       source-ingest:
@@ -401,6 +406,8 @@ services:
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN: ${ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE:-}
       PANTHEON_LOOP_ID: alpha_replication
       PANTHEON_CONTROLLER_NAME: alpha-replication-controller
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
@@ -408,6 +415,7 @@ services:
       GIT_SHA: ${GIT_SHA:-local-dev}
       PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
     volumes:
+      - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
       - source-ingest-data:/data/source-ingest
     depends_on:
@@ -2837,6 +2845,8 @@ volumes:
   dev-paper-governance-tokens:
   dev-paper-runtime-tokens:
   dev-paper-bff-tokens:
+  dev-paper-distillation-tokens:
+  dev-paper-alpha-replication-tokens:
   broker-data:
   bff-data:
   capital-data:

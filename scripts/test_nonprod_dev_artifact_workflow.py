@@ -91,6 +91,22 @@ def test_inline_compensation_never_uses_source_equality_as_artifact_proof():
     assert body.index("prepare --provenance runner-local") < body.index("acquire \\")
 
 
+def test_inline_compensation_readback_directory_is_bound_in_its_own_step(tmp_path):
+    rollback = step(DEPLOY, "deploy_compensation")
+    assert rollback["env"]["EVIDENCE_DIR"] == "${{ steps.release_admission.outputs.evidence_dir }}"
+    # Exercise the real shell expansion under nounset without running a deploy.
+    argument = re.search(r'--artifact-readback-out\s+("[^"\n]+")', rollback["run"])
+    assert argument is not None
+    result = subprocess.run(
+        ["bash", "-u", "-c", "printf '%s' " + argument.group(1)],
+        env={"EVIDENCE_DIR": str(tmp_path)},
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(tmp_path / "dev-compensation-artifact-readback.json")
+
+
 @pytest.mark.parametrize("job_name", ["deploy-dev", "coordinate-dev-release"])
 def test_dev_workflow_embedded_shell_is_syntactically_executable(job_name):
     for item in WORKFLOW["jobs"][job_name]["steps"]:

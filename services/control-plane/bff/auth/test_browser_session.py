@@ -51,6 +51,7 @@ def app_factory(tmp_path, monkeypatch):
         app.add_middleware(CORSMiddleware, allow_origins=[ORIGIN], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
         @app.api_route("/bff/test-business", methods=["GET", "POST"])
+        @app.api_route("/api/v1/operator/commands/test-command", methods=["GET", "POST"])
         def business(authorization: str | None = Header(default=None)):
             identity = deps.extract_identity(authorization)
             deps.require_read_role(identity)
@@ -71,8 +72,9 @@ def test_browser_login_reload_business_and_durable_logout(app_factory):
         assert response.status_code == 200, response.text
         assert "access_token" not in response.json()
         header = response.headers["set-cookie"]
-        assert all(value in header for value in ["HttpOnly", "Secure", "SameSite=lax", "Path=/bff", "Max-Age="])
+        assert all(value in header for value in ["HttpOnly", "Secure", "SameSite=lax", "Path=/", "Max-Age="])
         assert "Domain=" not in header
+        assert [cookie.path for cookie in client.cookies.jar if cookie.name == "pantheon_session"] == ["/"]
         token = client.cookies.get("pantheon_session")
         assert client.get("/bff/me").status_code == 200
         assert client.get("/bff/auth/readiness").status_code == 200
@@ -80,19 +82,22 @@ def test_browser_login_reload_business_and_durable_logout(app_factory):
         assert business.status_code == 200
         assert business.json()["tenant_id"] == "tenant-dev"
         assert client.post("/bff/test-business", headers={"Origin": ORIGIN}).status_code == 200
+        assert client.get("/api/v1/operator/commands/test-command").status_code == 200
 
     # A fresh application/client reads the persisted session using only cookie.
     with TestClient(app_factory(), base_url=BASE) as reloaded:
-        reloaded.cookies.set("pantheon_session", token, domain="api.dev.mvl-cap.tw", path="/bff")
+        reloaded.cookies.set("pantheon_session", token, domain="api.dev.mvl-cap.tw", path="/")
         assert reloaded.get("/bff/me").status_code == 200
         assert reloaded.get("/bff/test-business").status_code == 200
+        assert reloaded.get("/api/v1/operator/commands/test-command").status_code == 200
         logout = reloaded.post("/bff/logout", headers={"Origin": ORIGIN}, json={})
         assert logout.status_code == 200, logout.text
         assert reloaded.cookies.get("pantheon_session") is None
     with TestClient(app_factory(), base_url=BASE) as restarted:
-        restarted.cookies.set("pantheon_session", token, domain="api.dev.mvl-cap.tw", path="/bff")
+        restarted.cookies.set("pantheon_session", token, domain="api.dev.mvl-cap.tw", path="/")
         assert restarted.get("/bff/me").status_code == 401
         assert restarted.get("/bff/test-business").status_code == 401
+        assert restarted.get("/api/v1/operator/commands/test-command").status_code == 401
 
 
 @pytest.mark.parametrize("origin", [None, "null", "https://attacker.example", ORIGIN + ".attacker.example"])
@@ -104,6 +109,7 @@ def test_cookie_mutations_and_login_require_exact_origin(app_factory, origin):
         assert "set-cookie" not in response.headers
         assert login(client).status_code == 200
         assert client.post("/bff/test-business", headers=headers).status_code == 403
+        assert client.post("/api/v1/operator/commands/test-command", headers=headers).status_code == 403
         assert client.post("/bff/logout", headers=headers).status_code == 403
 
 
@@ -114,12 +120,14 @@ def test_invalid_credentials_and_authorization_precedence(app_factory):
         assert "set-cookie" not in denied.headers
         assert login(client).status_code == 200
         assert client.get("/bff/test-business", headers={"Authorization": "Bearer invalid"}).status_code == 401
+        assert client.get("/api/v1/operator/commands/test-command", headers={"Authorization": "Bearer invalid"}).status_code == 401
         client.cookies.clear()
         client.cookies.set("pantheon_session", "invalid", domain="api.dev.mvl-cap.tw", path="/bff")
         denied = client.get("/bff/test-business", headers={"Origin": ORIGIN})
         assert denied.status_code == 401
         assert denied.headers["access-control-allow-origin"] == ORIGIN
         assert login(client).status_code == 200
+        assert [cookie.path for cookie in client.cookies.jar if cookie.name == "pantheon_session"] == ["/"]
 
 
 def test_cli_login_remains_bearer_and_does_not_require_origin(app_factory):
@@ -138,3 +146,4 @@ def test_production_does_not_enable_dev_cookie_adapter(app_factory, monkeypatch)
         monkeypatch.setenv("PANTHEON_ENV", "production")
         assert login(client).status_code == 403
         assert client.get("/bff/test-business").status_code == 401
+        assert client.get("/api/v1/operator/commands/test-command").status_code == 401

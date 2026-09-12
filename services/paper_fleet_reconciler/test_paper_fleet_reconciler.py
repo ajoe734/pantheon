@@ -1891,6 +1891,27 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(adm["resume_snapshot_id"], "snap-fresh-002")
         self.assertIsNotNone(adm["resumed_at"])
 
+        # After automatic recovery, an actual operator pause must remain paused
+        # even when Source admits another newer snapshot.
+        from services.control_plane.internal import internal_api
+        owner = SimpleNamespace(
+            get=lambda binding_id: store.get(binding_id).to_dict(),
+            transition=lambda binding_id, status, **kwargs: store.transition_status(binding_id, status, **kwargs).to_dict(),
+        )
+        with tempfile.TemporaryDirectory() as command_dir, patch.object(internal_api, "_runtime_manager_client", owner), patch.object(internal_api, "_COMMAND_STATE_FILE", str(Path(command_dir) / "commands.json")):
+            response = internal_api.app.test_client().post(
+                "/api/internal/v1/runtimes/b-resume-001/pause",
+                headers={"Authorization": "Bearer internal-test-token:admin:mfa", "X-MFA-Token": "123456"},
+                json={"pause_action": "pause", "reason": "unit operator pause after recovery"},
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(store.get("b-resume-001").metadata["session_admission"]["reason_code"], "operator_requested_pause")
+        new_snap.update(snapshot_id="snap-fresh-003", event_time=now.isoformat().replace("+00:00", "Z"))
+        after_pause = recon.reconcile_once()
+        self.assertEqual(store.get("b-resume-001").status, "paused")
+        self.assertEqual(after_pause["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 1)  # no second automatic resume
+
     def test_same_stale_snapshot_cannot_resume(self) -> None:
         now = datetime.now(timezone.utc)
         snap_time = (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")

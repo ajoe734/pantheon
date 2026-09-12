@@ -390,7 +390,10 @@ class RuntimeBindingStore:
             )
 
         allowed = _ALLOWED_STATUS_TRANSITIONS.get(binding.status, [])
-        if new_status not in allowed:
+        # An operator can take ownership of an already-paused binding without
+        # resuming it just to replace the old automatic stale-pause reason.
+        paused_metadata_update = binding.status == "paused" and new_status == "paused" and bool(metadata_patch)
+        if new_status not in allowed and not paused_metadata_update:
             raise RuntimeBindingError(
                 f"Invalid status transition: {binding.status!r} -> {new_status!r}. "
                 f"Allowed from {binding.status!r}: {allowed}"

@@ -1473,8 +1473,8 @@ def _evaluate_persona_provisioning_status(
     projection_failed = False
     if plan_id:
         try:
-            candidate = _get_json(
-                _deployment_url(f"/api/deployment/plans/{quote(plan_id, safe='')}/projection")
+            candidate = _PersonaOwnerHttpTransport(tenant_id=tenant_id).get(
+                "deployment", f"/api/deployment/plans/{quote(plan_id, safe='')}/projection"
             )
             projection = candidate if isinstance(candidate, dict) else {}
         except Exception as exc:
