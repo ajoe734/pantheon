@@ -53,6 +53,9 @@ class SmokeTestStore(ReadSurfacePorts):
         super().__init__()
         self._data = data or {}
 
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        return list(self._data.get("paper_runtime_monitoring_sessions", []))
+
     def get_deployment_plan(self, plan_id: str) -> Optional[dict[str, Any]]:
         plans = self._data.get("deployment_plans", {})
         return plans.get(plan_id)

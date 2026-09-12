@@ -28,9 +28,12 @@ def create_auth_router(
             raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Browser login requires an allowed Origin"}})
         result = await service.invoke("bff_auth_dev_login", payload=payload)
         if browser_session:
+            # Retire the earlier /bff-only cookie: command tracking is served
+            # by the same BFF host at /api/v1/operator/commands/{id}.
+            response.delete_cookie("pantheon_session", path="/bff", secure=True, httponly=True, samesite="lax")
             response.set_cookie(
                 "pantheon_session", result["access_token"],
-                max_age=result["expires_in"], path="/bff",
+                max_age=result["expires_in"], path="/",
                 secure=True, httponly=True, samesite="lax",
             )
             # The browser needs only session metadata, never a JS-readable JWT.

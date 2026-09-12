@@ -306,7 +306,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
         raising=False,
     )
     monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", provisioning_store)
-    monkeypatch.setattr(personas_service, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
+    monkeypatch.setattr(personas_service._PersonaOwnerHttpTransport, "get", lambda *_args, **_kwargs: deepcopy(projection))
     monkeypatch.setattr(personas_service, "_runtime_manager_client", lambda: runtime_client)
     monkeypatch.setattr(
         personas_service,
@@ -768,7 +768,7 @@ def test_deployment_degraded_cannot_reuse_local_ids_as_success(
     def unavailable(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("deployment unavailable")
 
-    monkeypatch.setattr(personas_service, "_get_json", unavailable)
+    monkeypatch.setattr(personas_service._PersonaOwnerHttpTransport, "get", unavailable)
 
     state, _ = _evaluate(
         bindings={RUNTIME_BINDING_ID: _runtime_binding()},
@@ -1135,8 +1135,8 @@ def test_terminal_failure_ledger_materializes_before_owner_readback(
         "terminal_reason": "dispatch_owner_failed"
     }
     monkeypatch.setattr(
-        personas_service,
-        "_get_json",
+        personas_service._PersonaOwnerHttpTransport,
+        "get",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("terminal replay must precede Deployment readback")
         ),
@@ -1200,16 +1200,37 @@ def test_stable_terminal_failure_reconciliation_does_not_write_churn(
 
 
 def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> None:
-    calls: list[str] = []
+    drift_calls: list[str] = []
+    transport_calls: list[str] = []
 
-    class AuthoritativePaperSessionPort:
+    class DriftReportPort:
         def list_paper_live_drift_reports(self) -> list[dict[str, Any]]:
-            calls.append("authoritative_sessions")
+            drift_calls.append("drift_reports")
             return []
 
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return b'{"monitoring_sessions": [{"id": "session-1", "runtime_id": "rt-1"}]}'
+
+    def fake_transport(req, timeout=10.0):
+        transport_calls.append(req.full_url)
+        return FakeResponse()
+
     store = create_read_surface_ports(
-        lifecycle_telemetry_governance=AuthoritativePaperSessionPort(),
+        lifecycle_telemetry_governance=DriftReportPort(),
+        paper_fleet_reconciler_url="http://paper-reconciler.test",
+        paper_fleet_transport=fake_transport,
     )
 
-    assert store.list_authoritative_paper_runtime_monitoring_sessions() == []
-    assert calls == ["authoritative_sessions"]
+    sessions = store.list_authoritative_paper_runtime_monitoring_sessions()
+    assert sessions == [{"id": "session-1", "runtime_id": "rt-1"}]
+    assert transport_calls == ["http://paper-reconciler.test/api/fleet/state"]
+    assert drift_calls == []
