@@ -609,6 +609,18 @@ class TestPersistence:
 
 class TestRuntimeBindingMetadataPatch:
 
+    def test_operator_can_take_over_already_paused_binding(self, tmp_path) -> None:
+        path = tmp_path / "bindings.json"
+        store = RuntimeBindingStore(path)
+        store.create(_base(binding_id="rtb-paused-owner"), single_runtime_enforced=False)
+        store.transition_status("rtb-paused-owner", "pending_pause", metadata_patch={"session_admission": {"reason_code": "market_input_stale", "source_snapshot_id": "snap-unit"}})
+        store.transition_status("rtb-paused-owner", "paused")
+        updated = store.transition_status("rtb-paused-owner", "paused", metadata_patch={"session_admission": {"reason_code": "operator_requested_pause"}})
+        assert updated.status == "paused"
+        assert updated.metadata["session_admission"] == {"reason_code": "operator_requested_pause", "source_snapshot_id": "snap-unit"}
+        reloaded = RuntimeBindingStore(path).get("rtb-paused-owner")
+        assert reloaded.metadata == updated.metadata
+
     def test_transition_status_with_metadata_patch(self, store: RuntimeBindingStore) -> None:
         b = _base(binding_id="rtb-meta-001", metadata={"existing_key": "val1"})
         store.create(b, single_runtime_enforced=False)

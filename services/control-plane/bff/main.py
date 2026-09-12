@@ -2633,6 +2633,8 @@ _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
     CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
     CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
+    CommandType.PAUSE_PAPER_RUNTIME: ObjectType.RUNTIME,
+    CommandType.RESUME_PAPER_RUNTIME: ObjectType.RUNTIME,
 }
 def _validate_final_command_target_type(cmd: OperatorCommand) -> None:
     expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
@@ -2679,6 +2681,49 @@ def _validate_capital_authority_target_binding(cmd: OperatorCommand) -> None:
             ),
             precondition_failed="capital_target_id_mismatch",
         )
+def _validate_paper_runtime_authority_target_binding(cmd: OperatorCommand) -> None:
+    if cmd.command not in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+        return
+    if cmd.target.type != ObjectType.RUNTIME:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            f"{cmd.command.value} requires target.type = Runtime",
+            "Canonical paper commands only accept Runtime targets",
+            precondition_failed="target.type",
+        )
+    target_id = str(cmd.target.id or "").strip()
+    if not target_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            f"{cmd.command.value} requires a non-empty runtime target id",
+            "target.id must be a non-empty runtime id",
+            precondition_failed="target.id",
+        )
+    aliases = ("runtime_id", "runtimeId", "entity_id", "entityId")
+    supplied = {
+        str(cmd.params.get(alias) or "").strip()
+        for alias in aliases
+        if str(cmd.params.get(alias) or "").strip()
+    }
+    if supplied and supplied != {target_id}:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            f"runtime_id must match command target.id for {cmd.command.value}",
+            (
+                f"Canonical paper command targets {target_id!r}, but params supplied "
+                f"{sorted(supplied)!r}"
+            ),
+            precondition_failed="target_redirection_detected",
+        )
+    # Discard caller-supplied verified_binding/verified_binding_id
+    cmd.params.pop("verified_binding", None)
+    cmd.params.pop("verified_binding_id", None)
+    cmd.params.pop("verified_runtime_binding_id", None)
+    cmd.params["runtime_id"] = target_id
+    cmd.params["entity_id"] = target_id
 def _canonicalize_validated_precondition_evidence(
     stored_params: Dict[str, Any],
     evidence: Dict[str, str],
@@ -3300,18 +3345,40 @@ def _stored_command_params(
     elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
         params.pop("personaId", None)
         params["persona_id"] = cmd.target.id
+    elif cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+        target_rt_id = str(cmd.target.id).strip()
+        params["runtime_id"] = target_rt_id
+        params["entity_id"] = target_rt_id
+        params.pop("runtimeId", None)
+        params.pop("entityId", None)
+        params.pop("verified_binding", None)
+        params.pop("verified_binding_id", None)
+        params.pop("verified_runtime_binding_id", None)
+        if raw_payload and "bounded_duration_minutes" in raw_payload and "bounded_duration_minutes" not in params:
+            params["bounded_duration_minutes"] = raw_payload["bounded_duration_minutes"]
+        bdm = params.get("bounded_duration_minutes")
+        if bdm is not None:
+            try:
+                bdm_val = int(bdm)
+                if bdm_val > 0:
+                    params["duration_seconds"] = bdm_val * 60
+            except (ValueError, TypeError):
+                pass
     canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
         cmd.command,
         cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
     )
     if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
         canonical_action_id = "submit_recommendation"
+    canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
+    if canonical_paper:
+        canonical_action_id = cmd.command.value
     # The target/action/actor fields come from the validated command envelope,
     # never from caller params.  Apart from fixing null adapter receipts, this
     # prevents a caller from redirecting an admitted command after validation.
     params.update(
         {
-            "entity_type": cmd.params.get("entity_type") or cmd.target.type.value,
+            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
             "entity_id": cmd.target.id,
             "action_id": canonical_action_id,
             "actionId": canonical_action_id,
@@ -3413,6 +3480,21 @@ def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, An
     command_type = CommandType(record["type"])
     params = dict(record.get("params") or {})
     if command_type not in _DRAWER_RUNTIME_COMMANDS:
+        if command_type in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+            params.update(entity_type="Runtime", action_id=command_type.value, actionId=command_type.value)
+            target = record.get("target") or {}
+            rt_id = str(target.get("id") or "").strip()
+            # Discard caller-supplied verified_binding/verified_binding_id;
+            # server resolve authoritative owner both admission and execution;
+            # never replace immutable target with binding.runtime_id.
+            params.pop("verified_binding", None)
+            params.pop("verified_binding_id", None)
+            params.pop("verified_runtime_binding_id", None)
+            if rt_id:
+                params["runtime_id"] = rt_id
+                params["entity_id"] = rt_id
+                params.pop("runtimeId", None)
+                params.pop("entityId", None)
         return params
 
     target = record.get("target") or {}
@@ -4621,6 +4703,36 @@ def _validate_quarterly_ranking_recommendation_submit(
             f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
             precondition_failed="recommendation_action_id",
         )
+def _check_binding_tenant_ownership(binding: Any, identity: OperatorIdentity) -> str:
+    binding_tenant = ""
+    metadata = binding.get("metadata") if isinstance(binding, dict) else getattr(binding, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("tenant_id", "tenantId", "tenant"):
+            val = metadata.get(key)
+            if val is not None and str(val).strip():
+                binding_tenant = str(val).strip()
+                break
+    if not binding_tenant:
+        for key in ("tenant_id", "tenantId", "tenant"):
+            val = binding.get(key) if isinstance(binding, dict) else getattr(binding, key, None)
+            if val is not None and str(val).strip():
+                binding_tenant = str(val).strip()
+                break
+    if not binding_tenant:
+        raise _bff_error(403, ErrorCode.FORBIDDEN, "Runtime tenant is unavailable", "Cannot determine the runtime owner tenant", precondition_failed="cross_tenant")
+
+    # Reuse the existing tenant resolver; do not maintain another claims policy.
+    try:
+        _bff_me_tenant_payload(identity, requested_tenant=binding_tenant)
+    except HTTPException as exc:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Cross-tenant access forbidden",
+            f"Caller cannot operate on runtime binding in tenant '{binding_tenant}'",
+            precondition_failed="cross_tenant",
+        ) from exc
+    return binding_tenant
 def _enforce_ops_console_preconditions(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -4638,7 +4750,7 @@ def _enforce_ops_console_preconditions(
             or params.get("entityId")
             or ""
         ).strip()
-    elif entity_type == "runtime":
+    elif entity_type in ("runtime", "paper-runtime"):
         runtime_id = (
             params.get("runtime_id")
             or params.get("runtimeId")
@@ -4701,11 +4813,21 @@ def _enforce_ops_console_preconditions(
                             precondition_failed="capital_binding_missing",
                         )
 
-    runtime_id = (
-        params.get("runtime_id")
-        or params.get("runtimeId")
-        or ""
-    ).strip()
+    # Item 4: generic _enforce_ops_console_preconditions must NOT derive runtime_id from entity_id
+    # for persona actions Observe/RequestReview/etc. Runtime fallback only actual Runtime targets/paper runtime commands.
+    is_runtime_target = (
+        entity_type in ("runtime", "paper-runtime")
+        or (required_bindings and "paper" in required_bindings)
+        or str(params.get("target_type") or "").strip().lower() in ("runtime", "paper-runtime")
+    )
+    if not runtime_id and is_runtime_target:
+        runtime_id = (
+            params.get("runtime_id")
+            or params.get("runtimeId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
     if runtime_id:
         binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
         if not binding:
@@ -4715,8 +4837,51 @@ def _enforce_ops_console_preconditions(
                 "Runtime not found",
                 f"Runtime {runtime_id} does not exist",
             )
+        resolved_rt_id = (
+            binding.get("runtime_id") or binding.get("runtimeId")
+            if isinstance(binding, dict)
+            else getattr(binding, "runtime_id", getattr(binding, "runtimeId", None))
+        )
+        resolved_rt_id = str(resolved_rt_id or "").strip()
+        if resolved_rt_id and resolved_rt_id != runtime_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Runtime ID mismatch",
+                f"Binding runtime ID '{resolved_rt_id}' does not match requested runtime ID '{runtime_id}'",
+                precondition_failed="runtime_id_mismatch",
+            )
+        payload_binding_id = str(
+            params.get("binding_id")
+            or params.get("bindingId")
+            or params.get("runtime_binding_id")
+            or params.get("runtimeBindingId")
+            or ""
+        ).strip()
+        actual_binding_id = (
+            binding.get("binding_id") or binding.get("id") or binding.get("bindingId")
+            if isinstance(binding, dict)
+            else getattr(binding, "binding_id", getattr(binding, "id", getattr(binding, "bindingId", None)))
+        )
+        actual_binding_id = str(actual_binding_id or "").strip()
+        if payload_binding_id and actual_binding_id and payload_binding_id != actual_binding_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Binding ID mismatch",
+                f"Payload binding ID '{payload_binding_id}' does not match resolved binding '{actual_binding_id}'",
+                precondition_failed="binding_mismatch",
+            )
+        params["tenant_id"] = _check_binding_tenant_ownership(binding, identity)
         if required_bindings and "paper" in required_bindings:
-            stage = str(binding.get("deployment_stage") or binding.get("stage") or "").strip().lower()
+            stage = (
+                binding.get("deployment_mode")
+                or binding.get("deployment_stage")
+                or binding.get("stage")
+                if isinstance(binding, dict)
+                else getattr(binding, "deployment_mode", getattr(binding, "deployment_stage", getattr(binding, "stage", "")))
+            )
+            stage = str(stage or "").strip().lower()
             if stage != "paper":
                 raise _bff_error(
                     422,
@@ -4725,6 +4890,12 @@ def _enforce_ops_console_preconditions(
                     "Action is restricted to paper runtimes only",
                     precondition_failed="stage_mismatch",
                 )
+        # Discard caller-supplied verified_binding/verified_binding_id; server resolve authoritative owner
+        params.pop("verified_binding", None)
+        params.pop("verified_binding_id", None)
+        params.pop("verified_runtime_binding_id", None)
+        if actual_binding_id:
+            params["runtime_binding_id"] = actual_binding_id
 def _validate_observe(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
@@ -4763,8 +4934,13 @@ def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIden
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    runtime_id = params.get("runtime_id") or params.get("runtimeId")
-    if not runtime_id:
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or params.get("entity_id")
+        or params.get("entityId")
+    )
+    if not runtime_id or not str(runtime_id).strip():
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
@@ -4772,6 +4948,21 @@ def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIden
             "runtime_id must be provided",
             precondition_failed="missing_runtime",
         )
+    if "bounded_duration_minutes" in params and params["bounded_duration_minutes"] is not None:
+        val = params["bounded_duration_minutes"]
+        valid = False
+        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+            valid = True
+        elif isinstance(val, str) and val.strip().isdigit() and int(val.strip()) > 0:
+            valid = True
+        if not valid:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid bounded_duration_minutes",
+                "bounded_duration_minutes must be a positive integer",
+                precondition_failed="bounded_duration_minutes",
+            )
     _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
 def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     if not {"operator", "approver", "admin"}.intersection(identity.roles):
@@ -4782,8 +4973,13 @@ def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIde
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    runtime_id = params.get("runtime_id") or params.get("runtimeId")
-    if not runtime_id:
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or params.get("entity_id")
+        or params.get("entityId")
+    )
+    if not runtime_id or not str(runtime_id).strip():
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
@@ -7289,6 +7485,7 @@ def _submit_final_command_admission(
             extra_precondition(identity, cmd)
         _validate_audit_context(cmd)
         _validate_capital_authority_target_binding(cmd)
+        _validate_paper_runtime_authority_target_binding(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
         _validate_final_command_target_type(cmd)
@@ -13418,6 +13615,12 @@ def _mgmt_nl_action_params_valid(kind: str, params: Dict[str, Any]) -> bool:
     if kind == "refreshCurrentView":
         return True
     if kind == "runBffAction":
+        if (
+            params.get("entityType") == "Runtime"
+            and params.get("actionId") in {"PausePaperRuntime", "ResumePaperRuntime"}
+            and str(params.get("entityId") or "").strip()
+        ):
+            return True
         endpoint = str(params.get("endpoint") or "").strip()
         return endpoint.startswith("/bff/") or endpoint.startswith("/api/v1/")
     return False
@@ -15443,6 +15646,9 @@ def _mgmt_nl_provider_prompt(
         "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
         "Treat backend.management_nl.data.conversation.client_hint as a frontend hint, never as the conversation source of truth.",
         "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
+        'For an action proposal, return a JSON object {"answer": "...", "actions": '
+        '[{"id": "...", "kind": "...", "label": "...", "params": {}, "requiresConfirmation": true}]} '
+        "without markdown fences; use the advertised paramsSchema. Plain answers may remain text.",
         "Any runBffAction or write-style action must require confirmation.",
         "If evidence is missing or stale, say so and keep the answer concise.",
         f"Focus: {focus}",
@@ -16765,6 +16971,7 @@ def bff_management_nl_ask_stream(
         )
         chunks: List[str] = []
         final_text: Optional[str] = None
+        final_event: Dict[str, Any] = {}
         had_error = False
         failure_event: Optional[Dict[str, Any]] = None
         try:
@@ -16781,6 +16988,9 @@ def bff_management_nl_ask_stream(
                     chunks.append(str(evt.get("text") or ""))
                 elif evt.get("type") == "done":
                     final_text = str(evt.get("text") or "")
+                    final_event = dict(evt)
+                    # Only emit the BFF's filtered, persisted completion below.
+                    continue
                 elif evt.get("type") == "error":
                     had_error = True
                     failure_event = {
@@ -16836,8 +17046,27 @@ def bff_management_nl_ask_stream(
             yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
             )
-        answer = "".join(chunks).strip() or (final_text or "").strip()
+        raw_answer = (final_text or "").strip() or "".join(chunks).strip()
+        answer = _mgmt_nl_text_from_provider_value(_mgmt_nl_jsonish(raw_answer)) or raw_answer
+        if not final_event and not had_error:
+            had_error = True
+            failure_event = {
+                "event_type": "management_ai.provider.failed",
+                "session_id": session_id, "message_id": message_id, "trace_id": trace_id,
+                "provider_run_id": provider_run_id, "actor_id": identity.operator_id,
+                "provider": "openclaw", "mode": provider_mode,
+                "error_code": "OPENCLAW_STREAM_INCOMPLETE",
+                "error_message": "Provider stream ended without a terminal result.",
+            }
+            yield _mgmt_nl_sse_frame({
+                "type": "error", "error_code": failure_event["error_code"],
+                "message": failure_event["error_message"],
+            })
         if answer and not had_error:
+            actions = _mgmt_nl_extract_provider_actions(
+                {**final_event, "text": raw_answer},
+                allowed_action_kinds=_mgmt_nl_allowed_action_kinds(ui_snapshot),
+            )
             duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
             _management_ai_record_event(
                 {
@@ -16849,6 +17078,7 @@ def bff_management_nl_ask_stream(
                     "actor_id": identity.operator_id,
                     "provider": "openclaw",
                     "provider_state": "completed",
+                    "action_count": len(actions),
                     "mode": provider_mode,
                     "duration_ms": duration_ms,
                     "output_summary": {
@@ -16872,8 +17102,12 @@ def bff_management_nl_ask_stream(
                 created_at=utc_now(),
                 trace_id=trace_id,
                 provider_status=provider_status,
+                ui_actions=actions,
             )
-            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "provider_status": provider_status})
+            yield _mgmt_nl_sse_frame({
+                "type": "done", "text": answer,
+                "provider_status": provider_status, "ui_actions": actions,
+            })
         elif failure_event is not None:
             _management_ai_record_event(failure_event)
         yield _mgmt_nl_sse_frame("[DONE]")

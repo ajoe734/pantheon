@@ -22,6 +22,7 @@ from services.research.alpha_replication.controller_state import ControllerState
 from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.revalidation_worker import AlphaRevalidationWorker
 from services.research.experiment_orchestrator.authority import ExperimentAuthority
+from services.service_token_file import configured_service_token
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -56,7 +57,11 @@ class ReplicationControllerConfig:
 def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> list[dict]:
     url = f"{registry_url}/api/registry/strategies/{strategy_id}/strategy-specs?artifact_state=approved"
     try:
-        req = urllib.request.Request(url, method="GET")
+        headers = {}
+        token = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5) as response:
             views = json.loads(response.read().decode("utf-8"))
             return [view["entry"] for view in views if "entry" in view]

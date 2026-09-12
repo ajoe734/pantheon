@@ -906,13 +906,15 @@ def pause_runtime(binding_id):
         status_before = binding.get("status", "unknown")
 
         if pause_action == "pause":
+            operator_pause = {"session_admission": {"reason_code": "operator_requested_pause"}}
             # Transition: active -> pending_pause -> paused
             if status_before in ("active",):
-                client.transition(binding_id, "pending_pause")
+                client.transition(binding_id, "pending_pause", metadata_patch=operator_pause)
                 client.transition(binding_id, "paused")
                 status_after = "paused"
             elif status_before in ("pending_pause", "paused"):
-                status_after = status_before  # idempotent
+                client.transition(binding_id, "paused", metadata_patch=operator_pause)
+                status_after = "paused"
             else:
                 raise RuntimeError(f"Cannot pause binding in status {status_before}")
         else:
