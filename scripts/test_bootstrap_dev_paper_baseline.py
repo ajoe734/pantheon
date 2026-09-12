@@ -82,6 +82,17 @@ def test_replays_one_idempotent_request_until_authoritative_readback() -> None:
             },
         ),
         (
+            200,
+            {
+                "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                "meta": {
+                    "lifecycle_state": "paper_running",
+                    "status": "ok",
+                    "degraded_dependencies": [],
+                },
+            },
+        ),
+        (
             201,
             {
                 "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
@@ -115,15 +126,168 @@ def test_replays_one_idempotent_request_until_authoritative_readback() -> None:
         "capital_mode": "paper",
         "live_capital_side_effects": False,
     }
-    assert post.call_count == 3
+    assert post.call_count == 4
     login = post.call_args_list[0]
     assert login.args[1]["client_id"] == "operator-a-id"
     assert login.args[1]["client_secret"] == "operator-a-secret"
+
     first_create = post.call_args_list[1]
-    second_create = post.call_args_list[2]
+    assert first_create.args[0] == "http://127.0.0.1:8001/bff/management/personas/create-paper-bundle"
     assert first_create.kwargs["headers"]["Idempotency-Key"] == bootstrap.DEFAULT_IDEMPOTENCY_KEY
-    assert second_create.kwargs["headers"]["Idempotency-Key"] == bootstrap.DEFAULT_IDEMPOTENCY_KEY
     assert first_create.kwargs["headers"]["Authorization"] == "Bearer short-lived"
+
+    reconcile = post.call_args_list[2]
+    assert reconcile.args[0] == "http://127.0.0.1:8001/bff/personas/persona-1/provisioning/reconcile"
+    assert reconcile.kwargs["headers"]["Authorization"] == "Bearer short-lived"
+
+    second_create = post.call_args_list[3]
+    assert second_create.args[0] == "http://127.0.0.1:8001/bff/management/personas/create-paper-bundle"
+    assert second_create.kwargs["headers"]["Idempotency-Key"] == bootstrap.DEFAULT_IDEMPOTENCY_KEY
+    assert second_create.kwargs["headers"]["Authorization"] == "Bearer short-lived"
+
+
+def test_reconcile_mismatched_persona_id_raises() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+        (
+            200,
+            {
+                "data": {"id": "persona-mismatched", "state": "paper_running", "capitalMode": "paper"},
+                "meta": {"lifecycle_state": "paper_running", "status": "ok"},
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(bootstrap.BootstrapError, match="mismatched Persona ID"):
+        _run()
+
+
+def test_reconcile_terminal_failure_raises() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+        (
+            200,
+            {
+                "data": {"id": "persona-1", "state": "provisioning_failed", "capitalMode": "paper"},
+                "meta": {
+                    "lifecycle_state": "provisioning_failed",
+                    "status": "ok",
+                },
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(bootstrap.BootstrapError, match="terminal failure during reconcile"):
+        _run()
+
+
+def test_reconcile_degraded_dependencies_raises() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+        (
+            200,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "lifecycle_state": "provisioning",
+                    "status": "degraded",
+                    "degraded_dependencies": ["paper_runtime_manager"],
+                },
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(bootstrap.BootstrapError, match="degraded during reconcile"):
+        _run()
+
+
+def test_reconcile_timeout_raises() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+    ]
+
+    times = [0, 100]  # monotonic calls: start, then already past deadline (timeout=30)
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ) as post, pytest.raises(bootstrap.BootstrapError, match="timed out"):
+        _run(monotonic=lambda: times.pop(0) if times else 999)
+
+    assert post.call_count == 2  # login + create, then timeout before reconcile poll
+
+
+def test_no_reconcile_after_terminal_create_failure() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning_failed", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "failed",
+                    "provisioning_step": "deployment_failed",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ) as post, pytest.raises(bootstrap.BootstrapError, match="unexpected non-success state"):
+        _run()
+
+    # Reconcile must NEVER be called after terminal creation state
+    assert post.call_count == 2  # login and create only
 
 
 def test_allows_permissive_stub_for_dev_paper_functional_closure() -> None:
