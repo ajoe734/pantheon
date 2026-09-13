@@ -8,7 +8,7 @@
   "decision": {
     "backend": "Management Jobs as a typed read composition and single JobAction dispatch seam across five asynchronous backend sources plus one read-only external diagnostic source; distinct aggregates: ResearchTicket != Experiment != OrchestratorRun != Job",
     "document": "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
-    "document_sha256": "0ad2c647274eb3ac8bd15fda4c6503ebd029debd77da65b3493675c44e7d6083",
+    "document_sha256": "f68fc80146b3429b110d077f89dfd36b8176b7ec6d6ae8a85035df7c16b8c587",
     "operator_decision_required_for_selected_scope": false,
     "expansion_requires_decision": [
       "promotion to live/capital trading",
@@ -79,10 +79,10 @@
       "native_id_scheme": "rrun-{YYYYMMDD}-{index:03d} under rtask-{YYYYMMDD}-{index:03d} (main.py:759, 856)",
       "management_projection": "job-orchestrator-{rrun_id} (linked to parent rtask_id)",
       "auth_and_tenant_enforcement": "Task headers carry optional tenant ID in admission contracts",
-      "auth_and_tenant_gaps": "list_runs and get_run do not enforce tenant filtering; unauthenticated FastAPI endpoints",
+      "auth_and_tenant_gaps": "list_runs and get_run (GET /api/research-orchestrator/tasks, GET .../runs) do not enforce tenant filtering; unauthenticated FastAPI endpoints",
       "observed_capabilities": {
-        "dispatch": "Dispatches runs under tasks, records lifecycle (pending, running, completed, failed)",
-        "cancel": "services/research/main.py has NO run cancel endpoint",
+        "dispatch": "Dispatches runs via POST /api/research-orchestrator/tasks/{task_id}/runs, tracks stage/status, records artifacts & events",
+        "cancel": "services/research/main.py has NO run cancel endpoint; requires POST /api/research-orchestrator/runs/{run_id}/cancel",
         "retry": "New run can be queued under existing task",
         "archive": "Run artifact retention",
         "promote": "Candidate handoff to Replication Bridge (requires artifact proof)"
@@ -103,14 +103,14 @@
       "name": "Trainer preview jobs",
       "owner": "services/training-session",
       "store": "TrainingSessionStore + preview_eval_worker.py",
-      "native_id_scheme": "pvjob-{digest[:16]} or pvjob-{uuid[:12]} (main.py:170-174)",
+      "native_id_scheme": "pvjob-{digest[:16]} or pvjob-{uuid[:12]} (main.py:170-174, 1843)",
       "management_projection": "job-trainer-{pvjob_id}",
-      "auth_and_tenant_enforcement": "Persona-scoped and tenant-scoped via session headers",
-      "auth_and_tenant_gaps": "Preview jobs lack independent tenant authorization fences in memory/store",
+      "auth_and_tenant_enforcement": "main.py:499-522 enforces inbound authority middleware on /api/training/* via inbound_authority.py (Authorization, X-Tenant-Id, X-MFA-Token, X-Pantheon-Service). list_preview_jobs (1806) filters via _tenant_records matching request tenant_id. get_preview_job (1823) and queue_preview_job (1836) enforce _require_tenant_record (404 on mismatch).",
+      "auth_and_tenant_gaps": "Configuration/test exceptions when authority operates with test tokens (token_kind == \"test-disabled\") in test suites. Remaining gaps: preview jobs lack cancel endpoint or cancellation handler; eval worker threads in preview_eval_worker.py run to completion without in-flight abort mechanisms.",
       "observed_capabilities": {
-        "preview_eval": "Runs evaluation previews via preview_eval_worker.py",
-        "cancel": "NO cancel endpoint exists in training-session/main.py",
-        "retry": "Re-triggers evaluation against teaching dataset",
+        "preview_eval": "Exposes GET /api/training/preview-jobs, GET .../preview-jobs/{job_id}, POST .../sessions/{session_id}/preview-jobs; runs evaluation previews via preview_eval_worker.py",
+        "cancel": "NO cancel endpoint exists in training-session/main.py; fails closed with ActionUnavailableError",
+        "retry": "Re-triggers evaluation against teaching dataset via POST .../preview-jobs",
         "archive_promote": "Tied to teaching session retention; promotion routed through Governance"
       },
       "required_owner_effects_vs_gaps": {
@@ -120,7 +120,8 @@
       "responsible_closure_scope": {
         "read_projection": "U10A",
         "cancel_endpoint": "TS-CANCEL-001 (Training session owner task, outside U10B)"
-      }
+      },
+      "fail_closed_read_admission": "When serving tenant-scoped reads (GET /bff/jobs), candidate sources lacking verified tenant identity (like research-worker-gateway) must fail closed to prevent cross-tenant exposure."
     },
     {
       "source_id": "source_ingestion",
@@ -175,22 +176,24 @@
       "source_id": "openclaw_gateway_adapter",
       "name": "OpenClaw workflow jobs",
       "owner": "services/openclaw-gateway-adapter",
-      "store": "External OSS provider runtime; adapter tracks active provider sessions",
-      "native_id_scheme": "openclaw-session-<id>",
-      "management_projection": "job-openclaw-{session_id}",
-      "auth_and_tenant_enforcement": "Upstream provider session token; read-only access",
-      "auth_and_tenant_gaps": "Zero Management write authority per repository architecture",
+      "store": "Upstream OpenClaw service owns workflow execution and state persistence; adapter maintains local invocation audit trail (tool_workflow_bridge.py _audit store) without local persistent workflow job store",
+      "native_id_scheme": "Upstream OpenClaw job_id or id (preserved by tool_workflow_bridge.py:1005 from trigger_workflow response)",
+      "management_projection": "job-openclaw-{job_id}",
+      "auth_and_tenant_enforcement": "POST /api/openclaw-adapter/workflows/trigger requires X-Operator-Id header (401 if missing), maps operator role, control mode, confirm tokens, and passes upstream client credentials.",
+      "auth_and_tenant_gaps": "GET /api/openclaw-adapter/workflows/jobs/{job_id} lacks auth middleware; no tenant isolation upstream. Read API gap: no list_workflow_jobs or list_jobs endpoint on adapter or OpenClawClient; Management BFF cannot enumerate active/historical workflow jobs on GET /bff/jobs without upstream list route or dedicated audit index.",
       "observed_capabilities": {
-        "read_diagnostic": "Diagnostic observation and token status streaming (kernel_debug / ask)",
-        "write_actions": "All write actions (cancel, retry, archive, promote) are unsupported"
+        "trigger_workflow": "Triggers upstream workflow via POST /api/workflows/trigger, returns job_id and trace_id",
+        "get_job": "Fetches job status via GET /api/jobs/{job_id} (GET /api/openclaw-adapter/workflows/jobs/{job_id})",
+        "write_actions": "All write actions (cancel, retry, archive, promote) from product BFF are unsupported and return 400"
       },
       "required_owner_effects_vs_gaps": {
-        "write_actions": "Permanently excluded from product BFF write routes"
+        "read_only_qualification": "Preserve strictly read-only qualification for product BFF; write actions permanently excluded",
+        "no_development_supervisor_boundary": "No development-supervisor, worktree preparation, or repository-writing workflows per AGENTS.md boundary"
       },
-      "admission_status": "admitted_read_only_diagnostic",
+      "admission_status": "admitted_read_only_detail_observation",
       "responsible_closure_scope": {
-        "read_diagnostic": "U10A",
-        "write_actions": "Permanently excluded"
+        "read_detail": "U10A (read-only detail observation when job_id is known)",
+        "write_actions": "Permanently excluded per repository architecture"
       }
     }
   ],
@@ -255,29 +258,63 @@
     "ResearchTicket": {
       "store": "research.research_tickets (PostgresJsonOwnerStore via ResearchWriteOwner)",
       "id_scheme": "ticket-<id>",
-      "lifecycle": ["open", "in_progress", "closed", "archived"],
-      "allowed_actions": ["canEdit", "canClose", "canArchive"],
+      "lifecycle": [
+        "open",
+        "in_progress",
+        "closed",
+        "archived"
+      ],
+      "allowed_actions": [
+        "canEdit",
+        "canClose",
+        "canArchive"
+      ],
       "nature": "Business research ticket; NOT an asynchronous execution job"
     },
     "Experiment": {
       "store": "research.research_experiments (PostgresJsonOwnerStore via ResearchWriteOwner)",
       "id_scheme": "exp-YYYYMMDD-xxx",
-      "lifecycle": ["queued", "running", "completed", "failed", "canceled"],
-      "allowed_actions": ["canCancel"],
+      "lifecycle": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "canceled"
+      ],
+      "allowed_actions": [
+        "canCancel"
+      ],
       "nature": "Parametric research experiment specification"
     },
     "OrchestratorRun": {
       "store": "ResearchOrchestratorStore (ExperimentTask and ExperimentRun)",
       "id_scheme": "rrun-{date}-{seq} under rtask-{date}-{seq}",
-      "lifecycle": ["pending", "running", "completed", "failed", "canceled"],
-      "allowed_actions": ["cancel"],
+      "lifecycle": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "canceled"
+      ],
+      "allowed_actions": [
+        "cancel"
+      ],
       "nature": "Execution attempt with artifacts and telemetry"
     },
     "Job": {
       "store": "Domain-owned backend stores; projected through BFF Jobs read model",
       "id_scheme": "job-<source>-<native_id>",
-      "lifecycle": ["pending", "running", "completed", "failed", "canceled"],
-      "allowed_actions": ["cancel", "retry"],
+      "lifecycle": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "canceled"
+      ],
+      "allowed_actions": [
+        "cancel",
+        "retry"
+      ],
       "nature": "Unified operational job projection across qualified backends"
     }
   },
@@ -355,60 +392,111 @@
         "source_id": "research_worker_gateway",
         "domain_owner": "services/research-worker-gateway",
         "store_path": "worker_jobs.json + research_worker_gateway.worker_events",
-        "native_endpoints": ["GET /api/research-worker-gateway/jobs", "GET /api/research-worker-gateway/jobs/{id}", "POST /api/research-worker-gateway/jobs"],
+        "native_endpoints": [
+          "GET /api/research-worker-gateway/jobs",
+          "GET /api/research-worker-gateway/jobs/{id}",
+          "POST /api/research-worker-gateway/jobs"
+        ],
         "management_bff_route": "GET /bff/jobs (job-worker-*)",
-        "supported_actions": ["read_projection (U10A)", "safe_stub_dispatch (U10A)"],
-        "unimplemented_actions": ["cancel (fails closed with ActionUnavailableError in U10A/U10B)"],
+        "supported_actions": [
+          "read_projection (U10A)",
+          "safe_stub_dispatch (U10A)"
+        ],
+        "unimplemented_actions": [
+          "cancel (fails closed with ActionUnavailableError in U10A/U10B)"
+        ],
         "responsible_scope": "U10A for read; GW-STOP-FENCE-001 for backend stop & fence"
       },
       {
         "source_id": "research_orchestrator",
         "domain_owner": "services/research",
         "store_path": "ResearchOrchestratorStore (tasks and runs)",
-        "native_endpoints": ["GET /api/research/tasks", "GET /api/research/runs", "POST /api/research/runs"],
+        "native_endpoints": [
+          "GET /api/research-orchestrator/tasks",
+          "POST /api/research-orchestrator/tasks/{task_id}/runs",
+          "GET /api/research-orchestrator/runs",
+          "GET /api/research-orchestrator/runs/{run_id}"
+        ],
         "management_bff_route": "GET /bff/jobs (job-orchestrator-*) + POST /bff/jobs/{id}/actions/cancel",
-        "supported_actions": ["read_projection (U10A)", "run_cancellation (U10B)", "cancellation_fence (U10B)"],
-        "unimplemented_actions": ["promote_to_live (rejected 409)"],
+        "supported_actions": [
+          "read_projection (U10A)",
+          "run_cancellation (U10B)",
+          "cancellation_fence (U10B)"
+        ],
+        "unimplemented_actions": [
+          "promote_to_live (rejected 409)"
+        ],
         "responsible_scope": "U10A for read; U10B for run cancel & fence"
       },
       {
         "source_id": "training_session",
         "domain_owner": "services/training-session",
         "store_path": "TrainingSessionStore + preview_eval_worker.py",
-        "native_endpoints": ["pvjob-* session-internal evaluation"],
+        "native_endpoints": [
+          "GET /api/training/preview-jobs",
+          "GET /api/training/preview-jobs/{job_id}",
+          "POST /api/training/sessions/{session_id}/preview-jobs"
+        ],
         "management_bff_route": "GET /bff/jobs (job-trainer-*)",
-        "supported_actions": ["read_projection (U10A)"],
-        "unimplemented_actions": ["cancel (no endpoint; fails closed with ActionUnavailableError)"],
+        "supported_actions": [
+          "read_projection (U10A)"
+        ],
+        "unimplemented_actions": [
+          "cancel (no endpoint; fails closed with ActionUnavailableError)"
+        ],
         "responsible_scope": "U10A for read; TS-CANCEL-001 for cancel endpoint"
       },
       {
         "source_id": "source_ingestion",
         "domain_owner": "services/source_ingestion",
         "store_path": "source_management_store.py + pipeline.py",
-        "native_endpoints": ["GET /api/source-ingest/jobs", "POST /api/source-ingest/jobs"],
+        "native_endpoints": [
+          "GET /api/source-ingest/jobs",
+          "POST /api/source-ingest/jobs"
+        ],
         "management_bff_route": "GET /bff/jobs (job-ingest-*)",
-        "supported_actions": ["read_projection (U10A)"],
-        "unimplemented_actions": ["cancel (no endpoint; fails closed with ActionUnavailableError)"],
+        "supported_actions": [
+          "read_projection (U10A)"
+        ],
+        "unimplemented_actions": [
+          "cancel (no endpoint; fails closed with ActionUnavailableError)"
+        ],
         "responsible_scope": "U10A for read; SI-CANCEL-001 for cancel endpoint"
       },
       {
         "source_id": "policy_learning",
         "domain_owner": "services/policy-learning",
         "store_path": "PolicyLearningStore + scheduler_worker.py",
-        "native_endpoints": ["GET /api/policy-learning/jobs", "POST /api/policy-learning/jobs/{id}/reject"],
+        "native_endpoints": [
+          "GET /api/policy-learning/jobs",
+          "POST /api/policy-learning/jobs/{id}/reject"
+        ],
         "management_bff_route": "GET /bff/jobs (job-policy-*)",
-        "supported_actions": ["read_projection (U10A)"],
-        "unimplemented_actions": ["cancel/reject (fails closed with ActionUnavailableError)", "promote (rejected 409)"],
+        "supported_actions": [
+          "read_projection (U10A)"
+        ],
+        "unimplemented_actions": [
+          "cancel/reject (fails closed with ActionUnavailableError)",
+          "promote (rejected 409)"
+        ],
         "responsible_scope": "U10A for read; PL-CANCEL-001 for worker process stop"
       },
       {
         "source_id": "openclaw_gateway_adapter",
         "domain_owner": "services/openclaw-gateway-adapter",
         "store_path": "External provider session runtime",
-        "native_endpoints": ["POST /bff/management/nl/ask (read-only diagnostic)"],
-        "management_bff_route": "GET /bff/jobs (job-openclaw-*)",
-        "supported_actions": ["read_diagnostic (U10A)"],
-        "unimplemented_actions": ["all write actions (permanently excluded; returns 400)"],
+        "native_endpoints": [
+          "POST /api/openclaw-adapter/workflows/trigger",
+          "GET /api/openclaw-adapter/workflows/jobs/{job_id}",
+          "upstream: POST /api/workflows/trigger, GET /api/jobs/{job_id}"
+        ],
+        "management_bff_route": "GET /bff/jobs/{id} (job-openclaw-*, detail only)",
+        "supported_actions": [
+          "read_detail_observation in U10A (when job_id is known; no list_jobs route)"
+        ],
+        "unimplemented_actions": [
+          "all write actions (permanently excluded; returns 400)"
+        ],
         "responsible_scope": "U10A for read; write actions permanently excluded"
       }
     ],
@@ -461,6 +549,95 @@
         "disposition": "MERGE (ACG-02-005)",
         "resolution": "Implement server-side channel/topic filtering by jobId",
         "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
+      },
+      {
+        "method": "list_experiments_bff",
+        "inventory_line": 3480,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/main.py"
+        ],
+        "current_observation": "Delegates to in-memory _experiments dataset via _get_dataset(\"research_experiments\").",
+        "proposed_change": "Merge into DefaultResearchKnowledgeSourcePort.list_research_experiments reading from Postgres research.research_experiments via ResearchWriteOwner.",
+        "negative_cases": "DB connection failure returns 500/503; invalid query parameters return 422; unauthorized returns 401.",
+        "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
+      },
+      {
+        "method": "get_experiment_bff",
+        "inventory_line": 3496,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/main.py",
+          "services/control-plane/bff/research/router.py"
+        ],
+        "current_observation": "Reads directly from in-memory dictionary in ReadSurfaceStore.",
+        "proposed_change": "Merge into DefaultResearchKnowledgeSourcePort.get_research_experiment backed by ResearchWriteOwner.",
+        "negative_cases": "Unknown experiment_id returns 404; cross-tenant access returns 404/403.",
+        "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
+      },
+      {
+        "method": "create_experiment_bff",
+        "inventory_line": 3513,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/main.py",
+          "services/control-plane/bff/research/router.py"
+        ],
+        "current_observation": "Mutates in-memory _experiments dictionary in web process memory; non-durable.",
+        "proposed_change": "Atomic creation in Postgres research.research_experiments via ResearchWriteOwner.create_experiment.",
+        "negative_cases": "Missing required fields returns 422; duplicate idempotency key returns existing record without duplicate creation; DB failure returns 500/503.",
+        "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
+      },
+      {
+        "method": "_project_experiment_bff",
+        "inventory_line": 3530,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/read_store.py (internal)"
+        ],
+        "current_observation": "Projects internal record with hardcoded allowedActions (canCancel: true).",
+        "proposed_change": "Standard projection helper normalizing ResearchExperiment from ResearchWriteOwner into BFF DTO, dynamically computing allowedActions based on real lifecycle state (canCancel only for queued/running).",
+        "negative_cases": "Corrupt or missing lifecycle fields default safely; status preserves domain truth.",
+        "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
+      },
+      {
+        "method": "get_experiment_logs",
+        "inventory_line": 3546,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/main.py",
+          "services/control-plane/bff/research/router.py"
+        ],
+        "current_observation": "Returns hardcoded synthetic mock log entries from memory.",
+        "proposed_change": "Route to domain owner run stage logs (ResearchOrchestratorStore) or worker execution logs for experiment runs.",
+        "negative_cases": "Unknown experiment returns 404; experiment with no associated runs returns empty logs list [].",
+        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
+      },
+      {
+        "method": "get_experiment_metrics",
+        "inventory_line": 3563,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/main.py",
+          "services/control-plane/bff/research/router.py"
+        ],
+        "current_observation": "Returns synthetic dictionary of metric floats from in-memory fixture.",
+        "proposed_change": "Route to domain owner execution receipts and metrics from ResearchOrchestratorStore or ResearchWriteOwner.",
+        "negative_cases": "Unknown experiment returns 404; pending/running experiment returns empty metrics object {}.",
+        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
+      },
+      {
+        "method": "get_experiment_artifacts",
+        "inventory_line": 3580,
+        "disposition": "KEEP (ACG-02-001)",
+        "production_callers": [
+          "services/control-plane/bff/main.py",
+          "services/control-plane/bff/research/router.py"
+        ],
+        "current_observation": "Returns synthetic hardcoded artifact list from in-memory dictionary.",
+        "proposed_change": "Route to ResearchOrchestratorStore.list_artifacts / get_artifact or Postgres research.research_notes / artifacts table.",
+        "negative_cases": "Unknown experiment returns 404; empty artifact set returns empty list [].",
+        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
       }
     ],
     "regression_suites_mapping": [
@@ -469,28 +646,32 @@
         "case_count": 29,
         "scope": "U10A and U10B",
         "business_cases": "Evolution programs (8), Experiments CRUD & actions (8), Jobs CRUD & actions (6), Events & SSE (4)",
-        "invariants": "Retain 100% of business assertions; un-fake JobAction and ExperimentAction; preserve 29 passed"
+        "invariants": "Retain 100% of business assertions; un-fake JobAction and ExperimentAction; preserve 29 passed",
+        "verification_mode": "executed_and_passed (29 passed in pytest -k jobs)"
       },
       {
         "test_file": "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
-        "case_count": 13,
+        "case_count": 31,
         "scope": "U10A",
         "business_cases": "GET /bff/jobs list envelope, GET /bff/jobs/{id} detail + 404, HTTP 401 unauthenticated",
-        "invariants": "Preserve 200 envelope shape, items, page_info, and 401/404 handling"
+        "invariants": "Preserve 200 envelope shape, items, page_info, and 401/404 handling",
+        "verification_mode": "collected_only (31 collected via pytest --collect-only)"
       },
       {
         "test_file": "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py",
-        "case_count": 8,
+        "case_count": 17,
         "scope": "U10A and U10B",
         "business_cases": "Experiment list/detail envelope, status fields, analysis links, 404, 401",
-        "invariants": "Wire Postgres readback via ResearchWriteOwner; verify allowedActions.canCancel"
+        "invariants": "Wire Postgres readback via ResearchWriteOwner; verify allowedActions.canCancel",
+        "verification_mode": "collected_only (17 collected via pytest --collect-only)"
       },
       {
         "test_file": "services/control-plane/bff/tests/test_assistant_context_pack.py",
-        "case_count": 6,
+        "case_count": 5,
         "scope": "U10A",
         "business_cases": "Assistant collectors extracting active jobs, research experiments, tickets",
-        "invariants": "Preserve ticket vs job aggregate separation in collector summaries"
+        "invariants": "Preserve ticket vs job aggregate separation in collector summaries",
+        "verification_mode": "collected_only (5 collected via pytest --collect-only)"
       }
     ],
     "negative_verification_modes": [
@@ -538,6 +719,19 @@
       "skipped": 0,
       "stdout": "29 passed, 2 warnings in 13.49s",
       "limitation": "contract tests in isolated fixture environment; baseline behavior before U10A/U10B source delivery"
+    },
+    {
+      "command": "timeout 45 .venv-pantheon/bin/python3 -m pytest --collect-only -q services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "collected": 53,
+      "breakdown": {
+        "test_bff_b2_002_evolution_jobs_ops.py": 31,
+        "test_exp002_bff_research_experiments_contract.py": 17,
+        "test_assistant_context_pack.py": 5
+      },
+      "stdout": "53 tests collected in 13.76s",
+      "limitation": "Test collection verification only; these three suites were not run or passed in this contract task"
     },
     {
       "command": "timeout 30 .venv-pantheon/bin/python3 /tmp/bff-research-jobs-contract-probe.py",
@@ -590,5 +784,5 @@
     "ci": "pending",
     "binding": "Final PR/head/current base/manifest blob bound through governed owner handoff; canonical reviewer and supervisor supply approval/merge. This committed manifest cannot embed its own commit hash and is not changed after approval for bookkeeping."
   },
-  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\n    \"ResearchTicket != Experiment != OrchestratorRun != Job\",\n    \"wjob-{YYYYMMDD}-{index:03d}\",\n    \"rrun-{YYYYMMDD}-{index:03d}\",\n    \"pvjob-{digest[:16]}\",\n    \"ingest-{uuid4().hex[:12]}\",\n    \"plj-{YYYYMMDD}-{index:03d}\",\n    \"GW-STOP-FENCE-001\",\n    \"TS-CANCEL-001\",\n    \"SI-CANCEL-001\",\n    \"PL-CANCEL-001\",\n    \"GOV-PROMOTE-001\",\n    \"ActionUnavailableError\",\n]:\n    assert marker in doc.read_text(), marker\nassert len(e[\"six_sources_qualification\"]) == 6\nassert len(e[\"unresolved_composition_obligations\"]) == 5\nassert len(e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]) == 6\nassert len(e[\"source_specific_acceptance_mapping\"][\"inventory_migration_cases\"]) == 7\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, native IDs, auth gaps, 5 unresolved composition obligations, and source-specific acceptance mapping; no runtime change or merge claim.\")\n"
+  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\n    \"ResearchTicket != Experiment != OrchestratorRun != Job\",\n    \"wjob-{YYYYMMDD}-{index:03d}\",\n    \"rrun-{YYYYMMDD}-{index:03d}\",\n    \"pvjob-{digest[:16]}\",\n    \"ingest-{uuid4().hex[:12]}\",\n    \"plj-{YYYYMMDD}-{index:03d}\",\n    \"GW-STOP-FENCE-001\",\n    \"TS-CANCEL-001\",\n    \"SI-CANCEL-001\",\n    \"PL-CANCEL-001\",\n    \"GOV-PROMOTE-001\",\n    \"ActionUnavailableError\",\n]:\n    assert marker in doc.read_text(), marker\nassert len(e[\"six_sources_qualification\"]) == 6\nassert len(e[\"unresolved_composition_obligations\"]) == 5\nassert len(e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]) == 6\nassert len(e[\"source_specific_acceptance_mapping\"][\"inventory_migration_cases\"]) == 14\nassert sum(s[\"case_count\"] for s in e[\"source_specific_acceptance_mapping\"][\"regression_suites_mapping\"] if s[\"test_file\"] != \"services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py\") == 53\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, native IDs, auth gaps, 5 unresolved composition obligations, 14 inventory migration cases, and 53 collected regression suite cases; no runtime change or merge claim.\")\n"
 }
