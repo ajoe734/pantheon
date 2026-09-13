@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-RESEARCH-JOBS-CONTRACT-DECISION-001",
+  "scope": "D-JOBS design only; two declared documentation artifacts; no runtime source, deployment, grants or data migration",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "source_baseline": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
+  "decision": {
+    "backend": "Management Jobs as a typed read composition and single JobAction dispatch seam across five qualified asynchronous backend sources plus one read-only external diagnostic source; distinct aggregates: ResearchTicket != Experiment != OrchestratorRun != Job",
+    "document": "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
+    "document_sha256": "f8f7ceac40f3318be0ea96bc734b1090afdb3ad57d9905b62ab666e2a084e2eb",
+    "operator_decision_required_for_selected_scope": false,
+    "expansion_requires_decision": [
+      "promotion to live/capital trading",
+      "universal scheduler or shared JobStore across domain boundaries",
+      "writable or task-scheduling OpenClaw operations via product BFF"
+    ],
+    "implementation_status": "not implemented by this documentation task"
+  },
+  "source_blobs": {
+    "docs/operations/bff-upstream-v2-20260911/01_CURRENT_AUDIT.md": "d3396733862776428f616afd6db545e99092ed4d",
+    "docs/operations/bff-upstream-v2-20260911/02_RESEARCH_AND_DESIGN.md": "a170fe610deec840f3fba01299e45799fc339dad",
+    "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md": "fb0a96f16921ff191a9c773d1f3b81b7a725ec0e",
+    "docs/operations/bff-upstream-v2-20260911/dispatch-map.json": "bf0a974521566874fbccfec97c5719235c454c2d",
+    "services/control-plane/bff/command_adapters/evolution_adapter.py": "72f1ac9abb37a30054c18deb82f56137ae8696c4",
+    "services/control-plane/bff/command_adapters/registry.py": "7a3aaedd2261c4f1ea9c605bbc98eafdb6ca33d7",
+    "services/control-plane/bff/events/router.py": "c3285d9bf84475ceadcf57b711035a711003202b",
+    "services/control-plane/bff/jobs/router.py": "e2a5c7bd1e0dc51072825b593ed173a74435878a",
+    "services/control-plane/bff/main.py": "e2895535980483cc12b9711fbd268d3639256e9a",
+    "services/control-plane/bff/ports/read_surface_ports.py": "c3fc88e5e1e40c005f502af42a3b7a2faf691b5a",
+    "services/control-plane/bff/ports/research_knowledge_source.py": "71f7d07cbbc92cf3b14ee5a795d01b0335ca7e73",
+    "services/control-plane/bff/research/router.py": "2bc1c22aa130ba1bd268cce7cee7602199f501a5",
+    "services/control-plane/bff/research/routes/experiments.py": "07c093e938583ed2ce51a096813ff77d92b4970c",
+    "services/control-plane/bff/research/routes/tickets.py": "4783d02cd63e5a0c39e5b587e34f69d23fdd0176",
+    "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py": "69048e8c539a69c5ae1db72fdfa2e09376132c08",
+    "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py": "f341bd41ca2a4eab017fb1c985daca0a2e4b1be1",
+    "services/openclaw-gateway-adapter/main.py": "fc7f1febefc495a33ff6f0370a8d375be59c4609",
+    "services/policy-learning/main.py": "ae8b18c65b6080241e53f1d103d4c633da1e5bae",
+    "services/research-worker-gateway/main.py": "6a21fb23050bdba370f8f2e37e2a205632353943",
+    "services/research-worker-gateway/store.py": "4beb2a4f68300984b53ced9a0a942e9b26b158ee",
+    "services/research/main.py": "c3c73a478abebde22703595a72f4079a658dcba4",
+    "services/research/store.py": "a5d002212f39cf796ee728d3d935187e028690a9",
+    "services/research/write_owner.py": "a0d4e4669221189df0b8b05c10997766421879c0",
+    "services/source_ingestion/main.py": "ec39a5c2ef2d598f6cbed78d770679aaae420590",
+    "services/training-session/main.py": "9de92407d9de293c6066cdbcd4689bc676fc60ae"
+  },
+  "six_sources_qualification": [
+    {
+      "source_id": "research_worker_gateway",
+      "name": "Research worker jobs",
+      "owner": "services/research-worker-gateway",
+      "store": "ResearchWorkerGatewayStore (worker_jobs.json) + PostgresWorkerEventStore (research_worker_gateway.worker_events)",
+      "aggregate": "Job",
+      "id_scheme": "job-worker-<uuid>",
+      "auth_and_tenant": "Tenant context passed in job payload spec; service-level token auth",
+      "actions": {
+        "cancel": "Supported via POST /api/research-worker-gateway/jobs/{id}/cancel; sets status=canceled, appends event, terminates worker",
+        "retry": "Supported as new job submission linked to parent job ID",
+        "archive": "Not supported at worker layer",
+        "promote": "Not applicable"
+      },
+      "status": "admitted_qualified"
+    },
+    {
+      "source_id": "research_orchestrator",
+      "name": "Research orchestrator runs",
+      "owner": "services/research",
+      "store": "ResearchOrchestratorStore (ExperimentTask and ExperimentRun)",
+      "aggregate": "OrchestratorRun under ExperimentTask",
+      "id_scheme": "run-<id> under task-<id>",
+      "auth_and_tenant": "Tenant scoped in admission contracts; task headers carry tenant ID",
+      "actions": {
+        "cancel": "Terminates active run, fences late worker completions",
+        "retry": "New run attempt under existing task lineage",
+        "archive": "Run artifact retention (logical visibility)",
+        "promote": "Candidate handoff to Replication Bridge; requires artifact proof"
+      },
+      "status": "admitted_qualified"
+    },
+    {
+      "source_id": "training_session",
+      "name": "Trainer preview jobs",
+      "owner": "services/training-session",
+      "store": "TrainingSessionStore + preview_eval_worker.py",
+      "aggregate": "TrainerPreviewJob / EvaluationRun",
+      "id_scheme": "eval-preview-<id>",
+      "auth_and_tenant": "Persona-scoped and tenant-scoped via session headers",
+      "actions": {
+        "cancel": "Stops preview worker evaluation",
+        "retry": "Re-triggers evaluation against teaching dataset",
+        "archive": "Tied to teaching session retention",
+        "promote": "Not applicable (candidate promotion routed through Governance)"
+      },
+      "status": "admitted_qualified"
+    },
+    {
+      "source_id": "source_ingestion",
+      "name": "Source-ingest runs/jobs",
+      "owner": "services/source_ingestion",
+      "store": "source_management_store.py + pipeline.py + distillation_worker.py",
+      "aggregate": "SourceIngestRun / DistillationJob",
+      "id_scheme": "ingest-run-<id>",
+      "auth_and_tenant": "Tenant scoped via data source registry and connector configs",
+      "actions": {
+        "cancel": "Gracefully stops connector extraction thread/worker",
+        "retry": "Resumes from last verified checkpoint / watermark",
+        "archive": "Deactivates source connector; preserves lineage",
+        "promote": "Seed materializer promotion to Strategy Seed Store"
+      },
+      "status": "admitted_qualified"
+    },
+    {
+      "source_id": "policy_learning",
+      "name": "Policy-learning jobs",
+      "owner": "services/policy-learning",
+      "store": "PolicyLearningStore + scheduler_worker.py",
+      "aggregate": "PolicyLearningJob / ImitationCandidate",
+      "id_scheme": "pl-job-<id>",
+      "auth_and_tenant": "Tenant scoped in candidate claims and DLQ records",
+      "actions": {
+        "cancel": "Supported via POST /api/policy-learning/jobs/{id}/reject; marks job rejected",
+        "retry": "Supported via DLQ replay or worker retry with attempt count increment",
+        "archive": "Retention policy on candidate history",
+        "promote": "Requires Governance Gate; direct promotion returns 409"
+      },
+      "status": "admitted_qualified"
+    },
+    {
+      "source_id": "openclaw_gateway_adapter",
+      "name": "OpenClaw workflow jobs",
+      "owner": "services/openclaw-gateway-adapter",
+      "store": "External OSS provider runtime; adapter tracks active provider sessions",
+      "aggregate": "OpenClawWorkflow (external session/run ID)",
+      "id_scheme": "openclaw-<session-id>",
+      "auth_and_tenant": "Upstream provider session context; read-only token",
+      "actions": {
+        "cancel": "Not supported via product BFF",
+        "retry": "Not supported via product BFF",
+        "archive": "Not supported via product BFF",
+        "promote": "Not supported via product BFF"
+      },
+      "status": "admitted_read_only_diagnostic"
+    }
+  ],
+  "distinct_aggregates": {
+    "ResearchTicket": {
+      "store": "research.research_tickets (PostgresJsonOwnerStore via ResearchWriteOwner)",
+      "id_scheme": "ticket-<id>",
+      "lifecycle": ["open", "in_progress", "closed", "archived"],
+      "allowed_actions": ["canEdit", "canClose", "canArchive"],
+      "nature": "Business research ticket; NOT an asynchronous execution job"
+    },
+    "Experiment": {
+      "store": "research.research_experiments (PostgresJsonOwnerStore via ResearchWriteOwner)",
+      "id_scheme": "exp-YYYYMMDD-xxx",
+      "lifecycle": ["queued", "running", "completed", "failed", "canceled"],
+      "allowed_actions": ["canCancel"],
+      "nature": "Parametric research experiment specification"
+    },
+    "OrchestratorRun": {
+      "store": "ResearchOrchestratorStore (ExperimentTask and ExperimentRun)",
+      "id_scheme": "run-<id> under task-<id>",
+      "lifecycle": ["pending", "running", "completed", "failed"],
+      "allowed_actions": ["cancel"],
+      "nature": "Execution attempt with artifacts and telemetry"
+    },
+    "Job": {
+      "store": "Domain-owned backend stores; projected through BFF Jobs read model",
+      "id_scheme": "job-<source>-<id>",
+      "lifecycle": ["pending", "running", "completed", "failed", "canceled"],
+      "allowed_actions": ["cancel", "retry"],
+      "nature": "Unified operational job projection across qualified backends"
+    }
+  },
+  "u10a_composition": {
+    "task_id": "BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001",
+    "exact_source_scope": [
+      "docs/deployment/evidence/BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001/evidence.json",
+      "services/control-plane/bff/action_catalog.py",
+      "services/control-plane/bff/assistant/source_collectors.py",
+      "services/control-plane/bff/command_adapters/evolution_adapter.py",
+      "services/control-plane/bff/command_adapters/experiment_adapter.py",
+      "services/control-plane/bff/command_adapters/job_adapter.py",
+      "services/control-plane/bff/command_adapters/registry.py",
+      "services/control-plane/bff/events/router.py",
+      "services/control-plane/bff/jobs/projection.py",
+      "services/control-plane/bff/jobs/router.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/management_read_models/service.py",
+      "services/control-plane/bff/ports/job_read.py",
+      "services/control-plane/bff/ports/read_surface_ports.py",
+      "services/control-plane/bff/ports/research_commands.py",
+      "services/control-plane/bff/ports/research_knowledge_source.py",
+      "services/control-plane/bff/research/CHARACTERIZATION.md",
+      "services/control-plane/bff/research/router.py",
+      "services/control-plane/bff/research/routes/__init__.py",
+      "services/control-plane/bff/research/routes/common.py",
+      "services/control-plane/bff/research/routes/experiments.py",
+      "services/control-plane/bff/research/test_router.py",
+      "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+      "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+      "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py",
+      "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "services/control-plane/bff/tests/read_store_migration_inventory.json",
+      "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "services/control-plane/bff/tests/test_assistant_security.py",
+      "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+      "services/control-plane/bff/tests/test_bff_b2_004_research_search.py",
+      "services/control-plane/bff/tests/test_console_data_route_workflows_projection.py",
+      "services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
+      "services/control-plane/bff/tests/test_overlay_retirement.py",
+      "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+      "services/research/main.py",
+      "services/research/write_owner.py"
+    ],
+    "path_count": 39,
+    "authority": "snapshot from approved dispatch-map; current canonical grants/writer dependencies control execution",
+    "source_edits_in_this_task": []
+  },
+  "u10b_composition": {
+    "task_id": "RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001",
+    "exact_source_scope": [
+      "docs/deployment/evidence/RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json",
+      "services/control-plane/bff/action_catalog.py",
+      "services/control-plane/bff/command_adapters/experiment_adapter.py",
+      "services/control-plane/bff/command_adapters/job_adapter.py",
+      "services/control-plane/bff/command_adapters/registry.py",
+      "services/control-plane/bff/jobs/projection.py",
+      "services/control-plane/bff/jobs/router.py",
+      "services/control-plane/bff/ports/job_read.py",
+      "services/control-plane/bff/ports/research_commands.py",
+      "services/control-plane/bff/research/routes/experiments.py",
+      "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+      "services/research/main.py",
+      "services/research/write_owner.py"
+    ],
+    "path_count": 13,
+    "authority": "snapshot from approved dispatch-map; current canonical grants/writer dependencies control execution",
+    "source_edits_in_this_task": []
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-command-contract-deps/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "checkout-scoped .venv-pantheon provisioned and verified from foreign cwd"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py -k jobs",
+      "exit_code": 0,
+      "collection": "terminal",
+      "collected": 29,
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0,
+      "stdout": "29 passed, 2 warnings in 13.95s",
+      "limitation": "contract tests in isolated fixture environment; baseline behavior before U10A/U10B source delivery"
+    },
+    {
+      "command": "timeout 30 .venv-pantheon/bin/python3 /tmp/bff-research-jobs-contract-probe.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "observations": 5,
+      "results": {
+        "ticket_masquerades_as_job": true,
+        "in_memory_experiments_writer": true,
+        "evolution_adapter_fake_job_action_executed": true,
+        "registry_routes_job_to_evolution_adapter": true,
+        "sse_job_progress_ignores_job_id": true
+      },
+      "limitation": "Five existing deficiencies reproduced on current baseline; demonstrates necessity of U10A and U10B structural corrections"
+    },
+    {
+      "command": "python3 /tmp/validate-bff-research-jobs-evidence.py && git diff --check",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "Document digest, 25 immutable source blobs, 39 exact U10A paths, 13 exact U10B paths, validation terminal state, and embedded probe syntax verified; whitespace clean"
+    }
+  ],
+  "probe_source": "import json\nfrom services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts\nfrom services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort\nfrom services.control_plane.bff.command_adapters.evolution_adapter import EvolutionCommandAdapter\nfrom services.control_plane.bff.command_adapters.registry import find_adapter\n\nobservations = {}\nport = ReadSurfacePorts()\nobservations[\"ticket_masquerades_as_job\"] = (\n    hasattr(port, \"get_job_bff\") and hasattr(port, \"list_jobs_bff\")\n)\n\nrks = DefaultResearchKnowledgeSourcePort()\nexp = rks.create_research_experiment(\n    ticket_id=\"ticket-001\",\n    experiment_name=\"test-exp\",\n    strategy_selector={},\n    parameter_set={},\n    run_config={\"dataset_ref\": \"d1\", \"time_range\": {\"start_at\": \"a\", \"end_at\": \"b\"}, \"execution_mode\": \"paper\", \"priority\": \"normal\", \"requested_by\": \"user\"},\n    launch_context={},\n)\nobservations[\"in_memory_experiments_writer\"] = (\n    exp[\"experiment_id\"] in rks._experiments\n    and rks._experiments[exp[\"experiment_id\"]][\"status\"] == \"queued\"\n)\n\nevo = EvolutionCommandAdapter()\nassert evo.can_handle(\"JobAction\", \"job\", \"cancel\")\nreceipt = evo.execute(\"cmd-1\", \"JobAction\", {\"job_id\": \"job-1\", \"action_id\": \"cancel\"})\nobservations[\"evolution_adapter_fake_job_action_executed\"] = (\n    receipt[\"status\"] == \"executed\"\n    and receipt[\"domain_receipt\"].get(\"success\") is True\n    and receipt[\"dispatch_path\"] == \"research_job_authority\"\n)\n\nadapter = find_adapter(\"JobAction\", \"job\", \"cancel\")\nobservations[\"registry_routes_job_to_evolution_adapter\"] = isinstance(adapter, EvolutionCommandAdapter)\n\nwith open(\"services/control-plane/bff/events/router.py\") as f:\n    events_code = f.read()\nobservations[\"sse_job_progress_ignores_job_id\"] = \"Subscription is channel-based; job filtering remains client-side\" in events_code\n\nassert all(observations.values()), observations\nprint(json.dumps({\"observations\": observations, \"count\": len(observations),\n                  \"interpretation\": \"five current deficiencies reproduced; not implementation acceptance\"}, sort_keys=True))\n",
+  "probe_reproduction": "Write probe_source verbatim to an external temporary .py file, then execute with the provisioned checkout interpreter under timeout 30; imports exclude bff.main.",
+  "deletion_evidence": {
+    "runtime_paths_changed": [],
+    "runtime_paths_deleted": [],
+    "claim": "none; D-JOBS is documentation-only; U10A owns read/owner binding, in-memory writer removal, and adapter decoupling; U10B owns true action execution closure"
+  },
+  "not_run": [
+    "full B02 ASK/assistant workshop regressions",
+    "full B10 evolution/experiment/jobs regressions",
+    "full B16 command/write workflow regressions",
+    "U10A/U10B live owner and worker execution matrices",
+    "hosted probes / deployments"
+  ],
+  "changed_paths": [
+    "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
+    "docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json"
+  ],
+  "delivery": {
+    "target_branch": "dev",
+    "source_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
+    "anchor_commit": null,
+    "rebased_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
+    "head_sha": null,
+    "pr": null,
+    "merge_commit": null,
+    "independent_review": "pending",
+    "ci": "pending",
+    "binding": "Final PR/head/current base/manifest blob bound through governed owner handoff; canonical reviewer and supervisor supply approval/merge. This committed manifest cannot embed its own commit hash and is not changed after approval for bookkeeping."
+  },
+  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\"ResearchTicket != Experiment != OrchestratorRun != Job\", \"Research worker jobs\", \"Research orchestrator runs\", \"Trainer preview jobs\", \"Source-ingest runs\", \"Policy-learning jobs\", \"OpenClaw workflow jobs\", \"PostgresJsonOwnerStore\", \"cancel_requested\", \"ActionUnavailableError\"]:\n    assert marker in doc.read_text(), marker\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax; no runtime change or merge claim.\")\n"
+}
