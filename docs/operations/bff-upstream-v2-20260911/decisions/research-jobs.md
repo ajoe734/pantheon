@@ -8,11 +8,11 @@ V2 §02.9's design prerequisite, not U10A/U10B source delivery or hosted accepta
 ## 1. Decision and evidence boundary
 
 Fixed decision: **Establish Management Jobs as a typed read composition and
-single `JobAction` dispatch seam across five qualified asynchronous backend
-sources plus one read-only external diagnostic source, while maintaining strict
-domain aggregate separation**. Do not build a universal "JobStore", a second
-distributed scheduler, a shared worker pool, or an in-memory execution overlay.
-Domain owners retain exclusive write authority, state persistence, and worker
+single `JobAction` dispatch seam across five asynchronous backend sources plus
+one read-only diagnostic source, while maintaining strict domain aggregate
+separation**. Do not build a universal "JobStore", a second distributed
+scheduler, a shared worker pool, or an in-memory execution overlay. Domain
+owners retain exclusive write authority, state persistence, and worker
 lifecycle management for their respective job types.
 
 Management UI and BFF observe and interact with jobs via standard contracts:
@@ -20,9 +20,14 @@ Management UI and BFF observe and interact with jobs via standard contracts:
 - Action dispatch: `POST /bff/jobs/{job_id}/actions/{action_id}` routed via `CommandAdapterService` and `JobCommandAdapter` to the qualified domain owner.
 - Aggregate boundaries are strictly preserved: **`ResearchTicket != Experiment != OrchestratorRun != Job`**. They represent fundamentally distinct business entities, lifecycles, and storage models.
 
-This decision governs the contract and boundary prerequisites for U10A (read binding
-and minimal write wiring) and U10B (retained action execution closure). It does
-not authorize cross-host HA, live trading promotions, production capital grants,
+Crucial distinction between execution phases:
+- **Observed capabilities**: What exists in backend services today (e.g. gateway has `/cancel` updating row/events without worker kill; policy-learning has `/reject` updating row without worker kill; training-session and source-ingestion have NO cancel endpoint).
+- **U10A (Read Plumbing & Minimal Write Wiring)**: Connects `ResearchWriteOwner` to read surface, deletes in-memory `_experiments` dictionary, implements typed read projection (`JobReadPort`), decouples tickets from jobs, un-fakes `EvolutionCommandAdapter`, and ensures unimplemented actions fail closed with `ActionUnavailableError` (never fake 200/202).
+- **U10B (Real Action Execution Closure)**: Bounded strictly to the 13 paths declared in `dispatch-map.json` (`services/research/main.py`, `services/research/write_owner.py`, and BFF command adapters). U10B implements real cancellation and cancellation fencing for domain owners within its scope (`services/research/`).
+- **Unresolved Composition Obligations**: Because U10B's 13-path scope excludes `services/research-worker-gateway/`, `services/training-session/`, `services/source_ingestion/`, and `services/policy-learning/`, any missing backend owner operations (such as gateway worker termination/fence, trainer preview cancel, source-ingest extraction cancel, policy learning worker stop, or cross-service governance promotion) are **explicitly preserved as missing obligations** for follow-up domain tasks. U10B must not silently broaden its grants or pretend these missing backend capabilities are implemented.
+
+This decision governs the contract and boundary prerequisites for U10A and U10B.
+It does not authorize cross-host HA, live trading promotions, production capital grants,
 or repository/shell execution. If future operational requirements necessitate
 modifications to capital limits, live worker execution authority, or cross-tenant
 job scheduling, an explicit operator decision must be obtained before implementation.
@@ -41,11 +46,11 @@ The accompanying evidence manifest records exact source blobs and repeatable pro
 | `BFF/events/router.py:511–518` | `GET /bff/sse/jobs/{jobId}/progress` explicitly documents `"Subscription is channel-based; job filtering remains client-side."` Job progress events flood subscribers without backend `jobId` filtering. |
 | `BFF/research/routes/experiments.py:111–368, 453–550` | Two competing experiment API families coexist: `/bff/experiments*` (with subrouter `/bff/research-experiments*`) and `/api/v1/experiments*` (with `/launch` and `/cancel`), using divergent models and calling un-synchronized ports. |
 | `services/research/write_owner.py:48–85, 200–546` | Canonical persistent `ResearchWriteOwner` exists using `PostgresJsonOwnerStore` over `research.research_tickets`, `research.research_experiments`, and `research.research_notes`. It provides atomic, durable mutations but is disconnected from the main BFF read surface. |
-| `services/research-worker-gateway/main.py:406–565`; `store.py:100–186` | Real worker gateway provides `POST/GET /api/research-worker-gateway/jobs` and `POST .../cancel` with file/postgres event persistence. It is a genuine job execution backend, not the universal owner of all jobs. |
-| `services/research/main.py:745–1180`; `store.py:99–235` | `ResearchOrchestratorStore` manages `ExperimentTask` and `ExperimentRun` with artifact tracking, separate from `ResearchWriteOwner`'s ticket and experiment records. |
-| `services/training-session/main.py`; `store.py`; `preview_eval_worker.py` | Training session service manages teaching sessions and preview evaluation runs. Read-only preview generation and evaluation jobs belong to this domain owner. |
-| `services/source_ingestion/main.py`; `source_management_store.py` | Ingestion pipeline, active universe connectors, and strategy seed distillation runs are managed by ingestion workers and stores. |
-| `services/policy-learning/main.py:405–560, 1368`; `store.py` | Policy-learning manages imitation and shadow evaluation jobs. Promotion endpoint explicitly rejects with 409 because promotion requires Governance mutation review. |
+| `services/research-worker-gateway/main.py:406–574`; `store.py:100–186` | Worker gateway generates native `wjob-{date}-{seq}` IDs (main.py:422). `cancel_job` (main.py:559-574) only mutates status row and appends event; has no worker stop or cancellation fence. `DispatchJobBody` and list/get routes contain no tenant filtering or token auth. |
+| `services/research/main.py:182–202, 745–1180`; `store.py:99–235` | Research orchestrator generates native `rtask-{date}-{seq}` and `rrun-{date}-{seq}` IDs. Dispatches runs and stores artifacts, but has no run cancel endpoint on `main.py`. |
+| `services/training-session/main.py:170–174`; `preview_eval_worker.py` | Training session generates native `pvjob-{digest}` or `pvjob-{uuid}` IDs. Has NO cancel operation/endpoint anywhere in the service. |
+| `services/source_ingestion/main.py`; `connectors/base.py:634`; `pipeline.py` | Ingestion service generates native `ingest-{uuid}` or `run-{connector_id}` IDs. Has NO cancel operation/endpoint anywhere in the service. |
+| `services/policy-learning/main.py:189–196, 551–564`; `store.py` | Policy learning generates native `plj-{date}-{seq}` IDs. `reject_job` only mutates status row; has no worker stop; promotion returns 409 (requires Governance). |
 | `services/openclaw-gateway-adapter/main.py`; `AGENTS.md` | External OSS prompt and diagnostic adapter. Per repository architecture rules, OpenClaw is strictly read-only for product BFF (`kernel_debug`); no shell access, repo writes, or supervisor task scheduling. |
 
 ---
@@ -54,25 +59,111 @@ The accompanying evidence manifest records exact source blobs and repeatable pro
 
 The system discovery identified six distinct job and run mechanisms across the platform.
 The table below qualifies each source, establishing its canonical domain owner,
-storage mechanism, aggregate identity, tenant scoping, supported actions, and
-admission decision for the Management control plane.
+storage mechanism, native ID scheme, Management projection mapping, auth and tenant
+enforcement, existing gaps, observed capabilities, and justified admission decision.
 
-| Candidate Source | Underlying Domain Owner & Store | Target Aggregate & ID Scheme | Auth & Tenant Scoping | Supported Actions & Semantics | Management Admission Status |
-| --- | --- | --- | --- | --- | --- |
-| **1. Research worker jobs** | `services/research-worker-gateway/` (`ResearchWorkerGatewayStore` + `PostgresWorkerEventStore`) | `Job` (`job-worker-<uuid>`) | Tenant context passed via job payload spec; service-level token auth | **Cancel**: transitions job to `canceled`, appends event, halts worker.<br>**Retry**: new job submission linked to parent job ID.<br>**Archive/Promote**: N/A (worker level). | **Admitted (Qualified)**: primary worker execution backend for compute jobs. |
-| **2. Research orchestrator runs** | `services/research/` (`ResearchOrchestratorStore`, storing `ExperimentTask` & `ExperimentRun`) | `OrchestratorRun` (`run-<id>`) under `ExperimentTask` (`task-<id>`) | Tenant scoped in admission contracts; task headers carry tenant ID | **Cancel**: terminates active run, fences late worker completions.<br>**Retry**: new run attempt under existing task lineage.<br>**Archive**: run artifact retention (logical visibility).<br>**Promote**: candidate handoff to Replication Bridge (requires artifact proof). | **Admitted (Qualified)**: backtest, simulation, and multi-stage research runs. |
-| **3. Trainer preview jobs** | `services/training-session/` (`TrainingSessionStore`, `preview_eval_worker.py`) | `TrainerPreviewJob` (`eval-preview-<id>`) | Persona-scoped and tenant-scoped via session headers | **Cancel**: stops preview worker evaluation.<br>**Retry**: re-triggers evaluation against dataset.<br>**Archive**: tied to teaching session retention.<br>**Promote**: N/A (candidate promotion routed through Governance). | **Admitted (Qualified)**: interactive and automated model evaluation previews. |
-| **4. Source-ingest runs/jobs** | `services/source_ingestion/` (`source_management_store.py`, `pipeline.py`, `distillation_worker.py`) | `SourceIngestRun` (`ingest-run-<id>`) | Tenant scoped via data source registry and connector configs | **Cancel**: gracefully stops connector extraction thread/worker.<br>**Retry**: resumes from last verified checkpoint / watermark.<br>**Archive**: deactivates source connector; preserves lineage.<br>**Promote**: seed materializer promotion to Strategy Seed Store. | **Admitted (Qualified)**: data ingestion, universe synchronization, and distillation. |
-| **5. Policy-learning jobs** | `services/policy-learning/` (`PolicyLearningStore`, `scheduler_worker.py`) | `PolicyLearningJob` (`pl-job-<id>`) | Tenant scoped in candidate claims and DLQ records | **Cancel/Reject**: marks job rejected, stops processing.<br>**Retry**: DLQ replay or worker retry with attempt count increment.<br>**Archive**: retention policy on candidate history.<br>**Promote**: **Requires Governance Gate**; direct promotion returns 409. | **Admitted (Qualified)**: imitation learning, shadow evaluation, and model training. |
-| **6. OpenClaw workflow jobs** | `services/openclaw-gateway-adapter/` (`assistant_openclaw_provider.py`) | `OpenClawWorkflow` (external session/run ID) | Upstream provider session context; read-only token | **Read-only**: diagnostic observation and token status streaming.<br>**Cancel/Retry/Archive/Promote**: **Rejected / Not Supported** via product BFF. | **Admitted as Read-Only Diagnostic**: no write actions; no supervisor or task creation authority. |
+| Candidate Source | Underlying Domain Owner & Store | Native ID Scheme | Management Projection Scheme | Auth & Tenant Enforcement & Gaps | Observed Capabilities vs Missing Obligations | Management Admission Status | Responsible Scope |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **1. Research worker jobs** | `services/research-worker-gateway/` (`ResearchWorkerGatewayStore` + `PostgresWorkerEventStore`) | `wjob-{YYYYMMDD}-{index:03d}` (main.py:422) | `job-worker-{wjob_id}` | **Enforcement**: None in routing.<br>**Gaps**: `DispatchJobBody` has no `tenant_id`; list/get/cancel routes have no tenant filter and no token auth dependency. | **Observed**: Dispatch queues/runs; cancel (main.py:559-574) only sets status `canceled` & appends event.<br>**Missing**: No worker process kill; no cancellation fence; no attempt lineage retry. | **Conditionally Admitted (Read & Safe Stub Dispatch)**; Excluded from U10B backend action closure. | Read: U10A.<br>Worker stop & fence: **GW-STOP-FENCE-001** (Gateway owner task, outside U10B). |
+| **2. Research orchestrator runs** | `services/research/` (`ResearchOrchestratorStore`, storing `ExperimentTask` & `ExperimentRun`) | `rrun-{YYYYMMDD}-{index:03d}` under `rtask-{YYYYMMDD}-{index:03d}` (main.py:759, 856) | `job-orchestrator-{rrun_id}` (linked to parent `rtask_id`) | **Enforcement**: Task headers carry optional tenant ID in admission contract.<br>**Gaps**: List/get routes lack tenant query filtering; unauthenticated FastAPI endpoints. | **Observed**: Dispatches runs, tracks stage/status, records artifacts & events.<br>**Missing**: No run cancel endpoint on `main.py`; no late-completion fence. | **Admitted (Qualified)**; Fully in scope for U10A read and U10B backend action execution. | Read: U10A.<br>Run cancel & fence: **U10B** (`services/research/main.py` is in U10B scope). |
+| **3. Trainer preview jobs** | `services/training-session/` (`TrainingSessionStore`, `preview_eval_worker.py`) | `pvjob-{digest[:16]}` or `pvjob-{uuid[:12]}` (main.py:170-174) | `job-trainer-{pvjob_id}` | **Enforcement**: Session headers carry persona/tenant context.<br>**Gaps**: Preview jobs lack independent tenant fencing; unauthenticated preview list/get routes. | **Observed**: Triggers evaluation previews via worker; records evaluation metrics.<br>**Missing**: **NO cancel endpoint or operation exists** in `training-session`. | **Conditionally Admitted for Read Projection Only**; Excluded from Management Job Actions. | Read: U10A.<br>Cancel operation: **TS-CANCEL-001** (Training session owner task, outside U10B). |
+| **4. Source-ingest runs/jobs** | `services/source_ingestion/` (`source_management_store.py`, `pipeline.py`, `connectors/base.py`) | `ingest-{uuid4().hex[:12]}` or `run-{connector_id}` (connectors/base.py:634) | `job-ingest-{ingest_run_id}` | **Enforcement**: Controller token verified on connector mutation via `load_controller_token()`.<br>**Gaps**: `/api/source-ingest/jobs` has no tenant filter and no auth dependency. | **Observed**: Processes ingest batches, records receipts, frontier replay.<br>**Missing**: **NO cancel endpoint exists**; no graceful extraction worker halt. | **Conditionally Admitted for Read Projection Only**; Excluded from Management Job Actions. | Read: U10A.<br>Cancel operation: **SI-CANCEL-001** (Source ingestion owner task, outside U10B). |
+| **5. Policy-learning jobs** | `services/policy-learning/` (`PolicyLearningStore`, `scheduler_worker.py`) | `plj-{YYYYMMDD}-{index:03d}` (main.py:189-196) | `job-policy-{plj_id}` | **Enforcement**: Tenant scope helper for claims/DLQ.<br>**Gaps**: `list_jobs` has no tenant filter; unauthenticated endpoints; reject is row-only. | **Observed**: `reject_job` (main.py:551-564) updates row status `rejected` & appends event; promote returns 409.<br>**Missing**: Reject does not halt running worker; promote requires Governance. | **Conditionally Admitted for Read Projection Only**; Excluded from Direct JobAction Dispatch. | Read: U10A.<br>Worker stop: **PL-CANCEL-001** (Policy learning owner task, outside U10B). |
+| **6. OpenClaw workflow jobs** | `services/openclaw-gateway-adapter/` (`assistant_openclaw_provider.py`) | `openclaw-session-<id>` | `job-openclaw-{session_id}` | **Enforcement**: Upstream provider token, read-only session scope.<br>**Gaps**: Zero Management write authority. | **Observed**: Diagnostic prompt execution & token status streaming.<br>**Missing**: All write actions (cancel, retry, archive, promote) are unsupported. | **Admitted Strictly as Read-Only Diagnostic Projection**; Excluded from all Job Actions. | Read: U10A.<br>Write actions: Permanently excluded per repository architecture. |
+
+---
+
+### Detailed investigation per candidate source
+
+#### 2.1 Research worker jobs (`services/research-worker-gateway`)
+- **Native Store & State**: `ResearchWorkerGatewayStore` (`worker_jobs.json`) and `PostgresWorkerEventStore` (`research_worker_gateway.worker_events`).
+- **Native ID Scheme**: `_next_id("wjob", timestamp, existing)` generates formatted IDs `wjob-{YYYYMMDD}-{index:03d}` (main.py:422). Output records use `wgout-{YYYYMMDD}-{index:03d}` (main.py:439). Events use `wgevt-{YYYYMMDD}-{index:03d}` (main.py:196). The matrix previously misstated these as UUIDs; they are sequential date-stamped strings.
+- **Management Projection**: Projected into the unified Job model as `job-worker-{wjob_id}` (or `job-gateway-{wjob_id}`).
+- **Auth and Tenant Enforcement vs Gaps**:
+  - `DispatchJobBody` (main.py:312-324) declares `worker`, `requested_mode`, `dispatch_mode`, `objective`, `task_id`, `run_id`, `input_refs`, `parameters`, `actor_id`, `idempotency_key`, `requested_at`. It **contains no `tenant_id` field**.
+  - `list_jobs` (main.py:508-524) accepts query parameters `worker`, `status`, `task_id`, `run_id`, but **contains no tenant parameter or filtering**.
+  - `get_job`, `get_job_status`, and `cancel_job` (main.py:527-574) have no authentication dependencies (no `Depends(...)`, no token header check).
+  - **Gap**: Zero tenant isolation exists in the gateway service, and endpoints are unauthenticated.
+- **Observed Capabilities vs Required Owner Effects**:
+  - `POST /api/research-worker-gateway/jobs/{job_id}/cancel` (main.py:559-574):
+    ```python
+    job["status"] = "canceled"
+    job["updated_at"] = timestamp
+    job["cancel_reason"] = body.reason
+    job["events"] = events
+    store.put_job(job)
+    store.append_event(events[-1])
+    ```
+    This is **purely a row-level metadata update**. The handler does not track worker PIDs, does not send `SIGTERM` or `SIGKILL` to running subprocesses spawned by `_execute_worker`, and does not establish a cancellation fence timestamp. If a background worker subsequently writes output or completes, the gateway has no guard to reject the late completion.
+  - Retry: No retry endpoint exists. Clients may only submit a new dispatch with an idempotency key, which does not link attempt lineage (`parent_job_id`, `attempt_number`).
+- **Admission Decision**: **Conditionally Admitted for Read Projection and Safe Stub Dispatch; Excluded from U10B Action Closure**. Because `services/research-worker-gateway/` is outside U10B's 13-path scope, implementing true worker process termination and late-completion fencing cannot be done in U10B without silently broadening grants. This requirement is explicitly preserved as **`GW-STOP-FENCE-001`**.
+
+#### 2.2 Research orchestrator runs (`services/research`)
+- **Native Store & State**: `ResearchOrchestratorStore` managing `ExperimentTask` (`rtask-{date}-{seq}`) and `ExperimentRun` (`rrun-{date}-{seq}`) with stage tracking, artifact storage, and Postgres outbox (main.py:182-202, 759, 856).
+- **Native ID Scheme**: Tasks: `rtask-{YYYYMMDD}-{index:03d}`; Runs: `rrun-{YYYYMMDD}-{index:03d}`; Artifacts: `rart-{YYYYMMDD}-{index:03d}`; Events: `revt-{YYYYMMDD}-{index:03d}`.
+- **Management Projection**: Projected into the unified Job model as `job-orchestrator-{rrun_id}` under `rtask_id`.
+- **Auth and Tenant Enforcement vs Gaps**:
+  - Admission contracts allow tenant headers on task creation, but `list_runs` and `get_run` in `ResearchOrchestratorStore` do not enforce tenant filtering.
+  - Endpoints lack FastAPI authentication dependencies.
+- **Observed Capabilities vs Required Owner Effects**:
+  - Orchestrator dispatches and tracks multi-stage experiment runs (`pending`, `running`, `completed`, `failed`).
+  - **Missing**: `services/research/main.py` currently has NO run cancellation endpoint. A client cannot request `POST /api/research/runs/{run_id}/cancel`.
+- **Admission Decision**: **Admitted (Qualified)**. Crucially, `services/research/main.py` and `services/research/write_owner.py` **ARE within U10B's exact 13-path scope**. Therefore, U10B is the responsible task that will implement run cancellation, state persistence, and late-completion fencing directly within `services/research/`.
+
+#### 2.3 Trainer preview jobs (`services/training-session`)
+- **Native Store & State**: `TrainingSessionStore` + `preview_eval_worker.py`.
+- **Native ID Scheme**: `_preview_job_id` (main.py:170-174) generates `pvjob-{digest[:16]}` (deterministic with idempotency key) or `pvjob-{uuid[:12]}`. The matrix previously misstated this as `eval-preview-<id>`.
+- **Management Projection**: Projected into the unified Job model as `job-trainer-{pvjob_id}`.
+- **Auth and Tenant Enforcement vs Gaps**:
+  - Teaching sessions are persona-scoped and tenant-scoped via session headers.
+  - Preview jobs within session memory do not have independent tenant authorization fences.
+- **Observed Capabilities vs Required Owner Effects**:
+  - Spawns preview evaluation runs against evaluation datasets, calculating candidate metrics.
+  - **Missing**: `training-session/main.py` has **NO cancel endpoint or cancellation handler whatsoever**.
+- **Admission Decision**: **Conditionally Admitted for Read Projection Only; Excluded from Management Job Actions**. `services/training-session` is NOT in U10B's scope. In U10A and U10B, any `JobAction` targeting a `job-trainer-*` ID must fail closed with `ActionUnavailableError` (HTTP 400/503). Implementing a preview cancel operation on the training session service is preserved as an explicit obligation **`TS-CANCEL-001`**.
+
+#### 2.4 Source-ingest runs/jobs (`services/source_ingestion`)
+- **Native Store & State**: `source_management_store.py`, `pipeline.py`, `connectors/base.py`.
+- **Native ID Scheme**: `ingest-{uuid4().hex[:12]}` (connectors/base.py:634) or connector-based `run-{connector_id}` / `ingest-{connector_id}`, stored as `ingest_run_id` across pipeline and store.
+- **Management Projection**: Projected into the unified Job model as `job-ingest-{ingest_run_id}`.
+- **Auth and Tenant Enforcement vs Gaps**:
+  - Mutation endpoints verify controller authorization via `load_controller_token()` and `_fence_managed_connector_mutation`.
+  - `GET /api/source-ingest/jobs` and `GET /api/source-ingest/jobs/{ingest_run_id}` do not enforce tenant filtering or authentication.
+- **Observed Capabilities vs Required Owner Effects**:
+  - Ingestion pipeline executes batch extractions, updates watermarks, stores evidence bundles.
+  - Frontier items support replay (`POST /api/source-ingest/frontier/{frontier_id}/replay`).
+  - **Missing**: Ingestion service has **NO cancel endpoint**. Extraction workers cannot be aborted via API.
+- **Admission Decision**: **Conditionally Admitted for Read Projection Only; Excluded from Management Job Actions**. `services/source_ingestion` is NOT in U10B's scope. Action dispatch targeting `job-ingest-*` must fail closed with `ActionUnavailableError`. Implementing ingest cancellation is preserved as **`SI-CANCEL-001`**.
+
+#### 2.5 Policy-learning jobs (`services/policy-learning`)
+- **Native Store & State**: `PolicyLearningStore` + `scheduler_worker.py`.
+- **Native ID Scheme**: `_next_job_id` (main.py:189-196) generates `plj-{YYYYMMDD}-{index:03d}`. Events use `plevt-{YYYYMMDD}-{seq:03d}`. The matrix previously misstated this as `pl-job-<id>`.
+- **Management Projection**: Projected into the unified Job model as `job-policy-{plj_id}`.
+- **Auth and Tenant Enforcement vs Gaps**:
+  - Candidate claims and DLQ records have tenant scope; helper `_resolve_tenant_scope` exists.
+  - `list_jobs`, `get_job`, `propose_job`, and `reject_job` lack token authentication dependencies and tenant query filtering.
+- **Observed Capabilities vs Required Owner Effects**:
+  - `POST /api/policy-learning/jobs/{job_id}/reject` (main.py:551-564): Mutates status row to `rejected` and appends event to `PolicyLearningStore`. It does NOT stop running background workers or scheduler threads.
+  - Direct promotion is explicitly rejected with 409 Conflict because candidate promotion requires Governance mutation review.
+- **Admission Decision**: **Conditionally Admitted for Read Projection Only; Excluded from Direct JobAction Dispatch**. `services/policy-learning` is NOT in U10B's scope. Action dispatch targeting `job-policy-*` must fail closed with `ActionUnavailableError`. Worker process stopping is preserved as **`PL-CANCEL-001`**.
+
+#### 2.6 OpenClaw workflow jobs (`services/openclaw-gateway-adapter`)
+- **Native Store & State**: External OSS provider runtime; adapter streams provider sessions.
+- **Native ID Scheme**: Upstream provider session / thread ID `openclaw-session-<id>`.
+- **Management Projection**: Projected as `job-openclaw-{session_id}` for read-only diagnostic visibility.
+- **Auth and Tenant Enforcement vs Gaps**: Provider session token; read-only access.
+- **Observed Capabilities**: Diagnostic prompts (`POST /bff/management/nl/ask`) and token streaming. Zero Management write or job control capabilities.
+- **Admission Decision**: **Admitted Strictly as Read-Only Diagnostic Projection; Excluded from all Job Actions**. No cancel, retry, archive, or promote. Zero task scheduling authority.
+
+---
 
 ### Strict distinction of domain aggregates
 
 The system must not conflate these four distinct aggregates:
 1. **`ResearchTicket`**: Business research request or bug report owned by `ResearchWriteOwner` (`research.research_tickets`). Identifiers: `ticket-xxx`. States: `open`, `in_progress`, `closed`, `archived`. Actions: `canEdit`, `canClose`, `canArchive`. Tickets are tracked metadata, **not asynchronous execution jobs**.
 2. **`Experiment` (`ResearchExperiment`)**: Parametric research experiment specification owned by `ResearchWriteOwner` (`research.research_experiments`). Identifiers: `exp-YYYYMMDD-xxx`. States: `queued`, `running`, `completed`, `failed`, `canceled`. Actions: `canCancel`.
-3. **`OrchestratorRun`**: Specific execution attempt of an experiment task, owned by `ResearchOrchestratorStore`. Identifiers: `run-xxx` under `task-xxx`. Contains execution artifacts, hardware telemetry, and stage logs.
-4. **`Job`**: Unified Management operational projection of asynchronous units of work across qualified domain owners (worker jobs, ingestion runs, policy learning jobs, trainer previews). Identifiers: `job-<source>-<id>`. States: standard normalized job lifecycle (`pending`, `running`, `completed`, `failed`, `canceled`).
+3. **`OrchestratorRun`**: Specific execution attempt of an experiment task, owned by `ResearchOrchestratorStore`. Identifiers: `rrun-{date}-{seq}` under `rtask-{date}-{seq}`. Contains execution artifacts, hardware telemetry, and stage logs.
+4. **`Job`**: Unified Management operational projection of asynchronous units of work across qualified domain owners (worker jobs, ingestion runs, policy learning jobs, trainer previews). Identifiers: `job-<source>-<native_id>`. States: standard normalized job lifecycle (`pending`, `running`, `completed`, `failed`, `canceled`).
 
 ---
 
@@ -115,14 +206,16 @@ The system must not conflate these four distinct aggregates:
 
 ## 4. U10A vs U10B layering and composition contract
 
-The delivery of the Research and Jobs domain is partitioned into two ordered tasks:
+The delivery of the Research and Jobs domain is partitioned into two ordered tasks,
+with clear boundaries separating in-scope implementation from unresolved external obligations:
 
 ```
 +-------------------------------------------------------------------------------+
 | D-JOBS (This Task): Contract & Boundary Decision                               |
 |   - Fixed source/type/tenant/ID qualification matrix                          |
+|   - Native IDs: wjob-*, rrun-*, pvjob-*, ingest-*, plj-*                      |
 |   - Distinct aggregates: ResearchTicket != Experiment != OrchestratorRun != Job|
-|   - Per-action semantics: Cancel, Retry, Archive, Promote                      |
+|   - Detailed acceptance mapping & explicit unresolved composition obligations |
 +---------------------------------------+---------------------------------------+
                                         |
                                         v
@@ -140,11 +233,20 @@ The delivery of the Research and Jobs domain is partitioned into two ordered tas
                                         v
 +-------------------------------------------------------------------------------+
 | U10B: True Action Execution Closure (RESEARCH-JOBS-ACTIONS-CLOSURE-CORRECTIVE-001)
-|   - Real backend execution for Cancel (worker stopped verification + fence)   |
-|   - Real backend execution for Retry (attempt lineage + eligible state check)  |
-|   - Real backend execution for Archive (visibility projection, no physical del)|
-|   - Real backend execution for Promote (Governance authorization check)       |
+|   - Bounded strictly to 13 paths in dispatch-map.json                         |
+|   - Real backend execution for Experiment cancel (ResearchWriteOwner)         |
+|   - Real backend execution for Orchestrator run cancel & fence (services/research)|
 |   - Paired with FE-RESEARCH-JOBS-ACTIONS-CLOSURE-001 in execute-plans         |
++---------------------------------------+---------------------------------------+
+                                        |
+                                        v
++-------------------------------------------------------------------------------+
+| Unresolved Composition Obligations (Separate Follow-up Domain Tasks)          |
+|   - GW-STOP-FENCE-001: Gateway worker process kill & late completion fence    |
+|   - TS-CANCEL-001: Training session preview eval cancel endpoint              |
+|   - SI-CANCEL-001: Source ingestion extraction cancel endpoint                |
+|   - PL-CANCEL-001: Policy learning worker process stop endpoint               |
+|   - GOV-PROMOTE-001: Governance-gated candidate promotion verification        |
 +-------------------------------------------------------------------------------+
 ```
 
@@ -208,6 +310,20 @@ Execution of U10B backend is bounded strictly to the following 13 paths:
 12. `services/research/main.py`
 13. `services/research/write_owner.py`
 
+### Unresolved composition obligations
+
+Because U10B's scope excludes several backend service repositories, the following
+obligations cannot be completed by U10B and must be tracked as explicit external
+composition obligations:
+
+| Obligation ID | Responsible Domain Owner | Scope & Target Service | Description & Required Implementation |
+| --- | --- | --- | --- |
+| **`GW-STOP-FENCE-001`** | `research-worker-gateway` | `services/research-worker-gateway/main.py` | Add actual worker process termination (`SIGTERM`/`SIGKILL` to subprocess) and cancellation fence timestamp in `cancel_job` to reject late worker outputs. |
+| **`TS-CANCEL-001`** | `training-session` | `services/training-session/main.py` | Implement `POST /api/training-session/previews/{id}/cancel` endpoint, cancel preview evaluation worker thread, and update session state. |
+| **`SI-CANCEL-001`** | `source-ingestion` | `services/source_ingestion/routers/ingest_operations.py` | Implement `POST /api/source-ingest/jobs/{id}/cancel` endpoint, graceful connector extraction thread interruption, and cancellation fence. |
+| **`PL-CANCEL-001`** | `policy-learning` | `services/policy-learning/main.py` | Update `POST /api/policy-learning/jobs/{id}/reject` to halt active training/imitation worker processes rather than performing a row-only update. |
+| **`GOV-PROMOTE-001`** | `governance` | `services/control-plane/bff/` & `services/governance/` | Cross-service Governance promotion gate verification requiring signed operator authorization before candidate elevation. |
+
 ### Operator decision items
 
 The following boundaries must be preserved without unilateral agent expansion:
@@ -217,27 +333,74 @@ The following boundaries must be preserved without unilateral agent expansion:
 
 ---
 
-## 5. Required implementation acceptance and negative verification
+## 5. Source-specific API, store, and test acceptance mapping
 
-Implementation tasks (U10A and U10B) must satisfy the following acceptance matrix.
-These criteria govern subsequent code delivery and are **not** claims of completion
-for this design task.
+### 5.1 Source-specific API and store acceptance mapping
 
-| Risk / Feature Boundary | Required Proof in U10A / U10B |
-| --- | --- |
-| **Domain Aggregate Separation** | Querying `/bff/jobs` returns operational jobs, never raw `ResearchTicket` records. `ResearchTicket` CRUD remains on ticket endpoints with ticket-specific actions (`canClose`, `canArchive`). `Experiment` records link to ticket IDs without sharing database tables. |
-| **Real Storage Readback** | Creating an experiment via the consolidated endpoint writes to Postgres `research.research_experiments` via `ResearchWriteOwner`. Restarting the web process preserves the record. In-memory `_experiments` dictionary is completely removed. |
-| **Registry Single-Match** | `find_adapter("JobAction", "job", "cancel")` resolves exclusively to `JobCommandAdapter`. `find_adapter("ExperimentAction", "experiment", "cancel")` resolves exclusively to `ExperimentCommandAdapter`. `EvolutionCommandAdapter` rejects both. No first-match race conditions. |
-| **Action Unavailability Honesty** | In U10A, invoking an action not yet implemented in U10B returns `ActionUnavailableError` (HTTP 400/503) with clear remediation guidance. It **never returns fake HTTP 202/200 with status="executed"**. |
-| **True Cancellation Semantics (U10B)** | Cancellation verifies worker stoppage. A simulated worker finishing after cancellation receipt has its completion rejected by the owner due to the cancellation fence timestamp. |
-| **Retry Lineage & Idempotency (U10B)** | Retrying an eligible failed job produces attempt 2 with identical `parent_job_id`. Concurrent retries with the same idempotency key return the same new attempt. Active jobs reject retry with 409. |
-| **SSE Job ID Filtering** | Connecting to `/bff/sse/jobs/{jobId}/progress` streams only events matching the requested `jobId`. Events for other jobs are filtered server-side. |
-| **Regression Suites** | Retain 100% of the original business assertions in `test_bff_evolution_experiment_jobs_events_contract.py`, `test_bff_b2_002_evolution_jobs_ops.py`, `test_exp002_bff_research_experiments_contract.py`, and `test_assistant_context_pack.py`. |
+The following table maps each admitted source to its native API, backing store,
+BFF projection endpoint, supported actions, handling of unimplemented operations,
+and responsible delivery task.
 
-### Verification rules
-- AST function counts are not passed tests. Verification commands must report collected, passed, failed, and skipped counts.
-- No tests may be skipped, silenced, or stubbed with synthetic mock fixtures to bypass real owner requirements.
-- Long-running commands must be bounded and executed in terminal batches.
+| Source ID | Domain Owner & Store Paths | Native API Endpoint(s) | Management BFF Route | Supported Actions in U10A / U10B | Unimplemented Actions & Handling | Responsible Scope & Task ID |
+| --- | --- | --- | --- | --- | --- | --- |
+| **research_worker_gateway** | `services/research-worker-gateway/` (`ResearchWorkerGatewayStore`, `PostgresWorkerEventStore`) | `GET /api/research-worker-gateway/jobs`<br>`GET .../jobs/{id}`<br>`POST .../jobs` | `GET /bff/jobs` (`job-worker-*`)<br>`GET /bff/jobs/{id}` | Read projection in U10A.<br>Safe stub dispatch in U10A. | Cancel: Gateway only does row update. U10A/U10B fail closed with `ActionUnavailableError` until `GW-STOP-FENCE-001` is completed. | Read: U10A.<br>Backend closure: **`GW-STOP-FENCE-001`** (Gateway owner). |
+| **research_orchestrator** | `services/research/` (`ResearchOrchestratorStore`, `store.py:99-235`, `main.py:745-1180`) | `GET /api/research/tasks`<br>`GET .../runs`<br>`POST .../runs` | `GET /bff/jobs` (`job-orchestrator-*`)<br>`POST /bff/jobs/{id}/actions/cancel` | Read projection in U10A.<br>True run cancellation & late completion fence in U10B. | Retry: Linking attempt lineage under task is implemented in U10B.<br>Archive: Retention projection in U10B. | Read: U10A.<br>Action closure: **U10B** (`services/research/main.py` is in U10B scope). |
+| **training_session** | `services/training-session/` (`TrainingSessionStore`, `main.py:170-174`, `preview_eval_worker.py`) | Session-internal preview eval runs (`pvjob-*`) | `GET /bff/jobs` (`job-trainer-*`)<br>`GET /bff/jobs/{id}` | Read projection in U10A. | Cancel & Retry: **NO cancel endpoint exists**. Actions fail closed with `ActionUnavailableError` (HTTP 400/503). | Read: U10A.<br>Cancel closure: **`TS-CANCEL-001`** (Training session owner). |
+| **source_ingestion** | `services/source_ingestion/` (`source_management_store.py`, `pipeline.py`, `routers/ingest_operations.py`) | `GET /api/source-ingest/jobs`<br>`GET .../jobs/{id}`<br>`POST .../jobs` | `GET /bff/jobs` (`job-ingest-*`)<br>`GET /bff/jobs/{id}` | Read projection in U10A. | Cancel: **NO cancel endpoint exists**. Actions fail closed with `ActionUnavailableError` (HTTP 400/503). | Read: U10A.<br>Cancel closure: **`SI-CANCEL-001`** (Source ingestion owner). |
+| **policy_learning** | `services/policy-learning/` (`PolicyLearningStore`, `main.py:189-196, 551-564`) | `GET /api/policy-learning/jobs`<br>`POST .../jobs/{id}/reject` | `GET /bff/jobs` (`job-policy-*`)<br>`GET /bff/jobs/{id}` | Read projection in U10A. | Reject/Cancel: Row-only in gateway. Actions fail closed with `ActionUnavailableError`. Direct promote rejected (409). | Read: U10A.<br>Worker stop: **`PL-CANCEL-001`** (Policy learning owner). |
+| **openclaw_gateway_adapter** | `services/openclaw-gateway-adapter/` (`assistant_openclaw_provider.py`) | `POST /bff/management/nl/ask` (read-only diagnostic) | `GET /bff/jobs` (`job-openclaw-*`) | Read-only diagnostic observation in U10A. | All write actions (cancel, retry, archive, promote) are rejected and return 400. | Read: U10A.<br>Write actions: Permanently excluded. |
+
+---
+
+### 5.2 Original inventory cases (`read_store_migration_inventory.json`) mapping
+
+The following mapping binds every historical ReadSurfaceStore inventory case for
+jobs and experiments to its specific target disposition, target owner, and test proof.
+
+| Inventory Case / Method | Location & Disposition | Problem in Baseline | Target Disposition & Architecture | Responsible Task & Test File |
+| --- | --- | --- | --- | --- |
+| `list_jobs_bff` | line 3597 (ACG-02-005, MERGE) | Calls `list_research_tickets`; tickets masquerade as jobs in UI. | Merge into typed `JobReadPort` / `JobProjectionService` querying qualified domain owners. | **U10A**: `test_jobs_source_owner_contract.py` |
+| `get_job_bff` | line 3613 (ACG-02-005, MERGE) | Calls `get_research_ticket`; returns ticket dictionary as job. | Merge into typed `JobReadPort.get_job_bff`, dispatching to domain owner by ID prefix. | **U10A**: `test_jobs_source_owner_contract.py` |
+| `get_job_logs_bff` | line 3630 (ACG-02-001, KEEP) | Hardcoded mock logs returned from memory. | Route to domain owner logs endpoint (`/api/research-worker-gateway/jobs/{id}/status`, etc.). | **U10A**: `test_jobs_source_owner_contract.py` |
+| `_experiments` in read port | `research_knowledge_source.py:2170` | Ephemeral `self._experiments` dictionary in web memory; lost on restart. | **DELETE completely**. Replace with direct readback from Postgres `research.research_experiments` via `ResearchWriteOwner`. | **U10A**: `test_research_knowledge_source_ports.py` |
+| `EvolutionCommandAdapter._HANDLED_COMMANDS` | `evolution_adapter.py:28` | Declares `JobAction` and `ExperimentAction`; returns fake `executed` with zero effects. | **DELETE `JobAction` and `ExperimentAction` from handled list**. `EvolutionCommandAdapter.can_handle` returns `False`. | **U10A**: `test_bff_evolution_experiment_jobs_events_contract.py` |
+| `_DEFAULT_ADAPTERS` registry order | `registry.py:29-54` | `EvolutionCommandAdapter` evaluated first; swallows job/experiment actions. | Register dedicated `ExperimentCommandAdapter` and `JobCommandAdapter` ahead of `EvolutionCommandAdapter`. | **U10A**: `test_jobs_source_owner_contract.py` |
+| `GET /bff/sse/jobs/{jobId}/progress` | `events/router.py:511` | Client-side filtering only; events flood all connected clients. | Implement server-side topic/channel filtering by `jobId`. | **U10A**: `test_bff_evolution_experiment_jobs_events_contract.py` |
+
+---
+
+### 5.3 Regression test suites business acceptance and scope mapping
+
+All four regression test files are preserved without skipping or weakening assertions.
+The table below maps each test file and its business cases to the responsible delivery scope:
+
+| Test File | Test Cases & Business Invariants | Baseline Behavior | U10A Acceptance Obligation | U10B Acceptance Obligation |
+| --- | --- | --- | --- | --- |
+| `test_bff_evolution_experiment_jobs_events_contract.py` (29 tests) | **Evolution** (8 tests): program list, get, patch, runs, candidates, actions.<br>**Experiments** (8 tests): list, get, 404, logs, metrics, artifacts, action, idempotency.<br>**Jobs** (6 tests): list empty, list with seed, get detail, get 404, get logs, action, action 404.<br>**Events** (4 tests): list, filter, degraded, stream. | `_seed_job` seeds in-memory dataset; `EvolutionCommandAdapter` returns fake 202 `executed` for `JobAction`. | `_seed_job` replaced with typed domain projection. `test_jobs_action` fails closed with `ActionUnavailableError` if backend owner action is not yet wired. | In U10B, `test_jobs_action` returns real domain execution receipt for research orchestrator runs. |
+| `test_bff_b2_002_evolution_jobs_ops.py` (13 primary endpoints) | `GET /bff/jobs` list + envelope (200, items, page_info, meta.surfaces).<br>`GET /bff/jobs/{id}` detail + 404 for unknown id.<br>HTTP 401 unauthenticated for all endpoints. | `_EvolutionJobsOpsTestStore` returns local snapshot fixtures for jobs. | Replaces mock store with `JobReadPort` test fixture; verifies 200 envelope and 401/404 handling. | Unchanged; read facade remains stable. |
+| `test_exp002_bff_research_experiments_contract.py` | Experiment list/detail envelope, status-specific fields (`running`, `completed`, `failed`), analysis links injection, 404 on missing, 401 unauthenticated. | Reads from in-memory `read_store._get_dataset("research_experiments")`. | Replaces in-memory store with `ResearchWriteOwner` readback; preserves analysis link injection. | Verifies `allowedActions.canCancel` dynamically matches `ResearchWriteOwner` state. |
+| `test_assistant_context_pack.py` | Assistant context collectors extracting active jobs, research experiments, and ticket summaries. | Collectors call `read_store.list_jobs_bff` (which returns tickets). | Collectors call `JobReadPort.list_jobs_bff` and receive real operational jobs; ticket queries go to ticket collector. | Preserves clean separation between ticket context and job context. |
+
+---
+
+### 5.4 Negative verification, concurrency, and failure modes
+
+Implementation tasks (U10A and U10B) must prove the following negative cases:
+
+1. **Persistence & Database Failure**:
+   - Dropping Postgres connection or simulating write conflict in `ResearchWriteOwner` raises database error, rolls back transaction, and returns HTTP 500/503. It **never falls back to an in-memory dictionary**.
+2. **Concurrency & Late Completion Race (U10B)**:
+   - When a cancellation request succeeds, `services/research` persists a cancellation fence timestamp `t_cancel`.
+   - A simulated worker completion arriving at `t_completion > t_cancel` is rejected by the owner with 409 Conflict, marked as orphaned, and does NOT overwrite the `canceled` status.
+3. **Concurrent Retry Idempotency (U10B)**:
+   - Sending two concurrent retry requests with the same `Idempotency-Key` executes exactly one domain retry, creates attempt `N+1`, and returns the identical attempt record for both requests without spawning duplicate runs.
+   - Retrying an active job (`running`, `pending`) is rejected with HTTP 409 Conflict.
+4. **Permission & Tenant Isolation**:
+   - Request without valid `Authorization` header returns HTTP 401 Unauthorized.
+   - Request with tenant header attempting to access another tenant's job returns HTTP 403 Forbidden or 404 Not Found.
+5. **Action Unavailability Honesty**:
+   - Invoking `POST /bff/jobs/{job_id}/actions/cancel` against a source that lacks backend cancel implementation (e.g. `job-trainer-*` or `job-ingest-*`) returns HTTP 400 or 503 `ActionUnavailableError` with `action_id`, `job_id`, and `reason="owner_operation_unsupported"`.
+   - It **never returns fake HTTP 202/200 with status="executed"**.
 
 ---
 
