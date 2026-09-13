@@ -300,7 +300,7 @@
   "delivery": {
     "target_branch": "dev",
     "source_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
-    "anchor_commit": null,
+    "anchor_commit": "3170cdb5a60be4fb644be8af97e3d047ba173e6a",
     "rebased_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
     "head_sha": null,
     "pr": null,
