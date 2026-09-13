@@ -1,0 +1,103 @@
+{
+  "files": [
+    {
+      "path": "agora-compatibility-gate.input.json",
+      "sha256": "f3f00e2a60fb2271a2108989c403077433bff417dec80c378e56f8e9276dd9c9",
+      "sizeBytes": 2349
+    },
+    {
+      "path": "controller/accepted-deployment.json",
+      "sha256": "fa15e90633f2f54d3b1b783e35c87fcd12b7b429a4a75e1e34fe2b1c748e9817",
+      "sizeBytes": 6019
+    },
+    {
+      "path": "controller/agora-compatibility-gate.json",
+      "sha256": "f3f00e2a60fb2271a2108989c403077433bff417dec80c378e56f8e9276dd9c9",
+      "sizeBytes": 2349
+    },
+    {
+      "path": "controller/artifact-transport.json",
+      "sha256": "aca8c20fe1e0af0816b63271d4cd730bdea8a78a621f0e1fb9757940590acb85",
+      "sizeBytes": 311
+    },
+    {
+      "path": "controller/bff-version-accepted_final.json",
+      "sha256": "93439bbd75e603196a02cfa698f933941e2d0babbb1dd929fe9030a72e48b9ce",
+      "sizeBytes": 570
+    },
+    {
+      "path": "controller/bff-version-post_switch.json",
+      "sha256": "93439bbd75e603196a02cfa698f933941e2d0babbb1dd929fe9030a72e48b9ce",
+      "sizeBytes": 570
+    },
+    {
+      "path": "controller/bff-version-pre_candidate.json",
+      "sha256": "93439bbd75e603196a02cfa698f933941e2d0babbb1dd929fe9030a72e48b9ce",
+      "sizeBytes": 570
+    },
+    {
+      "path": "controller/bff-version-pre_switch.json",
+      "sha256": "93439bbd75e603196a02cfa698f933941e2d0babbb1dd929fe9030a72e48b9ce",
+      "sizeBytes": 570
+    },
+    {
+      "path": "controller/browser-probe-candidate_pre_switch.json",
+      "sha256": "63198802eb75cfdaf436583acb016c17a1d1dc71368697d55489e98ed70c3cef",
+      "sizeBytes": 172349
+    },
+    {
+      "path": "controller/browser-probe-post_switch.json",
+      "sha256": "0ed81761b65808d3d93af27bc6903601d8754932124b2637edc641bef21af1a7",
+      "sizeBytes": 13247
+    },
+    {
+      "path": "controller/browser-probe-previous_target_pre_switch.json",
+      "sha256": "ff7392835419befbdc6786cc111fd24f1d277f2209ceadc345f6acfbfdffaeef",
+      "sizeBytes": 13018
+    },
+    {
+      "path": "controller/dev-fe-deploy-20260913T103241Z.md",
+      "sha256": "daa1f5ba9783fc2b27ff99cdc40c2aed61c6603ed8b47b22e6ad0f4440b9221f",
+      "sizeBytes": 1344
+    },
+    {
+      "path": "controller/evidence.json",
+      "sha256": "24891e73e29e907b93078970be232c2424e982d3c60aad3de56ed505ef1a97cd",
+      "sizeBytes": 8115
+    },
+    {
+      "path": "controller/evidence.jsonl",
+      "sha256": "32be9e7c2f13bc3056f5236b7d4751d6f0c4034fdcb4b6174c7bd12978026936",
+      "sizeBytes": 9684
+    },
+    {
+      "path": "controller/hosted-browser-bff-probe-2026-09-13.md",
+      "sha256": "6ed70a2fe71092c57c7447910583827bfde6a6a92b86fd1fd8400835dfa7ff9e",
+      "sizeBytes": 4132
+    },
+    {
+      "path": "controller/post-switch-deployment.json",
+      "sha256": "9e0f79dfbd7a88238f47962db9eb382e2f3756f25d32a048be02cf1a791340eb",
+      "sizeBytes": 5867
+    },
+    {
+      "path": "controller/target-runner-controller-regression.log",
+      "sha256": "00de98f5deba34c86f4e5a46f62309fbe5d018e139354a7c6adc7465defeba15",
+      "sizeBytes": 2226
+    },
+    {
+      "path": "release-compatibility-manifest.json",
+      "sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+      "sizeBytes": 5333
+    },
+    {
+      "path": "workflow-envelope.json",
+      "sha256": "35320483a19e12d42477c00caace801535ad2899205d202165df3a97a68f75d7",
+      "sizeBytes": 1571
+    }
+  ],
+  "repository": "ajoe734/execute-plans",
+  "runAttempt": "1",
+  "runId": "34751773220",
+  "schemaVersion": "pantheon.dev-fe.workflow-audit-seal.v1"
+}
