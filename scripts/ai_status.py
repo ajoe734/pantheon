@@ -5277,12 +5277,18 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
                     _dependency_contract_validate_worker_recovery(task_id, task)
                     continue
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
-        if (isinstance(task.get("dev_bridge"), dict) and task["dev_bridge"].get("work_class") in {"security", "hosted", "live"}) or any(
+        bridge = task.get("dev_bridge")
+        work_class = bridge.get("work_class") if isinstance(bridge, dict) else None
+        # Editing dependencies does not grant execution authority. Local
+        # operators may reconcile ordinary hosted work without minting grants.
+        if work_class in {"security", "live"} or any(
             task.get(field) not in (None, {}, [], "") for field in (
                 "artifact_conflict_guard", "catalog_task_contract_sha256", "proof_ownership",
-                "execution_authorization", "execution_authorization_policy",
             )
-        ):
+        ) or (work_class != "hosted" and any(
+            task.get(field) not in (None, {}, [], "")
+            for field in ("execution_authorization", "execution_authorization_policy")
+        )):
             raise SystemExit(f"dependency-contract does not revise privileged/catalog authority: {task_id}")
         old_deps = task.get("depends_on")
         tracks = task.get("dependency_tracks", {})
@@ -5754,7 +5760,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
     task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
-    apply_task_lifecycle_transition(task, "reopen")
+    # A held todo has never started: use the existing START transition after
+    # the operator-only preflight, then the same durable requeue intent below.
+    apply_task_lifecycle_transition(task, "start" if task.get("status") == "todo" else "reopen")
     preserve_hold = actor != "Human/Ops" and task.get("waiting_for") == "Human/Ops"
     generation = max(1, int(task.get("generation", 1) or 1))
     requeue_basis = {
@@ -8733,7 +8741,12 @@ def prepare_external_mutation_preflight(
                 f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops "
                 f"can reopen {task_id}"
             )
-        validate_task_lifecycle_transition(task, "reopen")
+        action = "reopen"
+        if task.get("status") == "todo":
+            if actor != "Human/Ops" or not local_human_ops_requested() or task.get("waiting_for") != "Human/Ops":
+                raise SystemExit("Only local Human/Ops may reopen an operator-held todo task")
+            action = "start"
+        validate_task_lifecycle_transition(task, action)
         binding: dict[str, Any] = {}
         exact_binding: dict[str, Any] = {}
         repository_slug_value = ""

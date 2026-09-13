@@ -63,6 +63,25 @@ current configuration and task-scoped live authentication or quota evidence.
 Do not infer identity equivalence, capacity equivalence, or reviewer
 ineligibility from configured agent names alone.
 
+## Existing Task Cleanup And Resumption
+
+When the operator withdraws obsolete or duplicate work, remove it from active
+work using the existing `supersede` command; retain the archive and identify
+which existing task owns any surviving obligation. Do not leave cancelled work
+as `todo`, claim it was completed, or create replacement tasks unnecessarily.
+Reconcile downstream dependencies with `dependency-contract`, preserving real
+product prerequisites and source-writer ordering.
+
+An explicit operator request to resume existing work must reach the canonical
+state, not just a note: local Human/Ops uses `reopen` for operator-held `todo`
+tasks as well as blocked work. Ordinary hosted dev dependency maintenance does
+not require a new execution grant or MFA issuer and does not change execution
+authority. Keep genuine tenant, secret, and paper/live boundaries intact.
+Once authorized work is ready and a worker is available, let the existing
+supervisor dispatch it and verify its queue/worker receipt. Report a real
+remaining dependency or provider failure rather than requesting the same
+operator authorization again. Do not add a second dispatcher or new gates.
+
 ## Completion Definition For Repo Changes
 
 When Codex modifies repository files, the work is not complete until Codex has
