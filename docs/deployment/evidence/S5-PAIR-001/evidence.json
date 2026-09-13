@@ -34,6 +34,9 @@
       "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
       "fe_artifact_digest_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
       "fe_artifact_digest_read_only_sha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+      "fe_artifact_digest_type": "canonical asset-manifest SHA256 excluding deployment.json (execute-plans scripts/release-candidate.mjs lines 554-566)",
+      "github_fe_artifact_zip_digest": "sha256:9b4628a482aa963469c40a263962e5b99ecfd9599330be07aabaff230db152f4",
+      "github_fe_artifact_id": "10315906574",
       "bff_image_digest": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
       "bff_image_digest_type": "sha256 OCI container image ID",
       "interaction_worker_image_digest": "sha256:b01d9e2762b3120c9626bd3bd8e19d7b342a399334082e20c6be96bfc365cd58",
@@ -48,7 +51,9 @@
       }
     },
     "acceptance_3_gate_before_switch_served_readback": {
-      "status": "passed",
+      "status": "reconciled_operator_accepted",
+      "literal_criterion_satisfied": false,
+      "reconciliation_rationale": "Literal criterion required whole-pair gate-before-switch without public switch until required gates pass. In observed Release-I sequence, BFF was publicly switched (10:09:55Z) before FE gate (10:10:27Z) and FE switch (10:34:41Z / 10:49:48Z); whole-pair prequalification was not performed concurrently offline. Reconciled and accepted under 2026-09-13 operator handoff based on verified gate run 34751164876, strict auth, canonical CORS, safe write profiles, and served readbacks.",
       "gate_controller": "cross_repo_release_controller.py in run 34750913608",
       "fe_integration_gate_run_id": "34751164876",
       "strict_auth": {
@@ -57,11 +62,51 @@
         "dev_login_enabled": true
       },
       "canonical_cors_origin": "https://app.dev.mvl-cap.tw",
+      "build_profiles": {
+        "read_only_staging_profile": {
+          "release_name": "20260913T103241Z-dbe737e06766-gate-34751164876-34751773220-1-1224886",
+          "artifact_digest_sha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+          "flags": {
+            "VITE_BFF_MODE": "live",
+            "VITE_BFF_FALLBACK": "strict",
+            "VITE_BFF_REAL_WRITES": "false",
+            "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+            "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+          }
+        },
+        "served_operator_live_profile": {
+          "release_name": "20260913T104814Z-dbe737e06766-gate-34751164876-34752443280-1-1351147",
+          "artifact_digest_sha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+          "flags": {
+            "VITE_BFF_MODE": "live",
+            "VITE_BFF_FALLBACK": "strict",
+            "VITE_BFF_REAL_WRITES": "true",
+            "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+            "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+          }
+        }
+      },
       "safe_write_defaults": {
-        "VITE_BFF_MODE": "live",
-        "VITE_BFF_FALLBACK": "strict",
-        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
-        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+        "read_only_profile": {
+          "VITE_BFF_MODE": "live",
+          "VITE_BFF_FALLBACK": "strict",
+          "VITE_BFF_REAL_WRITES": "false",
+          "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+          "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+        },
+        "served_operator_live_profile": {
+          "VITE_BFF_MODE": "live",
+          "VITE_BFF_FALLBACK": "strict",
+          "VITE_BFF_REAL_WRITES": "true",
+          "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+          "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+        }
+      },
+      "paper_live_boundary_evidence": {
+        "dev_environment_mode": "paper_only",
+        "live_capital_activated": false,
+        "operator_live_scope": "Permits operator UI actions against dev BFF paper endpoints; does not activate live capital or bypass backend paper execution safety.",
+        "boundary_proof": "BFF and backend broker execution on dev operate strictly in paper mode; live execution credentials and authority are fail-closed. Served operator-live profile with VITE_BFF_REAL_WRITES=true is not proof of live-capital activation or paper-only validation."
       },
       "served_readback_verified": {
         "bff_version_url": "https://api.dev.mvl-cap.tw/bff/version",
@@ -71,7 +116,9 @@
       "boundary_disclosure": "Observed sequence is BFF deploy with exact-version smoke (10:04:48Z-10:09:55Z), followed by FE integration gate (10:10:27Z), followed by FE deploy and switch (10:24:35Z; accepted at 10:34:41Z / 10:49:48Z). This is BFF-public then FE-gate then FE-switch with exact compensation available, not whole-pair concurrent offline staging."
     },
     "acceptance_4_compensation_on_failure": {
-      "status": "passed",
+      "status": "not_exercised_in_run_34750913608",
+      "literal_criterion_satisfied": false,
+      "run_outcome": "deployment_succeeded_compensation_skipped",
       "compensation_target": {
         "backend_sha": "cdc02e2c65136275e00828950c18e53672fa5a40",
         "frontend_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
@@ -85,11 +132,11 @@
         "Release C",
         "Release F"
       ],
-      "bidirectional_drill_note": "Full roundtrip drill accepted->prior->accepted is owned solely by S5-ROLLBACK-001."
+      "bidirectional_drill_note": "Literal failure compensation was not exercised in run 34750913608 because deployment succeeded. Unexercised failure cases are not marked passed. Full roundtrip drill accepted->prior->accepted is owned solely by S5-ROLLBACK-001."
     }
   },
   "delivered_files": {
-    "docs/deployment/evidence/S5-PAIR-001/README.md": "3e0df7fed600a73322995adaa7da7bc53593a12457b6cd02149b716f7710300d",
+    "docs/deployment/evidence/S5-PAIR-001/README.md": "311e1f8160679cd610a47403674a99389c2c8ecfa79f227da8f2e9c1c4bcda22",
     "docs/deployment/evidence/S5-PAIR-001/audit-seal.json": "9e82ed77248cb311e3f8e6627a066ae13096dd55070f4d07d597762238d16e54",
     "docs/deployment/evidence/S5-PAIR-001/candidate-receipt.json": "168fb6c6268ab968f076d641c42180e7c59692b494c9401784fb941f16f6cabb",
     "docs/deployment/evidence/S5-PAIR-001/product-api-readbacks.json": "6767c0c179c6daef468743bea4656a39788e1e3a727b0485d2dd184f4fdd471f",
