@@ -8,7 +8,7 @@
   "source": {
     "repository": "ajoe734/pantheon",
     "branch": "task/OPS-SUPERVISOR-TRANSIENT-FALLBACK-CAPACITY-CORRECTIVE-001",
-    "base_sha": "4b5d774adfd5e01484985aec87241028839b9c3a",
+    "base_sha": "0f835eccc9b47a49d9ba24408651ed48e71b37c0",
     "files_sha256": {
       ".orchestrator/supervisor.py": "7dfb6f265fb7a1e16cb23b5902de03b2e827fde594daa04569502c4d910383e4",
       ".orchestrator/test_supervisor.py": "4a7964f755357422c1fea529ac3498e70958a430ecc7838ad462695935f2cff9"
