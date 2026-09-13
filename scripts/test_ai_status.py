@@ -696,6 +696,31 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._snapshot(), before)
                 self.state['tasks'][1].pop(field)
 
+    def test_hosted_dependency_cleanup_preserves_authority_and_hold(self):
+        task = self.state['tasks'][0]
+        task['dev_bridge'] = {'work_class': 'hosted', 'task_spec_hash': 'a' * 64}
+        task['waiting_for'] = 'Human/Ops'
+        task['execution_authorization'] = {'status': 'pending_authorization'}
+        task['execution_authorization_policy'] = {'requires_execution_authorization': True}
+        self._seed()
+        before = deepcopy(task)
+        self.assertEqual(self._run(self._request())[0], 0)
+        updated = ai_status.get_task(self._snapshot()['state'], 'DEP')
+        for field in ('dev_bridge', 'waiting_for', 'execution_authorization',
+                      'execution_authorization_policy', 'acceptance', 'status'):
+            self.assertEqual(updated[field], before[field])
+        self.assertEqual(updated['depends_on'], ['COVERAGE'])
+
+    def test_security_and_live_dependencies_remain_unchanged(self):
+        for work_class in ('security', 'live'):
+            with self.subTest(work_class=work_class):
+                self.state['tasks'][0]['dev_bridge'] = {'work_class': work_class}
+                self._seed()
+                before = self._snapshot()
+                with self.assertRaisesRegex(SystemExit, 'privileged/catalog'):
+                    self._run(self._request())
+                self.assertEqual(self._snapshot(), before)
+
     def test_settled_held_recovery_allows_dependency_revision_and_preserves_holds(self):
         dep = self.state['tasks'][0]
         dep['status'] = 'blocked'
@@ -9455,6 +9480,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertFalse(
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         )
+
+    def test_local_operator_reopens_held_todo_through_existing_intent(self) -> None:
+        task = self.state['tasks'][0]
+        task.update(status='todo', waiting_for='Human/Ops', generation=7,
+                    depends_on=['REG-001'], execution_authorization={'status': 'pending_authorization'})
+        with mock.patch.dict(os.environ, {'AI_NAME': 'Human/Ops', ai_status.LOCAL_HUMAN_OPS_ENV: '1'}):
+            _command_reopen(self.state, ['REG-002', 'Operator resumes original dev work'])
+        self.assertEqual(task['status'], 'in_progress')
+        self.assertNotIn('waiting_for', task)
+        self.assertEqual(task['generation'], 7)
+        self.assertEqual(task['depends_on'], ['REG-001'])
+        self.assertEqual(task['execution_authorization'], {'status': 'pending_authorization'})
+        intent = task[ai_status.REVIEW_REQUEUE_INTENT_KEY]
+        self.assertEqual(intent['reopened_by'], 'Human/Ops')
+        self.assertEqual(intent['status'], 'pending')
+        self.assertEqual(intent['task_generation'], 7)
+
+    def test_todo_reopen_requires_local_operator_and_actual_hold(self) -> None:
+        for actor, local, hold in [('Codex', '0', 'Human/Ops'), ('Claude', '0', 'Human/Ops'),
+                                   ('Human/Ops', '0', 'Human/Ops'), ('Human/Ops', '1', None)]:
+            with self.subTest(actor=actor, local=local, hold=hold):
+                task = self.state['tasks'][0]
+                task.update(status='todo', waiting_for=hold)
+                before = deepcopy(self.state)
+                with mock.patch.dict(os.environ, {'AI_NAME': actor, ai_status.LOCAL_HUMAN_OPS_ENV: local}):
+                    with self.assertRaisesRegex(SystemExit, 'Only local Human/Ops'):
+                        _command_reopen(self.state, ['REG-002', 'Attempt todo resumption'])
+                self.assertEqual(self.state, before)
 
     def test_human_ops_resume_integration_preserves_matching_approved_pr(self) -> None:
         task = self.state["tasks"][0]
