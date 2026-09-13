@@ -1,0 +1,372 @@
+{
+  "backend": {
+    "branch": "dev",
+    "commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "repository": "ajoe734/pantheon"
+  },
+  "candidate": {
+    "candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+    "execute_plans_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "expires_at": "2026-09-13T10:40:22.853471Z",
+    "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+    "pantheon_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "profile": "read-only",
+    "restored_at": "2026-09-13T10:35:10.506986Z",
+    "source_mode": "reconcile-only"
+  },
+  "compatibility_manifest_sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+  "compatibility_status": "compatible",
+  "completed_at": "2026-09-13T10:35:10.507352Z",
+  "controller": {
+    "repository": "ajoe734/pantheon",
+    "run_id": "34750913608",
+    "workflow": "nonprod-deploy.yml"
+  },
+  "frontend": {
+    "branch": "dev",
+    "commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "repository": "ajoe734/execute-plans",
+    "source_ref": "dev"
+  },
+  "frontend_deploy": {
+    "conclusion": "success",
+    "run_id": "34751773220",
+    "url": "https://github.com/ajoe734/execute-plans/actions/runs/34751773220"
+  },
+  "integration_gate": {
+    "conclusion": "success",
+    "run_id": "34751164876",
+    "url": "https://github.com/ajoe734/execute-plans/actions/runs/34751164876"
+  },
+  "outcome": "accepted",
+  "pre_dispatch_verification": {
+    "observed_bff_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "observed_fe_sha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+    "observed_pair_id": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+    "served_manifest": {
+      "acceptedAt": "2026-09-13T07:41:32Z",
+      "agoraCompatibility": {
+        "backend": {
+          "repo": "ajoe734/pantheon",
+          "runtime_commit": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "tree": "6f469aa9875009e9f59b8eda3fbf45c7bff42bad"
+        },
+        "blocking_reasons": [],
+        "compatibility_status": "accepted",
+        "contract_family": "agora.v1.13",
+        "environment": "dev",
+        "frontend": {
+          "repo": "ajoe734/execute-plans",
+          "runtime_commit": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+          "tree": "cc9efd001b185854e64aa014d4b0b4b4973fefdc"
+        },
+        "gate_controller": {
+          "commit": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "repo": "ajoe734/pantheon",
+          "tree": "6f469aa9875009e9f59b8eda3fbf45c7bff42bad"
+        },
+        "hash_policy": {
+          "file_hash": "sha256-exact-git-bytes-v1",
+          "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+        },
+        "manifest_sha256": "c35af9fc6a37b05cc5e526a2ab173a6bb751e2849e85f450af82edfe0d307a5d",
+        "release_candidate": {
+          "backend": {
+            "branch": "dev",
+            "commit": "cdc02e2c65136275e00828950c18e53672fa5a40",
+            "repository": "ajoe734/pantheon",
+            "tree": "6f469aa9875009e9f59b8eda3fbf45c7bff42bad"
+          },
+          "compatibility_manifest": {
+            "contract_family": "agora.v1.13",
+            "manifest_version": "1.0",
+            "sha256": "c35af9fc6a37b05cc5e526a2ab173a6bb751e2849e85f450af82edfe0d307a5d",
+            "source_status": "accepted"
+          },
+          "compatibility_status": "compatible",
+          "environment": "dev",
+          "frontend": {
+            "branch": "dev",
+            "commit": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+            "repository": "ajoe734/execute-plans",
+            "tree": "cc9efd001b185854e64aa014d4b0b4b4973fefdc"
+          },
+          "release_candidate_id": "bd238c5388af541a37fa81da194f6a1d84541edfefc983e62d73c565f123da31",
+          "schema_version": "pantheon.dev-release-candidate.v1"
+        },
+        "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+        "source_handoffs": {
+          "backend": {
+            "commit": "cd71b0ba4d92a18c955a21282755bb5be17f4c34",
+            "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+            "sha256": "31128a0a6abb2710bea6874cf634109cfe6267fc45e9226a76d402071e7595ae"
+          },
+          "frontend": {
+            "commit": "b9fee329cb7dd2bcb5f2e45fc4624ec5167b10c1",
+            "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+            "sha256": "501ba5db172c76f0ca4922bd033ecb53ef981b37f30b4bdcd4be31b6d975aebe"
+          }
+        }
+      },
+      "app": "execute-plans",
+      "artifactDigest": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+      "artifactDigestSha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+      "bff": {
+        "baseUrl": "https://api.dev.mvl-cap.tw",
+        "sourceCommitKnown": true,
+        "sourceCommitSha": "cdc02e2c65136275e00828950c18e53672fa5a40"
+      },
+      "bffCommit": "cdc02e2c65136275e00828950c18e53672fa5a40",
+      "bffCommitEvidence": true,
+      "bffHost": "https://api.dev.mvl-cap.tw",
+      "bffSourceCommitSha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+      "buildMode": {
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_REAL_WRITES": "false"
+      },
+      "commit": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+      "deployedAt": "20260913T074001Z",
+      "deploymentProfile": "read-only",
+      "deploymentState": "accepted",
+      "emergencyOverride": {
+        "actor": null,
+        "enabled": false,
+        "reasonSha256": null
+      },
+      "environment": "pantheon-dev-fe",
+      "frontend": {
+        "commitSha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+        "repository": "ajoe734/execute-plans"
+      },
+      "frontendSha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+      "gate": {
+        "runId": "34744818811",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/34744818811",
+        "workflow": "pantheon-integration-gate.yml"
+      },
+      "githubArtifactDigest": "sha256:346ac7d32adee8cf65baf7a1f8d20b883aee58e6b7cae32d067b675026459ca7",
+      "integrationGateRunId": "34744818811",
+      "pair": {
+        "operatorLiveArtifactDigestSha256": "fbe69411279d1c96535523aafd2ae52dea3af4c57474d294e477b3e6395f7241",
+        "pairId": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+        "readOnlyArtifactDigestSha256": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+        "writeProofArtifactDigestSha256": "76243296c63d28c0543b6a873b3b88505f637d5363b3a2d37b62e93440fc855c"
+      },
+      "pairId": "230cff55a7f299cf7b4c924b9200a7694f428a1064202f405a42d8b229e4030f",
+      "previousArtifactDigest": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+      "previousCommit": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+      "previousReleaseName": "20260913T064846Z-ba0b47f44551-gate-34742704449-34743286350-1-4113286",
+      "probes": {
+        "candidatePreSwitch": "passed",
+        "postSwitch": "passed",
+        "rollbackRequired": false
+      },
+      "profile": "read-only",
+      "releaseAdmission": {
+        "backend": {
+          "branch": "dev",
+          "commitSha": "cdc02e2c65136275e00828950c18e53672fa5a40",
+          "repository": "ajoe734/pantheon"
+        },
+        "compatibilityManifestSha256": "c35af9fc6a37b05cc5e526a2ab173a6bb751e2849e85f450af82edfe0d307a5d",
+        "compatibilityStatus": "compatible",
+        "controller": {
+          "repository": "ajoe734/pantheon",
+          "runId": "34744552305",
+          "workflow": "nonprod-deploy.yml"
+        },
+        "frontend": {
+          "branch": "dev",
+          "commitSha": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+          "repository": "ajoe734/execute-plans"
+        },
+        "releaseCandidateId": "bd238c5388af541a37fa81da194f6a1d84541edfefc983e62d73c565f123da31",
+        "schemaVersion": "pantheon.dev-release-candidate-admission.v1"
+      },
+      "releaseName": "20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+      "repository": "ajoe734/execute-plans",
+      "schemaVersion": 1,
+      "sourceBranch": "dev",
+      "sourceRef": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1"
+    },
+    "status": "verified",
+    "verified_at": "2026-09-13T10:10:24.964748Z"
+  },
+  "proof_history": [
+    {
+      "state": "CREATED",
+      "timestamp": "2026-09-13T10:10:22.853451Z"
+    },
+    {
+      "state": "IDENTITY_VERIFIED",
+      "timestamp": "2026-09-13T10:10:24.964772Z"
+    },
+    {
+      "state": "READ_ONLY_RESTORED",
+      "timestamp": "2026-09-13T10:35:10.507012Z"
+    }
+  ],
+  "proof_state": "READ_ONLY_RESTORED",
+  "release_candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+  "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
+  "served_verification": {
+    "observed_bff_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "observed_fe_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "observed_pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+    "served_manifest": {
+      "acceptedAt": "2026-09-13T10:34:41Z",
+      "agoraCompatibility": {
+        "backend": {
+          "repo": "ajoe734/pantheon",
+          "runtime_commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+          "tree": "825f68cec77dec3815084505886bdf49b9cbae79"
+        },
+        "blocking_reasons": [],
+        "compatibility_status": "accepted",
+        "contract_family": "agora.v1.13",
+        "environment": "dev",
+        "frontend": {
+          "repo": "ajoe734/execute-plans",
+          "runtime_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+          "tree": "ad9fb577f7d50ae489e8677f1c2e85c6130c5e9f"
+        },
+        "gate_controller": {
+          "commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+          "repo": "ajoe734/pantheon",
+          "tree": "825f68cec77dec3815084505886bdf49b9cbae79"
+        },
+        "hash_policy": {
+          "file_hash": "sha256-exact-git-bytes-v1",
+          "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+        },
+        "manifest_sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+        "release_candidate": {
+          "backend": {
+            "branch": "dev",
+            "commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+            "repository": "ajoe734/pantheon",
+            "tree": "825f68cec77dec3815084505886bdf49b9cbae79"
+          },
+          "compatibility_manifest": {
+            "contract_family": "agora.v1.13",
+            "manifest_version": "1.0",
+            "sha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+            "source_status": "accepted"
+          },
+          "compatibility_status": "compatible",
+          "environment": "dev",
+          "frontend": {
+            "branch": "dev",
+            "commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+            "repository": "ajoe734/execute-plans",
+            "tree": "ad9fb577f7d50ae489e8677f1c2e85c6130c5e9f"
+          },
+          "release_candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+          "schema_version": "pantheon.dev-release-candidate.v1"
+        },
+        "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+        "source_handoffs": {
+          "backend": {
+            "commit": "cd71b0ba4d92a18c955a21282755bb5be17f4c34",
+            "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+            "sha256": "31128a0a6abb2710bea6874cf634109cfe6267fc45e9226a76d402071e7595ae"
+          },
+          "frontend": {
+            "commit": "b9fee329cb7dd2bcb5f2e45fc4624ec5167b10c1",
+            "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+            "sha256": "501ba5db172c76f0ca4922bd033ecb53ef981b37f30b4bdcd4be31b6d975aebe"
+          }
+        }
+      },
+      "app": "execute-plans",
+      "artifactDigest": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+      "artifactDigestSha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+      "bff": {
+        "baseUrl": "https://api.dev.mvl-cap.tw",
+        "sourceCommitKnown": true,
+        "sourceCommitSha": "ae41705b4637110e665d2eed735afbd8307e28e6"
+      },
+      "bffCommit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "bffCommitEvidence": true,
+      "bffHost": "https://api.dev.mvl-cap.tw",
+      "bffSourceCommitSha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "buildMode": {
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_REAL_WRITES": "false"
+      },
+      "commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "deployedAt": "20260913T103241Z",
+      "deploymentProfile": "read-only",
+      "deploymentState": "accepted",
+      "emergencyOverride": {
+        "actor": null,
+        "enabled": false,
+        "reasonSha256": null
+      },
+      "environment": "pantheon-dev-fe",
+      "frontend": {
+        "commitSha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+        "repository": "ajoe734/execute-plans"
+      },
+      "frontendSha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+      "gate": {
+        "runId": "34751164876",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/34751164876",
+        "workflow": "pantheon-integration-gate.yml"
+      },
+      "githubArtifactDigest": "sha256:9b4628a482aa963469c40a263962e5b99ecfd9599330be07aabaff230db152f4",
+      "integrationGateRunId": "34751164876",
+      "pair": {
+        "operatorLiveArtifactDigestSha256": "01fbeb26d1d7523b44bf263e5c914eb0452ee6e620d9cacf40e963338432289c",
+        "pairId": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+        "readOnlyArtifactDigestSha256": "eab971709869b3f443222a13f769862072a4b2ad63557363c613ca0f1c982386",
+        "writeProofArtifactDigestSha256": "8f56c00caf6640679ec3c9bb64d62ea3e0e133d36b2a2cb11b961eac3c5cb983"
+      },
+      "pairId": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+      "previousArtifactDigest": "1452f7b35e039ca92a10525e6929ef18ef3498270d7cf873d5cc51de275be3b8",
+      "previousCommit": "ba0b47f445517ded95d910ee9a62e779a6a8d9d1",
+      "previousReleaseName": "20260913T074001Z-ba0b47f44551-gate-34744818811-34745406166-1-240646",
+      "probes": {
+        "candidatePreSwitch": "passed",
+        "postSwitch": "passed",
+        "rollbackRequired": false
+      },
+      "profile": "read-only",
+      "releaseAdmission": {
+        "backend": {
+          "branch": "dev",
+          "commitSha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+          "repository": "ajoe734/pantheon"
+        },
+        "compatibilityManifestSha256": "a949ab8a9146f785b98a0a888d358fa0bc87443b33a195ef4b95f31f3ede2eca",
+        "compatibilityStatus": "compatible",
+        "controller": {
+          "repository": "ajoe734/pantheon",
+          "runId": "34750913608",
+          "workflow": "nonprod-deploy.yml"
+        },
+        "frontend": {
+          "branch": "dev",
+          "commitSha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+          "repository": "ajoe734/execute-plans"
+        },
+        "releaseCandidateId": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+        "schemaVersion": "pantheon.dev-release-candidate-admission.v1"
+      },
+      "releaseName": "20260913T103241Z-dbe737e06766-gate-34751164876-34751773220-1-1224886",
+      "repository": "ajoe734/execute-plans",
+      "schemaVersion": 1,
+      "sourceBranch": "dev",
+      "sourceRef": "dbe737e0676640f1b9b2395b54fb3c0416099f8a"
+    },
+    "status": "verified",
+    "verified_at": "2026-09-13T10:35:09.911358Z"
+  },
+  "started_at": "2026-09-13T10:10:22.853483Z"
+}
