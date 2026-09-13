@@ -18,7 +18,7 @@
 - **Release-I Served Deployment Accepted At**: `2026-09-13T10:49:48Z` (`S5-PAIR-001`)
 
 ### Chronology and Scope Reconciliation Notice (Codex Review Remediation)
-In independent review of PR #5822 head `62565c213c57ed53087d59836bf1cdacb7e06580`, reviewer `Codex` identified that `evidence.json` erroneously claimed stimulus `dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e` was executed on accepted Release-I. In fact, `S5-PAIR-001` records the accepted served pair (`ae41705b4637110e665d2eed735afbd8307e28e6` / `dbe737e0676640f1b9b2395b54fb3c0416099f8a`) as accepted at `2026-09-13T10:49:48Z`. 
+In independent review of PR #5822 head `62565c213c57ed53087d59836bf1cdacb7e06580`, reviewer `Codex` identified that `evidence.json` erroneously claimed stimulus `dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e` was executed on accepted Release-I. In fact, `S5-PAIR-001` records the accepted served pair (`ae41705b4637110e665d2eed735afbd8307e28e6` / `dbe737e0676640f1b9b2395b54fb3c0416099f8a`) as accepted at `2026-09-13T10:49:48Z`.
 
 This remediation explicitly corrects that finding:
 1. **Historical Partial Evidence**: Stimulus `dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e` was executed at `04:04:39Z`, which preceded the Release-I deployment. It is retained and committed as historical partial evidence for Loops 1 & 2 rather than falsely claiming post-Release-I served identity.
@@ -153,7 +153,7 @@ All evidence files are co-located under `docs/deployment/evidence/S5-LOOPS-001/`
 9. `source-readbacks/`: Directory containing 14 committed HTTP response bodies for Loop 1 Source Ingestion.
 10. `alpha-approval-readbacks/`: Directory containing 22 committed HTTP response bodies for Loop 3 governance and admission.
 11. `workshop-readbacks/`: Directory containing 15 committed HTTP response bodies for Loop 5 Workshop recreation.
-12. `audit-seal.json`: Cryptographic SHA-256 seal of all 63 files in this directory.
+12. `audit-seal.json`: Cryptographic SHA-256 seal of the 62 underlying artifact files in this directory (acyclic binding to evidence.json).
 
 ---
 

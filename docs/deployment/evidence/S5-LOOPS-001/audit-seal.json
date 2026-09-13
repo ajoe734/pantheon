@@ -2,8 +2,8 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "a18da962ac6fb839e3c74ac3e45efb6c5efadc8111da560136ce1383678841e0",
-      "sizeBytes": 17441
+      "sha256": "a7e70db810fcf30575bf51e3a77d7a28bf5a9f72cbce97a365c0cf13bf37a4aa",
+      "sizeBytes": 17495
     },
     {
       "path": "alpha-approval-readbacks/alpha-admission-reload-response.json",
@@ -134,11 +134,6 @@
       "path": "distillation-registry-readback.json",
       "sha256": "b0aced123fe824a2ccbea6cd62fd0a55c8828ee14228a432f1533f48f0440e20",
       "sizeBytes": 16740
-    },
-    {
-      "path": "evidence.json",
-      "sha256": "fee1ad05f9cb57cef390fec9715884dc5918ec8a3e97687ec3c91c43ee8d4da7",
-      "sizeBytes": 8034
     },
     {
       "path": "loops-1-12-manifest.json",
