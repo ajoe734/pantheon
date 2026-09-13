@@ -643,6 +643,49 @@ def test_command_guards_reject_stale_etag_wrong_tenant_and_missing_mfa() -> None
     assert mfa_canonical.calls == []
 
 
+@pytest.mark.parametrize("environment,mfa_required,expected_status", [
+    ("dev", "false", 201),
+    ("dev", "true", 401),
+    ("production", "false", 401),
+    ("staging", "false", 401),
+    ("staging-live", "false", 401),
+])
+def test_workshop_follows_existing_dev_mfa_posture(
+    monkeypatch: pytest.MonkeyPatch, environment: str,
+    mfa_required: str, expected_status: int,
+) -> None:
+    # Build the in-memory fixture before selecting the request auth posture;
+    # production assemblies deliberately reject this fixture's ephemeral store.
+    client, store, canonical = _harness()
+    monkeypatch.setenv("PANTHEON_ENV", environment)
+    monkeypatch.delenv("PANTHEON_DEPLOYMENT_STAGE", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", mfa_required)
+    headers = _command_headers("dev-password-version", _etag(store), mfa=False)
+    response = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+        headers=headers, json=_version_body(),
+    )
+    assert response.status_code == expected_status, response.text
+    if expected_status == 201:
+        replay = client.post(
+            f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+            headers=headers, json=_version_body(),
+        )
+        assert replay.status_code == 201
+        assert replay.json() == response.json()
+        assert canonical.call_count("create_strategy_spec") == 1
+        denied = client.post(
+            f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+            headers=_command_headers("wrong-dev-tenant", _etag(store), tenant_id="tenant-beta", mfa=False),
+            json=_version_body(),
+        )
+        assert denied.status_code == 403
+        assert canonical.call_count("create_strategy_spec") == 1
+    else:
+        assert _reason(response) == "MFA_REQUIRED"
+        assert canonical.calls == []
+
+
 def test_version_read_scope_and_select_cas_leave_projection_unchanged() -> None:
     tenant_client, _tenant_store, tenant_canonical = _harness()
     denied = tenant_client.get(
