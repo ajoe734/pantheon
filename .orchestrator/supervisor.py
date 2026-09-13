@@ -10342,12 +10342,13 @@ def assignment_transiently_blocked_recoverable(
     owner: str,
     *,
     state: dict[str, Any],
+    agent_loads: Mapping[str, list[Any]] | None = None,
     fallback_candidates: list[str],
 ) -> str | None:
     """Return the load-balance reason when the owner cannot take this task
     right now for ANY reason -- stale/unknown health cache, a short
     retry-after window, zero capacity -- while a configured fallback
-    currently can.
+    currently has live spare capacity and satisfies dispatch readiness.
 
     Unlike ``assignment_terminal_unavailability`` this does not require the
     block to be durable: ``agent_can_take_task`` already fails closed on
@@ -10358,11 +10359,28 @@ def assignment_transiently_blocked_recoverable(
     ``assignment_saturated_recoverable`` before acting -- reassigning away
     from an owner that was about to recover on its own just churns
     ownership for nothing.
+
+    Requires at least one configured fallback candidate to have live spare
+    capacity (current load < dispatch capacity) according to the canonical
+    active-load model, and satisfy dispatch readiness via ``agent_can_take_task``.
+    A healthy fallback already at max_parallel is ineligible.
     """
 
     if agent_can_take_task(config, owner, task, state=state):
         return None
+    if agent_loads is None:
+        active_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("active_worker_statuses"), []
+        )
+        agent_loads = agent_dispatch_loads(config, state, active_statuses)
     for candidate in fallback_candidates:
+        candidate_capacity = agent_dispatch_capacity(config, normalize_agent_id(candidate))
+        if candidate_capacity <= 0:
+            continue
+        candidate_name = canonical_agent_name(config, candidate) or candidate
+        candidate_load = len(agent_loads.get(candidate, agent_loads.get(candidate_name, [])))
+        if candidate_load >= candidate_capacity:
+            continue
         if agent_can_take_task(config, candidate, task, state=state):
             return LOAD_BALANCE_TRANSIENT_REASON
     return None
@@ -10631,6 +10649,7 @@ def reconcile_unavailable_assignments(
                     task,
                     owner,
                     state=state,
+                    agent_loads=agent_loads,
                     fallback_candidates=fallback_candidates,
                 )
                 if saturation_reason is None:
@@ -10663,7 +10682,11 @@ def reconcile_unavailable_assignments(
                             ),
                             reverse=True,
                         )
-                        load_balance_owner_candidates = fallback_candidates
+                        load_balance_owner_candidates = [
+                            name for name in fallback_candidates
+                            if agent_dispatch_capacity(config, normalize_agent_id(name))
+                            > len(agent_loads.get(name, agent_loads.get(canonical_agent_name(config, name), [])))
+                        ]
         if not role or not unavailable_reason:
             continue
 
@@ -10722,6 +10745,20 @@ def reconcile_unavailable_assignments(
             continue
         new_owner, new_reviewer = pair
         if is_load_balance:
+            current_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
+            owner_capacity = agent_dispatch_capacity(config, normalize_agent_id(new_owner))
+            assigned_in_cycle = sum(1 for a in actions if a.get("owner") == new_owner)
+            candidate_key = canonical_agent_name(config, new_owner) or new_owner
+            current_owner_load = (
+                len(current_loads.get(new_owner, current_loads.get(candidate_key, [])))
+                + assigned_in_cycle
+            )
+            if (
+                owner_capacity <= 0
+                or current_owner_load >= owner_capacity
+                or not agent_can_take_task(config, new_owner, task, state=state)
+            ):
+                continue
             if unavailable_reason == LOAD_BALANCE_TRANSIENT_REASON:
                 condition = "was blocked from auto-dispatch (unhealthy/stale probe/retry-after)"
             else:
@@ -10769,6 +10806,7 @@ def reconcile_unavailable_assignments(
         load_balance_watch.pop(task_id, None)
         task["owner"] = new_owner
         task["reviewer"] = new_reviewer
+        agent_loads.setdefault(new_owner, []).append(1)
         actions.append(
             {
                 "task_id": task_id,

@@ -6155,6 +6155,161 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
         persisted.assert_not_called()
         self.assertNotIn("TASK-1", state["load_balance_watch"])
 
+    def test_owner_with_expired_probe_does_not_reassign_when_fallback_is_full(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+        state["workers"]["run-c"] = self._filler_worker("run-c", "TASK-C", "codex2")
+        state["workers"]["run-d"] = self._filler_worker("run-d", "TASK-D", "codex2")
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("load-balance recovery must not launch"),
+            ),
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        persisted.assert_not_called()
+        self.assertNotIn("TASK-1", state["load_balance_watch"])
+
+    def test_transient_lane_capacity_change_before_final_write_prevents_reassignment(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        orig_plan = supervisor.plan_task_assignment_pair
+
+        def fill_capacity_before_write(*args, **kwargs):
+            state["workers"]["run-c"] = self._filler_worker("run-c", "TASK-C", "codex2")
+            state["workers"]["run-d"] = self._filler_worker("run-d", "TASK-D", "codex2")
+            return orig_plan(*args, **kwargs)
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "plan_task_assignment_pair", side_effect=fill_capacity_before_write
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("load-balance recovery must not launch"),
+            ),
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_transient_lane_health_expiry_before_final_write_prevents_reassignment(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        orig_plan = supervisor.plan_task_assignment_pair
+
+        def expire_health_before_write(*args, **kwargs):
+            state["delivery_health"]["endpoints"]["codex2"]["valid_until"] = "2000-01-01T00:00:00Z"
+            state["delivery_health"]["accounts"]["codex2_account"]["valid_until"] = "2000-01-01T00:00:00Z"
+            return orig_plan(*args, **kwargs)
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "plan_task_assignment_pair", side_effect=expire_health_before_write
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("load-balance recovery must not launch"),
+            ),
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_assignment_transiently_blocked_recoverable_requires_live_spare_capacity(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+
+        # 1. Idle fallback has spare capacity -> eligible
+        reason = supervisor.assignment_transiently_blocked_recoverable(
+            self.config,
+            task,
+            "Codex",
+            state=state,
+            fallback_candidates=["Codex2"],
+        )
+        self.assertEqual(reason, supervisor.LOAD_BALANCE_TRANSIENT_REASON)
+
+        # 2. Fallback at capacity (2 active workers) -> ineligible
+        state["workers"]["run-c"] = self._filler_worker("run-c", "TASK-C", "codex2")
+        state["workers"]["run-d"] = self._filler_worker("run-d", "TASK-D", "codex2")
+        reason = supervisor.assignment_transiently_blocked_recoverable(
+            self.config,
+            task,
+            "Codex",
+            state=state,
+            fallback_candidates=["Codex2"],
+        )
+        self.assertIsNone(reason)
+
+        # 3. Fallback healthy and 1 active worker (capacity 2) -> eligible
+        state["workers"].pop("run-d")
+        reason = supervisor.assignment_transiently_blocked_recoverable(
+            self.config,
+            task,
+            "Codex",
+            state=state,
+            fallback_candidates=["Codex2"],
+        )
+        self.assertEqual(reason, supervisor.LOAD_BALANCE_TRANSIENT_REASON)
+
+        # 4. Fallback unhealthy -> ineligible
+        state["delivery_health"]["endpoints"]["codex2"]["valid_until"] = "2000-01-01T00:00:00Z"
+        reason = supervisor.assignment_transiently_blocked_recoverable(
+            self.config,
+            task,
+            "Codex",
+            state=state,
+            fallback_candidates=["Codex2"],
+        )
+        self.assertIsNone(reason)
+
+        # 5. Owner itself is healthy -> ineligible (not transiently blocked)
+        healthy_state = {
+            "workers": {},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        reason = supervisor.assignment_transiently_blocked_recoverable(
+            self.config,
+            task,
+            "Codex",
+            state=healthy_state,
+            fallback_candidates=["Codex2"],
+        )
+        self.assertIsNone(reason)
+
 
 class RecentTaskFailureCountsTests(unittest.TestCase):
     """recent_task_failure_counts: a bounded, offset-free tail read of the

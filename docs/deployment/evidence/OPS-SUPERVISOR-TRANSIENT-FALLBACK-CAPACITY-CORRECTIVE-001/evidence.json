@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-SUPERVISOR-TRANSIENT-FALLBACK-CAPACITY-CORRECTIVE-001",
+  "scope": "development tooling: require live spare capacity before transient fallback reassignment",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "review_status": "pending_independent_exact_head_review",
+  "source": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/OPS-SUPERVISOR-TRANSIENT-FALLBACK-CAPACITY-CORRECTIVE-001",
+    "base_sha": "4b5d774adfd5e01484985aec87241028839b9c3a",
+    "files_sha256": {
+      ".orchestrator/supervisor.py": "7dfb6f265fb7a1e16cb23b5902de03b2e827fde594daa04569502c4d910383e4",
+      ".orchestrator/test_supervisor.py": "4a7964f755357422c1fea529ac3498e70958a430ecc7838ad462695935f2cff9"
+    },
+    "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
+  },
+  "dispatch_runtime": {
+    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/9f4a5b97785a0145a56c2997e0e17ee84f8c7b4b",
+    "source_sha": "9f4a5b97785a0145a56c2997e0e17ee84f8c7b4b"
+  },
+  "problem": {
+    "summary": "Double-audited source and controlled runtime evidence showed that optional transient load balancing (assignment_transiently_blocked_recoverable and reconcile_unavailable_assignments) evaluated fallback readiness via agent_can_take_task only, which verifies endpoint/account health and configured capacity > 0 without checking current active worker load against max_parallel. As a result, a task whose owner had a transiently blocked condition (such as an expired health probe) could be reassigned to a healthy fallback candidate that was already running at max_parallel, falsely claiming in the status message that the candidate 'had spare capacity'. In addition, reconcile_unavailable_assignments lacked a live capacity revalidation immediately before the governed reassignment write, meaning a candidate whose capacity became exhausted or whose observation expired between candidate planning and the commit write would still receive the reassignment write."
+  },
+  "fix": {
+    "candidate_spare_capacity_requirement": "assignment_transiently_blocked_recoverable now requires that candidate_load < candidate_capacity (according to the canonical active-load model agent_dispatch_loads) in addition to agent_can_take_task readiness. Fallback candidates at max_parallel are ineligible.",
+    "headroom_candidate_filtering": "reconcile_unavailable_assignments now filters load_balance_owner_candidates to only candidates with live spare capacity (candidate_capacity > candidate_load) sorted by headroom descending.",
+    "commit_time_revalidation": "Immediately before invoking persist_task_reassignment, reconcile_unavailable_assignments revalidates that the selected fallback has owner_capacity > 0, current_owner_load (including tasks assigned in the current cycle) < owner_capacity, and agent_can_take_task(config, new_owner, task, state=state) remains satisfied. If full or observation is no longer current, it cleanly aborts as a no-op with no partial write, worker launch, or false log.",
+    "message_truthfulness": "The status message claim that the fallback 'had spare capacity' is now truthful and backed by the commit-time capacity predicate.",
+    "cycle_load_tracking": "agent_loads is updated upon successful reassignment to account for newly assigned tasks in subsequent evaluations within the same cycle.",
+    "call_sites": [
+      "supervisor.assignment_transiently_blocked_recoverable",
+      "supervisor.reconcile_unavailable_assignments"
+    ]
+  },
+  "before_after_behavior_map": [
+    {
+      "scenario": "Incumbent owner probe expired; fallback candidate is healthy but already running at max_parallel.",
+      "before": "assignment_transiently_blocked_recoverable returned 'owner_transiently_blocked', load_balance_owner_candidates included the full candidate, and reconcile_unavailable_assignments committed the reassignment with a false status message claiming the fallback had spare capacity.",
+      "after": "assignment_transiently_blocked_recoverable requires live spare capacity and returns None for a candidate at max_parallel; load_balance_watch drops the task; no reassignment or false log occurs."
+    },
+    {
+      "scenario": "Fallback candidate has spare capacity during hold, but becomes full before the final write.",
+      "before": "reconcile_unavailable_assignments proceeded blindly to persist_task_reassignment without commit-time revalidation, assigning the task despite zero headroom.",
+      "after": "Commit-time revalidation immediately before persist_task_reassignment detects current_owner_load >= owner_capacity, skips the write, launches no worker, and records no false log."
+    },
+    {
+      "scenario": "Fallback candidate has spare capacity during hold, but health probe expires before the final write.",
+      "before": "reconcile_unavailable_assignments wrote the reassignment to an unready/expired fallback.",
+      "after": "Commit-time revalidation evaluates agent_can_take_task against current state, detects unready/expired observation, and skips the write."
+    },
+    {
+      "scenario": "Incumbent owner probe expired; fallback candidate is healthy and idle (or below max_parallel) after hold duration.",
+      "before": "Reassigned to fallback.",
+      "after": "Reassigned to fallback with truthful status message claiming spare capacity proved by the commit-time predicate. Ordinary planner redispatches normally; no worker is launched directly by the recovery lane."
+    }
+  ],
+  "reproductions": [
+    {
+      "name": "repro_1_full_fallback_reassignment",
+      "description": "Owner probe is expired, fallback Codex2 is healthy but running 2 workers (max_parallel=2). Pre-fix supervisor persisted reassignment to Codex2 and claimed Codex2 had spare capacity. Post-fix supervisor detects zero headroom, returns None, and avoids reassignment.",
+      "pre_fix_outcome": "persist_task_reassignment was called with new_owner='Codex2' and message claiming 'Codex2 had spare capacity'.",
+      "post_fix_outcome": "persist_task_reassignment was not called; watch was cleared; no reassignment or false log."
+    },
+    {
+      "name": "repro_2_capacity_change_before_final_write",
+      "description": "Owner probe is expired, fallback Codex2 is healthy and idle initially, but capacity is exhausted before the final write. Pre-fix supervisor wrote reassignment regardless. Post-fix supervisor commit-time revalidation aborted the write.",
+      "pre_fix_outcome": "persist_task_reassignment was called despite zero commit-time headroom.",
+      "post_fix_outcome": "persist_task_reassignment was not called; no worker launched; clean no-op."
+    }
+  ],
+  "validation": [
+    {
+      "name": "test_load_balance_reassignment_suite",
+      "command": "python3 -m unittest discover -v -s .orchestrator -p 'test_supervisor.py' -k LoadBalanceReassignmentTests",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "13 passed in 0.020s, including new regressions: test_owner_with_expired_probe_does_not_reassign_when_fallback_is_full, test_transient_lane_capacity_change_before_final_write_prevents_reassignment, test_transient_lane_health_expiry_before_final_write_prevents_reassignment, test_assignment_transiently_blocked_recoverable_requires_live_spare_capacity"
+    },
+    {
+      "name": "reassignment_and_blocker_regressions",
+      "command": "python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py' -k 'SupervisorBlockerTransitionCorrective|Reassignment'",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "38 passed in 1.48s (20 BlockerTransitionCorrective + 18 Reassignment tests)"
+    }
+  ]
+}
