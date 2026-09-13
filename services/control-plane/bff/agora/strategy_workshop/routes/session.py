@@ -12,6 +12,7 @@ import uuid
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
+from services.control_plane.privacy.private_content_models import PrivateContentError
 
 from .._common import (
     _StrategyVersionProjectionError,
@@ -45,6 +46,16 @@ def build_session_router(
     _scoped_session = ctx.scoped_session
     _readiness_from_store_or_state = ctx.readiness_from_store_or_state
     _read_strategy_version = ctx.read_strategy_version
+
+    def _private_put(**kwargs: Any) -> Any:
+        if private_content_store is None:
+            raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
+                            "Private content store is not configured", "private_content_store")
+        try:
+            return private_content_store.put(**kwargs)
+        except PrivateContentError as exc:
+            raise bff_error(exc.http_status, exc.error_code,
+                            "Workshop message content is unavailable", "private_content_store") from None
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/workshops — list user-scoped workshop sessions
@@ -158,11 +169,8 @@ def build_session_router(
             "status": "open",
         })
         try:
-            if private_content_store is None:
-                raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
-                                "Private content store is not configured", "private_content_store")
             initial_event_id = str(uuid.uuid4())
-            private = private_content_store.put(
+            private = _private_put(
                 tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
                 workshop_id=workshop_id, event_id=initial_event_id,
                 content_type="text/plain", plaintext=body.initial_message.encode("utf-8"),
@@ -301,15 +309,12 @@ def build_session_router(
             or session.get("trace_id")
             or f"trace-{uuid.uuid4().hex[:12]}"
         )
-        private = private_content_store.put(
+        private = _private_put(
             tenant_id=scope.tenant_id, owner_user_id=scope.user_id,
             workshop_id=workshop_id, event_id=event_id, content_type="text/plain",
             plaintext=body.content.encode("utf-8"), retention_class="workshop_default",
             idempotency_key=idempotency_key,
-        ) if private_content_store is not None else None
-        if private is None:
-            raise bff_error(503, "PRIVATE_CONTENT_STORE_UNAVAILABLE",
-                            "Private content store is not configured", "private_content_store")
+        )
         expected_version = _parse_etag_lock_version(if_match, workshop_id)
         # Atomic CAS: compare expected lock_version, append event, bump version —
         # all in one store transaction so concurrent same-ETag writes both cannot succeed.
@@ -368,6 +373,7 @@ def build_session_router(
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,
                 session=store.get_session(workshop_id) or session,
+                private_content_store=private_content_store,
             )
         except Exception:
             pass
@@ -759,14 +765,19 @@ def build_session_router(
         # semantics live in one place rather than being duplicated per caller.
         scope = _scope(authorization, x_tenant_id)
         session = _scoped_session(workshop_id, scope)
-        outcome = run_reconstruction_worker(
-            store=store,
-            canonical=canonical,
-            workshop_id=workshop_id,
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-            session=session,
-        )
+        try:
+            outcome = run_reconstruction_worker(
+                store=store,
+                canonical=canonical,
+                private_content_store=private_content_store,
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                session=session,
+            )
+        except PrivateContentError as exc:
+            raise bff_error(exc.http_status, exc.error_code,
+                            "Workshop message content is unavailable", "private_content_store") from None
         return {
             "data": outcome["result"],
             "meta": {

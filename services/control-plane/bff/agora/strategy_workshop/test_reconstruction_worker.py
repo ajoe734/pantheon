@@ -219,3 +219,50 @@ def test_worker_skips_registry_draft_without_active_strategy_spec() -> None:
         tenant_id="tenant-test", user_id="user-test",
     )
     assert outcome["registry_draft_ref"] is None
+
+
+def test_worker_reads_private_owner_content_not_placeholder_and_upgrades_old_card() -> None:
+    from services.control_plane.privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+
+    store = MemoryWorkshopStore()
+    private = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
+    session = _new_session(store)
+    workshop_id = session["workshop_id"]
+    content = private.put(
+        tenant_id="tenant-test", owner_user_id="user-test", workshop_id=workshop_id,
+        event_id="private-message", content_type="text/plain", retention_class="workshop_default",
+        idempotency_key="private-message", plaintext=b"Hypothesis: momentum alpha. Universe: SPY equities.",
+    )
+    store.create_event({"workshop_id": workshop_id, "actor_type": "operator", "event_type": "message",
+                        "private_content_ref": content.private_content_ref,
+                        "redacted_summary": "Private workshop message"})
+    store.record_workshop_card({
+        "card_id": reconstruction_card_id(workshop_id), "card_type": "strategy_reconstruction",
+        "workshop_id": workshop_id, "status": "completed",
+        "title": "Old placeholder-based reconstruction",
+        "payload": {"based_on_sequence_no": 1, "reconstruction": {"stale": True}},
+    })
+    args = dict(store=store, canonical=_NoRegistryOperations(), workshop_id=workshop_id,
+                tenant_id="tenant-test", user_id="user-test", private_content_store=private)
+    result = run_reconstruction_worker(**args)
+    assert result["job_status"] == "completed"
+    assert result["result"]["strategy_map"]["hypothesis"]["status"] == "confirmed"
+    assert len(private.audit_records) == 1
+    assert private.audit_records[0].purpose == "workshop_reconstruction"
+    assert run_reconstruction_worker(**args)["result"] == result["result"]
+    assert len(private.audit_records) == 1, "same version replay must not decrypt or draft again"
+
+
+def test_worker_missing_private_content_does_not_reconstruct_placeholder() -> None:
+    from services.control_plane.privacy.private_content_models import PrivateContentStoreUnavailable
+
+    store = MemoryWorkshopStore()
+    session = _new_session(store)
+    store.create_event({"workshop_id": session["workshop_id"], "actor_type": "operator",
+                        "event_type": "message", "private_content_ref": "pcnt_missing",
+                        "redacted_summary": "Private workshop message"})
+    with pytest.raises(PrivateContentStoreUnavailable):
+        run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
+                                  workshop_id=session["workshop_id"],
+                                  tenant_id="tenant-test", user_id="user-test")
+    assert store.list_workshop_cards(session["workshop_id"]) == []

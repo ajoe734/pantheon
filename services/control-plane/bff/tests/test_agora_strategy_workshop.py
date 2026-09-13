@@ -529,6 +529,58 @@ def _get_current_etag(client, workshop_id: str) -> str:
     return resp.headers["etag"]
 
 
+def test_private_storage_unavailable_is_503_without_orphan_session(monkeypatch):
+    from services.control_plane.privacy.private_content_models import PrivateContentStoreUnavailable
+    from services.control_plane.privacy.private_content_store import MemoryPrivateContentStore
+
+    def unavailable(self, **kwargs):
+        raise PrivateContentStoreUnavailable("test missing storage key")
+
+    monkeypatch.setattr(MemoryPrivateContentStore, "put", unavailable)
+    client = _workshop_client(monkeypatch)
+    response = client.post("/bff/agora/workshops", headers={
+        "Authorization": _OPERATOR_AUTH, "Idempotency-Key": "missing-storage-test",
+    }, json={"initial_message": "Private alpha hypothesis"})
+    assert response.status_code == 503, response.text
+    # Keep the existing BFF error normalization for unavailable dependencies.
+    assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert "test missing storage key" not in response.text
+    listed = client.get("/bff/agora/workshops", headers={"Authorization": _OPERATOR_AUTH})
+    assert listed.status_code == 200
+    assert listed.json()["data"] == []
+
+
+def test_reconstruct_route_reads_private_initial_message(monkeypatch):
+    client = _workshop_client(monkeypatch)
+    response = client.post("/bff/agora/workshops", headers={
+        "Authorization": _OPERATOR_AUTH, "Idempotency-Key": "private-reconstruct-test",
+    }, json={"initial_message": "Hypothesis: momentum alpha. Universe: SPY equities."})
+    assert response.status_code == 201, response.text
+    workshop_id = response.json()["data"]["workshop_id"]
+    result = client.post(f"/bff/agora/workshops/{workshop_id}/reconstruct",
+                         headers={"Authorization": _OPERATOR_AUTH})
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["strategy_map"]["hypothesis"]["status"] == "confirmed"
+
+
+def test_reconstruct_missing_body_returns_503_not_placeholder_result(monkeypatch):
+    from services.control_plane.privacy.private_content_models import PrivateContentStoreUnavailable
+    from services.control_plane.privacy.private_content_store import MemoryPrivateContentStore
+
+    client = _workshop_client(monkeypatch)
+    workshop_id = _create_workshop(client, "private-missing-body-test")
+
+    def unavailable(self, **kwargs):
+        raise PrivateContentStoreUnavailable("test missing body")
+
+    monkeypatch.setattr(MemoryPrivateContentStore, "get_for_owner", unavailable)
+    result = client.post(f"/bff/agora/workshops/{workshop_id}/reconstruct",
+                         headers={"Authorization": _OPERATOR_AUTH})
+    assert result.status_code == 503, result.text
+    assert result.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert "test missing body" not in result.text
+
+
 def _create_workshop(client, idem_key: str, *, strategy_ref: str | None = None) -> str:
     payload = {"initial_message": "Private winner-branch strategy description"}
     if strategy_ref:
