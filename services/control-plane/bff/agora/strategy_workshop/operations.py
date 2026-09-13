@@ -14,8 +14,27 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Mapping, Optional
+
+from fastapi import Header
+
+
+_request_authorization: ContextVar[Optional[str]] = ContextVar(
+    "workshop_request_authorization", default=None,
+)
+
+
+async def bind_workshop_authorization(
+    authorization: Optional[str] = Header(default=None),
+) -> AsyncIterator[None]:
+    """Forward the caller's existing credential; auth stays in the shared facade."""
+    token = _request_authorization.set(authorization)
+    try:
+        yield
+    finally:
+        _request_authorization.reset(token)
 
 
 @dataclass(frozen=True)
@@ -106,6 +125,10 @@ class WorkshopCanonicalOperations:
             body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        authorization = _request_authorization.get()
+        if authorization:
+            # Never retain a caller token on the shared client or on redirects.
+            request.add_unredirected_header("Authorization", authorization)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = response.read().decode("utf-8").strip()
