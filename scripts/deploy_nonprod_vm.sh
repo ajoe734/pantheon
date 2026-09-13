@@ -1720,7 +1720,13 @@ assert (payload.get("meta") or {}).get("identity") == expected_identity, payload
 token = payload["access_token"]
 encoded = token.split(".")[1]
 claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-assert set(claims.get("roles") or []) == {expected_role}, claims.get("roles")
+roles = set(claims.get("roles") or [])
+allowed_roles = {expected_role}
+if expected_identity == "approver":
+    # Current dev approvers also use the existing Governance reader role.
+    # The exact prior artifact may predate that capability and remain restorable.
+    allowed_roles.add("governance_reviewer")
+assert expected_role in roles and roles <= allowed_roles, claims.get("roles")
 assert "mfa_verified" not in claims, "password-only dev login must not claim MFA verification"
 subject = str(claims.get("sub") or "")
 assert subject, "issued token is missing sub"

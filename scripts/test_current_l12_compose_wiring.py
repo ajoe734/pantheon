@@ -116,7 +116,7 @@ def test_teaching_worker_and_agora_service_boundaries_are_exact() -> None:
         "policy-learning-agora-handoff-drainer"
     )
     assert bff["AGORA_HANDOFF_SERVICE_TENANTS"] == (
-        "${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}"
+        "${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}}"
     )
     assert policy_worker["AGORA_BFF_URL"] == "http://operator-bff:8001"
     assert policy_worker["RESEARCH_SERVICE_URL"] == (
