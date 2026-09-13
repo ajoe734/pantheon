@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "task_id": "S5-LOOPS-001",
+  "task_title": "Drive Loops 1 through 12 from one fresh stimulus",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "phase": "step-5-loops",
+  "work_class": "hosted",
+  "timestamp": "2026-09-13T16:15:00Z",
+  "specification_reference": {
+    "step5_plan": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/step5-execution-tasks.json",
+    "sa": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/SA.md",
+    "sd": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/SD.md",
+    "reconciliation_doc": "/tmp/pantheon-delivery-20260913.MnZdSN/CURRENT-DELIVERY.zh-TW.md",
+    "five_column_evidence": "/tmp/pantheon-delivery-20260913.MnZdSN/LOOPS-1-12-EVIDENCE.zh-TW.md",
+    "remaining_gaps": "/tmp/pantheon-delivery-20260913.MnZdSN/REMAINING-PRODUCT-GAPS.zh-TW.md"
+  },
+  "stimulus_metadata": {
+    "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+    "generated_at": "2026-09-13T04:04:39Z",
+    "tenant_id": "tenant-dev",
+    "provenance": "simulation",
+    "is_real": false,
+    "source_container": "82a285494255",
+    "ingest_run_id": "ingest-bd1a73d4864e"
+  },
+  "acceptance_matrix": {
+    "acceptance_1_generate_new_stimulus": {
+      "status": "passed",
+      "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "served_identity_verified": true,
+      "prebuilt_ids_relabeled": false,
+      "details": "Generated genuine fresh stimulus on pantheon-dev following accepted Release-I deployment. Recorded execution context with container hostname 82a285494255, role manual bounded Source stimulus, simulation provenance."
+    },
+    "acceptance_2_persist_five_fields_loops_1_to_12": {
+      "status": "reconciled_functional_gaps_disclosed",
+      "literal_all_twelve_passed": false,
+      "accepted_loops_count": 2,
+      "unaccepted_loops_count": 10,
+      "accepted_loops": [
+        "source_ingestion",
+        "strategy_distillation"
+      ],
+      "unaccepted_loops": [
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "manifest_path": "docs/deployment/evidence/S5-LOOPS-001/loops-1-12-manifest.json",
+      "details": "All 12 canonical loops audited against the 5 mandatory fields (trigger ID, terminal output ID, next-consumer receipt ID, owner worker identity, durable reload readback). Loops 1 & 2 have complete 5-field verified chains. Loop 3 Alpha produced terminal output but lacks a next-consumer receipt to Teaching. Loops 4-12 are honestly reported as unaccepted/interrupted due to concrete functional gaps."
+    },
+    "acceptance_3_paper_only_tenant_bound": {
+      "status": "passed",
+      "tenant_id": "tenant-dev",
+      "is_real": false,
+      "provenance": "simulation",
+      "fail_closed_enforced": true,
+      "details": "Writes are strictly tenant-bound to tenant-dev and marked simulation. Fail-closed acceptance was applied: missing fields resulted in unaccepted verdicts without fabricating synthetic receipts."
+    },
+    "acceptance_4_stop_and_report_not_run": {
+      "status": "passed",
+      "prerequisite_pair_task": "S5-PAIR-001 (done)",
+      "stopped_at_gap": "Loop 3 -> Loop 4 boundary (no Teaching session invocation)",
+      "details": "Prerequisite pair acceptance verified. Downstream unexercised loops were stopped and reported not-run rather than simulating false completions."
+    }
+  },
+  "functional_gaps": [
+    {
+      "gap_id": "GAP-L03-TEACHING-INVOCATION",
+      "affected_loop": "alpha_replication -> persona_teaching",
+      "description": "Alpha revalidation worker evaluates schema and governance gates but does not initiate a downstream Persona Teaching training session."
+    },
+    {
+      "gap_id": "GAP-L05-WORKSHOP-STRATEGY-SPEC",
+      "affected_loop": "agora_interaction_evidence (Workshop)",
+      "description": "Workshop reconstruction currently relies on keyword and length heuristics resulting in insufficient status; does not generate or evaluate executable typed StrategySpec."
+    },
+    {
+      "gap_id": "GAP-L05-AGORA-RESEARCH-ADAPTER-WIRING",
+      "affected_loop": "agora_interaction_evidence (Research)",
+      "description": "BFF and interaction worker instantiate ResearchDispatcher without authentic adapter registry, falling back to DefaultAllowlistedAdapter simulation."
+    },
+    {
+      "gap_id": "GAP-L08-RUNTIME-BINDING",
+      "affected_loop": "promotion_deployment",
+      "description": "Strategy R1 remains research_only with execution mode none; no executable RuntimeBinding8 exists."
+    },
+    {
+      "gap_id": "GAP-L09-PAPER-LIFECYCLE",
+      "affected_loop": "capital_pool_execution",
+      "description": "Performance attribution lists strategy T1 with total_trades=0 and runtime_count=0; no paper market signals, orders, or fills were executed."
+    },
+    {
+      "gap_id": "GAP-L12-MANAGEMENT-PROJECTION",
+      "affected_loop": "bff_health_monitoring",
+      "description": "Management cockpit serves static health and cards over HTTP 200, but Loops projection remains degraded/unknown due to upstream chain interruption."
+    }
+  ],
+  "delivered_files": {
+    "docs/deployment/evidence/S5-LOOPS-001/README.md": "643c4fe8fb2e8c1ae0d2772a32fc98e0bc8fd4d4a8555cb1067c275f5424fd45",
+    "docs/deployment/evidence/S5-LOOPS-001/alpha-owner-identities.txt": "7beb3a6fb34c5349195b9e63a3d07fd42e1ab345207456119cf6b3da3fe09bdf",
+    "docs/deployment/evidence/S5-LOOPS-001/alpha-research-reload.json": "15f653a5b064e33d94a3f47f952b5a4f7ef1f18fb568a4af976891bad877452f",
+    "docs/deployment/evidence/S5-LOOPS-001/audit-seal.json": "71d1dd290eaa5e1961fad81a4bdebf8bff489d8701666bf4415df04148a02794",
+    "docs/deployment/evidence/S5-LOOPS-001/distillation-registry-readback.json": "b0aced123fe824a2ccbea6cd62fd0a55c8828ee14228a432f1533f48f0440e20",
+    "docs/deployment/evidence/S5-LOOPS-001/loops-1-12-manifest.json": "e49fa3ee2bd5785cae40645a5626ad0780ee99c5d8d1cd219da870e46a732ea6",
+    "docs/deployment/evidence/S5-LOOPS-001/source-execution-context.json": "d7f2c585da162e5f94c3be51ab7493d6285c2b07c9516ed1bd31b0a1cafd811c",
+    "docs/deployment/evidence/S5-LOOPS-001/source-stimulus-summary.json": "4d50d673baa6e828e88a1f98c05e9109ad5c118c2bdfd9f5d5e6173c38e752ae"
+  },
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_cross_repo_release_controller.py scripts/test_dev_release_artifacts.py scripts/test_deploy_nonprod_vm.py scripts/test_check_shared_deploy_workflow_disabled.py tests/test_loop_catalog_registry.py (215 passed, 3 skipped in 95.55s)",
+    "curl -s https://api.dev.mvl-cap.tw/bff/version (HTTP 200, source_commit_sha: ae41705b4637110e665d2eed735afbd8307e28e6)",
+    "curl -s https://app.dev.mvl-cap.tw/deployment.json (HTTP 200, deploymentState: accepted, commit: dbe737e0676640f1b9b2395b54fb3c0416099f8a)"
+  ],
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/S5-LOOPS-001"
+  }
+}

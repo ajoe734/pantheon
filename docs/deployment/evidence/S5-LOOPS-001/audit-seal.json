@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "pantheon.loops.audit-seal.v1",
+  "taskId": "S5-LOOPS-001",
+  "stimulusId": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+  "timestamp": "2026-09-13T16:15:00Z",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "643c4fe8fb2e8c1ae0d2772a32fc98e0bc8fd4d4a8555cb1067c275f5424fd45",
+      "sizeBytes": 14645
+    },
+    {
+      "path": "alpha-owner-identities.txt",
+      "sha256": "7beb3a6fb34c5349195b9e63a3d07fd42e1ab345207456119cf6b3da3fe09bdf",
+      "sizeBytes": 665
+    },
+    {
+      "path": "alpha-research-reload.json",
+      "sha256": "15f653a5b064e33d94a3f47f952b5a4f7ef1f18fb568a4af976891bad877452f",
+      "sizeBytes": 15284
+    },
+    {
+      "path": "distillation-registry-readback.json",
+      "sha256": "b0aced123fe824a2ccbea6cd62fd0a55c8828ee14228a432f1533f48f0440e20",
+      "sizeBytes": 16740
+    },
+    {
+      "path": "loops-1-12-manifest.json",
+      "sha256": "e49fa3ee2bd5785cae40645a5626ad0780ee99c5d8d1cd219da870e46a732ea6",
+      "sizeBytes": 9032
+    },
+    {
+      "path": "source-execution-context.json",
+      "sha256": "d7f2c585da162e5f94c3be51ab7493d6285c2b07c9516ed1bd31b0a1cafd811c",
+      "sizeBytes": 238
+    },
+    {
+      "path": "source-stimulus-summary.json",
+      "sha256": "4d50d673baa6e828e88a1f98c05e9109ad5c118c2bdfd9f5d5e6173c38e752ae",
+      "sizeBytes": 873
+    }
+  ]
+}
