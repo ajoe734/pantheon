@@ -2,19 +2,15 @@
 """HTTP contract tests for PKT-003 Evolution Center BFF surfaces."""
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
+import json
 from contextlib import contextmanager
+from pathlib import Path
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import json
-from pathlib import Path
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.evolution.router import create_evolution_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 AUTH = "Bearer test-operator:operator,admin"
@@ -26,7 +22,6 @@ with open(_DATA_PATH, "r", encoding="utf-8") as _f:
 
 @contextmanager
 def _seeded_client():
-    original_store = bff_main.read_store
     ports = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "evolution_decisions": _RAW_DATA.get("evolution_decisions", {}),
@@ -36,12 +31,10 @@ def _seeded_client():
     )
     ports.list_evolution_decisions = ports.lifecycle_telemetry_governance.list_evolution_decisions
     ports.list_all_rollbacks = ports.lifecycle_telemetry_governance.list_all_rollbacks
-    bff_main.read_store = ports
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+    app.include_router(create_evolution_router(read_surface=ports))
+    client = TestClient(app)
+    yield client
 
 
 def test_evolution_decisions_list_contract():

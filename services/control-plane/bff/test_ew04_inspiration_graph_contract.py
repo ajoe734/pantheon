@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
 from contextlib import contextmanager
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.evolution.router import create_evolution_router
+from services.control_plane.bff.evolution.service import ew04_inspiration_projection_from_lineage_edges
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -57,19 +55,38 @@ def _seeded_client(
     inspiration_graphs: dict | None = None,
     lineage_edges: list | None = None,
 ):
-    original_store = bff_main.read_store
     graphs = dict(_DEFAULT_INSPIRATION_GRAPHS if inspiration_graphs is None else inspiration_graphs)
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    ports = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "inspiration_graphs": graphs,
             "lineage_edges": lineage_edges or [],
         }
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "error": {
+                        "code": detail.get("code"),
+                        "message": detail.get("message"),
+                    },
+                    "detail": detail,
+                },
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(detail)}, "detail": detail},
+        )
+
+    app.include_router(create_evolution_router(get_read_store=lambda: client.store if hasattr(client, "store") else ports))
+    client = TestClient(app)
+    client.store = ports
+    yield client
 
 
 def test_ew04_inspiration_graph_contract_returns_published_projection() -> None:
@@ -122,19 +139,19 @@ def test_ew04_inspiration_graph_contract_returns_published_projection() -> None:
 
 def test_ew04_inspiration_graph_returns_unavailable_surface_when_dataset_is_missing() -> None:
     with _seeded_client() as client:
-        original_get = bff_main.read_store.get_inspiration_graph
-        original_source = bff_main.read_store.dataset_source
+        original_get = client.store.get_inspiration_graph
+        original_source = client.store.dataset_source
         try:
-            bff_main.read_store.get_inspiration_graph = lambda artifact_id: None
-            bff_main.read_store.dataset_source = lambda dataset: "missing"
+            client.store.get_inspiration_graph = lambda artifact_id: None
+            client.store.dataset_source = lambda dataset: "missing"
 
             response = client.get(
                 "/api/v1/lineage/inspiration/artifact-042",
                 headers={"Authorization": OPERATOR_AUTH},
             )
         finally:
-            bff_main.read_store.get_inspiration_graph = original_get
-            bff_main.read_store.dataset_source = original_source
+            client.store.get_inspiration_graph = original_get
+            client.store.dataset_source = original_source
 
         assert response.status_code == 200, response.text
         payload = response.json()
@@ -146,15 +163,15 @@ def test_ew04_inspiration_graph_returns_unavailable_surface_when_dataset_is_miss
 
 def test_ew04_inspiration_graph_returns_404_for_unknown_artifact_even_when_dataset_is_missing() -> None:
     with _seeded_client() as client:
-        original_source = bff_main.read_store.dataset_source
+        original_source = client.store.dataset_source
         try:
-            bff_main.read_store.dataset_source = lambda dataset: "missing"
+            client.store.dataset_source = lambda dataset: "missing"
             response = client.get(
                 "/api/v1/lineage/inspiration/artifact-missing",
                 headers={"Authorization": OPERATOR_AUTH},
             )
         finally:
-            bff_main.read_store.dataset_source = original_source
+            client.store.dataset_source = original_source
 
         assert response.status_code == 404, response.text
         payload = response.json()
@@ -172,8 +189,12 @@ def test_ew04_inspiration_graph_fallback_from_lineage_edges_does_not_synthesize_
             "strategy_id": "alpha-strategy",
         }
     ]
-    with _seeded_client(lineage_edges=edges) as _client:
-        projection = bff_main._ew04_inspiration_projection_from_lineage_edges("artifact-fallback-01")
+    with _seeded_client(lineage_edges=edges) as client:
+        projection = ew04_inspiration_projection_from_lineage_edges(
+            "artifact-fallback-01",
+            client.store,
+            utc_now=lambda: "2026-04-19T03:00:00Z",
+        )
         assert projection is not None
         assert projection["artifact_id"] == "artifact-fallback-01"
         assert len(projection["inspiration_edges"]) == 1

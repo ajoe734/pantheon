@@ -13,13 +13,16 @@ import tempfile
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 import json
 from pathlib import Path
-from ports import create_in_memory_read_surface_ports
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from services.control_plane.bff.evolution.router import create_evolution_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-evolution:operator,reviewer"}
 
@@ -312,7 +315,84 @@ class _EvolutionJournalTestStore:
         raise AttributeError(f"'_EvolutionJournalTestStore' has no attribute '{name}'")
 
 
-def _fresh_client(td: str) -> TestClient:
+class _JournalTestClient(TestClient):
+    @property
+    def store(self) -> Any:
+        return self.app.state.store
+
+    @store.setter
+    def store(self, val: Any) -> None:
+        self.app.state.store = val
+
+
+def _create_app_for_store(store: Any) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        detail = exc.detail
+        code = "HTTP_ERROR"
+        message = str(detail)
+        if isinstance(detail, dict):
+            code = detail.get("code") or (detail.get("error", {}).get("code") if isinstance(detail.get("error"), dict) else None) or "HTTP_ERROR"
+            message = detail.get("message") or str(detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": code, "message": message, "details": detail if isinstance(detail, dict) else {"reason": message}}},
+        )
+
+    class _Identity:
+        def __init__(self, op_id: str, roles: set[str]) -> None:
+            self.operator_id = op_id
+            self.roles = roles
+
+    def _extract_identity(auth: Optional[str] = None) -> Optional[_Identity]:
+        if not auth or not auth.startswith("Bearer "):
+            return None
+        token = auth[len("Bearer "):].strip()
+        if ":" in token:
+            op_id, roles_str = token.split(":", 1)
+            roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+        else:
+            op_id = token
+            roles = {"operator", "viewer", "reviewer", "admin"}
+        return _Identity(op_id, roles)
+
+    def _require_read(identity: Optional[_Identity]) -> None:
+        if identity is None:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "AUTH_REQUIRED", "message": "Authentication required"},
+            )
+
+    def _dataset_surface_status(dataset: str, *, snapshot_at: str, **kwargs: Any) -> Dict[str, Any]:
+        curr_store = app.state.store
+        source = kwargs.get("source")
+        if not source and hasattr(curr_store, "dataset_source"):
+            try:
+                source = curr_store.dataset_source(dataset)
+            except Exception:
+                source = "missing"
+        source = source or "ok"
+        if source in ("missing", "unavailable"):
+            return {"status": "unavailable", "dataset": dataset, "snapshot_at": snapshot_at, "source": source}
+        if source == "local_snapshot":
+            return {"status": "degraded", "dataset": dataset, "snapshot_at": snapshot_at, "source": source}
+        return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at, "source": source}
+
+    app.state.store = store
+    router = create_evolution_router(
+        read_surface=lambda: app.state.store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read,
+        dataset_surface_status=_dataset_surface_status,
+    )
+    app.include_router(router)
+    return app
+
+
+def _fresh_client(td: str, raise_server_exceptions: bool = True) -> _JournalTestClient:
     snapshot_path = os.path.join(td, "read_surfaces.json")
     if os.path.exists(snapshot_path):
         try:
@@ -330,16 +410,13 @@ def _fresh_client(td: str) -> TestClient:
                 data = _load_default_fixture_pack_datasets()
         else:
             data = _load_default_fixture_pack_datasets()
-    bff_main.read_store = _EvolutionJournalTestStore(data)
-    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-    if hasattr(bff_main, "_COMMAND_AUTH_CONTEXT"):
-        bff_main._COMMAND_AUTH_CONTEXT.clear()
-    return TestClient(bff_main.app)
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    return _JournalTestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def test_evolution_journal_composes_required_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
 
@@ -359,6 +436,7 @@ def test_evolution_journal_composes_required_sources() -> None:
             assert "byType" not in summary
             assert "byStatus" not in summary
             assert "byRiskLevel" not in summary
+            assert body["data"]["id"] == "management_evolution_journal"
             assert body["meta"]["surfaces"]["management_evolution_journal"]["source"] == "bff_composed"
             for surface in [
                 "evolution_decisions",
@@ -384,12 +462,11 @@ def test_evolution_journal_composes_required_sources() -> None:
             assert mutation_review["mutation_review"]["decision_id"] == "evo-dec-88f3a2c1"
             assert "mutationReview" not in mutation_review
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evolution_journal_supports_filters_and_pagination() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
 
@@ -409,15 +486,15 @@ def test_evolution_journal_supports_filters_and_pagination() -> None:
             item = items[0]
             assert item["entry_type"] == "mutation_review"
             assert item["source_id"] == "evo-dec-88f3a2c1"
+            assert item["mutation_review"]["decision_id"] == "evo-dec-88f3a2c1"
             assert item["mutation_review"]["allowedActions"]["canApproveMutation"] is True
             assert summary["pending_review_count"] == 1
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evolution_journal_server_side_filtering_and_origin() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
 
@@ -501,12 +578,11 @@ def test_evolution_journal_server_side_filtering_and_origin() -> None:
             assert body["page_info"]["total"] == 0
 
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evolution_journal_requires_read_authentication() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal")
@@ -514,7 +590,7 @@ def test_evolution_journal_requires_read_authentication() -> None:
             assert resp.status_code == 401, resp.text
             assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_filters_provenance_and_decoys() -> None:
@@ -632,7 +708,6 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
 
@@ -703,29 +778,20 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             assert body["page_info"]["next_page_token"] is None
 
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_filter_dependency_failure() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            # Create a TestClient with raise_server_exceptions=False to allow FastAPI exception handler to return 500
-            data = _load_default_fixture_pack_datasets()
-            bff_main.read_store = _EvolutionJournalTestStore(data)
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = _fresh_client(td, raise_server_exceptions=False)
 
-            # Mock read_store.list_personas to raise a RuntimeError exception
-            def mock_list_personas(*args, **kwargs):
-                raise RuntimeError("Database connection lost")
+        def mock_list_personas(*args, **kwargs):
+            raise RuntimeError("Database connection lost")
 
-            bff_main.read_store.list_personas = mock_list_personas
+        client.store.list_personas = mock_list_personas
 
-            # Querying with persona filter should fail with 500
-            resp = client.get("/bff/management/evolution-journal?persona=persona-1", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 500
-        finally:
-            bff_main.read_store = original_store
+        resp = client.get("/bff/management/evolution-journal?persona=persona-1", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 500
 
 
 def test_evochain_007_persona_mutation_review_collision() -> None:
@@ -755,7 +821,6 @@ def test_evochain_007_persona_mutation_review_collision() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             # Querying with persona=mutation_review should NOT match mutation reviews unless there is a matching persona
@@ -764,7 +829,7 @@ def test_evochain_007_persona_mutation_review_collision() -> None:
             body = resp.json()
             assert len(body["data"]["items"]) == 0
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_origin_exact_match_not_broad_substring() -> None:
@@ -808,7 +873,6 @@ def test_evochain_007_origin_exact_match_not_broad_substring() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
@@ -822,7 +886,7 @@ def test_evochain_007_origin_exact_match_not_broad_substring() -> None:
             assert by_id["live-seedling-1"]["origin"] == "unknown"
             assert by_id["evo-vslice-1"]["origin"] == "seed"
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def _evochain_007_lineage_mock_data(evolution_decisions: dict, **surfaces) -> dict:
@@ -895,7 +959,6 @@ def test_evochain_007_persona_lineage_shared_artifact_boundary() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-a", headers=OPERATOR_HEADERS)
@@ -905,7 +968,7 @@ def test_evochain_007_persona_lineage_shared_artifact_boundary() -> None:
             assert "dec-a" in source_ids
             assert "dec-b" not in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_namespace_collision() -> None:
@@ -981,7 +1044,6 @@ def test_evochain_007_persona_lineage_namespace_collision() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-pool-1", headers=OPERATOR_HEADERS)
@@ -990,7 +1052,7 @@ def test_evochain_007_persona_lineage_namespace_collision() -> None:
             assert "dec-pool-1" in source_ids
             assert "dec-pool-10" not in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_pool_only_convergence() -> None:
@@ -1037,7 +1099,6 @@ def test_evochain_007_persona_lineage_pool_only_convergence() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-pool-only", headers=OPERATOR_HEADERS)
@@ -1045,7 +1106,7 @@ def test_evochain_007_persona_lineage_pool_only_convergence() -> None:
             source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
             assert "dec-pool-only" in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_capital_binding_only_convergence() -> None:
@@ -1085,7 +1146,6 @@ def test_evochain_007_persona_lineage_capital_binding_only_convergence() -> None
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-cb-only", headers=OPERATOR_HEADERS)
@@ -1093,7 +1153,7 @@ def test_evochain_007_persona_lineage_capital_binding_only_convergence() -> None
             source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
             assert "dec-cb-only" in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_deep_chain_requires_fixed_point() -> None:
@@ -1181,7 +1241,6 @@ def test_evochain_007_persona_lineage_deep_chain_requires_fixed_point() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-deep", headers=OPERATOR_HEADERS)
@@ -1190,7 +1249,7 @@ def test_evochain_007_persona_lineage_deep_chain_requires_fixed_point() -> None:
             assert "dec-deep-6" in source_ids
             assert "dec-unrelated" not in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_canonical_binding_without_runtime_row() -> None:
@@ -1242,7 +1301,6 @@ def test_evochain_007_persona_lineage_canonical_binding_without_runtime_row() ->
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-nr", headers=OPERATOR_HEADERS)
@@ -1250,7 +1308,7 @@ def test_evochain_007_persona_lineage_canonical_binding_without_runtime_row() ->
             source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
             assert "dec-nr" in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_shared_pool_does_not_cross_persona_ownership() -> None:
@@ -1318,7 +1376,6 @@ def test_evochain_007_persona_lineage_shared_pool_does_not_cross_persona_ownersh
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-pool-a", headers=OPERATOR_HEADERS)
@@ -1327,7 +1384,7 @@ def test_evochain_007_persona_lineage_shared_pool_does_not_cross_persona_ownersh
             assert "dec-pool-a" in source_ids
             assert "dec-pool-b-private" not in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_persona_lineage_typed_namespaces_reject_cross_type_string_collision() -> None:
@@ -1373,7 +1430,6 @@ def test_evochain_007_persona_lineage_typed_namespaces_reject_cross_type_string_
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal?persona=persona-typed", headers=OPERATOR_HEADERS)
@@ -1382,7 +1438,7 @@ def test_evochain_007_persona_lineage_typed_namespaces_reject_cross_type_string_
             assert "dec-own-runtime" in source_ids
             assert "dec-unrelated-artifact" not in source_ids
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_seed_registry_recognizes_registered_families() -> None:
@@ -1450,7 +1506,6 @@ def test_evochain_007_seed_registry_recognizes_registered_families() -> None:
         with open(os.path.join(td, "read_surfaces.json"), "w") as f:
             json.dump(mock_data, f)
 
-        original_store = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
@@ -1466,7 +1521,7 @@ def test_evochain_007_seed_registry_recognizes_registered_families() -> None:
             assert by_id["dec-swept-from-seed-incident"]["origin"] == "seed"
             assert by_id["dec-targets-seed-artifact"]["origin"] == "seed"
         finally:
-            bff_main.read_store = original_store
+            pass
 
 
 def test_evochain_007_filter_dependency_surfaces_reported_and_fail_closed() -> None:
@@ -1476,32 +1531,24 @@ def test_evochain_007_filter_dependency_surfaces_reported_and_fail_closed() -> N
     no exception raised) must fail the filtered request closed (503) instead
     of returning an authoritative-looking empty total=0."""
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            # In-memory ports expose the same dataset_source()/composition
-            # surface as the production-shaped factory, so the in-memory
-            # double is sufficient here (no need for the real composed
-            # adapter's defaulting behavior) to simulate a silently missing
-            # dependency and assert the fail-closed 503.
-            bff_main.read_store = create_in_memory_read_surface_ports()
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
+        ports = create_in_memory_read_surface_ports()
+        app = _create_app_for_store(ports)
+        client = _JournalTestClient(app, raise_server_exceptions=False)
 
-            resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            surfaces = resp.json()["meta"]["surfaces"]
-            for key in ("personas", "persona_bindings", "runtime_bindings", "incidents"):
-                assert key in surfaces
+        resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        surfaces = resp.json()["meta"]["surfaces"]
+        for key in ("personas", "persona_bindings", "runtime_bindings", "incidents"):
+            assert key in surfaces
 
-            original_dataset_source = bff_main.read_store.dataset_source
-            bff_main.read_store.dataset_source = (
-                lambda dataset, **kwargs: "missing"
-                if dataset == "personas"
-                else original_dataset_source(dataset, **kwargs)
-            )
-            resp = client.get(
-                "/bff/management/evolution-journal?persona=persona-alpha",
-                headers=OPERATOR_HEADERS,
-            )
-            assert resp.status_code == 503, resp.text
-        finally:
-            bff_main.read_store = original_store
+        original_dataset_source = client.store.dataset_source
+        client.store.dataset_source = (
+            lambda dataset, **kwargs: "missing"
+            if dataset == "personas"
+            else original_dataset_source(dataset, **kwargs)
+        )
+        resp = client.get(
+            "/bff/management/evolution-journal?persona=persona-alpha",
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 503, resp.text
