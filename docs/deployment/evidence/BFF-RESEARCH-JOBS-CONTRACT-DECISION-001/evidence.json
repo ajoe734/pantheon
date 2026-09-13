@@ -8,7 +8,7 @@
   "decision": {
     "backend": "Management Jobs as a typed read composition and single JobAction dispatch seam across five asynchronous backend sources plus one read-only external diagnostic source; distinct aggregates: ResearchTicket != Experiment != OrchestratorRun != Job",
     "document": "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
-    "document_sha256": "f5da982da5cc7a6393054b9d761b16cf7b7e35ce1fd49ba87aae31b7f89542cd",
+    "document_sha256": "a45bd7a44713a758ca827c12f5ca6a50bac6d7b6da7208e3319f488de292579f",
     "operator_decision_required_for_selected_scope": true,
     "operator_decision_details": "Operator decision is required for unresolved retention schedules (worker gateway, orchestrator, training session, source ingestion, policy learning), archival authority boundaries, and cross-stage promotion semantics (e.g. elevation to paper canary or live trading).",
     "expansion_requires_decision": [
@@ -58,8 +58,8 @@
       "auth_and_tenant_gaps": "Complete absence of tenant isolation; endpoints unauthenticated; no token dependencies; payload lacks tenant scoping.",
       "concurrency_and_durability_limitations": "Single-instance file read/write (_write_json) susceptible to file race conditions if multiple gateway processes run concurrently. No distributed locks. Worker processes spawned via subprocess.Popen without PID tracking or cancellation fencing. Durability relies on local filesystem flush.",
       "owner_test_files": [
-        "services/research-worker-gateway/test_main.py",
-        "services/research-worker-gateway/test_store.py"
+        "services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py",
+        "services/research-worker-gateway/tests/test_research_worker_gateway_postgres_event_store.py"
       ],
       "operations": {
         "cancel": {
@@ -67,7 +67,7 @@
           "current_behavior": "main.py:559-574 updates status row to canceled and appends event to worker_events; does NOT terminate worker process or set late completion fence.",
           "target_contract": "Terminate subprocess (SIGTERM/SIGKILL) and persist cancellation fence timestamp to reject late completions.",
           "responsible_scope": "GW-STOP-FENCE-001 (Gateway owner task, outside U10B)",
-          "test_file": "services/research-worker-gateway/test_main.py",
+          "test_file": "services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py (existing suite; proposed worker process stop and fence suite in GW-STOP-FENCE-001)",
           "operator_decision_required": false
         },
         "retry": {
@@ -75,7 +75,7 @@
           "current_behavior": "Not supported as dedicated API; requires new dispatch with idempotency key, lacking attempt lineage (parent_job_id, attempt_number).",
           "target_contract": "Dedicated retry endpoint POST .../jobs/{id}/retry with attempt_number=N+1 and parent_job_id.",
           "responsible_scope": "Gateway owner (follow-up task)",
-          "test_file": "services/research-worker-gateway/test_store.py",
+          "test_file": "services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py (existing suite; proposed retry suite in follow-up task)",
           "operator_decision_required": false
         },
         "archive": {
@@ -83,7 +83,7 @@
           "current_behavior": "No archive API or retention policy; worker_jobs.json grows unboundedly.",
           "target_contract": "POST .../jobs/{id}/archive with is_archived=True; excluded from default list.",
           "responsible_scope": "Gateway owner (follow-up task)",
-          "test_file": "services/research-worker-gateway/test_store.py",
+          "test_file": "services/research-worker-gateway/tests/test_research_worker_gateway_postgres_event_store.py (existing suite; proposed archive suite in follow-up task)",
           "operator_decision_required": true
         },
         "promote": {
@@ -113,8 +113,8 @@
       "auth_and_tenant_gaps": "list_runs and get_run (GET /api/research-orchestrator/tasks, GET .../runs) do not enforce tenant filtering; unauthenticated FastAPI endpoints",
       "concurrency_and_durability_limitations": "File-backed JSON maps (_write_map) with file overwrite; no row-level locking or optimistic concurrency. Multi-instance writes risk clobbering runs/tasks. No process cancellation or late completion fence currently exists on main.py.",
       "owner_test_files": [
-        "services/research/test_store.py",
-        "services/research/test_main.py"
+        "services/research/tests/test_research_orchestrator_http_service.py",
+        "services/research/tests/test_research_postgres_event_store.py"
       ],
       "operations": {
         "cancel": {
@@ -122,7 +122,7 @@
           "current_behavior": "services/research/main.py currently has NO run cancel endpoint.",
           "target_contract": "Implement POST /api/research-orchestrator/runs/{run_id}/cancel, persist canceled status in research_runs.json, and set cancellation fence timestamp.",
           "responsible_scope": "U10B (services/research/main.py and write_owner.py)",
-          "test_file": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+          "test_file": "services/research/tests/test_research_orchestrator_http_service.py (existing suite; proposed U10B action receipt test services/control-plane/bff/tests/test_research_jobs_action_receipts.py)",
           "operator_decision_required": false
         },
         "retry": {
@@ -130,7 +130,7 @@
           "current_behavior": "Dispatches new run under task via POST .../tasks/{task_id}/runs, but lacks attempt_number and parent_run_id tracking.",
           "target_contract": "Implement explicit run retry linking parent_run_id and incrementing attempt_number under rtask.",
           "responsible_scope": "U10B",
-          "test_file": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+          "test_file": "services/research/tests/test_research_orchestrator_http_service.py (existing suite; proposed U10B retry test services/control-plane/bff/tests/test_research_jobs_action_receipts.py)",
           "operator_decision_required": false
         },
         "archive": {
@@ -138,7 +138,7 @@
           "current_behavior": "No archive mutation endpoint, retention period, or authority exists (not merely a retention projection without owner mutation).",
           "target_contract": "Add POST /api/research-orchestrator/runs/{run_id}/archive setting is_archived=True in research_runs.json.",
           "responsible_scope": "Research Orchestrator owner (follow-up task)",
-          "test_file": "services/research/test_store.py",
+          "test_file": "services/research/tests/test_research_postgres_event_store.py (existing suite; proposed archive suite in follow-up task)",
           "operator_decision_required": true
         },
         "promote": {
@@ -146,7 +146,7 @@
           "current_behavior": "Proposal handoff exists (POST .../tasks/{id}/proposals), but lacks artifact hash verification, operator approval, target stage binding, and registry readback.",
           "target_contract": "Enforce: (1) candidate artifact hash check, (2) signed approval token, (3) target stage binding, (4) registry readback verification.",
           "responsible_scope": "Research Orchestrator owner + Governance",
-          "test_file": "services/research/test_store.py",
+          "test_file": "services/research/tests/test_research_orchestrator_http_service.py (existing suite; proposed governance suite in follow-up task)",
           "operator_decision_required": true
         }
       },
@@ -169,8 +169,8 @@
       "auth_and_tenant_gaps": "Configuration/test exceptions when authority operates with test tokens (token_kind == 'test-disabled') in test fixtures. Operational gap: preview jobs lack cancel endpoint or cancellation handler; eval worker threads in preview_eval_worker.py run to completion without in-flight abort mechanisms.",
       "concurrency_and_durability_limitations": "In Postgres mode, transaction-scoped advisory locks serialize concurrent record mutations with ACID durability. In JSONL mode, local file only without distributed locking. Preview evaluation thread dispatches asynchronously without interruption handle.",
       "owner_test_files": [
-        "services/training-session/test_store.py",
-        "services/training-session/test_main.py"
+        "services/training-session/tests/test_http_service.py",
+        "services/training-session/tests/test_store_durability.py"
       ],
       "operations": {
         "cancel": {
@@ -178,7 +178,7 @@
           "current_behavior": "NO cancel endpoint exists in training-session/main.py. Fails closed with ActionUnavailableError.",
           "target_contract": "Implement POST /api/training/preview-jobs/{job_id}/cancel, interrupt worker thread, mutate record with advisory lock.",
           "responsible_scope": "TS-CANCEL-001 (Training session owner task, outside U10B)",
-          "test_file": "services/training-session/test_main.py",
+          "test_file": "services/training-session/tests/test_http_service.py (existing suite; proposed cancel suite in TS-CANCEL-001)",
           "operator_decision_required": false
         },
         "retry": {
@@ -186,7 +186,7 @@
           "current_behavior": "Re-triggers evaluation against teaching dataset via POST .../sessions/{id}/preview-jobs.",
           "target_contract": "Add attempt_number to preview_job record in authority_records linking previous job_id.",
           "responsible_scope": "Training Session owner (follow-up task)",
-          "test_file": "services/training-session/test_store.py",
+          "test_file": "services/training-session/tests/test_store_durability.py (existing suite; proposed retry suite in follow-up task)",
           "operator_decision_required": false
         },
         "archive": {
@@ -194,7 +194,7 @@
           "current_behavior": "Preview jobs tied to session lifecycle; no independent archive endpoint.",
           "target_contract": "Add session/preview archival endpoint with is_archived=True.",
           "responsible_scope": "Training Session owner (follow-up task)",
-          "test_file": "services/training-session/test_store.py",
+          "test_file": "services/training-session/tests/test_store_durability.py (existing suite; proposed archive suite in follow-up task)",
           "operator_decision_required": true
         },
         "promote": {
@@ -202,7 +202,7 @@
           "current_behavior": "Direct promotion returns 409 Conflict.",
           "target_contract": "Requires signed Governance review proposal, candidate weights verification, model stage binding, and Model Registry readback.",
           "responsible_scope": "Training Session owner + Governance",
-          "test_file": "services/training-session/test_main.py",
+          "test_file": "services/training-session/tests/test_http_service.py (existing suite; proposed governance suite in follow-up task)",
           "operator_decision_required": true
         }
       },
@@ -218,15 +218,15 @@
       "source_id": "source_ingestion",
       "name": "Source-ingest runs/jobs",
       "owner": "services/source_ingestion",
-      "store": "SourceManagementStore (file-backed JSON/sqlite/postgres) + pipeline.py + connectors/base.py. Checkpoint watermarks and frontier queue persisted per connector.",
+      "store": "JsonlIngestScheduleStore (services/source_ingestion/scheduler.py:281, 394-423, bound via runtime.py:267, 318 as runtime.store). Append/replay journal on disk with exclusive file locking (exclusive_file_lock with .lock file). Stores ingest runs (IngestRun), receipts (IngestReceipt), connector watermarks (SourceWatermark), and crawl frontier items (CrawlFrontierItem). SourceManagementStore in source_management.py is separate source-instance/control authority.",
       "native_id_scheme": "ingest-{uuid4().hex[:12]} or run-{connector_id} (connectors/base.py:634)",
       "management_projection": "job-ingest-{ingest_run_id}",
       "auth_and_tenant_enforcement": "Controller token verified on connector mutation via load_controller_token()",
-      "auth_and_tenant_gaps": "GET /api/source-ingest/jobs has no tenant filtering or authentication dependencies",
-      "concurrency_and_durability_limitations": "Sequential execution per connector; checkpoint watermarks updated after verified batch extractions. No graceful extraction worker/thread cancellation endpoint; process abort leaves partial frontier batches for replay.",
+      "auth_and_tenant_gaps": "GET /api/source-ingest/jobs and GET /api/source-ingest/jobs/{ingest_run_id} in routers/ingest_operations.py:168-183 read runtime.store without tenant query filtering or authentication dependencies.",
+      "concurrency_and_durability_limitations": "Exclusive file locking (exclusive_file_lock and threading.RLock) serializes read/decide/append mutations to schedule JSONL store. Runs and receipts are durable upon append. Sequential execution per connector; checkpoint watermarks updated after verified batch extractions. No graceful extraction worker/thread cancellation endpoint; process abort leaves partial frontier batches for replay.",
       "owner_test_files": [
-        "services/source_ingestion/tests/test_pipeline.py",
-        "services/source_ingestion/tests/test_connectors.py"
+        "services/source_ingestion/tests/test_ingest_run.py",
+        "services/source_ingestion/tests/test_scheduled_connector.py"
       ],
       "operations": {
         "cancel": {
@@ -234,7 +234,7 @@
           "current_behavior": "NO cancel endpoint exists in source_ingestion. Ingestion workers cannot be interrupted via API. Fails closed with ActionUnavailableError.",
           "target_contract": "Implement POST /api/source-ingest/jobs/{id}/cancel, graceful connector extraction interrupt, late-receipt fence.",
           "responsible_scope": "SI-CANCEL-001 (Source ingestion owner task, outside U10B)",
-          "test_file": "services/source_ingestion/tests/test_pipeline.py",
+          "test_file": "services/source_ingestion/tests/test_ingest_run.py (existing suite; proposed cancel suite in SI-CANCEL-001)",
           "operator_decision_required": false
         },
         "retry": {
@@ -242,7 +242,7 @@
           "current_behavior": "Replay frontier item via POST /api/source-ingest/frontier/{frontier_id}/replay.",
           "target_contract": "Add POST /api/source-ingest/jobs/{id}/retry resuming from last verified watermark with attempt count.",
           "responsible_scope": "Source Ingestion owner (follow-up task)",
-          "test_file": "services/source_ingestion/tests/test_frontier.py",
+          "test_file": "services/source_ingestion/tests/test_ingest_run.py (existing suite; proposed retry suite in follow-up task)",
           "operator_decision_required": false
         },
         "archive": {
@@ -250,7 +250,7 @@
           "current_behavior": "Connectors can be deactivated; raw ingest payload retention is unmanaged.",
           "target_contract": "Add connector run archive endpoint; exclude from active frontier list.",
           "responsible_scope": "Source Ingestion owner (follow-up task)",
-          "test_file": "services/source_ingestion/tests/test_pipeline.py",
+          "test_file": "services/source_ingestion/tests/test_scheduled_connector.py (existing suite; proposed archive suite in follow-up task)",
           "operator_decision_required": true
         },
         "promote": {
@@ -258,7 +258,7 @@
           "current_behavior": "Seed extraction promotion to Strategy Seed Store.",
           "target_contract": "Schema validation of candidate seed, write to strategy_seeds, and readback verification.",
           "responsible_scope": "Source Ingestion owner (follow-up task)",
-          "test_file": "services/source_ingestion/tests/test_connectors.py",
+          "test_file": "services/source_ingestion/tests/test_scheduled_connector.py (existing suite; proposed seed promotion suite in follow-up task)",
           "operator_decision_required": true
         }
       },
@@ -273,15 +273,15 @@
       "source_id": "policy_learning",
       "name": "Policy-learning jobs",
       "owner": "services/policy-learning",
-      "store": "PolicyLearningStore (file policy_jobs.json + policy_learning.events) + scheduler_worker.py. Local JSON file persistence.",
+      "store": "PolicyLearningStore configured via build_policy_learning_store(data_dir) (store.py:1028-1060) with dual backend: file policy_learning_jobs.json (store.py:617) when POLICY_LEARNING_STORE_BACKEND is not postgres, or authoritative PostgreSQL PostgresPolicyLearningJobStore (store.py:197-235) table policy_learning.jobs when POLICY_LEARNING_STORE_BACKEND=postgres. Candidate authority automatically upgrades to PostgreSQL with DSN, while job store requires explicit backend environment variable.",
       "native_id_scheme": "plj-{YYYYMMDD}-{index:03d} (main.py:189-196)",
       "management_projection": "job-policy-{plj_id}",
       "auth_and_tenant_enforcement": "Tenant scope helper for candidate claims and DLQ records",
       "auth_and_tenant_gaps": "list_jobs and propose_job lack tenant query filtering and token dependencies",
-      "concurrency_and_durability_limitations": "Single-instance file map; reject handler updates JSON row status to rejected and appends event, but background scheduler thread does not terminate active training processes.",
+      "concurrency_and_durability_limitations": "In Postgres mode, ACID durability with schema bootstrap and primary key integrity on job_id in policy_learning.jobs. In JSON mode, local file policy_learning_jobs.json without cross-process locks. Reject handler updates JSON row status to rejected and appends event, but background scheduler thread does not terminate active training processes.",
       "owner_test_files": [
-        "services/policy-learning/tests/test_store.py",
-        "services/policy-learning/tests/test_main.py"
+        "services/policy-learning/tests/test_policy_learning_http_service.py",
+        "services/policy-learning/tests/test_policy_learning_postgres_store.py"
       ],
       "operations": {
         "cancel": {
@@ -289,7 +289,7 @@
           "current_behavior": "POST /api/policy-learning/jobs/{id}/reject mutates row status to rejected and appends event, but does NOT stop background training worker.",
           "target_contract": "Add actual worker process kill/stop and cancellation fence in reject_job.",
           "responsible_scope": "PL-CANCEL-001 (Policy learning owner task, outside U10B)",
-          "test_file": "services/policy-learning/tests/test_main.py",
+          "test_file": "services/policy-learning/tests/test_policy_learning_http_service.py (existing suite; proposed worker stop suite in PL-CANCEL-001)",
           "operator_decision_required": false
         },
         "retry": {
@@ -297,7 +297,7 @@
           "current_behavior": "DLQ replay or new job submission.",
           "target_contract": "Add POST /api/policy-learning/jobs/{id}/retry incrementing attempt count and referencing parent job ID.",
           "responsible_scope": "Policy Learning owner (follow-up task)",
-          "test_file": "services/policy-learning/tests/test_store.py",
+          "test_file": "services/policy-learning/tests/test_policy_learning_postgres_store.py (existing suite; proposed retry suite in follow-up task)",
           "operator_decision_required": false
         },
         "archive": {
@@ -305,7 +305,7 @@
           "current_behavior": "Policy learning jobs stored without archiving mechanism.",
           "target_contract": "Add policy job archive endpoint with is_archived=True.",
           "responsible_scope": "Policy Learning owner (follow-up task)",
-          "test_file": "services/policy-learning/tests/test_store.py",
+          "test_file": "services/policy-learning/tests/test_policy_learning_postgres_store.py (existing suite; proposed archive suite in follow-up task)",
           "operator_decision_required": true
         },
         "promote": {
@@ -313,7 +313,7 @@
           "current_behavior": "Direct promotion returns 409 Conflict (requires Governance).",
           "target_contract": "Governance promotion gate: signed authorization, metric threshold check, stage binding, and readback.",
           "responsible_scope": "Policy Learning owner + Governance (GOV-PROMOTE-001)",
-          "test_file": "services/policy-learning/tests/test_main.py",
+          "test_file": "services/policy-learning/tests/test_policy_learning_http_service.py (existing suite; proposed governance suite in follow-up task)",
           "operator_decision_required": true
         }
       },
@@ -335,7 +335,8 @@
       "auth_and_tenant_gaps": "GET /api/openclaw-adapter/workflows/jobs/{job_id} lacks auth middleware; no tenant isolation upstream. Read API gap: no list_workflow_jobs or list_jobs endpoint on adapter or OpenClawClient; Management BFF cannot enumerate active/historical workflow jobs on GET /bff/jobs without upstream list route or dedicated audit index.",
       "concurrency_and_durability_limitations": "Upstream service manages execution; adapter has no local persistence of workflow jobs; lacks list endpoint; strictly read-only diagnostics for product BFF.",
       "owner_test_files": [
-        "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py"
+        "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py",
+        "services/openclaw-gateway-adapter/test_main.py"
       ],
       "operations": {
         "cancel": {
@@ -343,7 +344,7 @@
           "current_behavior": "All write actions from product BFF are unsupported and return 400 Bad Request.",
           "target_contract": "Fails closed (HTTP 400). Product BFF is strictly read-only diagnostics.",
           "responsible_scope": "Permanently excluded per repository architecture",
-          "test_file": "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py",
+          "test_file": "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py (existing suite verifying all write actions fail closed)",
           "operator_decision_required": false
         },
         "retry": {
@@ -610,7 +611,7 @@
             "owner": "services/research-worker-gateway",
             "api": "POST /api/research-worker-gateway/jobs/{id}/cancel",
             "store": "worker_jobs.json + worker_events",
-            "test": "services/research-worker-gateway/test_main.py",
+            "test": "Existing: services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py; Proposed in GW-STOP-FENCE-001",
             "status": "missing_process_kill_and_fence",
             "operator_decision_required": false
           },
@@ -618,7 +619,7 @@
             "owner": "services/research-worker-gateway",
             "api": "POST /api/research-worker-gateway/jobs/{id}/retry",
             "store": "worker_jobs.json",
-            "test": "services/research-worker-gateway/test_store.py",
+            "test": "Existing: services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py; Proposed in follow-up task",
             "status": "missing_lineage_endpoint",
             "operator_decision_required": false
           },
@@ -626,7 +627,7 @@
             "owner": "services/research-worker-gateway",
             "api": "POST /api/research-worker-gateway/jobs/{id}/archive",
             "store": "worker_jobs.json",
-            "test": "services/research-worker-gateway/test_store.py",
+            "test": "Existing: services/research-worker-gateway/tests/test_research_worker_gateway_postgres_event_store.py; Proposed in follow-up task",
             "status": "unsupported_unmanaged_retention",
             "operator_decision_required": true
           },
@@ -641,8 +642,8 @@
         },
         "concurrency_and_durability_limitations": "Single-instance file read/write (_write_json) susceptible to file race conditions if multiple gateway processes run concurrently. No distributed locks. Worker processes spawned via subprocess.Popen without PID tracking or cancellation fencing. Durability relies on local filesystem flush.",
         "owner_test_files": [
-          "services/research-worker-gateway/test_main.py",
-          "services/research-worker-gateway/test_store.py"
+          "services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py",
+          "services/research-worker-gateway/tests/test_research_worker_gateway_postgres_event_store.py"
         ],
         "responsible_scope": "U10A for read; GW-STOP-FENCE-001 for backend stop & fence",
         "operator_decision_required": true
@@ -674,7 +675,7 @@
             "owner": "services/research",
             "api": "POST /api/research-orchestrator/runs/{run_id}/cancel (U10B)",
             "store": "research_runs.json + cancellation fence timestamp",
-            "test": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+            "test": "Existing: services/research/tests/test_research_orchestrator_http_service.py; Proposed U10B test: services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
             "status": "in_scope_u10b",
             "operator_decision_required": false
           },
@@ -682,7 +683,7 @@
             "owner": "services/research",
             "api": "POST /api/research-orchestrator/tasks/{task_id}/runs (U10B)",
             "store": "research_runs.json with attempt_number and parent_run_id",
-            "test": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+            "test": "Existing: services/research/tests/test_research_orchestrator_http_service.py; Proposed U10B test: services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
             "status": "in_scope_u10b",
             "operator_decision_required": false
           },
@@ -690,7 +691,7 @@
             "owner": "services/research",
             "api": "POST /api/research-orchestrator/runs/{run_id}/archive",
             "store": "research_runs.json with is_archived=True",
-            "test": "services/research/test_store.py",
+            "test": "Existing: services/research/tests/test_research_postgres_event_store.py; Proposed in follow-up task",
             "status": "missing_owner_mutation_and_authority",
             "operator_decision_required": true
           },
@@ -698,15 +699,15 @@
             "owner": "services/research + Governance",
             "api": "POST /api/research-orchestrator/tasks/{task_id}/proposals",
             "store": "research_proposals.json + Strategy Seed Registry readback",
-            "test": "services/research/test_store.py",
+            "test": "Existing: services/research/tests/test_research_orchestrator_http_service.py; Proposed in follow-up task",
             "status": "missing_governance_verification_mapping",
             "operator_decision_required": true
           }
         },
         "concurrency_and_durability_limitations": "File-backed JSON maps (_write_map) with file overwrite; no row-level locking or optimistic concurrency. Multi-instance writes risk clobbering runs/tasks. No process cancellation or late completion fence currently exists on main.py.",
         "owner_test_files": [
-          "services/research/test_store.py",
-          "services/research/test_main.py"
+          "services/research/tests/test_research_orchestrator_http_service.py",
+          "services/research/tests/test_research_postgres_event_store.py"
         ],
         "responsible_scope": "U10A for read; U10B for run cancel, fence & retry; follow-up tasks for archive & promote",
         "operator_decision_required": true
@@ -735,7 +736,7 @@
             "owner": "services/training-session",
             "api": "POST /api/training/preview-jobs/{job_id}/cancel",
             "store": "training_session.authority_records via mutate_preview_job",
-            "test": "services/training-session/test_main.py",
+            "test": "Existing: services/training-session/tests/test_http_service.py; Proposed in TS-CANCEL-001",
             "status": "missing_cancel_endpoint",
             "operator_decision_required": false
           },
@@ -743,7 +744,7 @@
             "owner": "services/training-session",
             "api": "POST /api/training/sessions/{session_id}/preview-jobs",
             "store": "training_session.authority_records with attempt_number",
-            "test": "services/training-session/test_store.py",
+            "test": "Existing: services/training-session/tests/test_store_durability.py; Proposed in follow-up task",
             "status": "missing_lineage_tracking",
             "operator_decision_required": false
           },
@@ -751,7 +752,7 @@
             "owner": "services/training-session",
             "api": "POST /api/training/sessions/{session_id}/archive",
             "store": "training_session.authority_records",
-            "test": "services/training-session/test_store.py",
+            "test": "Existing: services/training-session/tests/test_store_durability.py; Proposed in follow-up task",
             "status": "session_coupled_unmanaged_retention",
             "operator_decision_required": true
           },
@@ -759,15 +760,15 @@
             "owner": "services/training-session + Governance",
             "api": "POST /api/training/sessions/{session_id}/promote",
             "store": "training_session.authority_records + Model Registry readback",
-            "test": "services/training-session/test_main.py",
+            "test": "Existing: services/training-session/tests/test_http_service.py; Proposed in follow-up task",
             "status": "requires_governance_review",
             "operator_decision_required": true
           }
         },
         "concurrency_and_durability_limitations": "In Postgres mode, transaction-scoped advisory locks serialize concurrent record mutations with ACID durability. In JSONL mode, local file only without distributed locking. Preview evaluation thread dispatches asynchronously without interruption handle.",
         "owner_test_files": [
-          "services/training-session/test_store.py",
-          "services/training-session/test_main.py"
+          "services/training-session/tests/test_http_service.py",
+          "services/training-session/tests/test_store_durability.py"
         ],
         "responsible_scope": "U10A for read; TS-CANCEL-001 for cancel endpoint; follow-up tasks for retry/archive/promote",
         "operator_decision_required": true
@@ -775,11 +776,12 @@
       {
         "source_id": "source_ingestion",
         "domain_owner": "services/source_ingestion",
-        "store_path": "SourceManagementStore (file-backed JSON/sqlite/postgres) + pipeline.py + connectors/base.py",
+        "store_path": "JsonlIngestScheduleStore (services/source_ingestion/scheduler.py:281, 394-423 via runtime.py:267, 318 as runtime.store for runs/receipts/watermarks; SourceManagementStore is separate source-instance/control authority)",
         "native_endpoints": [
-          "GET /api/source-ingest/jobs",
-          "GET /api/source-ingest/jobs/{id}",
-          "POST /api/source-ingest/jobs"
+          "GET /api/source-ingest/jobs (routers/ingest_operations.py:168-173)",
+          "GET /api/source-ingest/jobs/{ingest_run_id} (routers/ingest_operations.py:175-184)",
+          "GET /api/source-ingest/receipts (routers/ingest_operations.py:186-188)",
+          "GET /api/source-ingest/receipts/{ingest_run_id} (routers/ingest_operations.py:190-199)"
         ],
         "management_bff_route": "GET /bff/jobs (job-ingest-*) + POST /bff/jobs/{id}/actions/{action_id}",
         "supported_actions": [
@@ -795,24 +797,24 @@
           "cancel": {
             "owner": "services/source_ingestion",
             "api": "POST /api/source-ingest/jobs/{id}/cancel",
-            "store": "source_management_store.py + pipeline.py",
-            "test": "services/source_ingestion/tests/test_pipeline.py",
+            "store": "JsonlIngestScheduleStore + connector interrupt fence",
+            "test": "Existing: services/source_ingestion/tests/test_ingest_run.py; Proposed in SI-CANCEL-001",
             "status": "missing_cancel_endpoint",
             "operator_decision_required": false
           },
           "retry": {
             "owner": "services/source_ingestion",
             "api": "POST /api/source-ingest/jobs/{id}/retry",
-            "store": "source_management_store.py with watermark resume",
-            "test": "services/source_ingestion/tests/test_frontier.py",
+            "store": "JsonlIngestScheduleStore with watermark resume",
+            "test": "Existing: services/source_ingestion/tests/test_ingest_run.py; Proposed in follow-up task",
             "status": "frontier_replay_only",
             "operator_decision_required": false
           },
           "archive": {
             "owner": "services/source_ingestion",
             "api": "POST /api/source-ingest/jobs/{id}/archive",
-            "store": "source_management_store.py",
-            "test": "services/source_ingestion/tests/test_pipeline.py",
+            "store": "JsonlIngestScheduleStore",
+            "test": "Existing: services/source_ingestion/tests/test_scheduled_connector.py; Proposed in follow-up task",
             "status": "unmanaged_retention",
             "operator_decision_required": true
           },
@@ -820,15 +822,15 @@
             "owner": "services/source_ingestion",
             "api": "POST /api/source-ingest/seeds/{id}/promote",
             "store": "Strategy Seed Store + readback",
-            "test": "services/source_ingestion/tests/test_connectors.py",
+            "test": "Existing: services/source_ingestion/tests/test_scheduled_connector.py; Proposed in follow-up task",
             "status": "strategy_seed_promotion",
             "operator_decision_required": true
           }
         },
-        "concurrency_and_durability_limitations": "Sequential execution per connector; checkpoint watermarks updated after verified batch extractions. No graceful extraction worker/thread cancellation endpoint; process abort leaves partial frontier batches for replay.",
+        "concurrency_and_durability_limitations": "Exclusive file locking (exclusive_file_lock with .lock) serializes read/decide/append mutations to schedule JSONL store. Runs and receipts are durable upon append. Sequential execution per connector; checkpoint watermarks updated after verified batch extractions. No graceful extraction worker/thread cancellation endpoint; process abort leaves partial frontier batches for replay.",
         "owner_test_files": [
-          "services/source_ingestion/tests/test_pipeline.py",
-          "services/source_ingestion/tests/test_connectors.py"
+          "services/source_ingestion/tests/test_ingest_run.py",
+          "services/source_ingestion/tests/test_scheduled_connector.py"
         ],
         "responsible_scope": "U10A for read; SI-CANCEL-001 for cancel endpoint; follow-up tasks for retry/archive/promote",
         "operator_decision_required": true
@@ -836,7 +838,7 @@
       {
         "source_id": "policy_learning",
         "domain_owner": "services/policy-learning",
-        "store_path": "PolicyLearningStore (file policy_jobs.json + policy_learning.events) + scheduler_worker.py",
+        "store_path": "PolicyLearningStore (file policy_learning_jobs.json or PostgresPolicyLearningJobStore table policy_learning.jobs when POLICY_LEARNING_STORE_BACKEND=postgres; store.py:197, 617, 1028-1060)",
         "native_endpoints": [
           "GET /api/policy-learning/jobs",
           "GET /api/policy-learning/jobs/{id}",
@@ -856,40 +858,40 @@
           "cancel": {
             "owner": "services/policy-learning",
             "api": "POST /api/policy-learning/jobs/{id}/reject",
-            "store": "policy_jobs.json + scheduler_worker process halt",
-            "test": "services/policy-learning/tests/test_main.py",
+            "store": "policy_learning_jobs.json / policy_learning.jobs + worker stop",
+            "test": "Existing: services/policy-learning/tests/test_policy_learning_http_service.py; Proposed in PL-CANCEL-001",
             "status": "row_only_reject_missing_worker_stop",
             "operator_decision_required": false
           },
           "retry": {
             "owner": "services/policy-learning",
             "api": "POST /api/policy-learning/jobs/{id}/retry",
-            "store": "policy_jobs.json with attempt_number and parent_id",
-            "test": "services/policy-learning/tests/test_store.py",
+            "store": "policy_learning_jobs.json / policy_learning.jobs with attempt_number and parent_id",
+            "test": "Existing: services/policy-learning/tests/test_policy_learning_postgres_store.py; Proposed in follow-up task",
             "status": "dlq_replay_only",
             "operator_decision_required": false
           },
           "archive": {
             "owner": "services/policy-learning",
             "api": "POST /api/policy-learning/jobs/{id}/archive",
-            "store": "policy_jobs.json",
-            "test": "services/policy-learning/tests/test_store.py",
+            "store": "policy_learning_jobs.json / policy_learning.jobs",
+            "test": "Existing: services/policy-learning/tests/test_policy_learning_postgres_store.py; Proposed in follow-up task",
             "status": "unmanaged_retention",
             "operator_decision_required": true
           },
           "promote": {
             "owner": "services/policy-learning + Governance",
             "api": "POST /api/policy-learning/jobs/{id}/promote",
-            "store": "policy_jobs.json + Model Registry readback",
-            "test": "services/policy-learning/tests/test_main.py",
+            "store": "policy_learning_jobs.json / policy_learning.jobs + Model Registry readback",
+            "test": "Existing: services/policy-learning/tests/test_policy_learning_http_service.py; Proposed in follow-up task",
             "status": "requires_governance_gate",
             "operator_decision_required": true
           }
         },
-        "concurrency_and_durability_limitations": "Single-instance file map; reject handler updates JSON row status to rejected and appends event, but background scheduler thread does not terminate active training processes.",
+        "concurrency_and_durability_limitations": "In Postgres mode, ACID durability with schema bootstrap and primary key integrity on job_id in policy_learning.jobs. In JSON mode, local file policy_learning_jobs.json without cross-process locks. Reject handler updates JSON row status to rejected and appends event, but background scheduler thread does not terminate active training processes.",
         "owner_test_files": [
-          "services/policy-learning/tests/test_store.py",
-          "services/policy-learning/tests/test_main.py"
+          "services/policy-learning/tests/test_policy_learning_http_service.py",
+          "services/policy-learning/tests/test_policy_learning_postgres_store.py"
         ],
         "responsible_scope": "U10A for read; PL-CANCEL-001 for worker process stop; follow-up tasks for retry/archive/promote",
         "operator_decision_required": true
@@ -946,7 +948,8 @@
         },
         "concurrency_and_durability_limitations": "Upstream service manages execution; adapter has no local persistence of workflow jobs; lacks list endpoint; strictly read-only diagnostics for product BFF.",
         "owner_test_files": [
-          "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py"
+          "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py",
+          "services/openclaw-gateway-adapter/test_main.py"
         ],
         "responsible_scope": "U10A for read; write actions permanently excluded",
         "operator_decision_required": false
@@ -1267,7 +1270,7 @@
       },
       {
         "mode": "source_ingestion_checkpoint_resume_failure",
-        "scenario": "Extraction thread interruption before batch watermark commit in SourceManagementStore",
+        "scenario": "Extraction thread interruption before batch watermark commit in JsonlIngestScheduleStore",
         "expected_result": "Uncommitted frontier items remain in queue; connector restart resumes strictly from last verified watermark"
       },
       {
@@ -1302,7 +1305,7 @@
       "passed": 81,
       "failed": 1,
       "skipped": 0,
-      "stdout": "1 failed, 81 passed, 238 warnings in 41.86s",
+      "stdout": "1 failed, 81 passed, 238 warnings in 35.77s",
       "limitation": "Pre-existing baseline gap: test_assistant_context_pack_builds_structured_snapshot fails with NameError _REPO_ROOT at bff/main.py:21745; recorded honestly without expanding scope into runtime repair"
     },
     {
@@ -1367,5 +1370,5 @@
     "ci": "pending",
     "binding": "Final PR/head/current base/manifest blob bound through governed owner handoff; canonical reviewer and supervisor supply approval/merge. This committed manifest cannot embed its own commit hash and is not changed after approval for bookkeeping."
   },
-  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\n    \"ResearchTicket != Experiment != OrchestratorRun != Job\",\n    \"wjob-{YYYYMMDD}-{index:03d}\",\n    \"rrun-{YYYYMMDD}-{index:03d}\",\n    \"pvjob-{digest[:16]}\",\n    \"ingest-{uuid4().hex[:12]}\",\n    \"plj-{YYYYMMDD}-{index:03d}\",\n    \"GW-STOP-FENCE-001\",\n    \"TS-CANCEL-001\",\n    \"SI-CANCEL-001\",\n    \"PL-CANCEL-001\",\n    \"GOV-PROMOTE-001\",\n    \"ActionUnavailableError\",\n    \"invalidated / attached_to_review / archived / retry\",\n    \"12895\u201312966\",\n    \"12972\u201313022\",\n    \"create_research_experiment\",\n    \"PostgresTrainingSessionStore\",\n    \"NameError _REPO_ROOT at bff/main.py:21745\",\n]:\n    assert marker in doc.read_text(), marker\nassert len(e[\"six_sources_qualification\"]) == 6\nassert len(e[\"unresolved_composition_obligations\"]) == 5\nassert len(e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]) == 6\nassert len(e[\"source_specific_acceptance_mapping\"][\"inventory_migration_cases\"]) == 14\nassert len(e[\"source_specific_acceptance_mapping\"][\"regression_suites_mapping\"]) == 4\nassert e[\"decision\"][\"operator_decision_required_for_selected_scope\"] is True\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, native IDs, auth gaps, 5 unresolved composition obligations, 14 inventory migration cases, 4 regression suites with honest baseline gap, and operator decision requirement verified; no runtime change or merge claim.\")\n"
+  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\n    \"ResearchTicket != Experiment != OrchestratorRun != Job\",\n    \"wjob-{YYYYMMDD}-{index:03d}\",\n    \"rrun-{YYYYMMDD}-{index:03d}\",\n    \"pvjob-{digest[:16]}\",\n    \"ingest-{uuid4().hex[:12]}\",\n    \"plj-{YYYYMMDD}-{index:03d}\",\n    \"GW-STOP-FENCE-001\",\n    \"TS-CANCEL-001\",\n    \"SI-CANCEL-001\",\n    \"PL-CANCEL-001\",\n    \"GOV-PROMOTE-001\",\n    \"ActionUnavailableError\",\n    \"invalidated / attached_to_review / archived / retry\",\n    \"12895–12966\",\n    \"12972–13022\",\n    \"create_research_experiment\",\n    \"PostgresTrainingSessionStore\",\n    \"JsonlIngestScheduleStore\",\n    \"policy_learning_jobs.json\",\n    \"PostgresPolicyLearningJobStore\",\n    \"test_research_worker_gateway_http_service.py\",\n    \"test_ingest_run.py\",\n    \"test_policy_learning_http_service.py\",\n    \"NameError _REPO_ROOT at bff/main.py:21745\",\n]:\n    assert marker in doc.read_text(), marker\nassert len(e[\"six_sources_qualification\"]) == 6\nassert len(e[\"unresolved_composition_obligations\"]) == 5\nassert len(e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]) == 6\nassert len(e[\"source_specific_acceptance_mapping\"][\"inventory_migration_cases\"]) == 14\nassert len(e[\"source_specific_acceptance_mapping\"][\"regression_suites_mapping\"]) == 4\nassert e[\"decision\"][\"operator_decision_required_for_selected_scope\"] is True\nfor src in e[\"six_sources_qualification\"]:\n    assert len(src[\"owner_test_files\"]) >= 1, src[\"source_id\"]\n    for test_path in src[\"owner_test_files\"]:\n        assert Path(test_path).exists(), f\"Owner test file does not exist: {test_path}\"\nfor mapping in e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]:\n    assert len(mapping[\"owner_test_files\"]) >= 1, mapping[\"source_id\"]\n    for test_path in mapping[\"owner_test_files\"]:\n        assert Path(test_path).exists(), f\"Mapping owner test file does not exist: {test_path}\"\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, native IDs, auth gaps, verified existing owner test files on disk, 5 unresolved composition obligations, 14 inventory migration cases, 4 regression suites with honest baseline gap, and operator decision requirement verified; no runtime change or merge claim.\")\n"
 }
