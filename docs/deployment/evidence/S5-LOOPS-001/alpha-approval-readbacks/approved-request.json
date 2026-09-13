@@ -1,0 +1,12 @@
+{
+  "idempotency_key": null,
+  "payload": {
+    "approval_decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+    "command_key": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e:research-review:approved",
+    "expected_artifact_state": "candidate",
+    "expected_updated_at": "2026-09-13T05:21:37Z",
+    "expected_version": "1.0.0",
+    "target_state": "approved"
+  },
+  "route": "/api/registry/strategy-specs/reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b/advance"
+}

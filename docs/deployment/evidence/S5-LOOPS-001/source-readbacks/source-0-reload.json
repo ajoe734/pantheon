@@ -1,0 +1,56 @@
+{
+  "body": {
+    "source_record": {
+      "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "content_ref": "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-12",
+      "created_at": "2026-09-13T04:04:39Z",
+      "metadata": {
+        "acceptance_stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+        "access_scope": [
+          "research"
+        ],
+        "available_time": "2026-09-13T04:04:39Z",
+        "canonical_doi": null,
+        "canonical_repo": null,
+        "canonical_url": null,
+        "content_hash": "sha256:927662933073c63f99e017616e3d9bc181f34a3f904bcb9b147d72721a319d1d",
+        "is_real": false,
+        "license_scope": "internal",
+        "normalized_row": {
+          "close": 523.093425,
+          "event_time": "2026-09-12T03:59:39Z",
+          "is_real": false,
+          "provenance": "simulation",
+          "symbol": "SPY"
+        },
+        "provenance": "simulation",
+        "raw_storage_refs": [
+          {
+            "compression": "none",
+            "dataset": "market",
+            "date": "2026-09-13",
+            "ref_type": "raw_object",
+            "retention_days": null,
+            "retention_policy_ref": null,
+            "row_count": 2,
+            "source": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+            "storage_class": null,
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260913t040439z-7935481ca72f49629606e01098c3a54e/market/date=2026-09-13/ingest-bd1a73d4864e.jsonl"
+          }
+        ],
+        "source_dedupe_key": "content:sha256:927662933073c63f99e017616e3d9bc181f34a3f904bcb9b147d72721a319d1d",
+        "source_ingest_run_id": "ingest-bd1a73d4864e",
+        "tenant_id": "tenant-dev"
+      },
+      "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
+      "source_type": "market",
+      "status": "normalized",
+      "title": "SIMULATION paper-only SPY previous dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+    }
+  },
+  "http_status": 200,
+  "method": "GET",
+  "observed_at": "2026-09-13T04:04:40Z",
+  "route": "/api/source-ingest/source-records/src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous"
+}

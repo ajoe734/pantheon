@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-13T05:21:38+00:00",
+  "body": {
+    "actor_id": "pantheon-dev-approver",
+    "actor_role": "governance_reviewer",
+    "authority_status": "authoritative",
+    "authorization_scope": null,
+    "candidate_digest": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+    "capital_pool_id": null,
+    "conditions": [],
+    "controller_record_ref": "governance-controller://approval-apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+    "created_at": "2026-09-13T05:21:37Z",
+    "decided_at": "2026-09-13T05:21:38Z",
+    "decision": "approved",
+    "decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+    "decision_state": "decided",
+    "event_id": "7725b8d6-b98b-498b-a8e9-79e997921fdf",
+    "evidence_refs": [
+      {
+        "ref_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+        "ref_type": "source_record"
+      },
+      {
+        "ref_id": "distill-c4a34c2036cb1393c7e5ca8f",
+        "ref_type": "distillation_job"
+      }
+    ],
+    "expires_at": "2026-09-13T11:21:37Z",
+    "metadata": null,
+    "owner_user_id": "pantheon-dev-approver",
+    "persona_id": null,
+    "proof_digest": null,
+    "proposal_content_digest": null,
+    "proposal_id": null,
+    "proposal_revision": null,
+    "rationale": "Reviewed the exact fresh Source/distillation lineage and research-only schema. Input is explicitly simulated, not real market evidence. This permits Alpha research evaluation only, not paper/live execution or capital allocation.",
+    "recorded_at": "2026-09-13T05:21:38Z",
+    "revoked_at": null,
+    "risk_level": "low",
+    "session_id": null,
+    "superseded_by": null,
+    "target_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+    "target_type": "registry_entry",
+    "target_version": "1.0.0",
+    "tenant_id": "tenant-dev",
+    "validation_result_digest": null,
+    "version": 3
+  },
+  "route": "/api/governance/approvals/apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682/decide",
+  "status": 200
+}

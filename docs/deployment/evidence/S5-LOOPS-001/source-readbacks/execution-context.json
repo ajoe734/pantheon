@@ -1,0 +1,8 @@
+{
+  "container_hostname": "82a285494255",
+  "is_real": false,
+  "provenance": "simulation",
+  "role": "manual bounded Source stimulus; not controller-generated evidence",
+  "source_git_sha": null,
+  "started_at": "2026-09-13T04:04:39Z"
+}

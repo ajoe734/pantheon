@@ -1,0 +1,76 @@
+{
+  "available": true,
+  "directly_observed_job_workers": {
+    "distill-c4a34c2036cb1393c7e5ca8f": "distill-controller-5c099699",
+    "distill-e99ee043788c7e6a21ebd8b0": "distill-controller-5c099699"
+  },
+  "jobs": [
+    {
+      "inbox": {
+        "applied_at": 1789272323.2242622,
+        "checksum": "sha256:e7d369048ada3deb072990a8471e93cad60c1c4a451bf8cb1f3cd7f25a73c440",
+        "event_id": "source-normalized:src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous:sha256:e1ff23727e728d94d38817a76b6d1b77f875f8c4582244eca60391283f40835c",
+        "job_id": "distill-e99ee043788c7e6a21ebd8b0",
+        "lease_owner": null,
+        "payload_digest": "sha256:e1ff23727e728d94d38817a76b6d1b77f875f8c4582244eca60391283f40835c",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous-e1ff23727e72",
+        "result_ref": "seed-2d2d915f0e4e5eef",
+        "status": "applied",
+        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous-91283f40835c",
+        "version": "1.0.0"
+      },
+      "outbox": {
+        "attempts": 1,
+        "checksum": "sha256:e7d369048ada3deb072990a8471e93cad60c1c4a451bf8cb1f3cd7f25a73c440",
+        "enqueued_at": 1789272279.8748112,
+        "event_id": "source-normalized:src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous:sha256:e1ff23727e728d94d38817a76b6d1b77f875f8c4582244eca60391283f40835c",
+        "job_id": "distill-e99ee043788c7e6a21ebd8b0",
+        "last_error": null,
+        "lease_owner": null,
+        "processed_at": 1789272323.2242622,
+        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous-e1ff23727e72",
+        "seed_id": "seed-2d2d915f0e4e5eef",
+        "source_digest": "sha256:e1ff23727e728d94d38817a76b6d1b77f875f8c4582244eca60391283f40835c",
+        "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
+        "status": "done",
+        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous-91283f40835c",
+        "version": "1.0.0"
+      }
+    },
+    {
+      "inbox": {
+        "applied_at": 1789272323.4276156,
+        "checksum": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+        "event_id": "source-normalized:src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor:sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+        "job_id": "distill-c4a34c2036cb1393c7e5ca8f",
+        "lease_owner": null,
+        "payload_digest": "sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+        "result_ref": "seed-4929af0f1a189542",
+        "status": "applied",
+        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+        "version": "1.0.0"
+      },
+      "outbox": {
+        "attempts": 1,
+        "checksum": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+        "enqueued_at": 1789272279.8849463,
+        "event_id": "source-normalized:src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor:sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+        "job_id": "distill-c4a34c2036cb1393c7e5ca8f",
+        "last_error": null,
+        "lease_owner": null,
+        "processed_at": 1789272323.4276156,
+        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+        "seed_id": "seed-4929af0f1a189542",
+        "source_digest": "sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+        "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+        "status": "done",
+        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+        "version": "1.0.0"
+      }
+    }
+  ],
+  "observed_at": "2026-09-13T04:05:24Z",
+  "path": "/data/source-ingest/distill_job_queue.jsonl",
+  "worker_identity_limit": "Terminal store clears lease_owner; absent direct observation is a gap, not proof from a guessed worker name."
+}

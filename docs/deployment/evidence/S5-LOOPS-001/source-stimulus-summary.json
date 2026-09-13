@@ -1,21 +1,66 @@
 {
+  "chronology_note": "Stimulus was executed at 2026-09-13T04:04:39Z, which preceded the Release-I deployment accepted at 2026-09-13T10:49:48Z in S5-PAIR-001. Preserved as historical partial evidence for Loops 1-2; not accepted as post-Release-I served identity evidence.",
+  "committed_readbacks": {
+    "distillation_queue": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/distillation-queue-reload.json",
+      "route": "/api/source-ingest/distillation-jobs",
+      "sha256": "803a45efee7434249f30beac551acf6d819248de9f75eac40cadca48cc96c4e3"
+    },
+    "jobs": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/job-reload.json",
+      "route": "/api/source-ingest/jobs",
+      "sha256": "92bf1dd3a6265399f1cb38a223be113f3202a559a2e7b394aea6fa382e199601"
+    },
+    "receipt": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/receipt-reload.json",
+      "route": "/api/source-ingest/receipts/ingest-bd1a73d4864e",
+      "sha256": "411ad6a91da4fac0adefb4746581c60da9d5fe99e41d911bde1fff78d5371fad"
+    },
+    "research_input_owner": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/research-input-owner-reload.json",
+      "sha256": "91e23a31cba150d0c843cc9127f76bc3e7f65d679e784626df6a78c62508f408"
+    },
+    "snapshot": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/snapshot-reload.json",
+      "route": "/api/source-ingest/snapshots/mss-318d9ad652c4a87f1b39c8ec",
+      "sha256": "9b8900c2d8ad052f00fd97f1fd607f2ec4f1aedf66bb7d4477106b0f0344b277"
+    },
+    "source_0": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/source-0-reload.json",
+      "route": "/api/source-ingest/source-records/src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
+      "sha256": "b633f28c72cb602e936467dcf0f12cc114e121f0335e692df762b64462cbca3e"
+    },
+    "source_1": {
+      "http_status": 200,
+      "relative_path": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/source-1-reload.json",
+      "route": "/api/source-ingest/source-records/src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+      "sha256": "1f3e0ef22236c0fdba5a35f6306e0f4deb44edf80cea9315da550a9fb186c589"
+    }
+  },
   "distillation_job_ids": [
     "distill-e99ee043788c7e6a21ebd8b0",
     "distill-c4a34c2036cb1393c7e5ca8f"
   ],
-  "evidence_dir": "/tmp/pantheon-fresh-source-evidence-34736489137",
   "ingest_run_id": "ingest-bd1a73d4864e",
-  "remaining": [
-    "Registry authenticated GET for actual outbox registry_id",
-    "actual owner approval and Alpha receipt",
-    "numeric research execution with simulation provenance",
-    "remaining causal loops and hosted UI journeys"
-  ],
+  "is_real": false,
+  "provenance": "simulation",
+  "schema_version": 1,
   "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
+  "source_container_hostname": "82a285494255",
   "source_ids": [
     "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
     "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
   ],
-  "status": "source-stimulus-and-readbacks-only-not-loops-1-through-12-pass",
-  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+  "source_worker_identity": "82a285494255ef272b412e48751e0a2c938366e2c5d1b8049a2d48c71c0501b0",
+  "status": "historical-partial-evidence-source-and-distillation-only",
+  "stimulus_generated_at": "2026-09-13T04:04:39Z",
+  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+  "task_id": "S5-LOOPS-001",
+  "tenant_id": "tenant-dev"
 }

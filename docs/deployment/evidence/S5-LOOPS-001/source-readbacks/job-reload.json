@@ -1,0 +1,188 @@
+{
+  "body": {
+    "receipt": {
+      "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "created_at": "2026-09-13T04:04:39Z",
+      "evidence_refs": {
+        "distillation_admissions": {
+          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor": {
+            "job_id": "distill-c4a34c2036cb1393c7e5ca8f",
+            "source_digest": "sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+            "status": "admitted"
+          },
+          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous": {
+            "job_id": "distill-e99ee043788c7e6a21ebd8b0",
+            "source_digest": "sha256:e1ff23727e728d94d38817a76b6d1b77f875f8c4582244eca60391283f40835c",
+            "status": "admitted"
+          }
+        },
+        "evidence_bundle_id": "evbundle-ingest-bd1a73d4864e-b90c8729fc68",
+        "evidence_item_ids": [
+          "evi-5128701cbddec026",
+          "evi-65a2b85bf3b5d051"
+        ],
+        "knowledge_object_ids": [
+          "ko-evi-5128701cbddec026-1f179f8ed550",
+          "ko-evi-65a2b85bf3b5d051-a4bd75912c92"
+        ],
+        "market_snapshots": {
+          "accepted_record_count": 2,
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "schema_version": "source_ingest_latest_market_snapshot_batch.v1",
+          "snapshots": [
+            {
+              "closes": [
+                523.093425,
+                523.854427
+              ],
+              "event_time": "2026-09-13T03:59:39Z",
+              "lineage": {
+                "connector_ids": [
+                  "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+                ],
+                "content_refs": [
+                  "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-12",
+                  "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-13"
+                ],
+                "ingest_run_ids": [
+                  "ingest-bd1a73d4864e"
+                ],
+                "source_ids": [
+                  "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                  "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous"
+                ]
+              },
+              "observed_at": "2026-09-13T04:04:39Z",
+              "schema_version": "source_ingest_latest_market_snapshot.v1",
+              "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
+              "source_ref": "source-ingest://snapshots/mss-318d9ad652c4a87f1b39c8ec",
+              "symbol": "SPY"
+            }
+          ],
+          "updated_snapshot_count": 1
+        },
+        "source_ids": [
+          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
+          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+        ]
+      },
+      "finished_at": "2026-09-13T04:04:39Z",
+      "ingest_run_id": "ingest-bd1a73d4864e",
+      "normalized_count": 2,
+      "raw_count": 2,
+      "rejected_count": 0,
+      "schema_version": "source_ingest_receipt.v1",
+      "source_timestamp": "2026-09-13T03:59:39Z",
+      "source_timestamp_status": "valid",
+      "started_at": "2026-09-13T04:04:39Z",
+      "status": "completed",
+      "storage_refs": {
+        "created_at": "2026-09-13T04:04:39Z",
+        "feature_refs": [],
+        "ingest_run_id": "ingest-bd1a73d4864e",
+        "normalized_refs": [
+          {
+            "dataset": "market",
+            "date": "2026-09-13",
+            "ref_type": "normalized_rows",
+            "row_count": 2,
+            "schema_hash": null,
+            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-13/ingest-bd1a73d4864e.jsonl"
+          }
+        ],
+        "raw_refs": [
+          {
+            "compression": "none",
+            "dataset": "market",
+            "date": "2026-09-13",
+            "ref_type": "raw_object",
+            "retention_days": null,
+            "retention_policy_ref": null,
+            "row_count": 2,
+            "source": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+            "storage_class": null,
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260913t040439z-7935481ca72f49629606e01098c3a54e/market/date=2026-09-13/ingest-bd1a73d4864e.jsonl"
+          }
+        ],
+        "schema_version": "market_data_storage_manifest.v1",
+        "summary": {
+          "feature_ref_count": 0,
+          "normalized_ref_count": 1,
+          "normalized_row_count": 2,
+          "raw_ref_count": 1
+        }
+      },
+      "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "trigger_type": "manual",
+      "typed_failure": null,
+      "watermark": null
+    },
+    "run": {
+      "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "events": [
+        {
+          "created_at": "2026-09-13T04:04:39Z",
+          "event_type": "IngestRunQueued",
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "message": null,
+          "status": "queued",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        },
+        {
+          "created_at": "2026-09-13T04:04:39Z",
+          "event_type": "IngestRunStarted",
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "message": "Ingest run started",
+          "status": "fetching",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        },
+        {
+          "created_at": "2026-09-13T04:04:39Z",
+          "event_type": "SourceNormalizingStarted",
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "message": "Scheduled source records fetched",
+          "status": "normalizing",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        },
+        {
+          "created_at": "2026-09-13T04:04:39Z",
+          "event_type": "EvidenceIndexingStarted",
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "message": "Scheduled source records normalized",
+          "status": "indexing",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        },
+        {
+          "created_at": "2026-09-13T04:04:39Z",
+          "event_type": "IngestRunCompleted",
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "message": "Scheduled source records ready for indexing",
+          "status": "completed",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        },
+        {
+          "created_at": "2026-09-13T04:04:40Z",
+          "event_type": "SearchIndexRefreshObserved",
+          "ingest_run_id": "ingest-bd1a73d4864e",
+          "message": "{\"attempted_at\":\"2026-09-13T04:04:39Z\",\"configured\":true,\"error\":null,\"freshness_status\":\"fresh\",\"freshness_within_sla\":true,\"http_status\":200,\"ingest_run_id\":\"ingest-bd1a73d4864e\",\"materialized\":true,\"materialized_matches_completion\":true,\"pipeline_run_id\":\"9ea52009-ac8e-44e9-8582-2c4af6bdfaa4\",\"schema_version\":\"source_search_refresh_observed.v1\",\"search_url\":\"http://search-svc:8098\",\"status\":\"refreshed\"}",
+          "status": "completed",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        }
+      ],
+      "finished_at": "2026-09-13T04:04:39Z",
+      "ingest_run_id": "ingest-bd1a73d4864e",
+      "normalized_count": 2,
+      "raw_count": 2,
+      "rejected_count": 0,
+      "source_type": "market",
+      "started_at": "2026-09-13T04:04:39Z",
+      "status": "completed",
+      "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "trigger_type": "manual"
+    }
+  },
+  "http_status": 200,
+  "method": "GET",
+  "observed_at": "2026-09-13T04:04:40Z",
+  "route": "/api/source-ingest/jobs/ingest-bd1a73d4864e"
+}

@@ -1,0 +1,17 @@
+{
+  "approver": {
+    "operator_id": "pantheon-dev-approver",
+    "roles": [
+      "approver",
+      "governance_reviewer"
+    ],
+    "tenant_id": "tenant-dev"
+  },
+  "operator": {
+    "operator_id": "pantheon-dev-operator-a",
+    "roles": [
+      "operator"
+    ],
+    "tenant_id": "tenant-dev"
+  }
+}

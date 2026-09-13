@@ -1,0 +1,21 @@
+{
+  "distillation_job_ids": [
+    "distill-e99ee043788c7e6a21ebd8b0",
+    "distill-c4a34c2036cb1393c7e5ca8f"
+  ],
+  "evidence_dir": "/tmp/pantheon-fresh-source-evidence-34736489137",
+  "ingest_run_id": "ingest-bd1a73d4864e",
+  "remaining": [
+    "Registry authenticated GET for actual outbox registry_id",
+    "actual owner approval and Alpha receipt",
+    "numeric research execution with simulation provenance",
+    "remaining causal loops and hosted UI journeys"
+  ],
+  "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
+  "source_ids": [
+    "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
+    "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+  ],
+  "status": "source-stimulus-and-readbacks-only-not-loops-1-through-12-pass",
+  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+}

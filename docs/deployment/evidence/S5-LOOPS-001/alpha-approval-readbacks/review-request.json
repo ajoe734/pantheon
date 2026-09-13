@@ -1,0 +1,9 @@
+{
+  "idempotency_key": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e:research-review:review",
+  "payload": {
+    "actor_id": "pantheon-dev-approver",
+    "actor_role": "governance_reviewer",
+    "expected_version": 1
+  },
+  "route": "/api/governance/approvals/apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682/review"
+}

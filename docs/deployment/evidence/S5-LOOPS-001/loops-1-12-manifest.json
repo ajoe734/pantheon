@@ -1,217 +1,278 @@
 {
-  "schema_version": 1,
-  "task_id": "S5-LOOPS-001",
-  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
-  "stimulus_timestamp": "2026-09-13T04:04:39Z",
-  "provenance": "simulation",
   "is_real": false,
-  "tenant_id": "tenant-dev",
   "loops": [
     {
-      "loop_index": 1,
       "canonical_id": "source_ingestion",
+      "durable_reload_readback": {
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/receipt-reload.json",
+        "evidence_file_sha256": "411ad6a91da4fac0adefb4746581c60da9d5fe99e41d911bde1fff78d5371fad",
+        "summary": "Owner HTTP GET 200 reloaded receipt, jobs, both SourceRecords, and snapshot with matching checksums",
+        "supporting_files": [
+          "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/source-0-reload.json",
+          "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/source-1-reload.json",
+          "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/snapshot-reload.json",
+          "docs/deployment/evidence/S5-LOOPS-001/source-readbacks/job-reload.json"
+        ],
+        "verified": true
+      },
+      "gap_reason": null,
+      "loop_index": 1,
       "loop_name": "Source Ingestion",
+      "next_consumer_receipt_id": "distill-e99ee043788c7e6a21ebd8b0,distill-c4a34c2036cb1393c7e5ca8f",
+      "owner_container": "82a285494255",
+      "owner_worker_identity": "82a285494255ef272b412e48751e0a2c938366e2c5d1b8049a2d48c71c0501b0",
       "status": "accepted",
-      "trigger_id": "ingest-bd1a73d4864e",
-      "terminal_output_id": "mss-318d9ad652c4a87f1b39c8ec",
       "terminal_output_details": {
+        "is_real": false,
+        "provenance": "simulation",
+        "rows_per_source": 30,
         "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
         "source_ids": [
           "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
           "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
-        ],
-        "rows_per_source": 30,
-        "is_real": false,
-        "provenance": "simulation"
+        ]
       },
-      "next_consumer_receipt_id": "distill-e99ee043788c7e6a21ebd8b0,distill-c4a34c2036cb1393c7e5ca8f",
-      "owner_worker_identity": "82a285494255ef272b412e48751e0a2c938366e2c5d1b8049a2d48c71c0501b0",
-      "owner_container": "82a285494255",
-      "durable_reload_readback": "verified_http_readback_receipt_and_sources",
-      "gap_reason": null
+      "terminal_output_id": "mss-318d9ad652c4a87f1b39c8ec",
+      "trigger_id": "ingest-bd1a73d4864e"
     },
     {
-      "loop_index": 2,
       "canonical_id": "strategy_distillation",
-      "loop_name": "Strategy Distillation",
-      "status": "accepted",
-      "trigger_id": "distill-e99ee043788c7e6a21ebd8b0,distill-c4a34c2036cb1393c7e5ca8f",
-      "terminal_output_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-      "terminal_output_details": {
-        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
-        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-        "strategy_version": "1.0.0",
-        "execution_mode": "research_only"
+      "durable_reload_readback": {
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/distillation-registry-readback.json",
+        "evidence_file_sha256": "b0aced123fe824a2ccbea6cd62fd0a55c8828ee14228a432f1533f48f0440e20",
+        "summary": "Registry owner JWT GET 200, strategy T1 and spec R1 reloaded with matching source digest and checksum",
+        "verified": true
       },
+      "gap_reason": null,
+      "loop_index": 2,
+      "loop_name": "Strategy Distillation",
       "next_consumer_receipt_id": "adm-7d1bf7d5d2c6",
-      "owner_worker_identity": "distill-controller-5c099699",
       "owner_container": "distill-controller-5c099699",
-      "durable_reload_readback": "verified_registry_jwt_get_200_checksum_matched",
-      "gap_reason": null
+      "owner_worker_identity": "distill-controller-5c099699",
+      "status": "accepted",
+      "terminal_output_details": {
+        "execution_mode": "research_only",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+        "strategy_version": "1.0.0"
+      },
+      "terminal_output_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+      "trigger_id": "distill-e99ee043788c7e6a21ebd8b0,distill-c4a34c2036cb1393c7e5ca8f"
     },
     {
-      "loop_index": 3,
       "canonical_id": "alpha_replication",
+      "durable_reload_readback": {
+        "alpha_approval_files": [
+          "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/alpha-admission-reload-response.json",
+          "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/approved-reload-response.json",
+          "docs/deployment/evidence/S5-LOOPS-001/alpha-approval-readbacks/decision-reload-response.json"
+        ],
+        "evidence_file": "docs/deployment/evidence/S5-LOOPS-001/alpha-research-reload.json",
+        "evidence_file_sha256": "15f653a5b064e33d94a3f47f952b5a4f7ef1f18fb568a4af976891bad877452f",
+        "owner_identities_file": "docs/deployment/evidence/S5-LOOPS-001/alpha-owner-identities.txt",
+        "summary": "Research authority GET task rtask-20260913-001 and run rrun-20260913-001 HTTP 200, queue completed, claim generation 1; governance approval verified",
+        "verified": true
+      },
+      "functional_blocker": "GAP-L03-TEACHING-INVOCATION",
+      "functional_owner": "Claude",
+      "gap_reason": "Alpha evaluation did not invoke Teaching training-session creation; downstream next-consumer receipt is missing.",
+      "loop_index": 3,
       "loop_name": "Alpha Replication",
+      "next_consumer_receipt_id": null,
+      "owner_container": "ad5146992ebdb5f27f92fe7995afaa871af4c27bb8dcdff84816d4d6561450e3",
+      "owner_worker_identity": "alpha-revalidation-worker",
       "status": "unaccepted",
-      "trigger_id": "adm-7d1bf7d5d2c6",
-      "terminal_output_id": "erun-alpha-191f49482a35e074",
       "terminal_output_details": {
+        "approval_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+        "evaluation_type": "replication_gate_schema_governance",
         "experiment_run_id": "erun-alpha-191f49482a35e074",
         "research_authority_id": "rrun-20260913-001",
-        "research_task_id": "rtask-20260913-001",
-        "approval_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
-        "evaluation_type": "replication_gate_schema_governance"
+        "research_task_id": "rtask-20260913-001"
       },
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": "alpha-revalidation-worker",
-      "owner_container": "ad5146992ebdb5f27f92fe7995afaa871af4c27bb8dcdff84816d4d6561450e3",
-      "durable_reload_readback": "verified_research_owner_task_and_run_get_200",
-      "gap_reason": "Alpha evaluation did not invoke Teaching training-session creation; downstream next-consumer receipt is missing."
+      "terminal_output_id": "erun-alpha-191f49482a35e074",
+      "trigger_id": "adm-7d1bf7d5d2c6"
     },
     {
-      "loop_index": 4,
       "canonical_id": "persona_teaching",
-      "loop_name": "Persona Teaching",
-      "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
-      "terminal_output_details": null,
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
       "durable_reload_readback": null,
-      "gap_reason": "Missing Teaching trigger from Loop 3 Alpha terminal; chain interrupted."
+      "functional_blocker": "GAP-L03-TEACHING-INVOCATION",
+      "functional_owner": "Claude",
+      "gap_reason": "Missing Teaching trigger from Loop 3 Alpha terminal; chain interrupted.",
+      "loop_index": 4,
+      "loop_name": "Persona Teaching",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
+      "status": "unaccepted",
+      "terminal_output_details": null,
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 5,
       "canonical_id": "agora_interaction_evidence",
+      "durable_reload_readback": {
+        "evidence_files": [
+          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/cards-reload.json",
+          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/events.json",
+          "docs/deployment/evidence/S5-LOOPS-001/workshop-readbacks/versions-reload.json"
+        ],
+        "summary": "Workshop cards and events GET 200 on E credentials; private body not durable across restart; ResearchDispatcher unwired",
+        "verified": false
+      },
+      "functional_blocker": "GAP-L05-AGORA-RESEARCH-ADAPTER-WIRING",
+      "functional_owner": "Claude",
+      "gap_reason": "ResearchDispatcher in production router/worker was not constructed with AuthenticResearchBackendClient registry; true numeric backtesting was not executed.",
+      "loop_index": 5,
       "loop_name": "Agora Interaction Evidence & Research",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
       "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
       "terminal_output_details": {
         "parallel_workshop_branch_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
-        "workshop_message_event": "6287a125-8d7d-4baa-8c5b-63638e40d199",
-        "workshop_version": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
         "reconstruction_id": "recon-52946dbd93684fae",
         "reconstruction_status": "insufficient",
-        "research_adapter_state": "DefaultAllowlistedAdapter_unwired_numeric_backend"
+        "research_adapter_state": "DefaultAllowlistedAdapter_unwired_numeric_backend",
+        "workshop_message_event": "6287a125-8d7d-4baa-8c5b-63638e40d199",
+        "workshop_version": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f"
       },
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
-      "durable_reload_readback": "workshop_cards_get_200_private_body_not_durable_across_restart",
-      "gap_reason": "ResearchDispatcher in production router/worker was not constructed with AuthenticResearchBackendClient registry; true numeric backtesting was not executed."
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 6,
       "canonical_id": "human_imitation_shadow_evaluation",
+      "durable_reload_readback": null,
+      "functional_blocker": "GAP-L06-IMITATION-CHAIN-UNEXERCISED",
+      "functional_owner": "Claude",
+      "gap_reason": "Downstream loop unexercised on fresh stimulus chain; earlier tenant compensation was separate historical saga.",
+      "loop_index": 6,
       "loop_name": "Human Imitation & Shadow Evaluation",
-      "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
-      "terminal_output_details": null,
       "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
       "owner_container": null,
-      "durable_reload_readback": null,
-      "gap_reason": "Downstream loop unexercised on fresh stimulus chain; earlier tenant compensation was separate historical saga."
+      "owner_worker_identity": null,
+      "status": "unaccepted",
+      "terminal_output_details": null,
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 7,
       "canonical_id": "consultation",
+      "durable_reload_readback": null,
+      "functional_blocker": "GAP-L07-CONSULTATION-HANDOFF-MISSING",
+      "functional_owner": "Claude",
+      "gap_reason": "Missing consultation memo and governance handoff receipt.",
+      "loop_index": 7,
       "loop_name": "Consultation & Governance Handoff",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
       "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
       "terminal_output_details": null,
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
-      "durable_reload_readback": null,
-      "gap_reason": "Missing consultation memo and governance handoff receipt."
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 8,
       "canonical_id": "promotion_deployment",
-      "loop_name": "Promotion & Deployment (RuntimeBinding)",
-      "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
-      "terminal_output_details": {
-        "strategy_r1_state": "research_only",
-        "execution_state": "none"
-      },
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
       "durable_reload_readback": null,
-      "gap_reason": "Strategy R1 remains research_only; missing executable RuntimeBinding8."
+      "functional_blocker": "GAP-L08-RUNTIME-BINDING",
+      "functional_owner": "Claude",
+      "gap_reason": "Strategy R1 remains research_only; missing executable RuntimeBinding8.",
+      "loop_index": 8,
+      "loop_name": "Promotion & Deployment (RuntimeBinding)",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
+      "status": "unaccepted",
+      "terminal_output_details": {
+        "execution_state": "none",
+        "strategy_r1_state": "research_only"
+      },
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 9,
       "canonical_id": "capital_pool_execution",
+      "durable_reload_readback": {
+        "summary": "Performance reader lists T1 with runtime_count=0 and total_trades=0; no paper trading telemetry, orders, or fills",
+        "verified": false
+      },
+      "functional_blocker": "GAP-L09-PAPER-LIFECYCLE",
+      "functional_owner": "Claude",
+      "gap_reason": "Missing runtime signal trigger and paper order/fill/execution telemetry.",
+      "loop_index": 9,
       "loop_name": "Capital Pool Execution & Paper Lifecycle",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
       "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
       "terminal_output_details": {
         "performance_reader_strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
         "runtime_count": 0,
         "total_trades": 0
       },
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
-      "durable_reload_readback": "performance_attribution_get_200_zero_trades",
-      "gap_reason": "Missing runtime signal trigger and paper order/fill/execution telemetry."
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 10,
       "canonical_id": "telemetry_reconciliation",
+      "durable_reload_readback": null,
+      "functional_blocker": "GAP-L10-TELEMETRY-RECONCILIATION-MISSING",
+      "functional_owner": "Claude",
+      "gap_reason": "No execution telemetry generated to reconcile.",
+      "loop_index": 10,
       "loop_name": "Telemetry Reconciliation & Incident",
-      "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
-      "terminal_output_details": null,
       "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
       "owner_container": null,
-      "durable_reload_readback": null,
-      "gap_reason": "No execution telemetry generated to reconcile."
+      "owner_worker_identity": null,
+      "status": "unaccepted",
+      "terminal_output_details": null,
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 11,
       "canonical_id": "evolution",
-      "loop_name": "Evolution Decision & Adaptation",
-      "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
-      "terminal_output_details": null,
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
       "durable_reload_readback": null,
-      "gap_reason": "Missing evolution trigger and terminal decision record."
+      "functional_blocker": "GAP-L11-EVOLUTION-MISSING",
+      "functional_owner": "Claude",
+      "gap_reason": "Missing evolution trigger and terminal decision record.",
+      "loop_index": 11,
+      "loop_name": "Evolution Decision & Adaptation",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
+      "status": "unaccepted",
+      "terminal_output_details": null,
+      "terminal_output_id": null,
+      "trigger_id": null
     },
     {
-      "loop_index": 12,
       "canonical_id": "bff_health_monitoring",
+      "durable_reload_readback": {
+        "summary": "Cockpit GET 200 serves static health and 5 owner cards, but Loops projection is degraded/unknown due to upstream chain interruption",
+        "verified": false
+      },
+      "functional_blocker": "GAP-L12-MANAGEMENT-PROJECTION",
+      "functional_owner": "Claude",
+      "gap_reason": "Management cockpit displays read-only health and cards; Loops projection remains degraded/unknown due to upstream chain break.",
+      "loop_index": 12,
       "loop_name": "BFF Typed Health & Management Projection",
+      "next_consumer_receipt_id": null,
+      "owner_container": null,
+      "owner_worker_identity": null,
       "status": "unaccepted",
-      "trigger_id": null,
-      "terminal_output_id": null,
       "terminal_output_details": {
         "cockpit_http_status": 200,
-        "management_cards_count": 5,
-        "loops_projection_state": "missing_or_degraded"
+        "loops_projection_state": "missing_or_degraded",
+        "management_cards_count": 5
       },
-      "next_consumer_receipt_id": null,
-      "owner_worker_identity": null,
-      "owner_container": null,
-      "durable_reload_readback": "management_cockpit_authenticated_get_200",
-      "gap_reason": "Management cockpit displays read-only health and cards; Loops projection remains degraded/unknown due to upstream chain break."
+      "terminal_output_id": null,
+      "trigger_id": null
     }
-  ]
+  ],
+  "provenance": "simulation",
+  "schema_version": 1,
+  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+  "stimulus_timestamp": "2026-09-13T04:04:39Z",
+  "task_id": "S5-LOOPS-001",
+  "tenant_id": "tenant-dev"
 }

@@ -1,0 +1,829 @@
+{
+  "body": {
+    "connector": {
+      "auth_policy": {
+        "audience": null,
+        "auth_scope": [],
+        "auth_type": "none",
+        "secret_ref": null
+      },
+      "auth_type": "none",
+      "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "license_policy": {
+        "allowed_use": [
+          "research"
+        ],
+        "attribution_required": false,
+        "license_scope": "internal",
+        "policy_ref": null,
+        "redistribution_allowed": false
+      },
+      "license_scope": "internal",
+      "metadata": {
+        "acceptance_stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+        "is_real": false,
+        "provenance": "simulation",
+        "tenant_id": "tenant-dev"
+      },
+      "provider": "Explicit controlled simulation",
+      "rate_limit_policy": {
+        "burst": null,
+        "concurrency": null,
+        "policy_ref": null,
+        "requests_per_minute": null,
+        "retry_after_seconds": null
+      },
+      "rate_limit_policy_ref": null,
+      "schema_version": "source_connector.v2",
+      "secret_ref_id": null,
+      "source_metadata": {
+        "display_name": null,
+        "docs_url": null,
+        "homepage_url": null,
+        "owner": null,
+        "tags": []
+      },
+      "source_type": "market",
+      "status": "enabled",
+      "supported_modes": [
+        "batch"
+      ]
+    },
+    "fetch": {
+      "allow_empty": false,
+      "empty_reason": "",
+      "fail_until_attempt": 0,
+      "failure_reason": "configured connector fetch failed",
+      "mode": "static_records",
+      "next_watermark": null,
+      "records": [
+        {
+          "content_ref": "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-12",
+          "metadata": {
+            "acceptance_stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+            "access_scope": [
+              "research"
+            ],
+            "available_time": "2026-09-13T04:04:39Z",
+            "is_real": false,
+            "license_scope": "internal",
+            "normalized_row": {
+              "close": 523.093425,
+              "event_time": "2026-09-12T03:59:39Z",
+              "is_real": false,
+              "provenance": "simulation",
+              "symbol": "SPY"
+            },
+            "provenance": "simulation",
+            "tenant_id": "tenant-dev"
+          },
+          "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
+          "status": "normalized",
+          "title": "SIMULATION paper-only SPY previous dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        },
+        {
+          "content_ref": "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-13",
+          "metadata": {
+            "acceptance_stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+            "access_scope": [
+              "research"
+            ],
+            "available_time": "2026-09-13T04:04:39Z",
+            "is_real": false,
+            "license_scope": "internal",
+            "normalized_row": {
+              "close": 523.854427,
+              "event_time": "2026-09-13T03:59:39Z",
+              "is_real": false,
+              "provenance": "simulation",
+              "symbol": "SPY"
+            },
+            "provenance": "simulation",
+            "research_dataset": {
+              "data_frequency": "daily",
+              "dataset_id": "dataset-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+              "is_real": false,
+              "metadata": {
+                "intended_use": "paper_only_acceptance",
+                "is_real": false,
+                "provenance": "simulation",
+                "tenant_id": "tenant-dev"
+              },
+              "provenance": "simulation",
+              "records": [
+                {
+                  "close": 500.0,
+                  "date": "2026-08-15",
+                  "high": 500.6,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 499.3,
+                  "open": 499.8,
+                  "provenance": "simulation",
+                  "volume": 1000000
+                },
+                {
+                  "close": 501.135598,
+                  "date": "2026-08-16",
+                  "high": 501.735598,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 500.435598,
+                  "open": 500.935598,
+                  "provenance": "simulation",
+                  "volume": 1001000
+                },
+                {
+                  "close": 502.18903,
+                  "date": "2026-08-17",
+                  "high": 502.78903,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 501.48903,
+                  "open": 501.98903,
+                  "provenance": "simulation",
+                  "volume": 1002000
+                },
+                {
+                  "close": 503.098246,
+                  "date": "2026-08-18",
+                  "high": 503.698246,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 502.398246,
+                  "open": 502.898246,
+                  "provenance": "simulation",
+                  "volume": 1003000
+                },
+                {
+                  "close": 503.836508,
+                  "date": "2026-08-19",
+                  "high": 504.436508,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 503.136508,
+                  "open": 503.636508,
+                  "provenance": "simulation",
+                  "volume": 1004000
+                },
+                {
+                  "close": 504.418931,
+                  "date": "2026-08-20",
+                  "high": 505.018931,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 503.718931,
+                  "open": 504.218931,
+                  "provenance": "simulation",
+                  "volume": 1005000
+                },
+                {
+                  "close": 504.898784,
+                  "date": "2026-08-21",
+                  "high": 505.498784,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 504.198784,
+                  "open": 504.698784,
+                  "provenance": "simulation",
+                  "volume": 1006000
+                },
+                {
+                  "close": 505.354452,
+                  "date": "2026-08-22",
+                  "high": 505.954452,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 504.654452,
+                  "open": 505.154452,
+                  "provenance": "simulation",
+                  "volume": 1007000
+                },
+                {
+                  "close": 505.870238,
+                  "date": "2026-08-23",
+                  "high": 506.470238,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 505.170238,
+                  "open": 505.670238,
+                  "provenance": "simulation",
+                  "volume": 1008000
+                },
+                {
+                  "close": 506.515729,
+                  "date": "2026-08-24",
+                  "high": 507.115729,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 505.815729,
+                  "open": 506.315729,
+                  "provenance": "simulation",
+                  "volume": 1009000
+                },
+                {
+                  "close": 507.328753,
+                  "date": "2026-08-25",
+                  "high": 507.928753,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 506.628753,
+                  "open": 507.128753,
+                  "provenance": "simulation",
+                  "volume": 1010000
+                },
+                {
+                  "close": 508.306122,
+                  "date": "2026-08-26",
+                  "high": 508.906122,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 507.606122,
+                  "open": 508.106122,
+                  "provenance": "simulation",
+                  "volume": 1011000
+                },
+                {
+                  "close": 509.404409,
+                  "date": "2026-08-27",
+                  "high": 510.004409,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 508.704409,
+                  "open": 509.204409,
+                  "provenance": "simulation",
+                  "volume": 1012000
+                },
+                {
+                  "close": 510.550584,
+                  "date": "2026-08-28",
+                  "high": 511.150584,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 509.850584,
+                  "open": 510.350584,
+                  "provenance": "simulation",
+                  "volume": 1013000
+                },
+                {
+                  "close": 511.659891,
+                  "date": "2026-08-29",
+                  "high": 512.259891,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 510.959891,
+                  "open": 511.459891,
+                  "provenance": "simulation",
+                  "volume": 1014000
+                },
+                {
+                  "close": 512.6566,
+                  "date": "2026-08-30",
+                  "high": 513.2566,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 511.9566,
+                  "open": 512.4566,
+                  "provenance": "simulation",
+                  "volume": 1015000
+                },
+                {
+                  "close": 513.492551,
+                  "date": "2026-08-31",
+                  "high": 514.092551,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 512.792551,
+                  "open": 513.292551,
+                  "provenance": "simulation",
+                  "volume": 1016000
+                },
+                {
+                  "close": 514.158941,
+                  "date": "2026-09-01",
+                  "high": 514.758941,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 513.458941,
+                  "open": 513.958941,
+                  "provenance": "simulation",
+                  "volume": 1017000
+                },
+                {
+                  "close": 514.688483,
+                  "date": "2026-09-02",
+                  "high": 515.288483,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 513.988483,
+                  "open": 514.488483,
+                  "provenance": "simulation",
+                  "volume": 1018000
+                },
+                {
+                  "close": 515.147394,
+                  "date": "2026-09-03",
+                  "high": 515.747394,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 514.447394,
+                  "open": 514.947394,
+                  "provenance": "simulation",
+                  "volume": 1019000
+                },
+                {
+                  "close": 515.619185,
+                  "date": "2026-09-04",
+                  "high": 516.219185,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 514.919185,
+                  "open": 515.419185,
+                  "provenance": "simulation",
+                  "volume": 1020000
+                },
+                {
+                  "close": 516.184213,
+                  "date": "2026-09-05",
+                  "high": 516.784213,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 515.484213,
+                  "open": 515.984213,
+                  "provenance": "simulation",
+                  "volume": 1021000
+                },
+                {
+                  "close": 516.900007,
+                  "date": "2026-09-06",
+                  "high": 517.500007,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 516.200007,
+                  "open": 516.700007,
+                  "provenance": "simulation",
+                  "volume": 1022000
+                },
+                {
+                  "close": 517.787183,
+                  "date": "2026-09-07",
+                  "high": 518.387183,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 517.087183,
+                  "open": 517.587183,
+                  "provenance": "simulation",
+                  "volume": 1023000
+                },
+                {
+                  "close": 518.824399,
+                  "date": "2026-09-08",
+                  "high": 519.424399,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 518.124399,
+                  "open": 518.624399,
+                  "provenance": "simulation",
+                  "volume": 1024000
+                },
+                {
+                  "close": 519.953575,
+                  "date": "2026-09-09",
+                  "high": 520.553575,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 519.253575,
+                  "open": 519.753575,
+                  "provenance": "simulation",
+                  "volume": 1025000
+                },
+                {
+                  "close": 521.094117,
+                  "date": "2026-09-10",
+                  "high": 521.694117,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 520.394117,
+                  "open": 520.894117,
+                  "provenance": "simulation",
+                  "volume": 1026000
+                },
+                {
+                  "close": 522.162649,
+                  "date": "2026-09-11",
+                  "high": 522.762649,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 521.462649,
+                  "open": 521.962649,
+                  "provenance": "simulation",
+                  "volume": 1027000
+                },
+                {
+                  "close": 523.093425,
+                  "date": "2026-09-12",
+                  "high": 523.693425,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 522.393425,
+                  "open": 522.893425,
+                  "provenance": "simulation",
+                  "volume": 1028000
+                },
+                {
+                  "close": 523.854427,
+                  "date": "2026-09-13",
+                  "high": 524.454427,
+                  "instrument": "SPY",
+                  "is_real": false,
+                  "low": 523.154427,
+                  "open": 523.654427,
+                  "provenance": "simulation",
+                  "volume": 1029000
+                },
+                {
+                  "close": 450.0,
+                  "date": "2026-08-15",
+                  "high": 450.6,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 449.3,
+                  "open": 449.8,
+                  "provenance": "simulation",
+                  "volume": 1000000
+                },
+                {
+                  "close": 451.135598,
+                  "date": "2026-08-16",
+                  "high": 451.735598,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 450.435598,
+                  "open": 450.935598,
+                  "provenance": "simulation",
+                  "volume": 1001000
+                },
+                {
+                  "close": 452.18903,
+                  "date": "2026-08-17",
+                  "high": 452.78903,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 451.48903,
+                  "open": 451.98903,
+                  "provenance": "simulation",
+                  "volume": 1002000
+                },
+                {
+                  "close": 453.098246,
+                  "date": "2026-08-18",
+                  "high": 453.698246,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 452.398246,
+                  "open": 452.898246,
+                  "provenance": "simulation",
+                  "volume": 1003000
+                },
+                {
+                  "close": 453.836508,
+                  "date": "2026-08-19",
+                  "high": 454.436508,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 453.136508,
+                  "open": 453.636508,
+                  "provenance": "simulation",
+                  "volume": 1004000
+                },
+                {
+                  "close": 454.418931,
+                  "date": "2026-08-20",
+                  "high": 455.018931,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 453.718931,
+                  "open": 454.218931,
+                  "provenance": "simulation",
+                  "volume": 1005000
+                },
+                {
+                  "close": 454.898784,
+                  "date": "2026-08-21",
+                  "high": 455.498784,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 454.198784,
+                  "open": 454.698784,
+                  "provenance": "simulation",
+                  "volume": 1006000
+                },
+                {
+                  "close": 455.354452,
+                  "date": "2026-08-22",
+                  "high": 455.954452,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 454.654452,
+                  "open": 455.154452,
+                  "provenance": "simulation",
+                  "volume": 1007000
+                },
+                {
+                  "close": 455.870238,
+                  "date": "2026-08-23",
+                  "high": 456.470238,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 455.170238,
+                  "open": 455.670238,
+                  "provenance": "simulation",
+                  "volume": 1008000
+                },
+                {
+                  "close": 456.515729,
+                  "date": "2026-08-24",
+                  "high": 457.115729,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 455.815729,
+                  "open": 456.315729,
+                  "provenance": "simulation",
+                  "volume": 1009000
+                },
+                {
+                  "close": 457.328753,
+                  "date": "2026-08-25",
+                  "high": 457.928753,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 456.628753,
+                  "open": 457.128753,
+                  "provenance": "simulation",
+                  "volume": 1010000
+                },
+                {
+                  "close": 458.306122,
+                  "date": "2026-08-26",
+                  "high": 458.906122,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 457.606122,
+                  "open": 458.106122,
+                  "provenance": "simulation",
+                  "volume": 1011000
+                },
+                {
+                  "close": 459.404409,
+                  "date": "2026-08-27",
+                  "high": 460.004409,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 458.704409,
+                  "open": 459.204409,
+                  "provenance": "simulation",
+                  "volume": 1012000
+                },
+                {
+                  "close": 460.550584,
+                  "date": "2026-08-28",
+                  "high": 461.150584,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 459.850584,
+                  "open": 460.350584,
+                  "provenance": "simulation",
+                  "volume": 1013000
+                },
+                {
+                  "close": 461.659891,
+                  "date": "2026-08-29",
+                  "high": 462.259891,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 460.959891,
+                  "open": 461.459891,
+                  "provenance": "simulation",
+                  "volume": 1014000
+                },
+                {
+                  "close": 462.6566,
+                  "date": "2026-08-30",
+                  "high": 463.2566,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 461.9566,
+                  "open": 462.4566,
+                  "provenance": "simulation",
+                  "volume": 1015000
+                },
+                {
+                  "close": 463.492551,
+                  "date": "2026-08-31",
+                  "high": 464.092551,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 462.792551,
+                  "open": 463.292551,
+                  "provenance": "simulation",
+                  "volume": 1016000
+                },
+                {
+                  "close": 464.158941,
+                  "date": "2026-09-01",
+                  "high": 464.758941,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 463.458941,
+                  "open": 463.958941,
+                  "provenance": "simulation",
+                  "volume": 1017000
+                },
+                {
+                  "close": 464.688483,
+                  "date": "2026-09-02",
+                  "high": 465.288483,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 463.988483,
+                  "open": 464.488483,
+                  "provenance": "simulation",
+                  "volume": 1018000
+                },
+                {
+                  "close": 465.147394,
+                  "date": "2026-09-03",
+                  "high": 465.747394,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 464.447394,
+                  "open": 464.947394,
+                  "provenance": "simulation",
+                  "volume": 1019000
+                },
+                {
+                  "close": 465.619185,
+                  "date": "2026-09-04",
+                  "high": 466.219185,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 464.919185,
+                  "open": 465.419185,
+                  "provenance": "simulation",
+                  "volume": 1020000
+                },
+                {
+                  "close": 466.184213,
+                  "date": "2026-09-05",
+                  "high": 466.784213,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 465.484213,
+                  "open": 465.984213,
+                  "provenance": "simulation",
+                  "volume": 1021000
+                },
+                {
+                  "close": 466.900007,
+                  "date": "2026-09-06",
+                  "high": 467.500007,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 466.200007,
+                  "open": 466.700007,
+                  "provenance": "simulation",
+                  "volume": 1022000
+                },
+                {
+                  "close": 467.787183,
+                  "date": "2026-09-07",
+                  "high": 468.387183,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 467.087183,
+                  "open": 467.587183,
+                  "provenance": "simulation",
+                  "volume": 1023000
+                },
+                {
+                  "close": 468.824399,
+                  "date": "2026-09-08",
+                  "high": 469.424399,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 468.124399,
+                  "open": 468.624399,
+                  "provenance": "simulation",
+                  "volume": 1024000
+                },
+                {
+                  "close": 469.953575,
+                  "date": "2026-09-09",
+                  "high": 470.553575,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 469.253575,
+                  "open": 469.753575,
+                  "provenance": "simulation",
+                  "volume": 1025000
+                },
+                {
+                  "close": 471.094117,
+                  "date": "2026-09-10",
+                  "high": 471.694117,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 470.394117,
+                  "open": 470.894117,
+                  "provenance": "simulation",
+                  "volume": 1026000
+                },
+                {
+                  "close": 472.162649,
+                  "date": "2026-09-11",
+                  "high": 472.762649,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 471.462649,
+                  "open": 471.962649,
+                  "provenance": "simulation",
+                  "volume": 1027000
+                },
+                {
+                  "close": 473.093425,
+                  "date": "2026-09-12",
+                  "high": 473.693425,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 472.393425,
+                  "open": 472.893425,
+                  "provenance": "simulation",
+                  "volume": 1028000
+                },
+                {
+                  "close": 473.854427,
+                  "date": "2026-09-13",
+                  "high": 474.454427,
+                  "instrument": "QQQ",
+                  "is_real": false,
+                  "low": 473.154427,
+                  "open": 473.654427,
+                  "provenance": "simulation",
+                  "volume": 1029000
+                }
+              ],
+              "source_dataset_refs": [
+                "source-ingest://source-records/src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+              ]
+            },
+            "strategy_seed": {
+              "asset_class": [
+                "equity"
+              ],
+              "backend_hint": "vectorbt",
+              "feature_hints": [
+                "momentum"
+              ],
+              "holding_period": "1 day",
+              "hypothesis": "Explicitly simulated SPY two-point momentum for paper-only acceptance; QQQ is a simulated research comparison.",
+              "label_hints": [
+                "return_1d"
+              ],
+              "market_scope": [
+                "US"
+              ],
+              "required_data": [
+                "OHLCV"
+              ],
+              "risk_notes": [
+                "simulation",
+                "is_real=false",
+                "paper_only",
+                "not_market_evidence"
+              ]
+            },
+            "tenant_id": "tenant-dev"
+          },
+          "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+          "status": "normalized",
+          "title": "SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+          "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        }
+      ]
+    },
+    "state": {
+      "attempts": 0,
+      "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+      "failed_attempts": 0,
+      "last_error": null,
+      "successful_attempts": 0,
+      "updated_at": null
+    },
+    "updated_at": "2026-09-13T04:04:39Z"
+  },
+  "http_status": 201,
+  "method": "POST",
+  "observed_at": "2026-09-13T04:04:39Z",
+  "route": "/api/source-ingest/connectors"
+}

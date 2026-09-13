@@ -1,0 +1,34 @@
+{
+  "body": {
+    "closes": [
+      523.093425,
+      523.854427
+    ],
+    "event_time": "2026-09-13T03:59:39Z",
+    "lineage": {
+      "connector_ids": [
+        "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+      ],
+      "content_refs": [
+        "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-12",
+        "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-13"
+      ],
+      "ingest_run_ids": [
+        "ingest-bd1a73d4864e"
+      ],
+      "source_ids": [
+        "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+        "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous"
+      ]
+    },
+    "observed_at": "2026-09-13T04:04:39Z",
+    "schema_version": "source_ingest_latest_market_snapshot.v1",
+    "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
+    "source_ref": "source-ingest://snapshots/mss-318d9ad652c4a87f1b39c8ec",
+    "symbol": "SPY"
+  },
+  "http_status": 200,
+  "method": "GET",
+  "observed_at": "2026-09-13T04:04:40Z",
+  "route": "/api/source-ingest/snapshots/latest?symbol=SPY"
+}
