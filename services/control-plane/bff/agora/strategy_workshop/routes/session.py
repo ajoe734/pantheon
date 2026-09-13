@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
 
 from .._common import (
     _StrategyVersionProjectionError,
@@ -19,7 +19,7 @@ from .._common import (
     _raise_cross_user_forbidden,
 )
 from ..events import _ws_publish
-from ..operations import CanonicalOperationError
+from ..operations import CanonicalOperationError, bind_workshop_authorization
 from ..readiness import build_readiness_assessment as _build_readiness_assessment
 from ..cards import _build_workshop_cards, _merge_cards
 from ..runner import run_reconstruction_worker
@@ -40,7 +40,7 @@ def build_session_router(
     bff_error: Callable[..., HTTPException],
     ctx: Any,
 ) -> APIRouter:
-    router = APIRouter(tags=["agora-workshop"])
+    router = APIRouter(tags=["agora-workshop"], dependencies=[Depends(bind_workshop_authorization)])
     _scope = ctx.scope
     _scoped_session = ctx.scoped_session
     _readiness_from_store_or_state = ctx.readiness_from_store_or_state

@@ -400,7 +400,7 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
 
     assert "assert_dedicated_dev_login_identity" in script
     assert "for identity in viewer approver risk_owner operator_a operator_b" in script
-    assert 'assert set(claims.get("roles") or []) == {expected_role}' in script
+    assert 'assert expected_role in roles and roles <= allowed_roles' in script
     assert 'assert "mfa_verified" not in claims' in script
     assert "len(set(subjects)) == len(subjects)" in script
     assert (
@@ -533,6 +533,32 @@ def test_dev_identity_gate_accepts_password_token_and_rejects_fake_mfa() -> None
         else:
             assert result.returncode == 0, result.stderr
             assert result.stdout.strip() == "test-viewer"
+
+
+def test_dev_identity_gate_allows_current_and_prior_approver_roles_only() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("  python3 -c '\n", script.index("assert_dedicated_dev_login_identity()"))
+    start += len("  python3 -c '")
+    end = script.index("\n' \"$expected_identity\"", start)
+    verifier = script[start:end]
+    for identity, expected_role, roles, accepted in (
+        ("approver", "approver", ["approver"], True),  # exact prior remains restorable
+        ("approver", "approver", ["approver", "governance_reviewer"], True),
+        ("approver", "approver", ["governance_reviewer"], False),
+        ("approver", "approver", ["approver", "operator"], False),
+        ("approver", "approver", ["approver", "admin"], False),
+        ("viewer", "viewer", ["viewer", "governance_reviewer"], False),
+        ("operator_a", "operator", ["operator", "governance_reviewer"], False),
+        ("risk_owner", "risk_owner", ["risk_owner", "governance_reviewer"], False),
+    ):
+        claims = {"sub": "test-" + identity, "roles": roles}
+        encoded = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        payload = {"meta": {"identity": identity}, "access_token": f"header.{encoded}.signature"}
+        result = subprocess.run(
+            ["python3", "-c", verifier, identity, expected_role, json.dumps(payload)],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+        assert (result.returncode == 0) is accepted, (identity, roles, result.stderr)
 
 
 def test_auth_gate_posture_assertion_is_valid_python() -> None:

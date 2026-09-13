@@ -638,8 +638,8 @@ services:
       # PANTHEON_PERSISTENCE_POSTURE is staging or prod; a real deployment
       # supplies its own POLICY_LEARNING_SERVICE_TOKEN.
       POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
-      POLICY_LEARNING_SERVICE_TENANTS: ${POLICY_LEARNING_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
-      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_SERVICE_TENANTS: ${POLICY_LEARNING_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
       # Agora DatasetVersion authority (owned by L12-AGORA-001).  Unset means
       # "follow DATABASE_URL"; set these to read through a dedicated Agora
@@ -701,7 +701,7 @@ services:
       # This second credential is intentionally distinct: it can drain the
       # operator-BFF handoff store but cannot call policy-learning APIs.
       AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
-      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
     depends_on:
       policy-learning-svc:
@@ -1218,7 +1218,7 @@ services:
       # internal service route, never through browser BFF JWT/user identity.
       AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
       AGORA_HANDOFF_ALLOWED_SERVICE_ACTOR: policy-learning-agora-handoff-drainer
-      AGORA_HANDOFF_SERVICE_TENANTS: ${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
+      AGORA_HANDOFF_SERVICE_TENANTS: ${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}}
       AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
       AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
