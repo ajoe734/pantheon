@@ -8,12 +8,14 @@
   "decision": {
     "backend": "Management Jobs as a typed read composition and single JobAction dispatch seam across five asynchronous backend sources plus one read-only external diagnostic source; distinct aggregates: ResearchTicket != Experiment != OrchestratorRun != Job",
     "document": "docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md",
-    "document_sha256": "f68fc80146b3429b110d077f89dfd36b8176b7ec6d6ae8a85035df7c16b8c587",
-    "operator_decision_required_for_selected_scope": false,
+    "document_sha256": "f5da982da5cc7a6393054b9d761b16cf7b7e35ce1fd49ba87aae31b7f89542cd",
+    "operator_decision_required_for_selected_scope": true,
+    "operator_decision_details": "Operator decision is required for unresolved retention schedules (worker gateway, orchestrator, training session, source ingestion, policy learning), archival authority boundaries, and cross-stage promotion semantics (e.g. elevation to paper canary or live trading).",
     "expansion_requires_decision": [
       "promotion to live/capital trading",
       "universal scheduler or shared JobStore across domain boundaries",
-      "writable or task-scheduling OpenClaw operations via product BFF"
+      "writable or task-scheduling OpenClaw operations via product BFF",
+      "unresolved retention periods and archival authority"
     ],
     "implementation_status": "not implemented by this documentation task; governed by U10A/U10B and external domain obligations"
   },
@@ -49,77 +51,166 @@
       "source_id": "research_worker_gateway",
       "name": "Research worker jobs",
       "owner": "services/research-worker-gateway",
-      "store": "ResearchWorkerGatewayStore (worker_jobs.json) + PostgresWorkerEventStore (research_worker_gateway.worker_events)",
+      "store": "ResearchWorkerGatewayStore (worker_jobs.json in local directory) + PostgresWorkerEventStore (research_worker_gateway.worker_events). Configured via RESEARCH_WORKER_GATEWAY_DATA_DIR and DATABASE_URL.",
       "native_id_scheme": "wjob-{YYYYMMDD}-{index:03d} (main.py:422)",
       "management_projection": "job-worker-{wjob_id}",
       "auth_and_tenant_enforcement": "None in routing. DispatchJobBody has no tenant_id field; list/get/cancel routes have no auth dependencies.",
       "auth_and_tenant_gaps": "Complete absence of tenant isolation; endpoints unauthenticated; no token dependencies; payload lacks tenant scoping.",
-      "observed_capabilities": {
-        "dispatch": "Queues/runs job, saves to worker_jobs.json",
-        "cancel": "main.py:559-574 updates status row to canceled and appends event to worker_events",
-        "retry": "Not supported as dedicated API; requires new dispatch with idempotency key",
-        "archive_promote": "Not supported"
-      },
-      "required_owner_effects_vs_gaps": {
-        "worker_process_stop": "Unimplemented in gateway (does not terminate running subprocesses/threads)",
-        "cancellation_fence": "Unimplemented in gateway (does not reject late completions from workers)",
-        "attempt_lineage": "Unimplemented (does not link parent job ID or attempt counter)"
+      "concurrency_and_durability_limitations": "Single-instance file read/write (_write_json) susceptible to file race conditions if multiple gateway processes run concurrently. No distributed locks. Worker processes spawned via subprocess.Popen without PID tracking or cancellation fencing. Durability relies on local filesystem flush.",
+      "owner_test_files": [
+        "services/research-worker-gateway/test_main.py",
+        "services/research-worker-gateway/test_store.py"
+      ],
+      "operations": {
+        "cancel": {
+          "status": "missing_process_stop_and_fence",
+          "current_behavior": "main.py:559-574 updates status row to canceled and appends event to worker_events; does NOT terminate worker process or set late completion fence.",
+          "target_contract": "Terminate subprocess (SIGTERM/SIGKILL) and persist cancellation fence timestamp to reject late completions.",
+          "responsible_scope": "GW-STOP-FENCE-001 (Gateway owner task, outside U10B)",
+          "test_file": "services/research-worker-gateway/test_main.py",
+          "operator_decision_required": false
+        },
+        "retry": {
+          "status": "missing_lineage_endpoint",
+          "current_behavior": "Not supported as dedicated API; requires new dispatch with idempotency key, lacking attempt lineage (parent_job_id, attempt_number).",
+          "target_contract": "Dedicated retry endpoint POST .../jobs/{id}/retry with attempt_number=N+1 and parent_job_id.",
+          "responsible_scope": "Gateway owner (follow-up task)",
+          "test_file": "services/research-worker-gateway/test_store.py",
+          "operator_decision_required": false
+        },
+        "archive": {
+          "status": "unsupported_unmanaged_retention",
+          "current_behavior": "No archive API or retention policy; worker_jobs.json grows unboundedly.",
+          "target_contract": "POST .../jobs/{id}/archive with is_archived=True; excluded from default list.",
+          "responsible_scope": "Gateway owner (follow-up task)",
+          "test_file": "services/research-worker-gateway/test_store.py",
+          "operator_decision_required": true
+        },
+        "promote": {
+          "status": "permanently_unsupported",
+          "current_behavior": "Not supported; worker jobs are raw compute units without registry destination.",
+          "target_contract": "Unsupported; returns HTTP 400 Bad Request.",
+          "responsible_scope": "Permanently excluded from promotion",
+          "test_file": "N/A",
+          "operator_decision_required": false
+        }
       },
       "admission_status": "conditionally_admitted_read_only_pending_owner_closure",
       "responsible_closure_scope": {
         "read_and_safe_stub": "U10A",
-        "backend_worker_stop_and_fence": "GW-STOP-FENCE-001 (Gateway owner task, outside U10B)"
+        "backend_worker_stop_and_fence": "GW-STOP-FENCE-001 (Gateway owner task, outside U10B)",
+        "retry_and_archive": "Follow-up gateway owner tasks + Operator Decision"
       }
     },
     {
       "source_id": "research_orchestrator",
       "name": "Research orchestrator runs",
       "owner": "services/research",
-      "store": "ResearchOrchestratorStore (ExperimentTask and ExperimentRun in Postgres/JSON, store.py:99-235, main.py:745-1180)",
+      "store": "ResearchOrchestratorStore (research_tasks.json, research_runs.json, research_artifacts.json, research_proposals.json on disk with optional Postgres event store research_events.jsonl/PostgresResearchEventStore, store.py:100-139). ExperimentTask and ExperimentRun are stored in JSON files on disk, NOT Postgres tables.",
       "native_id_scheme": "rrun-{YYYYMMDD}-{index:03d} under rtask-{YYYYMMDD}-{index:03d} (main.py:759, 856)",
       "management_projection": "job-orchestrator-{rrun_id} (linked to parent rtask_id)",
       "auth_and_tenant_enforcement": "Task headers carry optional tenant ID in admission contracts",
       "auth_and_tenant_gaps": "list_runs and get_run (GET /api/research-orchestrator/tasks, GET .../runs) do not enforce tenant filtering; unauthenticated FastAPI endpoints",
-      "observed_capabilities": {
-        "dispatch": "Dispatches runs via POST /api/research-orchestrator/tasks/{task_id}/runs, tracks stage/status, records artifacts & events",
-        "cancel": "services/research/main.py has NO run cancel endpoint; requires POST /api/research-orchestrator/runs/{run_id}/cancel",
-        "retry": "New run can be queued under existing task",
-        "archive": "Run artifact retention",
-        "promote": "Candidate handoff to Replication Bridge (requires artifact proof)"
-      },
-      "required_owner_effects_vs_gaps": {
-        "run_cancellation": "Requires run cancel endpoint on main.py with state transition and event append",
-        "cancellation_fence": "Requires fencing late worker completions arriving after cancel timestamp",
-        "attempt_lineage": "Requires attempt counter increment under rtask lineage"
+      "concurrency_and_durability_limitations": "File-backed JSON maps (_write_map) with file overwrite; no row-level locking or optimistic concurrency. Multi-instance writes risk clobbering runs/tasks. No process cancellation or late completion fence currently exists on main.py.",
+      "owner_test_files": [
+        "services/research/test_store.py",
+        "services/research/test_main.py"
+      ],
+      "operations": {
+        "cancel": {
+          "status": "in_scope_u10b",
+          "current_behavior": "services/research/main.py currently has NO run cancel endpoint.",
+          "target_contract": "Implement POST /api/research-orchestrator/runs/{run_id}/cancel, persist canceled status in research_runs.json, and set cancellation fence timestamp.",
+          "responsible_scope": "U10B (services/research/main.py and write_owner.py)",
+          "test_file": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+          "operator_decision_required": false
+        },
+        "retry": {
+          "status": "in_scope_u10b",
+          "current_behavior": "Dispatches new run under task via POST .../tasks/{task_id}/runs, but lacks attempt_number and parent_run_id tracking.",
+          "target_contract": "Implement explicit run retry linking parent_run_id and incrementing attempt_number under rtask.",
+          "responsible_scope": "U10B",
+          "test_file": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+          "operator_decision_required": false
+        },
+        "archive": {
+          "status": "missing_owner_mutation_and_authority",
+          "current_behavior": "No archive mutation endpoint, retention period, or authority exists (not merely a retention projection without owner mutation).",
+          "target_contract": "Add POST /api/research-orchestrator/runs/{run_id}/archive setting is_archived=True in research_runs.json.",
+          "responsible_scope": "Research Orchestrator owner (follow-up task)",
+          "test_file": "services/research/test_store.py",
+          "operator_decision_required": true
+        },
+        "promote": {
+          "status": "missing_governance_verification_mapping",
+          "current_behavior": "Proposal handoff exists (POST .../tasks/{id}/proposals), but lacks artifact hash verification, operator approval, target stage binding, and registry readback.",
+          "target_contract": "Enforce: (1) candidate artifact hash check, (2) signed approval token, (3) target stage binding, (4) registry readback verification.",
+          "responsible_scope": "Research Orchestrator owner + Governance",
+          "test_file": "services/research/test_store.py",
+          "operator_decision_required": true
+        }
       },
       "admission_status": "admitted_qualified",
       "responsible_closure_scope": {
         "read_projection": "U10A",
-        "run_cancel_and_fence": "U10B (services/research/main.py and write_owner.py are in U10B scope)"
+        "run_cancel_and_fence": "U10B (services/research/main.py and write_owner.py are in U10B scope)",
+        "attempt_lineage_retry": "U10B",
+        "archive_and_promote": "Follow-up orchestrator owner governance tasks + Operator Decision"
       }
     },
     {
       "source_id": "training_session",
       "name": "Trainer preview jobs",
       "owner": "services/training-session",
-      "store": "TrainingSessionStore + preview_eval_worker.py",
+      "store": "Dual backend configured via build_training_session_store (store.py:831-847): local JSON files via TrainingSessionStore or authoritative PostgresTrainingSessionStore (training_session.authority_records JSONB table for all mutable records including preview_job with transaction-scoped advisory locking, store.py:179-208, 483-500).",
       "native_id_scheme": "pvjob-{digest[:16]} or pvjob-{uuid[:12]} (main.py:170-174, 1843)",
       "management_projection": "job-trainer-{pvjob_id}",
       "auth_and_tenant_enforcement": "main.py:499-522 enforces inbound authority middleware on /api/training/* via inbound_authority.py (Authorization, X-Tenant-Id, X-MFA-Token, X-Pantheon-Service). list_preview_jobs (1806) filters via _tenant_records matching request tenant_id. get_preview_job (1823) and queue_preview_job (1836) enforce _require_tenant_record (404 on mismatch).",
-      "auth_and_tenant_gaps": "Configuration/test exceptions when authority operates with test tokens (token_kind == \"test-disabled\") in test suites. Remaining gaps: preview jobs lack cancel endpoint or cancellation handler; eval worker threads in preview_eval_worker.py run to completion without in-flight abort mechanisms.",
-      "observed_capabilities": {
-        "preview_eval": "Exposes GET /api/training/preview-jobs, GET .../preview-jobs/{job_id}, POST .../sessions/{session_id}/preview-jobs; runs evaluation previews via preview_eval_worker.py",
-        "cancel": "NO cancel endpoint exists in training-session/main.py; fails closed with ActionUnavailableError",
-        "retry": "Re-triggers evaluation against teaching dataset via POST .../preview-jobs",
-        "archive_promote": "Tied to teaching session retention; promotion routed through Governance"
-      },
-      "required_owner_effects_vs_gaps": {
-        "preview_cancellation": "Cancel operation completely missing on domain owner; fails closed with ActionUnavailableError"
+      "auth_and_tenant_gaps": "Configuration/test exceptions when authority operates with test tokens (token_kind == 'test-disabled') in test fixtures. Operational gap: preview jobs lack cancel endpoint or cancellation handler; eval worker threads in preview_eval_worker.py run to completion without in-flight abort mechanisms.",
+      "concurrency_and_durability_limitations": "In Postgres mode, transaction-scoped advisory locks serialize concurrent record mutations with ACID durability. In JSONL mode, local file only without distributed locking. Preview evaluation thread dispatches asynchronously without interruption handle.",
+      "owner_test_files": [
+        "services/training-session/test_store.py",
+        "services/training-session/test_main.py"
+      ],
+      "operations": {
+        "cancel": {
+          "status": "missing_cancel_endpoint",
+          "current_behavior": "NO cancel endpoint exists in training-session/main.py. Fails closed with ActionUnavailableError.",
+          "target_contract": "Implement POST /api/training/preview-jobs/{job_id}/cancel, interrupt worker thread, mutate record with advisory lock.",
+          "responsible_scope": "TS-CANCEL-001 (Training session owner task, outside U10B)",
+          "test_file": "services/training-session/test_main.py",
+          "operator_decision_required": false
+        },
+        "retry": {
+          "status": "missing_lineage_tracking",
+          "current_behavior": "Re-triggers evaluation against teaching dataset via POST .../sessions/{id}/preview-jobs.",
+          "target_contract": "Add attempt_number to preview_job record in authority_records linking previous job_id.",
+          "responsible_scope": "Training Session owner (follow-up task)",
+          "test_file": "services/training-session/test_store.py",
+          "operator_decision_required": false
+        },
+        "archive": {
+          "status": "session_coupled_unmanaged_retention",
+          "current_behavior": "Preview jobs tied to session lifecycle; no independent archive endpoint.",
+          "target_contract": "Add session/preview archival endpoint with is_archived=True.",
+          "responsible_scope": "Training Session owner (follow-up task)",
+          "test_file": "services/training-session/test_store.py",
+          "operator_decision_required": true
+        },
+        "promote": {
+          "status": "requires_governance_review",
+          "current_behavior": "Direct promotion returns 409 Conflict.",
+          "target_contract": "Requires signed Governance review proposal, candidate weights verification, model stage binding, and Model Registry readback.",
+          "responsible_scope": "Training Session owner + Governance",
+          "test_file": "services/training-session/test_main.py",
+          "operator_decision_required": true
+        }
       },
       "admission_status": "conditionally_admitted_read_only_pending_owner_closure",
       "responsible_closure_scope": {
         "read_projection": "U10A",
-        "cancel_endpoint": "TS-CANCEL-001 (Training session owner task, outside U10B)"
+        "cancel_endpoint": "TS-CANCEL-001 (Training session owner task, outside U10B)",
+        "retry_archive_promote": "Follow-up training session owner tasks + Operator Decision"
       },
       "fail_closed_read_admission": "When serving tenant-scoped reads (GET /bff/jobs), candidate sources lacking verified tenant identity (like research-worker-gateway) must fail closed to prevent cross-tenant exposure."
     },
@@ -127,49 +218,110 @@
       "source_id": "source_ingestion",
       "name": "Source-ingest runs/jobs",
       "owner": "services/source_ingestion",
-      "store": "source_management_store.py + pipeline.py + connectors/base.py",
+      "store": "SourceManagementStore (file-backed JSON/sqlite/postgres) + pipeline.py + connectors/base.py. Checkpoint watermarks and frontier queue persisted per connector.",
       "native_id_scheme": "ingest-{uuid4().hex[:12]} or run-{connector_id} (connectors/base.py:634)",
       "management_projection": "job-ingest-{ingest_run_id}",
       "auth_and_tenant_enforcement": "Controller token verified on connector mutation via load_controller_token()",
       "auth_and_tenant_gaps": "GET /api/source-ingest/jobs has no tenant filtering or authentication dependencies",
-      "observed_capabilities": {
-        "pipeline_run": "Executes batch ingestion, updates watermarks, stores evidence bundles",
-        "cancel": "NO cancel endpoint exists in source_ingestion",
-        "retry": "Resumes from last verified checkpoint / watermark; frontier replay",
-        "archive_promote": "Deactivates connector; seed promotion to Strategy Seed Store"
-      },
-      "required_owner_effects_vs_gaps": {
-        "extraction_cancellation": "Graceful extraction worker/thread stoppage completely missing; fails closed with ActionUnavailableError"
+      "concurrency_and_durability_limitations": "Sequential execution per connector; checkpoint watermarks updated after verified batch extractions. No graceful extraction worker/thread cancellation endpoint; process abort leaves partial frontier batches for replay.",
+      "owner_test_files": [
+        "services/source_ingestion/tests/test_pipeline.py",
+        "services/source_ingestion/tests/test_connectors.py"
+      ],
+      "operations": {
+        "cancel": {
+          "status": "missing_cancel_endpoint",
+          "current_behavior": "NO cancel endpoint exists in source_ingestion. Ingestion workers cannot be interrupted via API. Fails closed with ActionUnavailableError.",
+          "target_contract": "Implement POST /api/source-ingest/jobs/{id}/cancel, graceful connector extraction interrupt, late-receipt fence.",
+          "responsible_scope": "SI-CANCEL-001 (Source ingestion owner task, outside U10B)",
+          "test_file": "services/source_ingestion/tests/test_pipeline.py",
+          "operator_decision_required": false
+        },
+        "retry": {
+          "status": "frontier_replay_only",
+          "current_behavior": "Replay frontier item via POST /api/source-ingest/frontier/{frontier_id}/replay.",
+          "target_contract": "Add POST /api/source-ingest/jobs/{id}/retry resuming from last verified watermark with attempt count.",
+          "responsible_scope": "Source Ingestion owner (follow-up task)",
+          "test_file": "services/source_ingestion/tests/test_frontier.py",
+          "operator_decision_required": false
+        },
+        "archive": {
+          "status": "unmanaged_retention",
+          "current_behavior": "Connectors can be deactivated; raw ingest payload retention is unmanaged.",
+          "target_contract": "Add connector run archive endpoint; exclude from active frontier list.",
+          "responsible_scope": "Source Ingestion owner (follow-up task)",
+          "test_file": "services/source_ingestion/tests/test_pipeline.py",
+          "operator_decision_required": true
+        },
+        "promote": {
+          "status": "strategy_seed_promotion",
+          "current_behavior": "Seed extraction promotion to Strategy Seed Store.",
+          "target_contract": "Schema validation of candidate seed, write to strategy_seeds, and readback verification.",
+          "responsible_scope": "Source Ingestion owner (follow-up task)",
+          "test_file": "services/source_ingestion/tests/test_connectors.py",
+          "operator_decision_required": true
+        }
       },
       "admission_status": "conditionally_admitted_read_only_pending_owner_closure",
       "responsible_closure_scope": {
         "read_projection": "U10A",
-        "cancel_endpoint": "SI-CANCEL-001 (Source ingestion owner task, outside U10B)"
+        "cancel_endpoint": "SI-CANCEL-001 (Source ingestion owner task, outside U10B)",
+        "retry_archive_promote": "Follow-up source ingestion owner tasks + Operator Decision"
       }
     },
     {
       "source_id": "policy_learning",
       "name": "Policy-learning jobs",
       "owner": "services/policy-learning",
-      "store": "PolicyLearningStore + scheduler_worker.py",
+      "store": "PolicyLearningStore (file policy_jobs.json + policy_learning.events) + scheduler_worker.py. Local JSON file persistence.",
       "native_id_scheme": "plj-{YYYYMMDD}-{index:03d} (main.py:189-196)",
       "management_projection": "job-policy-{plj_id}",
       "auth_and_tenant_enforcement": "Tenant scope helper for candidate claims and DLQ records",
       "auth_and_tenant_gaps": "list_jobs and propose_job lack tenant query filtering and token dependencies",
-      "observed_capabilities": {
-        "proposals": "Records policy learning proposals and DLQ records",
-        "cancel_reject": "main.py:551-564 updates job row status to rejected and appends event; does NOT halt worker",
-        "retry": "DLQ replay or worker retry with attempt count increment",
-        "promote": "Direct promotion returns 409 Conflict (requires Governance Gate)"
-      },
-      "required_owner_effects_vs_gaps": {
-        "worker_process_stop": "Reject handler is row-only; does not stop running background training worker",
-        "governance_promotion": "Direct promotion rejected by owner; requires signed Governance authorization"
+      "concurrency_and_durability_limitations": "Single-instance file map; reject handler updates JSON row status to rejected and appends event, but background scheduler thread does not terminate active training processes.",
+      "owner_test_files": [
+        "services/policy-learning/tests/test_store.py",
+        "services/policy-learning/tests/test_main.py"
+      ],
+      "operations": {
+        "cancel": {
+          "status": "row_only_reject_missing_worker_stop",
+          "current_behavior": "POST /api/policy-learning/jobs/{id}/reject mutates row status to rejected and appends event, but does NOT stop background training worker.",
+          "target_contract": "Add actual worker process kill/stop and cancellation fence in reject_job.",
+          "responsible_scope": "PL-CANCEL-001 (Policy learning owner task, outside U10B)",
+          "test_file": "services/policy-learning/tests/test_main.py",
+          "operator_decision_required": false
+        },
+        "retry": {
+          "status": "dlq_replay_only",
+          "current_behavior": "DLQ replay or new job submission.",
+          "target_contract": "Add POST /api/policy-learning/jobs/{id}/retry incrementing attempt count and referencing parent job ID.",
+          "responsible_scope": "Policy Learning owner (follow-up task)",
+          "test_file": "services/policy-learning/tests/test_store.py",
+          "operator_decision_required": false
+        },
+        "archive": {
+          "status": "unmanaged_retention",
+          "current_behavior": "Policy learning jobs stored without archiving mechanism.",
+          "target_contract": "Add policy job archive endpoint with is_archived=True.",
+          "responsible_scope": "Policy Learning owner (follow-up task)",
+          "test_file": "services/policy-learning/tests/test_store.py",
+          "operator_decision_required": true
+        },
+        "promote": {
+          "status": "requires_governance_gate",
+          "current_behavior": "Direct promotion returns 409 Conflict (requires Governance).",
+          "target_contract": "Governance promotion gate: signed authorization, metric threshold check, stage binding, and readback.",
+          "responsible_scope": "Policy Learning owner + Governance (GOV-PROMOTE-001)",
+          "test_file": "services/policy-learning/tests/test_main.py",
+          "operator_decision_required": true
+        }
       },
       "admission_status": "conditionally_admitted_read_only_pending_owner_closure",
       "responsible_closure_scope": {
         "read_projection": "U10A",
-        "worker_stop": "PL-CANCEL-001 (Policy learning owner task, outside U10B)"
+        "worker_stop": "PL-CANCEL-001 (Policy learning owner task, outside U10B)",
+        "retry_archive_promote": "Follow-up policy learning owner tasks + Operator Decision"
       }
     },
     {
@@ -181,14 +333,43 @@
       "management_projection": "job-openclaw-{job_id}",
       "auth_and_tenant_enforcement": "POST /api/openclaw-adapter/workflows/trigger requires X-Operator-Id header (401 if missing), maps operator role, control mode, confirm tokens, and passes upstream client credentials.",
       "auth_and_tenant_gaps": "GET /api/openclaw-adapter/workflows/jobs/{job_id} lacks auth middleware; no tenant isolation upstream. Read API gap: no list_workflow_jobs or list_jobs endpoint on adapter or OpenClawClient; Management BFF cannot enumerate active/historical workflow jobs on GET /bff/jobs without upstream list route or dedicated audit index.",
-      "observed_capabilities": {
-        "trigger_workflow": "Triggers upstream workflow via POST /api/workflows/trigger, returns job_id and trace_id",
-        "get_job": "Fetches job status via GET /api/jobs/{job_id} (GET /api/openclaw-adapter/workflows/jobs/{job_id})",
-        "write_actions": "All write actions (cancel, retry, archive, promote) from product BFF are unsupported and return 400"
-      },
-      "required_owner_effects_vs_gaps": {
-        "read_only_qualification": "Preserve strictly read-only qualification for product BFF; write actions permanently excluded",
-        "no_development_supervisor_boundary": "No development-supervisor, worktree preparation, or repository-writing workflows per AGENTS.md boundary"
+      "concurrency_and_durability_limitations": "Upstream service manages execution; adapter has no local persistence of workflow jobs; lacks list endpoint; strictly read-only diagnostics for product BFF.",
+      "owner_test_files": [
+        "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py"
+      ],
+      "operations": {
+        "cancel": {
+          "status": "permanently_unsupported",
+          "current_behavior": "All write actions from product BFF are unsupported and return 400 Bad Request.",
+          "target_contract": "Fails closed (HTTP 400). Product BFF is strictly read-only diagnostics.",
+          "responsible_scope": "Permanently excluded per repository architecture",
+          "test_file": "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py",
+          "operator_decision_required": false
+        },
+        "retry": {
+          "status": "permanently_unsupported",
+          "current_behavior": "Unsupported. Returns HTTP 400 Bad Request.",
+          "target_contract": "Fails closed (HTTP 400).",
+          "responsible_scope": "Permanently excluded",
+          "test_file": "N/A",
+          "operator_decision_required": false
+        },
+        "archive": {
+          "status": "permanently_unsupported",
+          "current_behavior": "Unsupported. Returns HTTP 400 Bad Request.",
+          "target_contract": "Fails closed (HTTP 400).",
+          "responsible_scope": "Permanently excluded",
+          "test_file": "N/A",
+          "operator_decision_required": false
+        },
+        "promote": {
+          "status": "permanently_unsupported",
+          "current_behavior": "Unsupported. Returns HTTP 400 Bad Request.",
+          "target_contract": "Fails closed (HTTP 400).",
+          "responsible_scope": "Permanently excluded",
+          "test_file": "N/A",
+          "operator_decision_required": false
+        }
       },
       "admission_status": "admitted_read_only_detail_observation",
       "responsible_closure_scope": {
@@ -279,15 +460,29 @@
         "running",
         "completed",
         "failed",
-        "canceled"
+        "canceled",
+        "invalidated",
+        "archived"
       ],
       "allowed_actions": [
-        "canCancel"
+        "canCancel",
+        "invalidated",
+        "attached_to_review",
+        "archived",
+        "retry"
       ],
-      "nature": "Parametric research experiment specification"
+      "accepted_design_ref": "docs/operations/bff-upstream-v2-20260911/02_RESEARCH_AND_DESIGN.md section 6.1 (FE operations: invalidated / attached_to_review / archived / retry; aligned with Research owner and real artifact/approval chain, not cancel-only)",
+      "operations_detail": {
+        "invalidated": "Owner mutation in research.research_experiments marking experiment run/metrics invalid following evaluation rejection or corrupted input data",
+        "attached_to_review": "Links experiment specification, artifact hash, and telemetry metrics to an operator/governance review packet",
+        "archived": "Retains experiment definition and history under archived state (is_archived=True), excluding it from default queries while preserving compliance record",
+        "retry": "Re-queues experiment or parameter variant with incremented attempt counter under the same lineage",
+        "cancel": "In-flight abort for queued or running experiments"
+      },
+      "nature": "Parametric research experiment specification with multi-action lifecycle"
     },
     "OrchestratorRun": {
-      "store": "ResearchOrchestratorStore (ExperimentTask and ExperimentRun)",
+      "store": "ResearchOrchestratorStore (research_runs.json on disk with optional Postgres events)",
       "id_scheme": "rrun-{date}-{seq} under rtask-{date}-{seq}",
       "lifecycle": [
         "pending",
@@ -297,7 +492,8 @@
         "canceled"
       ],
       "allowed_actions": [
-        "cancel"
+        "cancel",
+        "retry"
       ],
       "nature": "Execution attempt with artifacts and telemetry"
     },
@@ -391,100 +587,317 @@
       {
         "source_id": "research_worker_gateway",
         "domain_owner": "services/research-worker-gateway",
-        "store_path": "worker_jobs.json + research_worker_gateway.worker_events",
+        "store_path": "ResearchWorkerGatewayStore (worker_jobs.json) + PostgresWorkerEventStore",
         "native_endpoints": [
           "GET /api/research-worker-gateway/jobs",
           "GET /api/research-worker-gateway/jobs/{id}",
-          "POST /api/research-worker-gateway/jobs"
+          "POST /api/research-worker-gateway/jobs",
+          "POST /api/research-worker-gateway/jobs/{id}/cancel"
         ],
-        "management_bff_route": "GET /bff/jobs (job-worker-*)",
+        "management_bff_route": "GET /bff/jobs (job-worker-*) + POST /bff/jobs/{id}/actions/{action_id}",
         "supported_actions": [
           "read_projection (U10A)",
           "safe_stub_dispatch (U10A)"
         ],
         "unimplemented_actions": [
-          "cancel (fails closed with ActionUnavailableError in U10A/U10B)"
+          "cancel (fails closed with ActionUnavailableError in U10A/U10B until GW-STOP-FENCE-001)",
+          "retry (missing attempt lineage endpoint)",
+          "archive (missing retention purge endpoint)",
+          "promote (permanently unsupported; returns 400)"
         ],
-        "responsible_scope": "U10A for read; GW-STOP-FENCE-001 for backend stop & fence"
+        "settled_operations": {
+          "cancel": {
+            "owner": "services/research-worker-gateway",
+            "api": "POST /api/research-worker-gateway/jobs/{id}/cancel",
+            "store": "worker_jobs.json + worker_events",
+            "test": "services/research-worker-gateway/test_main.py",
+            "status": "missing_process_kill_and_fence",
+            "operator_decision_required": false
+          },
+          "retry": {
+            "owner": "services/research-worker-gateway",
+            "api": "POST /api/research-worker-gateway/jobs/{id}/retry",
+            "store": "worker_jobs.json",
+            "test": "services/research-worker-gateway/test_store.py",
+            "status": "missing_lineage_endpoint",
+            "operator_decision_required": false
+          },
+          "archive": {
+            "owner": "services/research-worker-gateway",
+            "api": "POST /api/research-worker-gateway/jobs/{id}/archive",
+            "store": "worker_jobs.json",
+            "test": "services/research-worker-gateway/test_store.py",
+            "status": "unsupported_unmanaged_retention",
+            "operator_decision_required": true
+          },
+          "promote": {
+            "owner": "N/A",
+            "api": "N/A",
+            "store": "N/A",
+            "test": "N/A",
+            "status": "permanently_unsupported_returns_400",
+            "operator_decision_required": false
+          }
+        },
+        "concurrency_and_durability_limitations": "Single-instance file read/write (_write_json) susceptible to file race conditions if multiple gateway processes run concurrently. No distributed locks. Worker processes spawned via subprocess.Popen without PID tracking or cancellation fencing. Durability relies on local filesystem flush.",
+        "owner_test_files": [
+          "services/research-worker-gateway/test_main.py",
+          "services/research-worker-gateway/test_store.py"
+        ],
+        "responsible_scope": "U10A for read; GW-STOP-FENCE-001 for backend stop & fence",
+        "operator_decision_required": true
       },
       {
         "source_id": "research_orchestrator",
         "domain_owner": "services/research",
-        "store_path": "ResearchOrchestratorStore (tasks and runs)",
+        "store_path": "ResearchOrchestratorStore (research_tasks.json, research_runs.json, research_artifacts.json on disk with optional Postgres events; store.py:100-139)",
         "native_endpoints": [
           "GET /api/research-orchestrator/tasks",
           "POST /api/research-orchestrator/tasks/{task_id}/runs",
           "GET /api/research-orchestrator/runs",
-          "GET /api/research-orchestrator/runs/{run_id}"
+          "GET /api/research-orchestrator/runs/{run_id}",
+          "POST /api/research-orchestrator/runs/{run_id}/cancel (U10B)"
         ],
         "management_bff_route": "GET /bff/jobs (job-orchestrator-*) + POST /bff/jobs/{id}/actions/cancel",
         "supported_actions": [
           "read_projection (U10A)",
           "run_cancellation (U10B)",
-          "cancellation_fence (U10B)"
+          "cancellation_fence (U10B)",
+          "attempt_lineage_retry (U10B)"
         ],
         "unimplemented_actions": [
-          "promote_to_live (rejected 409)"
+          "archive (missing owner mutation endpoint and authority; requires operator decision)",
+          "promote (lacks artifact/approval/stage/readback mapping; rejected 409)"
         ],
-        "responsible_scope": "U10A for read; U10B for run cancel & fence"
+        "settled_operations": {
+          "cancel": {
+            "owner": "services/research",
+            "api": "POST /api/research-orchestrator/runs/{run_id}/cancel (U10B)",
+            "store": "research_runs.json + cancellation fence timestamp",
+            "test": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+            "status": "in_scope_u10b",
+            "operator_decision_required": false
+          },
+          "retry": {
+            "owner": "services/research",
+            "api": "POST /api/research-orchestrator/tasks/{task_id}/runs (U10B)",
+            "store": "research_runs.json with attempt_number and parent_run_id",
+            "test": "services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+            "status": "in_scope_u10b",
+            "operator_decision_required": false
+          },
+          "archive": {
+            "owner": "services/research",
+            "api": "POST /api/research-orchestrator/runs/{run_id}/archive",
+            "store": "research_runs.json with is_archived=True",
+            "test": "services/research/test_store.py",
+            "status": "missing_owner_mutation_and_authority",
+            "operator_decision_required": true
+          },
+          "promote": {
+            "owner": "services/research + Governance",
+            "api": "POST /api/research-orchestrator/tasks/{task_id}/proposals",
+            "store": "research_proposals.json + Strategy Seed Registry readback",
+            "test": "services/research/test_store.py",
+            "status": "missing_governance_verification_mapping",
+            "operator_decision_required": true
+          }
+        },
+        "concurrency_and_durability_limitations": "File-backed JSON maps (_write_map) with file overwrite; no row-level locking or optimistic concurrency. Multi-instance writes risk clobbering runs/tasks. No process cancellation or late completion fence currently exists on main.py.",
+        "owner_test_files": [
+          "services/research/test_store.py",
+          "services/research/test_main.py"
+        ],
+        "responsible_scope": "U10A for read; U10B for run cancel, fence & retry; follow-up tasks for archive & promote",
+        "operator_decision_required": true
       },
       {
         "source_id": "training_session",
         "domain_owner": "services/training-session",
-        "store_path": "TrainingSessionStore + preview_eval_worker.py",
+        "store_path": "Dual backend: TrainingSessionStore (local JSON files) or authoritative PostgresTrainingSessionStore (training_session.authority_records JSONB table for all mutable records including preview_job with transaction-scoped advisory locking; store.py:179-208, 483-500, 831-847)",
         "native_endpoints": [
           "GET /api/training/preview-jobs",
           "GET /api/training/preview-jobs/{job_id}",
           "POST /api/training/sessions/{session_id}/preview-jobs"
         ],
-        "management_bff_route": "GET /bff/jobs (job-trainer-*)",
+        "management_bff_route": "GET /bff/jobs (job-trainer-*) + POST /bff/jobs/{id}/actions/{action_id}",
         "supported_actions": [
           "read_projection (U10A)"
         ],
         "unimplemented_actions": [
-          "cancel (no endpoint; fails closed with ActionUnavailableError)"
+          "cancel (no cancel endpoint; fails closed with ActionUnavailableError)",
+          "retry (missing attempt lineage in preview_job record)",
+          "archive (tied to session lifecycle)",
+          "promote (direct promotion returns 409 Conflict; requires Governance review)"
         ],
-        "responsible_scope": "U10A for read; TS-CANCEL-001 for cancel endpoint"
+        "settled_operations": {
+          "cancel": {
+            "owner": "services/training-session",
+            "api": "POST /api/training/preview-jobs/{job_id}/cancel",
+            "store": "training_session.authority_records via mutate_preview_job",
+            "test": "services/training-session/test_main.py",
+            "status": "missing_cancel_endpoint",
+            "operator_decision_required": false
+          },
+          "retry": {
+            "owner": "services/training-session",
+            "api": "POST /api/training/sessions/{session_id}/preview-jobs",
+            "store": "training_session.authority_records with attempt_number",
+            "test": "services/training-session/test_store.py",
+            "status": "missing_lineage_tracking",
+            "operator_decision_required": false
+          },
+          "archive": {
+            "owner": "services/training-session",
+            "api": "POST /api/training/sessions/{session_id}/archive",
+            "store": "training_session.authority_records",
+            "test": "services/training-session/test_store.py",
+            "status": "session_coupled_unmanaged_retention",
+            "operator_decision_required": true
+          },
+          "promote": {
+            "owner": "services/training-session + Governance",
+            "api": "POST /api/training/sessions/{session_id}/promote",
+            "store": "training_session.authority_records + Model Registry readback",
+            "test": "services/training-session/test_main.py",
+            "status": "requires_governance_review",
+            "operator_decision_required": true
+          }
+        },
+        "concurrency_and_durability_limitations": "In Postgres mode, transaction-scoped advisory locks serialize concurrent record mutations with ACID durability. In JSONL mode, local file only without distributed locking. Preview evaluation thread dispatches asynchronously without interruption handle.",
+        "owner_test_files": [
+          "services/training-session/test_store.py",
+          "services/training-session/test_main.py"
+        ],
+        "responsible_scope": "U10A for read; TS-CANCEL-001 for cancel endpoint; follow-up tasks for retry/archive/promote",
+        "operator_decision_required": true
       },
       {
         "source_id": "source_ingestion",
         "domain_owner": "services/source_ingestion",
-        "store_path": "source_management_store.py + pipeline.py",
+        "store_path": "SourceManagementStore (file-backed JSON/sqlite/postgres) + pipeline.py + connectors/base.py",
         "native_endpoints": [
           "GET /api/source-ingest/jobs",
+          "GET /api/source-ingest/jobs/{id}",
           "POST /api/source-ingest/jobs"
         ],
-        "management_bff_route": "GET /bff/jobs (job-ingest-*)",
+        "management_bff_route": "GET /bff/jobs (job-ingest-*) + POST /bff/jobs/{id}/actions/{action_id}",
         "supported_actions": [
           "read_projection (U10A)"
         ],
         "unimplemented_actions": [
-          "cancel (no endpoint; fails closed with ActionUnavailableError)"
+          "cancel (no cancel endpoint; fails closed with ActionUnavailableError)",
+          "retry (frontier replay only)",
+          "archive (unmanaged raw payload retention)",
+          "promote (requires seed verification)"
         ],
-        "responsible_scope": "U10A for read; SI-CANCEL-001 for cancel endpoint"
+        "settled_operations": {
+          "cancel": {
+            "owner": "services/source_ingestion",
+            "api": "POST /api/source-ingest/jobs/{id}/cancel",
+            "store": "source_management_store.py + pipeline.py",
+            "test": "services/source_ingestion/tests/test_pipeline.py",
+            "status": "missing_cancel_endpoint",
+            "operator_decision_required": false
+          },
+          "retry": {
+            "owner": "services/source_ingestion",
+            "api": "POST /api/source-ingest/jobs/{id}/retry",
+            "store": "source_management_store.py with watermark resume",
+            "test": "services/source_ingestion/tests/test_frontier.py",
+            "status": "frontier_replay_only",
+            "operator_decision_required": false
+          },
+          "archive": {
+            "owner": "services/source_ingestion",
+            "api": "POST /api/source-ingest/jobs/{id}/archive",
+            "store": "source_management_store.py",
+            "test": "services/source_ingestion/tests/test_pipeline.py",
+            "status": "unmanaged_retention",
+            "operator_decision_required": true
+          },
+          "promote": {
+            "owner": "services/source_ingestion",
+            "api": "POST /api/source-ingest/seeds/{id}/promote",
+            "store": "Strategy Seed Store + readback",
+            "test": "services/source_ingestion/tests/test_connectors.py",
+            "status": "strategy_seed_promotion",
+            "operator_decision_required": true
+          }
+        },
+        "concurrency_and_durability_limitations": "Sequential execution per connector; checkpoint watermarks updated after verified batch extractions. No graceful extraction worker/thread cancellation endpoint; process abort leaves partial frontier batches for replay.",
+        "owner_test_files": [
+          "services/source_ingestion/tests/test_pipeline.py",
+          "services/source_ingestion/tests/test_connectors.py"
+        ],
+        "responsible_scope": "U10A for read; SI-CANCEL-001 for cancel endpoint; follow-up tasks for retry/archive/promote",
+        "operator_decision_required": true
       },
       {
         "source_id": "policy_learning",
         "domain_owner": "services/policy-learning",
-        "store_path": "PolicyLearningStore + scheduler_worker.py",
+        "store_path": "PolicyLearningStore (file policy_jobs.json + policy_learning.events) + scheduler_worker.py",
         "native_endpoints": [
           "GET /api/policy-learning/jobs",
+          "GET /api/policy-learning/jobs/{id}",
           "POST /api/policy-learning/jobs/{id}/reject"
         ],
-        "management_bff_route": "GET /bff/jobs (job-policy-*)",
+        "management_bff_route": "GET /bff/jobs (job-policy-*) + POST /bff/jobs/{id}/actions/{action_id}",
         "supported_actions": [
           "read_projection (U10A)"
         ],
         "unimplemented_actions": [
-          "cancel/reject (fails closed with ActionUnavailableError)",
-          "promote (rejected 409)"
+          "cancel/reject (row-only in gateway; fails closed with ActionUnavailableError until PL-CANCEL-001)",
+          "retry (DLQ replay only)",
+          "archive (unmanaged retention)",
+          "promote (direct promotion returns 409 Conflict)"
         ],
-        "responsible_scope": "U10A for read; PL-CANCEL-001 for worker process stop"
+        "settled_operations": {
+          "cancel": {
+            "owner": "services/policy-learning",
+            "api": "POST /api/policy-learning/jobs/{id}/reject",
+            "store": "policy_jobs.json + scheduler_worker process halt",
+            "test": "services/policy-learning/tests/test_main.py",
+            "status": "row_only_reject_missing_worker_stop",
+            "operator_decision_required": false
+          },
+          "retry": {
+            "owner": "services/policy-learning",
+            "api": "POST /api/policy-learning/jobs/{id}/retry",
+            "store": "policy_jobs.json with attempt_number and parent_id",
+            "test": "services/policy-learning/tests/test_store.py",
+            "status": "dlq_replay_only",
+            "operator_decision_required": false
+          },
+          "archive": {
+            "owner": "services/policy-learning",
+            "api": "POST /api/policy-learning/jobs/{id}/archive",
+            "store": "policy_jobs.json",
+            "test": "services/policy-learning/tests/test_store.py",
+            "status": "unmanaged_retention",
+            "operator_decision_required": true
+          },
+          "promote": {
+            "owner": "services/policy-learning + Governance",
+            "api": "POST /api/policy-learning/jobs/{id}/promote",
+            "store": "policy_jobs.json + Model Registry readback",
+            "test": "services/policy-learning/tests/test_main.py",
+            "status": "requires_governance_gate",
+            "operator_decision_required": true
+          }
+        },
+        "concurrency_and_durability_limitations": "Single-instance file map; reject handler updates JSON row status to rejected and appends event, but background scheduler thread does not terminate active training processes.",
+        "owner_test_files": [
+          "services/policy-learning/tests/test_store.py",
+          "services/policy-learning/tests/test_main.py"
+        ],
+        "responsible_scope": "U10A for read; PL-CANCEL-001 for worker process stop; follow-up tasks for retry/archive/promote",
+        "operator_decision_required": true
       },
       {
         "source_id": "openclaw_gateway_adapter",
         "domain_owner": "services/openclaw-gateway-adapter",
-        "store_path": "External provider session runtime",
+        "store_path": "Upstream OpenClaw service owns workflow state; adapter maintains local invocation audit log (tool_workflow_bridge.py _audit)",
         "native_endpoints": [
           "POST /api/openclaw-adapter/workflows/trigger",
           "GET /api/openclaw-adapter/workflows/jobs/{job_id}",
@@ -497,146 +910,308 @@
         "unimplemented_actions": [
           "all write actions (permanently excluded; returns 400)"
         ],
-        "responsible_scope": "U10A for read; write actions permanently excluded"
+        "settled_operations": {
+          "cancel": {
+            "owner": "N/A",
+            "api": "N/A",
+            "store": "N/A",
+            "test": "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py",
+            "status": "permanently_unsupported_returns_400",
+            "operator_decision_required": false
+          },
+          "retry": {
+            "owner": "N/A",
+            "api": "N/A",
+            "store": "N/A",
+            "test": "N/A",
+            "status": "permanently_unsupported_returns_400",
+            "operator_decision_required": false
+          },
+          "archive": {
+            "owner": "N/A",
+            "api": "N/A",
+            "store": "N/A",
+            "test": "N/A",
+            "status": "permanently_unsupported_returns_400",
+            "operator_decision_required": false
+          },
+          "promote": {
+            "owner": "N/A",
+            "api": "N/A",
+            "store": "N/A",
+            "test": "N/A",
+            "status": "permanently_unsupported_returns_400",
+            "operator_decision_required": false
+          }
+        },
+        "concurrency_and_durability_limitations": "Upstream service manages execution; adapter has no local persistence of workflow jobs; lacks list endpoint; strictly read-only diagnostics for product BFF.",
+        "owner_test_files": [
+          "services/openclaw-gateway-adapter/test_tool_workflow_bridge.py"
+        ],
+        "responsible_scope": "U10A for read; write actions permanently excluded",
+        "operator_decision_required": false
       }
     ],
     "inventory_migration_cases": [
       {
-        "method": "list_jobs_bff",
-        "inventory_line": 3597,
-        "disposition": "MERGE (ACG-02-005)",
-        "resolution": "Decouple from list_research_tickets; wire to JobReadPort/JobProjectionService",
-        "test_proof": "test_jobs_source_owner_contract.py in U10A"
-      },
-      {
-        "method": "get_job_bff",
-        "inventory_line": 3613,
-        "disposition": "MERGE (ACG-02-005)",
-        "resolution": "Decouple from get_research_ticket; query domain owner by ID prefix",
-        "test_proof": "test_jobs_source_owner_contract.py in U10A"
-      },
-      {
-        "method": "get_job_logs_bff",
-        "inventory_line": 3630,
-        "disposition": "KEEP (ACG-02-001)",
-        "resolution": "Route to domain owner logs endpoint",
-        "test_proof": "test_jobs_source_owner_contract.py in U10A"
-      },
-      {
-        "method": "_experiments dictionary",
-        "inventory_line": 2170,
-        "disposition": "REMOVE (ACG-02-003)",
-        "resolution": "Delete ephemeral in-memory dict; wire ResearchWriteOwner Postgres store",
-        "test_proof": "test_research_knowledge_source_ports.py in U10A"
-      },
-      {
-        "method": "EvolutionCommandAdapter._HANDLED_COMMANDS",
-        "inventory_line": 28,
-        "disposition": "REMOVE (ACG-02-003)",
-        "resolution": "Delete JobAction and ExperimentAction from handled commands list",
-        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
-      },
-      {
-        "method": "registry._DEFAULT_ADAPTERS order",
-        "inventory_line": 29,
-        "disposition": "MERGE (ACG-02-005)",
-        "resolution": "Register dedicated ExperimentCommandAdapter and JobCommandAdapter before EvolutionCommandAdapter",
-        "test_proof": "test_jobs_source_owner_contract.py in U10A"
-      },
-      {
-        "method": "GET /bff/sse/jobs/{jobId}/progress",
-        "inventory_line": 511,
-        "disposition": "MERGE (ACG-02-005)",
-        "resolution": "Implement server-side channel/topic filtering by jobId",
-        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
-      },
-      {
         "method": "list_experiments_bff",
-        "inventory_line": 3480,
+        "historical_store_line": "lines 12895-12900 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3480,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
+        "historical_callers": [
           "services/control-plane/bff/main.py"
         ],
-        "current_observation": "Delegates to in-memory _experiments dataset via _get_dataset(\"research_experiments\").",
-        "proposed_change": "Merge into DefaultResearchKnowledgeSourcePort.list_research_experiments reading from Postgres research.research_experiments via ResearchWriteOwner.",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py:60-62",
+          "services/control-plane/bff/ports/research_knowledge_source.py"
+        ],
+        "current_observation": "read_store.py deleted. experiments.py checks hasattr(read_store, 'list_experiments_bff') and falls back to empty list [].",
+        "proposed_change": "Wire to DefaultResearchKnowledgeSourcePort.list_research_experiments reading directly from PostgreSQL research.research_experiments via ResearchWriteOwner.list_research_experiments.",
+        "unique_owner_and_readback": "ResearchWriteOwner via research.research_experiments",
+        "consumer_removal_obligations": "Remove legacy read_store hasattr checks",
         "negative_cases": "DB connection failure returns 500/503; invalid query parameters return 422; unauthorized returns 401.",
         "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
       },
       {
         "method": "get_experiment_bff",
-        "inventory_line": 3496,
+        "historical_store_line": "lines 12902-12906 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3496,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
+        "historical_callers": [
           "services/control-plane/bff/main.py",
           "services/control-plane/bff/research/router.py"
         ],
-        "current_observation": "Reads directly from in-memory dictionary in ReadSurfaceStore.",
-        "proposed_change": "Merge into DefaultResearchKnowledgeSourcePort.get_research_experiment backed by ResearchWriteOwner.",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py:201-211"
+        ],
+        "current_observation": "Delegates to _require_experiment checking read store or port",
+        "proposed_change": "Wire to DefaultResearchKnowledgeSourcePort.get_research_experiment backed by ResearchWriteOwner.get_research_experiment.",
+        "unique_owner_and_readback": "ResearchWriteOwner via research.research_experiments",
+        "consumer_removal_obligations": "Remove legacy read_store fallback",
         "negative_cases": "Unknown experiment_id returns 404; cross-tenant access returns 404/403.",
         "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
       },
       {
         "method": "create_experiment_bff",
-        "inventory_line": 3513,
+        "historical_store_line": "lines 12908-12926 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3513,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
+        "historical_callers": [
           "services/control-plane/bff/main.py",
           "services/control-plane/bff/research/router.py"
         ],
-        "current_observation": "Mutates in-memory _experiments dictionary in web process memory; non-durable.",
-        "proposed_change": "Atomic creation in Postgres research.research_experiments via ResearchWriteOwner.create_experiment.",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py:164-196",
+          "services/control-plane/bff/ports/research_knowledge_source.py:2170"
+        ],
+        "current_observation": "experiments.py:164-196 falls back to creator looking for create_research_experiment. DefaultResearchKnowledgeSourcePort delegates to in-memory _experiments dictionary. ResearchWriteOwner.create_experiment does not exist (actual method is create_research_experiment).",
+        "proposed_change": "Delete in-memory _experiments dict. Atomic creation in Postgres research.research_experiments via ResearchWriteOwner.create_research_experiment.",
+        "unique_owner_and_readback": "ResearchWriteOwner.create_research_experiment writing to Postgres research.research_experiments",
+        "consumer_removal_obligations": "Delete self._experiments in-memory dict in DefaultResearchKnowledgeSourcePort",
         "negative_cases": "Missing required fields returns 422; duplicate idempotency key returns existing record without duplicate creation; DB failure returns 500/503.",
         "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
       },
       {
         "method": "_project_experiment_bff",
-        "inventory_line": 3530,
+        "historical_store_line": "lines 12929-12945 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3530,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
-          "services/control-plane/bff/read_store.py (internal)"
+        "historical_callers": [
+          "read_store.py (internal)"
         ],
-        "current_observation": "Projects internal record with hardcoded allowedActions (canCancel: true).",
-        "proposed_change": "Standard projection helper normalizing ResearchExperiment from ResearchWriteOwner into BFF DTO, dynamically computing allowedActions based on real lifecycle state (canCancel only for queued/running).",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py",
+          "services/research/write_owner.py:280-374"
+        ],
+        "current_observation": "Historical helper projected record with static allowedActions (canCancel: true).",
+        "proposed_change": "Standard projection helper normalizing ResearchExperiment from ResearchWriteOwner into BFF DTO, dynamically computing allowedActions based on real lifecycle state and design section 6.1 obligations (canCancel, invalidated, attached_to_review, archived, retry).",
+        "unique_owner_and_readback": "ResearchWriteOwner experiment projections (_project_experiment_summary, _project_experiment_detail)",
+        "consumer_removal_obligations": "Remove static canCancel: true assumption",
         "negative_cases": "Corrupt or missing lifecycle fields default safely; status preserves domain truth.",
         "test_proof": "test_exp002_bff_research_experiments_contract.py in U10A"
       },
       {
         "method": "get_experiment_logs",
-        "inventory_line": 3546,
+        "historical_store_line": "lines 12947-12951 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3546,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
+        "historical_callers": [
           "services/control-plane/bff/main.py",
           "services/control-plane/bff/research/router.py"
         ],
-        "current_observation": "Returns hardcoded synthetic mock log entries from memory.",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py:241-261"
+        ],
+        "current_observation": "read_store.py deleted. experiments.py:256 checks getattr(read_store, 'get_experiment_logs') and falls back to empty list [], not synthetic hardcoded data.",
         "proposed_change": "Route to domain owner run stage logs (ResearchOrchestratorStore) or worker execution logs for experiment runs.",
+        "unique_owner_and_readback": "ResearchOrchestratorStore run logs and artifacts",
+        "consumer_removal_obligations": "Remove empty list fallback; wire domain orchestrator logs",
         "negative_cases": "Unknown experiment returns 404; experiment with no associated runs returns empty logs list [].",
         "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
       },
       {
         "method": "get_experiment_metrics",
-        "inventory_line": 3563,
+        "historical_store_line": "lines 12953-12957 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3563,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
+        "historical_callers": [
           "services/control-plane/bff/main.py",
           "services/control-plane/bff/research/router.py"
         ],
-        "current_observation": "Returns synthetic dictionary of metric floats from in-memory fixture.",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py:263-283"
+        ],
+        "current_observation": "read_store.py deleted. experiments.py:278 checks getattr(read_store, 'get_experiment_metrics') and falls back to empty dict {}, not synthetic hardcoded data.",
         "proposed_change": "Route to domain owner execution receipts and metrics from ResearchOrchestratorStore or ResearchWriteOwner.",
+        "unique_owner_and_readback": "ResearchOrchestratorStore and ResearchWriteOwner metrics",
+        "consumer_removal_obligations": "Remove empty dict fallback; wire domain metrics",
         "negative_cases": "Unknown experiment returns 404; pending/running experiment returns empty metrics object {}.",
         "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
       },
       {
         "method": "get_experiment_artifacts",
-        "inventory_line": 3580,
+        "historical_store_line": "lines 12959-12966 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3580,
         "disposition": "KEEP (ACG-02-001)",
-        "production_callers": [
+        "historical_callers": [
           "services/control-plane/bff/main.py",
           "services/control-plane/bff/research/router.py"
         ],
-        "current_observation": "Returns synthetic hardcoded artifact list from in-memory dictionary.",
+        "current_routes_and_ports": [
+          "services/control-plane/bff/research/routes/experiments.py:285-305"
+        ],
+        "current_observation": "read_store.py deleted. experiments.py:300 checks getattr(read_store, 'get_experiment_artifacts') and falls back to empty list [], not synthetic hardcoded data.",
         "proposed_change": "Route to ResearchOrchestratorStore.list_artifacts / get_artifact or Postgres research.research_notes / artifacts table.",
+        "unique_owner_and_readback": "ResearchOrchestratorStore artifacts and research.research_notes",
+        "consumer_removal_obligations": "Remove empty list fallback; wire orchestrator artifacts",
         "negative_cases": "Unknown experiment returns 404; empty artifact set returns empty list [].",
+        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
+      },
+      {
+        "method": "list_jobs_bff",
+        "historical_store_line": "lines 12972-12992 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3597,
+        "disposition": "MERGE (ACG-02-005)",
+        "historical_callers": [
+          "services/control-plane/bff/main.py"
+        ],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/ports/read_surface_ports.py:1069-1074",
+          "services/control-plane/bff/jobs/router.py:58-95"
+        ],
+        "current_observation": "Calls list_research_tickets; tickets masquerade as jobs in UI.",
+        "proposed_change": "Merge into typed JobReadPort / JobProjectionService querying qualified domain owners. Decouple tickets from jobs.",
+        "unique_owner_and_readback": "JobReadPort aggregating qualified domain owners",
+        "consumer_removal_obligations": "Remove delegation from list_jobs_bff to list_research_tickets",
+        "negative_cases": "Cross-tenant query fails closed; empty source returns empty list [].",
+        "test_proof": "test_jobs_source_owner_contract.py in U10A"
+      },
+      {
+        "method": "get_job_bff",
+        "historical_store_line": "lines 12994-13016 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3613,
+        "disposition": "MERGE (ACG-02-005)",
+        "historical_callers": [
+          "services/control-plane/bff/read_store.py (internal)",
+          "services/control-plane/bff/main.py"
+        ],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/ports/read_surface_ports.py:1069-1074",
+          "services/control-plane/bff/jobs/router.py:98-124"
+        ],
+        "current_observation": "Calls get_research_ticket; returns ticket dictionary as job.",
+        "proposed_change": "Merge into typed JobReadPort.get_job_bff, dispatching to domain owner by ID prefix.",
+        "unique_owner_and_readback": "JobReadPort routing to domain owner by native ID prefix",
+        "consumer_removal_obligations": "Remove delegation from get_job_bff to get_research_ticket",
+        "negative_cases": "Unknown job_id returns 404; cross-tenant query returns 404/403.",
+        "test_proof": "test_jobs_source_owner_contract.py in U10A"
+      },
+      {
+        "method": "get_job_logs_bff",
+        "historical_store_line": "lines 13018-13022 in original ReadSurfaceStore",
+        "inventory_catalog_line": 3630,
+        "disposition": "KEEP (ACG-02-001)",
+        "historical_callers": [],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/jobs/router.py:127-142"
+        ],
+        "current_observation": "Hardcoded mock logs returned from memory when present.",
+        "proposed_change": "Route to domain owner logs endpoint (/api/research-worker-gateway/jobs/{id}/status, etc.).",
+        "unique_owner_and_readback": "Domain owner logs APIs",
+        "consumer_removal_obligations": "Remove mock logs dictionary",
+        "negative_cases": "Unknown job returns 404; unstarted job returns empty logs list [].",
+        "test_proof": "test_jobs_source_owner_contract.py in U10A"
+      },
+      {
+        "method": "_experiments dictionary",
+        "historical_store_line": "ports/research_knowledge_source.py:2170",
+        "inventory_catalog_line": 2170,
+        "disposition": "REMOVE (ACG-02-003)",
+        "historical_callers": [
+          "DefaultResearchKnowledgeSourcePort"
+        ],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/ports/research_knowledge_source.py:2170-2230"
+        ],
+        "current_observation": "Ephemeral self._experiments dictionary in web memory; non-durable.",
+        "proposed_change": "DELETE completely. Replace with direct readback from Postgres research.research_experiments via ResearchWriteOwner.",
+        "unique_owner_and_readback": "ResearchWriteOwner via research.research_experiments",
+        "consumer_removal_obligations": "Delete self._experiments dictionary attribute and methods mutating it",
+        "negative_cases": "DB connection error raises 500/503; never falls back to in-memory dictionary.",
+        "test_proof": "test_research_knowledge_source_ports.py in U10A"
+      },
+      {
+        "method": "EvolutionCommandAdapter._HANDLED_COMMANDS",
+        "historical_store_line": "command_adapters/evolution_adapter.py:28",
+        "inventory_catalog_line": 28,
+        "disposition": "REMOVE (ACG-02-003)",
+        "historical_callers": [
+          "EvolutionCommandAdapter"
+        ],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/command_adapters/evolution_adapter.py:28-38"
+        ],
+        "current_observation": "Declares JobAction and ExperimentAction; returns fake executed with zero effects.",
+        "proposed_change": "DELETE JobAction and ExperimentAction from handled commands list. EvolutionCommandAdapter.can_handle returns False.",
+        "unique_owner_and_readback": "Dedicated ExperimentCommandAdapter and JobCommandAdapter",
+        "consumer_removal_obligations": "Remove JobAction and ExperimentAction from _HANDLED_COMMANDS",
+        "negative_cases": "Unsupported command rejects execution; fails closed without synthetic receipt.",
+        "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
+      },
+      {
+        "method": "registry._DEFAULT_ADAPTERS order",
+        "historical_store_line": "command_adapters/registry.py:29-54",
+        "inventory_catalog_line": 29,
+        "disposition": "MERGE (ACG-02-005)",
+        "historical_callers": [
+          "CommandAdapterRegistry"
+        ],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/command_adapters/registry.py:29-54"
+        ],
+        "current_observation": "EvolutionCommandAdapter evaluated first; swallows job/experiment actions.",
+        "proposed_change": "Register dedicated ExperimentCommandAdapter and JobCommandAdapter ahead of EvolutionCommandAdapter.",
+        "unique_owner_and_readback": "Dedicated command adapters in registry",
+        "consumer_removal_obligations": "Un-register job/experiment actions from EvolutionCommandAdapter",
+        "negative_cases": "Unknown action type returns 404/400 unhandled adapter error.",
+        "test_proof": "test_jobs_source_owner_contract.py in U10A"
+      },
+      {
+        "method": "GET /bff/sse/jobs/{jobId}/progress",
+        "historical_store_line": "events/router.py:511",
+        "inventory_catalog_line": 511,
+        "disposition": "MERGE (ACG-02-005)",
+        "historical_callers": [
+          "Frontend SSE subscribers"
+        ],
+        "current_routes_and_ports": [
+          "services/control-plane/bff/events/router.py:511-518"
+        ],
+        "current_observation": "Client-side filtering only; events flood all connected clients without jobId match.",
+        "proposed_change": "Implement server-side topic/channel filtering by jobId.",
+        "unique_owner_and_readback": "Server-side filtered SSE event broker",
+        "consumer_removal_obligations": "Remove client-side filtering note; filter events before emission",
+        "negative_cases": "Client subscribed to job-A never receives events for job-B.",
         "test_proof": "test_bff_evolution_experiment_jobs_events_contract.py in U10A"
       }
     ],
@@ -647,7 +1222,7 @@
         "scope": "U10A and U10B",
         "business_cases": "Evolution programs (8), Experiments CRUD & actions (8), Jobs CRUD & actions (6), Events & SSE (4)",
         "invariants": "Retain 100% of business assertions; un-fake JobAction and ExperimentAction; preserve 29 passed",
-        "verification_mode": "executed_and_passed (29 passed in pytest -k jobs)"
+        "verification_mode": "executed_and_passed (29 passed in isolated execution)"
       },
       {
         "test_file": "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
@@ -655,7 +1230,7 @@
         "scope": "U10A",
         "business_cases": "GET /bff/jobs list envelope, GET /bff/jobs/{id} detail + 404, HTTP 401 unauthenticated",
         "invariants": "Preserve 200 envelope shape, items, page_info, and 401/404 handling",
-        "verification_mode": "collected_only (31 collected via pytest --collect-only)"
+        "verification_mode": "executed_and_passed (31 passed in full regression run)"
       },
       {
         "test_file": "services/control-plane/bff/test_exp002_bff_research_experiments_contract.py",
@@ -663,35 +1238,45 @@
         "scope": "U10A and U10B",
         "business_cases": "Experiment list/detail envelope, status fields, analysis links, 404, 401",
         "invariants": "Wire Postgres readback via ResearchWriteOwner; verify allowedActions.canCancel",
-        "verification_mode": "collected_only (17 collected via pytest --collect-only)"
+        "verification_mode": "executed_and_passed (17 passed in full regression run)"
       },
       {
         "test_file": "services/control-plane/bff/tests/test_assistant_context_pack.py",
         "case_count": 5,
         "scope": "U10A",
-        "business_cases": "Assistant collectors extracting active jobs, research experiments, tickets",
+        "business_cases": "Assistant context collectors extracting active jobs, research experiments, tickets",
         "invariants": "Preserve ticket vs job aggregate separation in collector summaries",
-        "verification_mode": "collected_only (5 collected via pytest --collect-only)"
+        "verification_mode": "executed (4 passed, 1 failed with NameError _REPO_ROOT at bff/main.py:21745; honest baseline gap record)"
       }
     ],
     "negative_verification_modes": [
       {
-        "mode": "persistence_failure",
-        "scenario": "Database connection drop or write conflict in PostgresJsonOwnerStore",
-        "expected_result": "Raises error, rolls back transaction, returns HTTP 500/503; never falls back to in-memory dictionary"
+        "mode": "gateway_concurrency_and_durability_failure",
+        "scenario": "Simulated missing data directory or unwritable worker_jobs.json file during concurrent dispatch",
+        "expected_result": "Raises 500 error, rolls back local state; never returns synthetic success"
       },
       {
-        "mode": "concurrency_and_cancellation_fence",
-        "scenario": "Worker completion arriving after cancellation timestamp t_cancel",
-        "expected_result": "Domain owner rejects completion with 409 Conflict, marks as orphaned, preserves canceled status"
+        "mode": "orchestrator_concurrency_and_cancellation_fence",
+        "scenario": "Worker completion arriving after cancellation timestamp t_cancel in ResearchOrchestratorStore",
+        "expected_result": "Domain owner rejects completion with 409 Conflict, marks as orphaned/discarded, preserves canceled status"
       },
       {
-        "mode": "retry_idempotency",
-        "scenario": "Two concurrent retry requests with identical Idempotency-Key",
-        "expected_result": "Creates exactly one attempt N+1, returns identical record for both; active job rejects retry with 409"
+        "mode": "training_session_advisory_lock_failure",
+        "scenario": "Concurrent preview job mutation conflict in PostgresTrainingSessionStore",
+        "expected_result": "Transaction-scoped advisory lock serializes mutation; connection drop rolls back authority_records transaction"
       },
       {
-        "mode": "permission_and_auth",
+        "mode": "source_ingestion_checkpoint_resume_failure",
+        "scenario": "Extraction thread interruption before batch watermark commit in SourceManagementStore",
+        "expected_result": "Uncommitted frontier items remain in queue; connector restart resumes strictly from last verified watermark"
+      },
+      {
+        "mode": "policy_learning_reject_race",
+        "scenario": "Calling reject on an already rejected job or calling direct promote without Governance approval",
+        "expected_result": "Returns HTTP 409 Conflict; direct promotion without Governance approval fails closed"
+      },
+      {
+        "mode": "permission_and_tenant_isolation",
         "scenario": "Request without authorization or cross-tenant access",
         "expected_result": "Returns HTTP 401 Unauthorized or HTTP 403 Forbidden / 404 Not Found"
       },
@@ -710,28 +1295,26 @@
       "result": "checkout-scoped .venv-pantheon provisioned and verified from foreign cwd"
     },
     {
-      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py -k jobs",
-      "exit_code": 0,
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "exit_code": 1,
       "collection": "terminal",
-      "collected": 29,
-      "passed": 29,
-      "failed": 0,
+      "collected": 82,
+      "passed": 81,
+      "failed": 1,
       "skipped": 0,
-      "stdout": "29 passed, 2 warnings in 13.49s",
-      "limitation": "contract tests in isolated fixture environment; baseline behavior before U10A/U10B source delivery"
+      "stdout": "1 failed, 81 passed, 238 warnings in 41.86s",
+      "limitation": "Pre-existing baseline gap: test_assistant_context_pack_builds_structured_snapshot fails with NameError _REPO_ROOT at bff/main.py:21745; recorded honestly without expanding scope into runtime repair"
     },
     {
-      "command": "timeout 45 .venv-pantheon/bin/python3 -m pytest --collect-only -q services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/test_exp002_bff_research_experiments_contract.py services/control-plane/bff/tests/test_assistant_context_pack.py",
-      "exit_code": 0,
+      "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_assistant_context_pack.py::test_assistant_context_pack_builds_structured_snapshot",
+      "exit_code": 1,
       "collection": "terminal",
-      "collected": 53,
-      "breakdown": {
-        "test_bff_b2_002_evolution_jobs_ops.py": 31,
-        "test_exp002_bff_research_experiments_contract.py": 17,
-        "test_assistant_context_pack.py": 5
-      },
-      "stdout": "53 tests collected in 13.76s",
-      "limitation": "Test collection verification only; these three suites were not run or passed in this contract task"
+      "collected": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "stdout": "1 failed, 86 warnings in 8.87s",
+      "limitation": "Isolated rerun confirms unchanged pre-existing baseline defect (NameError: name _REPO_ROOT is not defined at services/control-plane/bff/main.py:21745)"
     },
     {
       "command": "timeout 30 .venv-pantheon/bin/python3 /tmp/bff-research-jobs-contract-probe.py",
@@ -751,7 +1334,7 @@
       "command": "python3 /tmp/validate-bff-research-jobs-evidence.py && git diff --check",
       "exit_code": 0,
       "collection": "terminal",
-      "result": "Document digest, 25 immutable source blobs, 39 exact U10A paths, 13 exact U10B paths, validation terminal state, embedded probe syntax, six sources qualification with native IDs and auth gaps, unresolved composition obligations, and source-specific acceptance mapping verified; whitespace clean"
+      "result": "Document digest, 25 immutable source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, six sources qualification with native IDs and auth gaps, unresolved composition obligations, and source-specific acceptance mapping verified; whitespace clean"
     }
   ],
   "probe_source": "import json\nfrom services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts\nfrom services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort\nfrom services.control_plane.bff.command_adapters.evolution_adapter import EvolutionCommandAdapter\nfrom services.control_plane.bff.command_adapters.registry import find_adapter\n\nobservations = {}\nport = ReadSurfacePorts()\nobservations[\"ticket_masquerades_as_job\"] = (\n    hasattr(port, \"get_job_bff\") and hasattr(port, \"list_jobs_bff\")\n)\n\nrks = DefaultResearchKnowledgeSourcePort()\nexp = rks.create_research_experiment(\n    ticket_id=\"ticket-001\",\n    experiment_name=\"test-exp\",\n    strategy_selector={},\n    parameter_set={},\n    run_config={\"dataset_ref\": \"d1\", \"time_range\": {\"start_at\": \"a\", \"end_at\": \"b\"}, \"execution_mode\": \"paper\", \"priority\": \"normal\", \"requested_by\": \"user\"},\n    launch_context={},\n)\nobservations[\"in_memory_experiments_writer\"] = (\n    exp[\"experiment_id\"] in rks._experiments\n    and rks._experiments[exp[\"experiment_id\"]][\"status\"] == \"queued\"\n)\n\nevo = EvolutionCommandAdapter()\nassert evo.can_handle(\"JobAction\", \"job\", \"cancel\")\nreceipt = evo.execute(\"cmd-1\", \"JobAction\", {\"job_id\": \"job-1\", \"action_id\": \"cancel\"})\nobservations[\"evolution_adapter_fake_job_action_executed\"] = (\n    receipt[\"status\"] == \"executed\"\n    and receipt[\"domain_receipt\"].get(\"success\") is True\n    and receipt[\"dispatch_path\"] == \"research_job_authority\"\n)\n\nadapter = find_adapter(\"JobAction\", \"job\", \"cancel\")\nobservations[\"registry_routes_job_to_evolution_adapter\"] = isinstance(adapter, EvolutionCommandAdapter)\n\nwith open(\"services/control-plane/bff/events/router.py\") as f:\n    events_code = f.read()\nobservations[\"sse_job_progress_ignores_job_id\"] = \"Subscription is channel-based; job filtering remains client-side\" in events_code\n\nassert all(observations.values()), observations\nprint(json.dumps({\"observations\": observations, \"count\": len(observations),\n                  \"interpretation\": \"five current deficiencies reproduced; not implementation acceptance\"}, sort_keys=True))\n",
@@ -784,5 +1367,5 @@
     "ci": "pending",
     "binding": "Final PR/head/current base/manifest blob bound through governed owner handoff; canonical reviewer and supervisor supply approval/merge. This committed manifest cannot embed its own commit hash and is not changed after approval for bookkeeping."
   },
-  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\n    \"ResearchTicket != Experiment != OrchestratorRun != Job\",\n    \"wjob-{YYYYMMDD}-{index:03d}\",\n    \"rrun-{YYYYMMDD}-{index:03d}\",\n    \"pvjob-{digest[:16]}\",\n    \"ingest-{uuid4().hex[:12]}\",\n    \"plj-{YYYYMMDD}-{index:03d}\",\n    \"GW-STOP-FENCE-001\",\n    \"TS-CANCEL-001\",\n    \"SI-CANCEL-001\",\n    \"PL-CANCEL-001\",\n    \"GOV-PROMOTE-001\",\n    \"ActionUnavailableError\",\n]:\n    assert marker in doc.read_text(), marker\nassert len(e[\"six_sources_qualification\"]) == 6\nassert len(e[\"unresolved_composition_obligations\"]) == 5\nassert len(e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]) == 6\nassert len(e[\"source_specific_acceptance_mapping\"][\"inventory_migration_cases\"]) == 14\nassert sum(s[\"case_count\"] for s in e[\"source_specific_acceptance_mapping\"][\"regression_suites_mapping\"] if s[\"test_file\"] != \"services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py\") == 53\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, native IDs, auth gaps, 5 unresolved composition obligations, 14 inventory migration cases, and 53 collected regression suite cases; no runtime change or merge claim.\")\n"
+  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-RESEARCH-JOBS-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu10a = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10A\")\nu10b = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U10B\")\nassert e[\"u10a_composition\"][\"exact_source_scope\"] == u10a[\"exact_source_scope\"]\nassert e[\"u10a_composition\"][\"path_count\"] == 39\nassert e[\"u10b_composition\"][\"exact_source_scope\"] == u10b[\"exact_source_scope\"]\nassert e[\"u10b_composition\"][\"path_count\"] == 13\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\n    \"ResearchTicket != Experiment != OrchestratorRun != Job\",\n    \"wjob-{YYYYMMDD}-{index:03d}\",\n    \"rrun-{YYYYMMDD}-{index:03d}\",\n    \"pvjob-{digest[:16]}\",\n    \"ingest-{uuid4().hex[:12]}\",\n    \"plj-{YYYYMMDD}-{index:03d}\",\n    \"GW-STOP-FENCE-001\",\n    \"TS-CANCEL-001\",\n    \"SI-CANCEL-001\",\n    \"PL-CANCEL-001\",\n    \"GOV-PROMOTE-001\",\n    \"ActionUnavailableError\",\n    \"invalidated / attached_to_review / archived / retry\",\n    \"12895\u201312966\",\n    \"12972\u201313022\",\n    \"create_research_experiment\",\n    \"PostgresTrainingSessionStore\",\n    \"NameError _REPO_ROOT at bff/main.py:21745\",\n]:\n    assert marker in doc.read_text(), marker\nassert len(e[\"six_sources_qualification\"]) == 6\nassert len(e[\"unresolved_composition_obligations\"]) == 5\nassert len(e[\"source_specific_acceptance_mapping\"][\"api_and_store_mapping\"]) == 6\nassert len(e[\"source_specific_acceptance_mapping\"][\"inventory_migration_cases\"]) == 14\nassert len(e[\"source_specific_acceptance_mapping\"][\"regression_suites_mapping\"]) == 4\nassert e[\"decision\"][\"operator_decision_required_for_selected_scope\"] is True\nprint(\"Evidence valid: document digest, 25 source blobs, 39 exact U10A paths, 13 exact U10B paths, terminal validation records, embedded probe syntax, native IDs, auth gaps, 5 unresolved composition obligations, 14 inventory migration cases, 4 regression suites with honest baseline gap, and operator decision requirement verified; no runtime change or merge claim.\")\n"
 }
