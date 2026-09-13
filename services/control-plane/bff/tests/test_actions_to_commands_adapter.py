@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.command_adapters.router import create_action_command_router
+from services.control_plane.bff.command_queue import CommandStore
 
 
 OPERATOR_HEADERS = {
@@ -23,17 +21,57 @@ OPERATOR_HEADERS = {
 }
 
 
+class _StoreProxy:
+    _store: Optional[CommandStore] = None
+
+    def _get_all_commands(self):
+        if self._store is None:
+            return []
+        return self._store._get_all_commands()
+
+
+command_store = _StoreProxy()
+
+
+def _extract_identity(auth_header: Optional[str], **kwargs: Any) -> Any:
+    class _Id:
+        def __init__(self, op_id: str, roles: list[str]) -> None:
+            self.operator_id = op_id
+            self.roles = roles
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return _Id("anonymous", ["viewer"])
+    token = auth_header[len("Bearer "):].strip()
+    parts = token.split(":")
+    op_id = parts[0] if parts else "op-user"
+    roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else ["operator"]
+    return _Id(op_id, roles)
+
+
 @contextmanager
 def _isolated_action_adapter() -> Iterator[TestClient]:
+    from fastapi import HTTPException, Request
+    from fastapi.responses import JSONResponse
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
     old_auth = os.environ.get("PANTHEON_BFF_AUTH_MODE")
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
-        original_command_store = bff_main.command_store
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        command_store._store = store
+        app = FastAPI()
+
+        @app.exception_handler(StarletteHTTPException)
+        @app.exception_handler(HTTPException)
+        async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+            if isinstance(exc.detail, dict):
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+        app.include_router(create_action_command_router(command_store=store, extract_identity=_extract_identity))
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.command_store = original_command_store
+            command_store._store = None
             if old_auth is None:
                 os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
             else:
@@ -41,8 +79,9 @@ def _isolated_action_adapter() -> Iterator[TestClient]:
 
 
 def test_bff_actions_openapi_exposes_frontend_and_generic_action_templates() -> None:
-    bff_main.app.openapi_schema = None
-    schema = bff_main.app.openapi()
+    app = FastAPI()
+    app.include_router(create_action_command_router())
+    schema = app.openapi()
 
     assert "/bff/actions/{type}/{id}/{action}" in schema["paths"]
     generic = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]
@@ -72,7 +111,7 @@ def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
         assert body["data"]["receipt"]["deprecated"] is True
         assert body["meta"]["deprecation"]["replacement"] == "/bff/v1/commands"
 
-        records = bff_main.command_store._get_all_commands()
+        records = command_store._get_all_commands()
         assert len(records) == 1
         record = records[0]
         assert record["type"] == "StrategyAction"
@@ -125,7 +164,7 @@ def test_bff_actions_named_facade_accepts_x_idempotency_alias() -> None:
         assert body["data"]["command"] == "StrategyAction"
         assert body["meta"]["idempotency"]["idempotencyKey"] == "bff-b1-008-action-alias"
 
-        records = bff_main.command_store._get_all_commands()
+        records = command_store._get_all_commands()
         assert len(records) == 1
         foundation = records[0]["foundation"]
         assert foundation["admission_route"] == "POST /bff/v1/commands"
@@ -149,7 +188,7 @@ def test_bff_actions_named_facade_rejects_body_idempotency_key() -> None:
         detail = response.json()
         assert detail["error"]["code"] == "VALIDATION_FAILED"
         assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
-        assert bff_main.command_store._get_all_commands() == []
+        assert command_store._get_all_commands() == []
 
 
 def test_bff_actions_adapter_requires_idempotency_key() -> None:
@@ -165,7 +204,7 @@ def test_bff_actions_adapter_requires_idempotency_key() -> None:
         detail = response.json()
         assert detail["error"]["code"] == "VALIDATION_FAILED"
         assert detail["error"]["details"]["precondition_failed"] == "idempotency_key"
-        assert bff_main.command_store._get_all_commands() == []
+        assert command_store._get_all_commands() == []
 
 
 def test_bff_actions_adapter_policy_denial_records_foundation_error() -> None:
@@ -189,11 +228,11 @@ def test_bff_actions_adapter_policy_denial_records_foundation_error() -> None:
             detail["audit_action"]["metadata"]["source_route"]
             == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
         )
-        assert bff_main.command_store._get_all_commands() == []
+        assert command_store._get_all_commands() == []
 
 
 def test_command_adapters_router_single_route_uniqueness() -> None:
-    from command_adapters.router import create_action_command_router
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
     from fastapi import FastAPI
 
     router = create_action_command_router()
@@ -211,7 +250,7 @@ def test_command_adapters_router_single_route_uniqueness() -> None:
 
 
 def test_command_adapters_router_standalone_execution() -> None:
-    from command_adapters.router import create_action_command_router
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
     from fastapi import FastAPI
 
     with tempfile.TemporaryDirectory() as td:
@@ -241,7 +280,7 @@ def test_command_adapters_router_standalone_execution() -> None:
 
 
 def test_command_adapters_router_validations() -> None:
-    from command_adapters.router import create_action_command_router
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
     from fastapi import FastAPI
 
     router = create_action_command_router()
