@@ -23,7 +23,6 @@ from typing import Any, Dict, List, Optional
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
 from .reconstruction import StrategyReconstructionResult, reconstruct_strategy_from_events
-from services.control_plane.privacy.private_content_models import PrivateContentStoreUnavailable
 
 RECONSTRUCTION_CARD_TYPE = "strategy_reconstruction"
 
@@ -43,6 +42,9 @@ def _messages_from_events(
             private_ref = event.get("private_content_ref")
             if private_ref:
                 if private_content_store is None:
+                    # Store-only CLIs do not load the product privacy package.
+                    from services.control_plane.privacy.private_content_models import PrivateContentStoreUnavailable
+
                     raise PrivateContentStoreUnavailable("Workshop message content is unavailable.")
                 msg = private_content_store.get_for_owner(
                     private_content_ref=private_ref, tenant_id=tenant_id,

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -10,6 +13,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 HELPER_PATH = ROOT / "scripts" / "agora_workshop_restart_persistence_smoke.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+
+
+def test_standalone_cli_imports_without_repository_pythonpath(tmp_path) -> None:
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run(
+        [sys.executable, str(HELPER_PATH), "--help"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "seed" in result.stdout and "verify" in result.stdout
 
 
 def _load_helper():
