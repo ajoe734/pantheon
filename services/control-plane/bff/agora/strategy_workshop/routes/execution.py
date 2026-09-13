@@ -11,11 +11,11 @@ import hashlib
 import json
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
 
 from .._common import _StrategyVersionProjectionError
 from ..events import _ws_publish
-from ..operations import CanonicalOperationError
+from ..operations import CanonicalOperationError, bind_workshop_authorization
 from ..store import WorkshopVersionProjectionConflict
 from ..schemas import (
     WorkshopConcludeRequest,
@@ -32,7 +32,7 @@ def build_execution_router(
     bff_error: Callable[..., HTTPException],
     ctx: Any,
 ) -> APIRouter:
-    router = APIRouter(tags=["agora-workshop"])
+    router = APIRouter(tags=["agora-workshop"], dependencies=[Depends(bind_workshop_authorization)])
     _scope = ctx.scope
     _scoped_session = ctx.scoped_session
     _admit_command = ctx.admit_command
