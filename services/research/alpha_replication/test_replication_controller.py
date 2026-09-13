@@ -20,6 +20,7 @@ from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.replication_controller import (
     ReplicationControllerConfig,
     _queue_payload_from_registry_entry,
+    initialize_controller_state,
     run_controller_tick,
 )
 from services.research.experiment_orchestrator.authority import (
@@ -47,6 +48,46 @@ class CaptureLoopWriter:
 
     async def record_failure(self, **payload) -> None:
         self.failures.append(payload)
+
+
+@pytest.mark.parametrize("changed", ["tenant", "environment", "deployment"])
+def test_restart_uses_configured_scope_not_old_health_checkpoint(tmp_path, monkeypatch, changed):
+    store = ControllerStateStore(tmp_path / "controller_state.json")
+    previous = ControllerState(
+        controller_id="old-controller", controller_name="alpha-replication-controller",
+        tenant_id="default" if changed == "tenant" else "tenant-dev",
+        environment="staging-live" if changed == "environment" else "dev",
+        deployment={"git_sha": "old-sha" if changed == "deployment" else "current-sha"},
+        total_ticks=10, desired_state={"strategy_spec_ids": ["old-scope-spec"]},
+    )
+    store.save(previous)
+    # Neither file belongs to controller health; a restart must preserve both.
+    for name in ("replication_admissions.jsonl", "alpha_replication_queue.jsonl"):
+        (tmp_path / name).write_text('{"existing":"unchanged"}\n')
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("GIT_SHA", "current-sha")
+    monkeypatch.setenv("PANTHEON_CONTROLLER_ID", "current-controller")
+    actual = initialize_controller_state(store)
+    assert (actual.tenant_id, actual.environment, actual.deployment["git_sha"]) == ("tenant-dev", "dev", "current-sha")
+    assert actual.controller_id == "current-controller"
+    assert actual.total_ticks == 0 and actual.desired_state == {}
+    assert store.load().to_dict() == actual.to_dict()
+    for name in ("replication_admissions.jsonl", "alpha_replication_queue.jsonl"):
+        assert (tmp_path / name).read_text() == '{"existing":"unchanged"}\n'
+
+
+def test_restart_keeps_same_deployment_checkpoint(tmp_path, monkeypatch):
+    store = ControllerStateStore(tmp_path / "state.json")
+    previous = ControllerState(
+        controller_id="same-controller", controller_name="alpha-replication-controller",
+        tenant_id="tenant-dev", environment="dev", deployment={"git_sha": "same-sha"}, total_ticks=7,
+    )
+    store.save(previous)
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("GIT_SHA", "same-sha")
+    assert initialize_controller_state(store).to_dict() == previous.to_dict()
 
 
 def _state(path: Path, *, tenant_id: str = "tenant-a"):

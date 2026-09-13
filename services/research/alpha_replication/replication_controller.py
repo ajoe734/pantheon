@@ -315,23 +315,38 @@ def run_controller_tick(
     return state.to_dict()
 
 
-def main() -> int:
-    config = ReplicationControllerConfig()
-    
-    # Initialize state
-    store = ControllerStateStore(config.state_path)
+def initialize_controller_state(store: ControllerStateStore) -> ControllerState:
+    """Resume a checkpoint only within its configured tenant and deployment.
+
+    Admissions and queue entries are separate stores and are never moved or
+    rewritten here. An old health checkpoint must not choose the new worker's
+    tenant or continue publishing an obsolete source identity after rollout.
+    """
     state = store.load()
-    if state is None:
-        git_sha = os.getenv("GIT_SHA") or "unknown"
+    tenant_id = os.getenv("PANTHEON_TENANT_ID") or "default"
+    environment = os.getenv("PANTHEON_ENV") or "dev"
+    git_sha = os.getenv("GIT_SHA") or "unknown"
+    if state is None or (
+        state.tenant_id != tenant_id
+        or state.environment != environment
+        or state.deployment.get("git_sha") != git_sha
+    ):
         state = ControllerState(
             controller_id=os.getenv("PANTHEON_CONTROLLER_ID") or f"alpha-replication-controller-{os.getpid()}",
             controller_name=os.getenv("PANTHEON_CONTROLLER_NAME") or "alpha-replication-controller",
-            environment=os.getenv("PANTHEON_ENV") or "dev",
-            tenant_id=os.getenv("PANTHEON_TENANT_ID") or "default",
+            environment=environment,
+            tenant_id=tenant_id,
             deployment={"git_sha": git_sha},
         )
         store.save(state)
-        
+    return state
+
+
+def main() -> int:
+    config = ReplicationControllerConfig()
+    store = ControllerStateStore(config.state_path)
+    state = initialize_controller_state(store)
+
     writer = None
     if config.database_url:
         writer = build_loop_writer(dsn=config.database_url, state=state)
