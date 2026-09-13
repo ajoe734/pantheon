@@ -317,7 +317,8 @@
   "delivery": {
     "target_branch": "dev",
     "source_base_sha": "e401682d1fa8cc90e7820c1b39d396ccb4e5b477",
-    "anchor_commit": "6401e8ce5",
+    "anchor_commit": "b5570084e089e7127a4419a672d951604f81ea50",
+    "rebased_base_sha": "a7ef52ca906e09780e6767a5964bbe861f77a426",
     "head_sha": null,
     "pr": null,
     "merge_commit": null,
