@@ -191,7 +191,6 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
     for step_name in (
         "Deploy dev VM stack under lease",
         "Ensure governed dev paper baseline under lease",
-        "Dev OpenClaw assistant live smoke under lease",
         "Public dev BFF smoke and exact version proof under lease",
         "Dev Agora restart persistence smoke under lease",
     ):
@@ -224,10 +223,45 @@ def test_bff_smoke_runs_before_unrelated_smoke_steps() -> None:
         "      - name: Public dev BFF smoke and exact version proof under lease"
     )
     for unrelated_step in (
-        "Dev OpenClaw assistant live smoke under lease",
         "Dev Agora restart persistence smoke under lease",
     ):
         assert bff_smoke_at < dev.index(f"      - name: {unrelated_step}")
+
+
+def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
+    dev = _job(_workflow(), "deploy-dev", "coordinate-dev-release")
+    assert "id: openclaw" not in dev
+    assert "openclaw-assistant-openclaw-live-smoke.sh" not in dev
+    assert "steps.openclaw" not in dev
+    assert "OPENCLAW_OUTCOME" not in dev
+    assert "success:success:success:success:success:success" in dev
+    assert "success:success:skipped:success:success:success" in dev
+
+
+@pytest.mark.parametrize("component", ["root", "auto", "bff"])
+@pytest.mark.parametrize("failed_step", [None, "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
+                                      "PAPER_BOOTSTRAP_OUTCOME", "PUBLIC_SMOKE_OUTCOME",
+                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME"])
+def test_deployment_completion_retains_real_checks_without_provider_gate(
+    component: str, failed_step: str | None,
+) -> None:
+    dev = _job(_workflow(), "deploy-dev", "coordinate-dev-release")
+    start = dev.index("          complete_success=false")
+    end = dev.index('          if [[ ! -s "${LEASE_PID_FILE}" ]]', start)
+    outcomes = {name: "success" for name in (
+        "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME", "PAPER_BOOTSTRAP_OUTCOME",
+        "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME",
+    )}
+    if component == "bff":
+        outcomes["PAPER_BOOTSTRAP_OUTCOME"] = "skipped"
+    if failed_step:
+        outcomes[failed_step] = "failure"
+    result = subprocess.run(
+        ["bash", "-c", dev[start:end] + '\nprintf "%s" "$complete_success"'],
+        env={**os.environ, **outcomes, "TARGET_COMPONENT": component},
+        capture_output=True, text=True, check=True,
+    )
+    assert result.stdout == ("false" if failed_step else "true")
 
 
 def test_dev_release_admission_depends_only_on_verified_bff_fe_pair() -> None:
@@ -239,7 +273,10 @@ def test_dev_release_admission_depends_only_on_verified_bff_fe_pair() -> None:
     dev = _job(workflow, "deploy-dev", "coordinate-dev-release")
     assert (
         "bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' "
-        "&& steps.public_smoke.outcome == 'success' }}"
+        "&& steps.public_smoke.outcome == 'success' "
+        "&& steps.artifact_baseline_upload.outcome == 'success' "
+        "&& steps.artifact_candidate_seal.outcome == 'success' "
+        "&& steps.artifact_candidate_upload.outcome == 'success' }}"
     ) in dev
 
     coordinate = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
@@ -306,7 +343,7 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count("unset PANTHEON_ENVIRONMENT_LEASE_TOKEN") >= 7
     assert dev.count(
         'exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh"'
-    ) >= 4
+    ) >= 3
     assert "env -i \\\n" in dev
     assert "PANTHEON_ENVIRONMENT_LEASE_TOKEN=\"${{ secrets." not in dev
 

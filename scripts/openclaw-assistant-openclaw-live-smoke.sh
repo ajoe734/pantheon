@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Live smoke gate for the `openclaw` assistant provider against a DEPLOYED adapter.
+# Post-deployment live acceptance for the `openclaw` assistant provider.
 #
 # Why this exists: OPENCLAW-AGENT-TURN-LIVE-FIX shipped the provider code with
 # unit tests that mock the CLI, and the existing pytest live smoke
 # (test_assistant_openclaw_provider_live.py) SKIPS unless the openclaw binary +
 # gateway env are present — so CI stayed green while the deployed adapter image
 # had no openclaw binary at all (it degraded with OPENCLAW_BINARY_NOT_FOUND on
-# every real turn). This script is the missing gate: it talks to a real adapter,
+# every real turn). This script talks to a real deployed adapter,
 # drives a real agent turn through the gateway, and FAILS (non-zero) on any
-# degradation. It does NOT skip — point it at a deployment and it must pass.
+# degradation. It does NOT skip or claim AI readiness from service health.
+# Its result is separate from FE/BFF deployment; provider auth or quota failure
+# must not block release or hold the deployment lease.
 #
 # Usage (on the dev VM, adapter publishes host port 18104):
 #   bash scripts/openclaw-assistant-openclaw-live-smoke.sh
@@ -29,8 +31,8 @@ assistant_curl() {
 }
 
 # Gateway configuration changes recreate the service before its provider has
-# finished warming up.  A single long request made the deployment outcome race
-# that warm-up.  Keep the deployment budget bounded, but spend it over small
+# finished warming up. Keep this post-deployment acceptance budget bounded,
+# but spend it over small
 # readiness-only probes.  Do not reuse this loop for an invoke: an agent turn
 # can have side effects and must be issued exactly once.
 READINESS_TOTAL_BUDGET_SECONDS="${OPENCLAW_READINESS_TOTAL_BUDGET_SECONDS:-90}"

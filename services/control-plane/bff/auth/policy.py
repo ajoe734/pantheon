@@ -57,7 +57,9 @@ _WRITE_ROLES = frozenset({"operator", "approver", "admin", "reviewer"})
 _DEV_LOGIN_IDENTITY_DEFS = {
     "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
     "operator": {"roles": ("operator",), "subject_suffix": "operator"},
-    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
+    # Keep the UI role and the Governance owner's ordinary review role aligned
+    # for this configured dev account; other dev identities stay distinct.
+    "approver": {"roles": ("approver", "governance_reviewer"), "subject_suffix": "approver"},
     "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
     "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
     "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
