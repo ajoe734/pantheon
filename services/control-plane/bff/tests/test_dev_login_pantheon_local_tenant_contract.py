@@ -7,11 +7,10 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
-# The downstream Agora/policy-learning boundary owned by operator-bff is
-# tenant-scoped to this canonical value; see AGORA_HANDOFF_SERVICE_TENANTS
-# and POLICY_LEARNING_AGORA_TENANT_ID below. This test does not change that
-# canonical downstream tenant -- it only asserts every dev-login identity
-# that already has an explicit allowed-tenant default can also reach it.
+# Without an explicit policy or BFF tenant, local Compose retains this
+# downstream tenant. Hosted deployments select their existing BFF tenant.
+# Every dev-login identity with an explicit allowed-tenant default must still
+# authorize the unchanged local fallback.
 CANONICAL_DOWNSTREAM_TENANT = "pantheon-local"
 
 _IDENTITIES_WITH_EXPLICIT_DEFAULTS = (
@@ -33,10 +32,11 @@ def _default_value(raw: str) -> str:
 
 
 def test_dev_login_identity_defaults_authorize_the_downstream_tenant() -> None:
-    """Every dev-login identity with an explicit allowed-tenant default must
-    also authorize the canonical downstream pantheon-local tenant, or a real
-    strict-auth token minted for that identity cannot reach the deployed
-    Agora handoff / policy-learning boundary owned by this same service."""
+    """Local login defaults retain access to the unchanged local fallback.
+
+    Hosted downstream selection follows explicit policy/BFF configuration;
+    it does not change existing local login allowlists.
+    """
 
     env = _compose_env()
     for var_name in _IDENTITIES_WITH_EXPLICIT_DEFAULTS:
@@ -48,12 +48,11 @@ def test_dev_login_identity_defaults_authorize_the_downstream_tenant() -> None:
         )
 
 
-def test_downstream_agora_tenant_boundary_is_unchanged() -> None:
-    """This contract only widens dev-login identity defaults; it must not
-    also change the canonical downstream tenant boundary those identities
-    are being authorized to reach."""
+def test_downstream_agora_tenant_falls_back_to_bff_then_local() -> None:
+    """Explicit handoff/policy scopes win; otherwise follow the deployed BFF."""
 
     env = _compose_env()
     assert _default_value(env["AGORA_HANDOFF_SERVICE_TENANTS"]) == (
-        "${POLICY_LEARNING_AGORA_TENANT_ID:-" + CANONICAL_DOWNSTREAM_TENANT + "}"
+        "${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-"
+        + CANONICAL_DOWNSTREAM_TENANT + "}}"
     )
