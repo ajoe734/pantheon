@@ -245,10 +245,12 @@ Preserve the original inventory's per-case business and negative assertions;
 `services/control-plane/bff/tests/bff_test_architecture_inventory.json` is a
 file inventory, not a passed-test count. Existing B10 eight review/journal
 failures remain U7 obligations. Relevant full files include
-`test_evolution_center_contract.py`, `test_ew05_mutation_review_contract.py`,
+`test_evolution_center_contract.py`, `test_ew04_inspiration_graph_contract.py`,
+`test_ew05_mutation_review_contract.py`,
 `test_bff_evolution_experiment_jobs_events_contract.py`,
 `tests/test_bff_b2_002_evolution_jobs_ops.py`,
 `tests/test_bff_b3_evolution_journal.py`,
+`tests/test_evochain_004_freeze_rollback_store.py`,
 `tests/test_evolution_programs_population_contract.py`, and
 `tests/test_evolution_router.py` under BFF; plus
 `services/evolution/test_dispatch_worker.py`,
