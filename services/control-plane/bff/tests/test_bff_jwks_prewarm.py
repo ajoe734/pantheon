@@ -1,14 +1,7 @@
 """AGORA-BFF-JWKS-COLDSTART-20260830: JWKS cache pre-warm at BFF startup."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import patch
-
-BFF_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-sys.path.insert(0, str(REPO_ROOT))
 
 from services.control_plane.bff.core.lifespan import _prewarm_jwks_cache
 
