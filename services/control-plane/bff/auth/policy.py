@@ -864,6 +864,33 @@ def raise_if_session_logged_out(
     )
 
 
+def require_admin_mfa(
+    identity: OperatorIdentity,
+    command_name: str,
+    *,
+    error_factory: Optional[Callable[..., HTTPException]] = None,
+) -> None:
+    err_fn = error_factory or bff_error
+    if "admin" not in identity.roles:
+        raise err_fn(
+            403,
+            ErrorCode.FORBIDDEN,
+            f"{command_name} requires 'admin' role",
+            "Operator does not hold the admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to an admin-role operator",
+        )
+    if not identity.mfa_verified:
+        raise err_fn(
+            403,
+            ErrorCode.AUTH_REQUIRED,
+            f"{command_name} requires MFA verification",
+            "Admin action requires MFA validation",
+            precondition_failed="mfa_check",
+            suggestion="Provide a valid MFA token in your session",
+        )
+
+
 raise_if_session_logged_out._canonical_guard = True  # type: ignore[attr-defined]
 
 
@@ -983,3 +1010,4 @@ default_capabilities_for_identity = capabilities_for_identity
 default_bff_auth_stub_enabled = bff_auth_stub_enabled
 default_bff_auth_mode = bff_auth_mode
 default_bff_source_commit = bff_source_commit
+default_require_admin_mfa = require_admin_mfa

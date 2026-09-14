@@ -239,442 +239,64 @@ _BFF_AUTH_STUB_ENV = auth_policy._BFF_AUTH_STUB_ENV
 _BFF_STUB_LEGACY_BARE_TOKENS_ENV = auth_policy._BFF_STUB_LEGACY_BARE_TOKENS_ENV
 _BFF_STUB_CAPABILITY_ROLES = auth_policy._BFF_STUB_CAPABILITY_ROLES
 _PRODUCTION_STRICT_ENVIRONMENTS = auth_policy._PRODUCTION_STRICT_ENVIRONMENTS
-_DEFAULT_LOVABLE_CORS_ORIGINS = [
-    # Pantheon-owned self-hosted dev frontend (execute-plans). This replaced the
-    # Lovable-hosted dev FE; it is the current dev acceptance origin. Dev-only:
-    # it must be filtered out by the production-strict CORS filter below.
-    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-    # TODO(off-lovable): staging-live and prod FE are also migrating off Lovable
-    # to self-hosted sslip.io origins. Replace the staging/prod *.lovable.app
-    # entries below once the new self-hosted URLs are provisioned.
-    # Lovable shared-preview and published URLs for the Pantheon UI lanes.
-    "https://preview--pantheon-dev.lovable.app",
-    "https://preview--pantheon-ai-system-front-dev.lovable.app",
-    "https://preview--pantheon-ai-system-front-staging-live.lovable.app",
-    "https://preview--pantheon.lovable.app",
-    "https://preview--pantheon-ai-system-front.lovable.app",
-    "https://pantheon-dev.lovable.app",
-    "https://pantheon-ai-system-front-dev.lovable.app",
-    "https://pantheon-ai-system-front-staging-live.lovable.app",
-    "https://pantheon.lovable.app",
-    "https://pantheon-ai-system-front.lovable.app",
-    # BFF-CONSOL-022: Pantheon Frontend Lovable project preview URLs.
-    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
-    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
-    # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
-    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
-]
-_DEV_LOOPBACK_CORS_ORIGINS = [
-    "http://127.0.0.1:4173",
-    "http://localhost:4173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-]
-_DEV_LOVABLE_CORS_ORIGINS = {
-    # Self-hosted dev FE origin is dev-only: production-strict mode must filter it.
-    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-    "https://preview--pantheon-dev.lovable.app",
-    "https://preview--pantheon-ai-system-front-dev.lovable.app",
-    "https://pantheon-dev.lovable.app",
-    "https://pantheon-ai-system-front-dev.lovable.app",
-    # Pantheon Frontend Lovable project preview URLs (dev tier).
-    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
-    # Static id-preview URLs are Lovable-hosted strict-preview origins; keep them
-    # out of the dev-only set so production-strict preflight can still succeed.
-    # BFF-B1-001-DELTA: 140c41d5 published URL intentionally NOT in dev-only set —
-    # it must survive the production-strict filter so live OPTIONS succeeds.
-}
-_LOVABLE_PREVIEW_UUIDS = (
-    "b75d3452-f667-4cf4-893a-1061de45b347"
-    "|140c41d5-9cd8-4d6b-ba02-66d5941d0dbe"
-)
-_LOVABLE_PREVIEW_ORIGIN_REGEX = (
-    r"https://id-preview(?:-[a-f0-9]+)?--({})"
-    r"\.lovable\.app"
-).format(_LOVABLE_PREVIEW_UUIDS)
-_LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(
-    r"^" + _LOVABLE_PREVIEW_ORIGIN_REGEX + r"$"
-)
-class _PantheonCORSMiddleware(CORSMiddleware):
-    def preflight_response(self, request_headers: Any) -> Response:
-        response = super().preflight_response(request_headers)
-        if response.status_code != 200:
-            return response
-        headers = dict(response.headers)
-        headers.pop("content-length", None)
-        headers.pop("content-type", None)
-        return Response(status_code=204, headers=headers)
-def _normalized_origin(origin: str) -> str:
-    return origin.strip().rstrip("/")
-def _dedupe_origins(origins: List[str]) -> List[str]:
-    deduped: List[str] = []
-    seen = set()
-    for origin in origins:
-        cleaned = _normalized_origin(origin)
-        if cleaned and cleaned not in seen:
-            deduped.append(cleaned)
-            seen.add(cleaned)
-    return deduped
 _BFF_VALID_AUTH_MODES = auth_policy._BFF_VALID_AUTH_MODES
 _bff_auth_mode = auth_policy.bff_auth_mode
 _is_production_strict_mode = auth_policy.is_production_strict_mode
 _bff_auth_stub_enabled = auth_policy.bff_auth_stub_enabled
-def _cors_origins_from_env() -> List[str]:
-    raw = os.getenv("PANTHEON_BFF_CORS_ORIGINS", "")
-    origins = _dedupe_origins(raw.split(",")) if raw.strip() else list(_DEFAULT_LOVABLE_CORS_ORIGINS)
-    if _is_production_strict_mode():
-        origins = [
-            origin
-            for origin in origins
-            if origin not in _DEV_LOVABLE_CORS_ORIGINS and origin != "*"
-        ]
-    else:
-        # Non-strict (dev/test) tiers always accept the loopback origins the
-        # FE-BFF integration gate and local vite servers use, regardless of the
-        # deploy-time PANTHEON_BFF_CORS_ORIGINS override.
-        origins = origins + _DEV_LOOPBACK_CORS_ORIGINS
-    return _dedupe_origins(origins)
-_SECURITY_RESPONSE_HEADERS = (
-    (b"x-content-type-options", b"nosniff"),
-    (b"x-frame-options", b"DENY"),
-    (b"referrer-policy", b"no-referrer"),
+from .core.http_security import _cors_origin_allowed
+from .core.errors import _pack_d_direct_error_response
+from .core.lifespan import (
+    create_lifespan,
+    refresh_provider_readiness,
 )
-class _SecurityHeadersMiddleware:
-    """Pure-ASGI middleware that appends baseline security headers.
-
-    Implemented at the ASGI layer (not BaseHTTPMiddleware) so it does not buffer
-    or break StreamingResponse / SSE endpoints.
-    """
-
-    def __init__(self, app: Any) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope.get("type") != "http":
-            await self.app(scope, receive, send)
-            return
-
-        async def _send(message: Any) -> None:
-            if message.get("type") == "http.response.start":
-                headers = message.setdefault("headers", [])
-                present = {name.lower() for name, _ in headers}
-                for name, value in _SECURITY_RESPONSE_HEADERS:
-                    if name not in present:
-                        headers.append((name, value))
-            await send(message)
-
-        await self.app(scope, receive, _send)
+from .auth.service import ProviderReadinessCache
+from .core.app_factory import build_bff_app
 
 
-def _cors_origin_allowed(origin: Optional[str]) -> bool:
-    if not origin:
-        return False
-    normalized = _normalized_origin(origin)
-    if normalized in _cors_origins:
-        return True
-    if not _is_production_strict_mode() and _LOVABLE_PREVIEW_ORIGIN_PATTERN.fullmatch(origin):
-        return True
-    return False
-
-def _clean_correlation_id(value: Any) -> Optional[str]:
-    raw = str(value or "").strip()
-    return raw or None
-
-def _error_response_correlation_id(request: Optional[Request], headers: Optional[Dict[str, Any]] = None) -> str:
-    if headers:
-        for key in ("X-Correlation-Id", "x-correlation-id", "correlationId", "correlation_id"):
-            val = _clean_correlation_id(headers.get(key))
-            if val:
-                return val
-    if request is not None:
-        for key in ("X-Correlation-Id", "x-correlation-id", "X-Request-Id", "x-request-id"):
-            val = _clean_correlation_id(request.headers.get(key))
-            if val:
-                return val
-    return str(uuid.uuid4())
-
-def _status_error_code(status_code: int) -> str:
-    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.VALIDATION_FAILED.value)
-
-def _canonical_error_code_value(code: Any, *, status_code: Optional[int] = None) -> str:
-    raw = str(getattr(code, "value", code) or "").strip()
-    if not raw and status_code is not None:
-        return _status_error_code(status_code)
-    candidate = _LEGACY_ERROR_CODE_ALIASES.get(raw, raw)
+def _default_openclaw_provider_probe() -> Dict[str, Any]:
     try:
-        return ErrorCode(candidate).value
-    except ValueError:
-        if status_code is not None:
-            return _status_error_code(status_code)
-        return ErrorCode.INTERNAL_ERROR.value
-
-def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> Dict[str, Any]:
-    code_value = _canonical_error_code_value(code, status_code=status_code)
-    behavior = _PACK_D_D21_ERROR_BEHAVIOR.get(
-        code_value,
-        _PACK_D_D21_ERROR_BEHAVIOR[ErrorCode.INTERNAL_ERROR.value],
-    )
-    return {
-        "code": code_value,
-        "i18nKey": f"errors.{code_value}",
-        "retryable": behavior["retryable"],
-        "userActionable": behavior["userActionable"],
-    }
-
-def _status_error_message(status_code: int, fallback: Any = None) -> str:
-    clean = str(fallback or "").strip()
-    if clean and clean != "{}":
-        return clean
-    if status_code == 404:
-        return "Not Found"
-    if status_code == 422:
-        return "Request validation failed"
-    if status_code >= 500:
-        return "Internal server error"
-    return "Request failed"
-
-def _error_details_without_correlation(value: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(value, dict):
-        return None
-    return {
-        key: item
-        for key, item in value.items()
-        if key != "correlationId"
-    }
-
-def _pack_d_error_response(
-    *,
-    status_code: int,
-    code: Any,
-    message: Any,
-    correlation_id: str,
-    details: Optional[Dict[str, Any]] = None,
-    headers: Optional[Dict[str, Any]] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> JSONResponse:
-    metadata = _pack_d_error_metadata(code, status_code=status_code)
-    error_payload: Dict[str, Any] = {
-        "code": metadata["code"],
-        "i18nKey": metadata["i18nKey"],
-        "message": str(message or _status_error_message(status_code)),
-        "retryable": metadata["retryable"],
-        "userActionable": metadata["userActionable"],
-    }
-    if details is not None:
-        error_payload["details"] = details
-    content: Dict[str, Any] = {
-        "error": error_payload,
-        "meta": {"correlationId": correlation_id},
-    }
-    if extra:
-        content.update(extra)
-    response_headers = dict(headers or {})
-    response_headers["X-Correlation-Id"] = correlation_id
-    return JSONResponse(
-        status_code=status_code,
-        content=jsonable_encoder(content),
-        headers=response_headers,
-    )
-
-
-def _pack_d_direct_error_response(
-    *,
-    status_code: int,
-    code: Any,
-    message: Any,
-    details: Optional[Dict[str, Any]] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> JSONResponse:
-    return _pack_d_error_response(
-        status_code=status_code,
-        code=code,
-        message=message,
-        correlation_id=str(uuid.uuid4()),
-        details=details,
-        extra=extra,
-    )
-
-
-def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
-    response_headers = dict(headers)
-    origin = request.headers.get("origin")
-    if not origin or not _cors_origin_allowed(origin):
-        return response_headers
-
-    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
-    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
-    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
-
-    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
-    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
-    if "Origin" not in {part.title() for part in vary_parts}:
-        vary_parts.append("Origin")
-    if vary_parts:
-        response_headers["Vary"] = ", ".join(vary_parts)
-    return response_headers
-
-def _pack_d_http_exception_response(
-    request: Request,
-    exc: StarletteHTTPException,
-) -> JSONResponse:
-    headers = _with_cors_actual_response_headers(
-        request,
-        dict(getattr(exc, "headers", None) or {}),
-    )
-    correlation_id = _error_response_correlation_id(request, headers)
-    detail = exc.detail
-    source = detail
-    if (
-        isinstance(detail, dict)
-        and isinstance(detail.get("detail"), dict)
-        and "error" in detail["detail"]
-    ):
-        source = detail["detail"]
-
-    error: Dict[str, Any] = {}
-    if isinstance(source, dict) and isinstance(source.get("error"), dict):
-        error = dict(source["error"])
-    elif isinstance(source, dict) and source.get("error") is not None:
-        error = {
-            "code": source.get("error"),
-            "message": source.get("message") or source.get("error"),
+        from .openclaw_ops_client import OpenClawOpsClient
+        client = OpenClawOpsClient()
+        if not client.configured:
+            return {
+                "provider": "openclaw",
+                "ready": False,
+                "status": "unavailable",
+                "reason": "openclaw_adapter_unconfigured",
+            }
+        status = client.get_upstream_status()
+        ready = bool(
+            status.get("reachable")
+            or status.get("ready")
+            or status.get("status") in {"ready", "ok", "healthy"}
+        )
+        return {
+            "provider": "openclaw",
+            "ready": ready,
+            "status": "ready" if ready else "unavailable",
+            "raw": status,
+        }
+    except Exception as exc:
+        return {
+            "provider": "openclaw",
+            "ready": False,
+            "status": "unavailable",
+            "reason": type(exc).__name__,
         }
 
-    code = error.get("code") or _status_error_code(exc.status_code)
-    message = error.get("message") or _status_error_message(exc.status_code, detail)
-    details = _error_details_without_correlation(error.get("details"))
-    if details is None and not isinstance(source, dict):
-        details = {"reason": str(source or message)}
 
-    extra: Dict[str, Any] = {}
-    if isinstance(source, dict):
-        for key, value in source.items():
-            if key in {"error", "correlationId", "meta", "detail"}:
-                continue
-            extra[key] = value
+provider_readiness_cache = ProviderReadinessCache(
+    probe=_default_openclaw_provider_probe,
+    provider="openclaw",
+)
+_bff_lifespan = create_lifespan(provider_readiness_cache)
 
-    return _pack_d_error_response(
-        status_code=exc.status_code,
-        code=code,
-        message=message,
-        correlation_id=correlation_id,
-        details=details,
-        headers=headers,
-        extra=extra,
-    )
-
-async def _bff_http_exception_handler(
-    request: Request,
-    exc: StarletteHTTPException | HTTPException,
-) -> JSONResponse:
-    return _pack_d_http_exception_response(request, exc)
-
-async def _bff_request_validation_error_handler(
-    request: Request,
-    exc: RequestValidationError,
-) -> JSONResponse:
-    correlation_id = _error_response_correlation_id(request)
-    return _pack_d_error_response(
-        status_code=422,
-        code=ErrorCode.VALIDATION_FAILED.value,
-        message="Request validation failed",
-        correlation_id=correlation_id,
-        details={
-            "reason": "REQUEST_VALIDATION_ERROR",
-            "errors": exc.errors(),
-        },
-    )
-
-async def _bff_value_error_handler(
-    request: Request,
-    exc: ValueError,
-) -> JSONResponse:
-    correlation_id = _error_response_correlation_id(request)
-    return _pack_d_error_response(
-        status_code=400,
-        code=ErrorCode.VALIDATION_FAILED.value,
-        message=str(exc) or "Invalid request",
-        correlation_id=correlation_id,
-        details={"reason": "VALUE_ERROR"},
-    )
-
-async def _bff_unhandled_exception_handler(
-    request: Request,
-    exc: Exception,
-) -> JSONResponse:
-    log.exception("Unhandled BFF request error", exc_info=True)
-    correlation_id = _error_response_correlation_id(request)
-    return _pack_d_error_response(
-        status_code=500,
-        code=ErrorCode.INTERNAL_ERROR.value,
-        message="Internal server error",
-        correlation_id=correlation_id,
-        details={"reason": "INTERNAL_SERVER_ERROR"},
-        # Starlette's outer error handler runs after the CORS middleware has
-        # unwound. Preserve the same allowlist on this terminal response.
-        headers=_with_cors_actual_response_headers(request, {}),
-    )
-
-def _build_bff_app() -> FastAPI:
-    from .auth.browser_session import DevBrowserSessionMiddleware
-
-    cors_origins = _cors_origins_from_env()
-    strict = _is_production_strict_mode()
-    preview_regex = None if strict else _LOVABLE_PREVIEW_ORIGIN_REGEX
-    built_app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
-    built_app.add_middleware(
-        DevBrowserSessionMiddleware,
-        enabled=lambda: _dev_login_enabled(),
-        origin_allowed=_cors_origin_allowed,
-        validate_session=lambda token: _raise_if_session_logged_out(_extract_identity(f"Bearer {token}")),
-    )
-    if cors_origins or preview_regex:
-        middleware_kwargs: Dict[str, Any] = dict(
-            allow_origins=cors_origins,
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=_CORS_ALLOW_HEADERS,
-            expose_headers=_CORS_EXPOSE_HEADERS,
-        )
-        if preview_regex:
-            middleware_kwargs["allow_origin_regex"] = preview_regex
-        built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
-    built_app.add_middleware(_SecurityHeadersMiddleware)
-    built_app.add_exception_handler(HTTPException, _bff_http_exception_handler)
-    built_app.add_exception_handler(StarletteHTTPException, _bff_http_exception_handler)
-    built_app.add_exception_handler(RequestValidationError, _bff_request_validation_error_handler)
-    built_app.add_exception_handler(ValueError, _bff_value_error_handler)
-    built_app.add_exception_handler(Exception, _bff_unhandled_exception_handler)
-    return built_app
-_cors_origins = _cors_origins_from_env()
-_CORS_ALLOW_HEADERS = [
-    "Accept",
-    "Accept-Language",
-    "Authorization",
-    "Cache-Control",
-    "Content-Type",
-    "If-Match",
-    "X-BFF-Api-Version",
-    "X-Confirm-Token",
-    "Idempotency-Key",
-    "Last-Event-ID",
-    "X-Correlation-Id",
-    "X-Dry-Run",
-    "X-Idempotency-Key",
-    "X-Locale",
-    "X-MFA-Token",
-    "X-Request-Id",
-    "X-Refresh-Token",
-    "X-Tenant-Id",
-    "X-Trace-Id",
-]
-_CORS_EXPOSE_HEADERS = [
-    "ETag",
-    "X-BFF-Api-Version",
-    "X-Correlation-Id",
-    "X-Request-Id",
-]
-app = _build_bff_app()
+app = build_bff_app(
+    lifespan=_bff_lifespan,
+    dev_login_enabled=lambda: auth_policy.dev_login_enabled(),
+    origin_allowed=_cors_origin_allowed,
+    validate_session=lambda token: _raise_if_session_logged_out(_extract_identity(f"Bearer {token}")),
+)
 _OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
 def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -1774,25 +1396,7 @@ def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, A
             "runtime kill-switch, and broker rehearsal gates are verified"
         ),
     )
-def _require_admin_mfa(identity: OperatorIdentity, command_name: str) -> None:
-    if "admin" not in identity.roles:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            f"{command_name} requires 'admin' role",
-            "Operator does not hold the admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to an admin-role operator",
-        )
-    if not identity.mfa_verified:
-        raise _bff_error(
-            403,
-            ErrorCode.AUTH_REQUIRED,
-            f"{command_name} requires MFA verification",
-            "Admin action requires MFA validation",
-            precondition_failed="mfa_check",
-            suggestion="Provide a valid MFA token in your session",
-        )
+_require_admin_mfa = auth_policy.require_admin_mfa
 def _deployment_review_href(plan_id: str) -> str:
     return f"{_OPERATOR_DEPLOYMENT_REVIEW_ROUTE}?plan={plan_id}"
 def _incident_detail_href(incident_id: str) -> str:
@@ -7458,10 +7062,7 @@ def _submit_final_command_admission(
     identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     cmd = _normalize_operator_command_payload(payload)
 
-    # Resolve idempotency key before building foundation context so the key is
-    # present in the trace from the start.
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
+    candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
     foundation_context = _build_foundation_command_context(
         cmd=cmd,
         identity=identity,
@@ -7473,12 +7074,13 @@ def _submit_final_command_admission(
         trace_id=x_trace_id,
         correlation_id=x_correlation_id,
         request_id=x_request_id,
-        idempotency_key=resolved_key,
+        idempotency_key=candidate_key,
         route=route,
         source_route=source_route,
     )
 
     try:
+        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         _reject_body_idempotency_key(payload)
         _reject_server_managed_rebalance_evidence_command(cmd)
         if extra_precondition is not None:
@@ -22715,6 +22317,7 @@ auth_handlers = create_auth_handlers(dependencies=auth_deps)
 auth_facade_service = AuthFacadeService(
     local_readiness=auth_handlers["bff_auth_readiness"],
     handlers=auth_handlers,
+    provider_readiness_cache=provider_readiness_cache,
 )
 app.include_router(create_auth_router(service=auth_facade_service, browser_origin_allowed=_cors_origin_allowed))
 from .core.app_factory import (
