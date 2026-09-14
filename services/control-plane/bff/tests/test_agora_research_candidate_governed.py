@@ -20,18 +20,13 @@ from typing import Any, Dict, Optional
 import pytest
 from fastapi.testclient import TestClient
 
-BFF_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from agora.research.dispatcher import (  # noqa: E402
+from agora.research.dispatcher import (
     AdapterRegistry,
     ALLOWLISTED_STAGE_BACKENDS,
     compute_artifact_checksum,
     ResearchDispatcher,
 )
-from agora.research.store import MemoryResearchPlanStore, PostgresResearchPlanStore  # noqa: E402
+from agora.research.store import MemoryResearchPlanStore, PostgresResearchPlanStore
 
 
 _OPERATOR_AUTH_A = "Bearer agora-user-a:operator"
@@ -42,9 +37,11 @@ _TENANT_A = "pantheon-dev"
 
 
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    try:
+        from services.control_plane.bff.tests.test_agora_strategy_workshop import _workshop_client
+    except ImportError:
+        from test_agora_strategy_workshop import _workshop_client
+    return _workshop_client(monkeypatch)
 
 
 def _headers(
@@ -533,8 +530,9 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
 
     # 5. Execute actual worker to drain outbox
     from agora.interaction.worker import AgoraInteractionWorker
+    research_store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
     worker = AgoraInteractionWorker(
-        research_store=bff_main.research_store,
+        research_store=research_store,
         worker_id="test-worker-e2e",
     )
     drained = worker.drain_research_outbox(tenant_id=_TENANT_A, user_id="agora-user-a")

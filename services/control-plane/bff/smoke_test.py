@@ -36,6 +36,7 @@ os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.core.app_factory import build_bff_app
 from services.control_plane.bff.agora.identity.scope import AgoraScopeResolutionError
 from services.control_plane.bff.agora.router import _raise_scope_error
 from services.control_plane.bff.models import (
@@ -52,6 +53,9 @@ class SmokeTestStore(ReadSurfacePorts):
     def __init__(self, data: Optional[dict[str, Any]] = None) -> None:
         super().__init__()
         self._data = data or {}
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        return list(self._data.get("paper_runtime_monitoring_sessions", []))
 
     def get_deployment_plan(self, plan_id: str) -> Optional[dict[str, Any]]:
         plans = self._data.get("deployment_plans", {})
@@ -202,7 +206,7 @@ class TestOperatorBFF(unittest.TestCase):
             stream_generic_events=bff_main.stream_generic_events,
             surface_degradation_reason=bff_main._surface_degradation_reason,
         )
-        test_app = bff_main._build_bff_app()
+        test_app = build_bff_app()
         test_app.include_router(dep_router)
         client = TestClient(test_app)
         r = client.get(

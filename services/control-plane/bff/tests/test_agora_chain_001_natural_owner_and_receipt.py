@@ -39,6 +39,10 @@ from agora.research.routes.common import (
     _build_run_projection,
 )
 from agora.research.store import MemoryResearchPlanStore
+try:
+    from agora.strategy_workshop import MemoryWorkshopStore
+except ImportError:
+    from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
 
@@ -105,6 +109,7 @@ def test_public_plan_reaches_execution_owner(supply_correlation: bool) -> None:
         "review-plan",
         "2026-09-08T00:00:00Z",
         SimpleNamespace(tenant_id="review-tenant", user_id="review-user"),
+        workshop_store=MemoryWorkshopStore(),
     )
     if supply_correlation:
         plan["correlation_id"] = "review-correlation"
@@ -134,6 +139,43 @@ def test_public_plan_reaches_execution_owner(supply_correlation: bool) -> None:
         downstream_key="review-key",
     )
     assert responses and responses[0].status_code == 200, responses[0].text
+
+
+def test_build_plan_with_injected_workshop_store_makes_no_main_import_attempts() -> None:
+    """Verify _build_plan with injected workshop_store makes no BFF main import or execution attempts."""
+    import sys
+    attempts: list[str] = []
+
+    def audit_hook(event: str, args: tuple[Any, ...]) -> None:
+        if event == "import":
+            mod_name = args[0]
+            if mod_name == "main" or "bff.main" in mod_name:
+                attempts.append(mod_name)
+
+    sys.addaudithook(audit_hook)
+    body = ResearchPlanCreateRequest.model_validate({
+        "spec_version": "1.0",
+        "strategy_id": "audit-strategy",
+        "strategy_spec_registry_id": "audit-spec",
+        "stages": [
+            {
+                "stage_id": "audit-stage",
+                "stage_type": "prototype_backtest",
+                "input_refs": ["dataset:audit-ref"],
+                "status": "ready",
+            }
+        ],
+    })
+    plan = _build_plan(
+        body,
+        "audit-workshop",
+        "audit-plan",
+        "2026-09-08T00:00:00Z",
+        SimpleNamespace(tenant_id="audit-tenant", user_id="audit-user"),
+        workshop_store=MemoryWorkshopStore(),
+    )
+    assert plan["correlation_id"] == "workshop:audit-workshop"
+    assert not attempts, f"Unexpected main import attempts: {attempts}"
 
 
 def test_backend_without_provenance_or_receipt_does_not_mint_real() -> None:
@@ -191,14 +233,31 @@ def test_backend_with_real_provenance_but_no_receipt_downgrades_to_simulation() 
 def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("RANKING_STORE_BOOTSTRAP", "0")
-    sys.path.insert(0, str(Path.cwd() / "services/control-plane/bff/tests"))
-    from test_agora_strategy_workshop import _workshop_client, _create_workshop, _get_current_etag
-    import main as bff_main
+    try:
+        from services.control_plane.bff.tests.test_agora_strategy_workshop import (
+            _workshop_client,
+            _create_workshop,
+            _get_current_etag,
+        )
+    except ImportError:
+        from test_agora_strategy_workshop import (
+            _workshop_client,
+            _create_workshop,
+            _get_current_etag,
+        )
     from agora.dataset_extraction.extractor import DatasetRecord
     from agora.dataset_extraction.models import DatasetKind, InteractionKind
     from agora.dataset_extraction.router import _default_store
 
     client = _workshop_client(monkeypatch)
+    router = getattr(client, "router", None)
+    app = getattr(client, "app_instance", None)
+    research_store = getattr(router, "research_store", None) or getattr(app, "research_store", None)
+    dispatcher = getattr(router, "research_dispatcher", None) or getattr(app, "research_dispatcher", None)
+    ds_store = getattr(router, "dataset_store", None) or getattr(app, "dataset_store", None) or _default_store()
+    test_public_create_approve_dispatch_worker_to_research_endpoint.last_client = client
+    test_public_create_approve_dispatch_worker_to_research_endpoint.last_store = research_store
+
     workshop_id = _create_workshop(client, "ws-agora-natural-001")
     auth = {"Authorization": "Bearer agora-test-user:operator"}
 
@@ -216,7 +275,6 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert msg_resp.status_code == 202, msg_resp.text
 
     # 2. Register canonical governed dataset in the canonical dataset owner
-    ds_store = getattr(bff_main, "dataset_store", None) or _default_store()
     raw_ohlcv = []
     start = date(2026, 1, 1)
     for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
@@ -324,7 +382,6 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
         mode="real",
         execution_owner=backend_client,
     )
-    dispatcher = bff_main.research_dispatcher
     assert dispatcher is not None
     dispatcher.registry.register("prototype_backtest", adapter)
 
@@ -341,14 +398,14 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     run_resp_json = run_resp.json()
     assert run_resp_json["status"] == "queued"
     run_id = run_resp_json["data"]["run_id"]
-    initial_run = bff_main.research_store.get_run(run_id)
+    initial_run = research_store.get_run(run_id)
     assert initial_run is not None
     assert initial_run["execution_status"] == "queued"
     assert initial_run["correlation_id"] == "trace-natural-interaction-001"
 
     # 7. Execute worker drain via AgoraInteractionWorker
     worker = AgoraInteractionWorker(
-        research_store=bff_main.research_store,
+        research_store=research_store,
         research_dispatcher=dispatcher,
         worker_id="worker-natural-001",
     )
@@ -356,14 +413,14 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert drained >= 1
 
     # 8. Verify executed run and authentic owner receipt
-    completed_run = bff_main.research_store.get_run(run_id)
+    completed_run = research_store.get_run(run_id)
     assert completed_run is not None
     assert completed_run["execution_status"] == "succeeded"
     assert completed_run["outcome"] == "pass"
     assert completed_run["correlation_id"] == "trace-natural-interaction-001"
     assert len(completed_run["metrics"]) > 0
 
-    receipt = bff_main.research_store.get_execution_receipt(run_id)
+    receipt = research_store.get_execution_receipt(run_id)
     assert receipt is not None
     assert receipt["run_id"] == run_id
     assert receipt["correlation_id"] == "trace-natural-interaction-001"
@@ -373,7 +430,7 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
 
     # 9. Server-side provenance resolution
     prov, resolved_receipt = resolve_run_provenance(
-        bff_main.research_store,
+        research_store,
         completed_run,
         expected_correlation_id="trace-natural-interaction-001",
     )
@@ -406,7 +463,7 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
 
     scope = SimpleNamespace(tenant_id="pantheon-dev", user_id="agora-test-user", auth_stub=False)
     research_ctx = AgoraResearchRouteContext(
-        store=bff_main.research_store,
+        store=research_store,
         extract_identity=lambda *a, **k: None,
         require_read_role=lambda *a, **k: None,
         require_write_role=lambda *a, **k: None,
@@ -443,7 +500,7 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert cand["artifact_digest"] == receipt["artifact_digest"]
 
     # Assert client cannot substitute authentic owner metrics
-    cand_metrics = bff_main.research_store.get_candidate_metrics(pool["pool_id"], owner_artifact_id)
+    cand_metrics = research_store.get_candidate_metrics(pool["pool_id"], owner_artifact_id)
     assert cand_metrics.get("mean_total_return") != 999.0
 
     # Negative control: synthetic artifact IDs fail admission
@@ -476,11 +533,23 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     """Unknown dataset reference must fail closed end-to-end through public route dispatch and drain."""
     monkeypatch.setenv("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("RANKING_STORE_BOOTSTRAP", "0")
-    sys.path.insert(0, str(Path.cwd() / "services/control-plane/bff/tests"))
-    from test_agora_strategy_workshop import _workshop_client, _create_workshop
-    import main as bff_main
+    try:
+        from services.control_plane.bff.tests.test_agora_strategy_workshop import (
+            _workshop_client,
+            _create_workshop,
+        )
+    except ImportError:
+        from test_agora_strategy_workshop import (
+            _workshop_client,
+            _create_workshop,
+        )
 
     client = _workshop_client(monkeypatch)
+    router = getattr(client, "router", None)
+    app = getattr(client, "app_instance", None)
+    research_store = getattr(router, "research_store", None) or getattr(app, "research_store", None)
+    dispatcher = getattr(router, "research_dispatcher", None) or getattr(app, "research_dispatcher", None)
+
     workshop_id = _create_workshop(client, "ws-agora-negative-001")
     auth = {"Authorization": "Bearer agora-test-user:operator"}
 
@@ -548,7 +617,6 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
         mode="real",
         execution_owner=backend_client,
     )
-    dispatcher = bff_main.research_dispatcher
     assert dispatcher is not None
     dispatcher.registry.register("prototype_backtest", adapter)
 
@@ -564,7 +632,7 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     run_id = run_resp.json()["data"]["run_id"]
 
     worker = AgoraInteractionWorker(
-        research_store=bff_main.research_store,
+        research_store=research_store,
         research_dispatcher=dispatcher,
         worker_id="worker-negative-001",
     )
@@ -572,10 +640,10 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     worker.drain_research_outbox()
 
     # The run must NOT be successful, receipt must NOT exist, provenance must NOT be 'real'
-    run_record = bff_main.research_store.get_run(run_id)
+    run_record = research_store.get_run(run_id)
     assert run_record["execution_status"] != "succeeded"
-    assert bff_main.research_store.get_execution_receipt(run_id) is None
-    prov, _ = resolve_run_provenance(bff_main.research_store, run_record)
+    assert research_store.get_execution_receipt(run_id) is None
+    prov, _ = resolve_run_provenance(research_store, run_record)
     assert prov != "real"
 
 
@@ -622,14 +690,20 @@ def test_compose_agora_interaction_worker_dataset_wiring_and_separate_process() 
 
 def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_controls(monkeypatch: pytest.MonkeyPatch) -> None:
     """Public candidate admission must fail closed for forged, missing, or mismatched receipts, and verify genuine real receipts."""
-    import main as bff_main
+    try:
+        from services.control_plane.bff.tests.test_agora_strategy_workshop import _workshop_client
+    except ImportError:
+        from test_agora_strategy_workshop import _workshop_client
     from agora.research.receipt import ResearchExecutionReceipt
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("AGORA_CANDIDATE_POOL_PROFILE", "production")
 
-    store = bff_main.research_store
+    client = _workshop_client(monkeypatch)
+    router = getattr(client, "router", None)
+    app = getattr(client, "app_instance", None)
+    store = getattr(router, "research_store", None) or getattr(app, "research_store", None)
     assert store is not None
 
     tenant_id = "pantheon-dev"
@@ -637,7 +711,6 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
     operator_auth = f"Bearer {user_id}:operator"
 
     # 1. Non-existent run: client claims real provenance and has_real_receipt=True
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
     resp_absent = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -1205,11 +1278,11 @@ def test_public_natural_chain_preserves_owner_artifact(monkeypatch: pytest.Monke
         return mod
     monkeypatch.setattr(sys.modules[__name__], "_load_service_module", load)
     test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch)
-    import main as bff_main
+    research_store = getattr(test_public_create_approve_dispatch_worker_to_research_endpoint, "last_store", None)
     artifacts = modules[0].store.list_artifacts()
     assert artifacts
     artifact = artifacts[-1]
-    run = bff_main.research_store.get_run(artifact["run_id"])
+    run = research_store.get_run(artifact["run_id"])
     ids, digests = _extract_run_artifact_identities(run)
     assert artifact["artifact_id"] in ids, dict(owner_artifact=artifact["artifact_id"], projected_ids=sorted(ids))
 

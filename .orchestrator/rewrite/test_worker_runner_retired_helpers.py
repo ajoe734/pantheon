@@ -17,7 +17,10 @@ class WorkerRunnerRetiredHelpersTests(unittest.TestCase):
         }
 
     def test_retired_shortcuts_have_no_definition_or_reference(self) -> None:
-        retired = {"_get_task_roles", "execution_authorization_still_current"}
+        retired = {
+            "_get_task_roles", "execution_authorization_still_current",
+            "ensure_execution_authorized_before_launch",
+        }
         for node in ast.walk(self.tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 symbol = node.name
@@ -30,14 +33,6 @@ class WorkerRunnerRetiredHelpersTests(unittest.TestCase):
             else:
                 continue
             self.assertNotIn(symbol, retired, f"retired symbol at line {node.lineno}")
-
-    def test_entry_binding_retains_execution_authorization_barrier(self) -> None:
-        self.assertTrue(any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "ensure_execution_authorized_before_launch"
-            for node in ast.walk(self.functions["validate_worker_entry_binding"])
-        ))
 
     def test_main_reuses_entry_binding_for_running_checks(self) -> None:
         calls = [

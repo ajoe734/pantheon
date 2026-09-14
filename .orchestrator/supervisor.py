@@ -31,7 +31,9 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
+from functools import wraps
 import model_rotation
+import runtime_state as promotion_state
 import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
@@ -43,6 +45,7 @@ from common import (
     canonical_task_state_lock_file,
     canonical_task_state_identity,
     config_path,
+    cmdline_is_worker_runner,
     display_name_for,
     load_config,
     load_json,
@@ -179,7 +182,6 @@ from watch_events import (
 
 # Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
-import execution_authorization
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
@@ -3150,75 +3152,44 @@ class StaleDispatchBeforeLaunch(RuntimeError):
     """The canonical task assignment changed before adapter process spawn."""
 
 
-class ExecutionAuthorizationSpendFailed(RuntimeError):
-    """A privileged task's grant could not be reserved for this exact launch."""
-
-
-def reserve_execution_authorization_for_launch(
-    config: dict[str, Any],
-    task_id: str,
-    *,
-    run_id: str,
-) -> None:
-    """Atomically spend one privileged task's execution grant for one launch.
-
-    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): dispatch admission
-    already refused to build a launch request unless
-    ``execution_authorization.is_execution_authorized`` was ``True`` at
-    snapshot time, but that snapshot is not the authoritative claim/lease
-    boundary -- two concurrent launch attempts could otherwise both observe
-    ``STATE_GRANTED`` and both proceed. This function is that boundary: it
-    reloads canonical state under the same exclusive task-state lock every
-    other canonical mutation uses, re-verifies authorization against the
-    freshly loaded task, and -- only if it is still ``STATE_GRANTED`` --
-    commits the transition to ``STATE_RESERVED`` bound to this exact
-    ``run_id`` in the same write. A task with no execution-authorization
-    subrecord (the overwhelmingly common, non-privileged case) is a no-op:
-    ordinary functional/paper/read_only/ci/reconcile_only dispatch never
-    takes this lock path at all costs beyond one dict lookup.
-    """
-
-    status_path = config_path(config, "status_file")
-    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-        status = load_status(config)
-        task = task_index_from_status(config, status).get(task_id)
-        if task is None:
-            # Cannot independently prove this dispatched task is
-            # non-privileged when the authoritative reload cannot even find
-            # it. Fail closed rather than treating an unresolvable task the
-            # same as an ordinary functional one (SA/SD 4, 7).
-            raise ExecutionAuthorizationSpendFailed(
-                f"cannot verify execution-authorization policy for missing task {task_id}"
+def promotion_launch_guard(operation):
+    @wraps(operation)
+    def guarded(config, state, *args, **kwargs):
+        # The final fresh admission read and adapter process creation share the
+        # promotion lock. Detached runtime-phase snapshots cannot bypass it.
+        with runtime_state_lock(config):
+            current = (
+                load_runtime_state(config)
+                if config.get("paths", {}).get("state_file")
+                else state
             )
-        privileged_by_source = execution_authorization.task_privileged_by_source(task)
-        record = task.get("execution_authorization")
-        policy = record.get("policy") if isinstance(record, dict) else None
-        policy_requires = isinstance(policy, dict) and bool(
-            policy.get("requires_execution_authorization")
-        )
-        if not privileged_by_source and not policy_requires:
-            return
-        if not policy_requires:
-            # Ground truth (the verified dev-bridge packet provenance) says
-            # this task is privileged, but its execution-authorization
-            # subrecord/policy is missing, corrupt, or downgraded. Never
-            # silently relabel that as an ordinary, unauthorized-by-default
-            # task -- refuse the launch instead (SA/SD 2, 7).
-            raise ExecutionAuthorizationSpendFailed(
-                f"task {task_id} is privileged by source provenance but has no "
-                "valid execution-authorization policy; refusing to reserve"
+            runtime = (
+                status_command_runtime_record_from_env(status_command_runtime_env(config))
+                if current.get("promotion")
+                else {}
             )
-        now = datetime.now(timezone.utc)
-        try:
-            updated = execution_authorization.reserve_execution_authorization(
-                task, run_id=run_id, now=now
-            )
-        except execution_authorization.ExecutionAuthorizationError as exc:
-            raise ExecutionAuthorizationSpendFailed(str(exc)) from exc
-        task["execution_authorization"] = updated
-        write_status(config, status, source="supervisor-execution-authorization-reserve")
+            request = args[0] if args else kwargs.get("request")
+            if getattr(promotion_state, "promotion_launch_allowed", None) and not promotion_state.promotion_launch_allowed(
+                current, runtime, request.task_id if request is not None else None
+            ):
+                return False, "runtime_promotion_fenced", None
+            result = operation(config, state, *args, **kwargs)
+        # The recovery projection child acquires runtime admission itself.
+        # Its canonical receipt is already durable; run projection after unlock.
+        if (
+            isinstance(result, tuple)
+            and len(result) > 0
+            and result[0]
+            and request is not None
+            and getattr(request, "metadata", {}).get("recovery_receipt_id")
+            and config.get("paths", {}).get("status_file")
+        ):
+            sync_status_pipeline(config)
+        return result
+    return guarded
 
 
+@promotion_launch_guard
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3252,11 +3223,6 @@ def start_worker_for_request(
     request.metadata["task_state_identity"] = json.loads(
         issued_command_env.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", "{}")
     )
-    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-        request.metadata["execution_authorization_run_id"] = (
-            f"{event_id_for_log or queue_event_id or ''}"
-            f"-attempt-{max(1, int(attempt_count))}"
-        )
     _persist_runtime_phase_launch_intent(
         config,
         state,
@@ -3269,19 +3235,6 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
-    # Always reload at the spend boundary. A stale/corrupted queue snapshot
-    # cannot classify privileged work as ordinary to skip this check.
-    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-        execution_authorization_run_id = request.metadata["execution_authorization_run_id"]
-        try:
-            reserve_execution_authorization_for_launch(
-                config, str(request.task_id or ""),
-                run_id=execution_authorization_run_id,
-            )
-        except BaseException:
-            _discard_unlaunched_runtime_phase_intent(config, state)
-            raise
-        request.metadata["execution_authorization_run_id"] = execution_authorization_run_id
     delivery_invoked = False
     try:
         # Keep the canonical assignment read lock through process creation.
@@ -3301,16 +3254,6 @@ def start_worker_for_request(
             )
             if stale_message:
                 raise StaleDispatchBeforeLaunch(stale_message)
-            if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-                current_task = latest_task_map.get(str(request.task_id or ""))
-                if current_task is None or not execution_authorization.reservation_is_current(
-                    current_task,
-                    run_id=request.metadata.get("execution_authorization_run_id"),
-                    now=datetime.now(timezone.utc),
-                ):
-                    raise ExecutionAuthorizationSpendFailed(
-                        "execution authorization changed between reservation and launch"
-                    )
             delivery_invoked = True
             result = adapter.deliver(request)
     except BaseException:
@@ -3505,6 +3448,7 @@ def start_worker_for_request(
             task_generation=int(request.metadata.get("task_generation") or 0),
             queue_event_id=str(queue_event_id or ""),
             worker_run_id=str(worker_run_id),
+            sync_projection=False,
         )
     write_activity_log(
         config,
@@ -3610,6 +3554,11 @@ def process_queue(
     """
     if delivery_outcome is not None:
         delivery_outcome["launched"] = False
+    with runtime_state_lock(config):
+        current = load_runtime_state(config) if config.get("paths", {}).get("state_file") else state
+        runtime = status_command_runtime_record_from_env(status_command_runtime_env(config)) if current.get("promotion") else {}
+        if not promotion_state.promotion_admission_allowed(current, runtime):
+            return False
     if not bool(ready_dispatch_settings(config).get("enabled", False)):
         return False
     if command_runtime_dispatch_block_reason(state):
@@ -3619,6 +3568,8 @@ def process_queue(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     queued_events = sorted(queue_events(state), key=queue_event_sort_key)
     for event in queued_events:
+        if not promotion_state.promotion_launch_allowed(current, runtime, str(event.get("task_id") or "")):
+            continue
         event_id = event.get("event_id")
         if not event_id:
             continue
@@ -3848,30 +3799,6 @@ def process_queue(
             record["status"] = "completed"
             record["processed_at"] = utc_now()
             record["skip_reason"] = "task_generation_changed_before_launch"
-            record["error"] = str(exc)
-            write_activity_log(
-                config,
-                {
-                    "type": "wake_skipped",
-                    "task_id": event.get("task_id"),
-                    "target_agent": event.get("target_display_name")
-                    or event.get("target_agent"),
-                    "message": str(exc),
-                    "queue_event_id": event_id,
-                    "dispatch_reason": event.get("reason"),
-                },
-            )
-            changed = True
-            continue
-        except ExecutionAuthorizationSpendFailed as exc:
-            # The admission snapshot said this privileged task was granted,
-            # but the exact claim/lease boundary found it already reserved,
-            # expired, revoked, or reassigned since that snapshot was taken.
-            # Skip like any other late-eligibility change; a future cycle
-            # re-evaluates admission from fresh canonical state.
-            record["status"] = "completed"
-            record["processed_at"] = utc_now()
-            record["skip_reason"] = "execution_authorization_required"
             record["error"] = str(exc)
             write_activity_log(
                 config,
@@ -4253,7 +4180,15 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         # worker_runner.py wrapper is exactly one-per-worker, so count it alone;
         # otherwise the live worker count is ~3x inflated and max_concurrent_workers
         # freezes dispatch at ~1/3 of its configured value (OPS-DISPATCH-PIDCOUNT-001).
-        if "worker_runner.py" not in cmdline:
+        # A raw substring search over the whole cmdline blob is not an identity
+        # boundary: provider descendants inherit the wake prompt as an argv
+        # value and can carry the same "worker_runner.py" text, so the scan
+        # must instead require an exact argv path token whose basename is
+        # worker_runner.py under an .orchestrator directory, bound to the actual
+        # interpreter or script invocation (OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001).
+        raw_cmd = raw[:-1] if raw.endswith(b"\x00") else raw
+        argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
+        if not cmdline_is_worker_runner(argv_parts):
             continue
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
@@ -6946,7 +6881,11 @@ def _proc_worker_runner_launch_marker(
     """
 
     raw_cmdline = (entry / "cmdline").read_bytes()
-    if not raw_cmdline or b"worker_runner.py" not in raw_cmdline:
+    if not raw_cmdline:
+        return None
+    raw_cmd = raw_cmdline[:-1] if raw_cmdline.endswith(b"\x00") else raw_cmdline
+    argv_parts = [part.decode("utf-8", errors="ignore") for part in raw_cmd.split(b"\x00")]
+    if not cmdline_is_worker_runner(argv_parts):
         return None
     raw_environ = (entry / "environ").read_bytes()
     env: dict[str, str] = {}
@@ -7010,11 +6949,7 @@ def _proc_worker_runner_launch_marker(
     # process generations that are definitively earlier than the intent.
     if process_started_epoch + 1.0 < prepared_epoch:
         return None
-    argv = [
-        value.decode("utf-8", errors="ignore")
-        for value in raw_cmdline.split(b"\0")
-        if value
-    ]
+    argv = argv_parts
     run_id = str(env.get("ORCH_RUN_ID") or "")
     if not run_id and "--run-id" in argv:
         index = argv.index("--run-id") + 1
@@ -8952,9 +8887,116 @@ def owner_worker_canonical_handoff_status(
     )
 
 
+def _coerce_observed_worker_task_generation(raw_gen: Any) -> int | None:
+    """Parse a worker-observed task generation without ever guessing one.
+
+    Returns ``None`` for anything that is not an unambiguous positive
+    integer generation value: absent, boolean, non-numeric, non-finite,
+    fractional, or non-positive. Only ``int`` or an integral ``float`` is
+    accepted -- ``2.9`` must not silently truncate to ``2``. A missing or
+    malformed observation must never fall back to the task's current
+    generation and must never raise -- callers treat ``None`` as "no valid
+    observed binding" and refuse the write entirely.
+    """
+    if raw_gen is None or isinstance(raw_gen, bool):
+        return None
+    if isinstance(raw_gen, int):
+        generation = raw_gen
+    elif isinstance(raw_gen, float):
+        if not math.isfinite(raw_gen) or not raw_gen.is_integer():
+            return None
+        generation = int(raw_gen)
+    else:
+        try:
+            generation = int(raw_gen)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return generation if generation >= 1 else None
+
+
+def observed_worker_task_generation(worker: dict[str, Any]) -> int | None:
+    """Extract the exact task generation this worker was dispatched against.
+
+    Reads every copy that is actually present -- the worker's own
+    ``task_generation`` field, its dispatch ``request_snapshot``, and that
+    snapshot's ``metadata`` -- and requires all present copies to parse to
+    the same valid positive generation. A malformed container shape (for
+    example a non-mapping ``request_snapshot`` or ``metadata``) is rejected
+    without calling ``.get`` on it, and any present-but-invalid or
+    conflicting copy makes the whole observation invalid. Returns ``None``
+    (never a substitute value) whenever no consistent valid generation can
+    be established.
+    """
+    request_snapshot = worker.get("request_snapshot")
+    if request_snapshot is not None and not isinstance(request_snapshot, Mapping):
+        return None
+
+    metadata = request_snapshot.get("metadata") if isinstance(request_snapshot, Mapping) else None
+    if metadata is not None and not isinstance(metadata, Mapping):
+        return None
+
+    observations: list[int | None] = []
+    if "task_generation" in worker:
+        observations.append(_coerce_observed_worker_task_generation(worker.get("task_generation")))
+    if isinstance(request_snapshot, Mapping) and "task_generation" in request_snapshot:
+        observations.append(_coerce_observed_worker_task_generation(request_snapshot.get("task_generation")))
+    if isinstance(metadata, Mapping) and "task_generation" in metadata:
+        observations.append(_coerce_observed_worker_task_generation(metadata.get("task_generation")))
+
+    if not observations or any(value is None for value in observations):
+        return None
+    if len(set(observations)) != 1:
+        return None
+    return observations[0]
+
+
+def _blocked_hold_already_committed(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    waiting_for: str,
+    blocker_kind: str,
+) -> bool:
+    """Distinguish a precommit ``write_status`` failure from an already
+    durable hold whose derived-file projection merely failed to land.
+
+    ``write_status`` journals the authoritative commit before it projects
+    ``status_file``; a projection failure (for example an unwritable or
+    replaced status path) still leaves the journal committed. ``load_status``
+    reads directly from that journal, independent of the failed projection,
+    so re-reading it after a ``write_status`` exception tells the caller
+    whether the transition it built already became durable. Returning
+    ``None`` for an already-committed hold would make the caller believe no
+    write occurred while the task is, in fact, already blocked -- exactly
+    the storage-failure/no-partial-write violation this guards against.
+    """
+    try:
+        reloaded = load_status(config)
+    except Exception:
+        return False
+    reloaded_task = task_index_from_status(config, reloaded).get(task_id)
+    if not reloaded_task:
+        return False
+    if str(reloaded_task.get("status") or "") != "blocked":
+        return False
+    if str(reloaded_task.get("waiting_for") or "") != waiting_for:
+        return False
+    return any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == blocker_kind
+        for blocker in (reloaded.get("blockers") or [])
+    )
+
+
 def _prepare_missing_handoff_blocker_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
+    *,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
     """Record an actionable missing-handoff blocker for a prepared-but-unhanded task."""
     if not config.get("paths", {}).get("status_file"):
@@ -8967,16 +9009,60 @@ def _prepare_missing_handoff_blocker_locked(
     if not owner_agent:
         return None
 
-    status = load_status(config)
+    try:
+        status = load_status(config)
+    except Exception:
+        return None
     if status.get("status_activity_outbox") not in (None, {}, []):
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
         return None
-    if str(task.get("owner") or "").strip() != owner_agent:
+    if task.get("review_decision_intent") not in (None, {}, []):
+        return None
+    if task_has_active_worker_recovery(task):
+        return None
+    if str(task.get("waiting_for") or "").strip():
         return None
 
-    reviewer = str(task.get("reviewer") or "").strip()
+    old_owner = str(task.get("owner") or "").strip()
+    old_reviewer = str(task.get("reviewer") or "").strip()
+    old_status = str(task.get("status") or "").strip()
+    old_generation = task_generation(task)
+
+    if expected_generation is None:
+        expected_generation = observed_worker_task_generation(worker)
+    if expected_generation is None:
+        # No valid observed worker binding: refuse the write rather than
+        # substitute the task's current generation or skip the fence.
+        return None
+
+    if expected_owner is not None:
+        if (
+            old_owner != expected_owner.strip()
+            and canonical_agent_name(config, old_owner) != canonical_agent_name(config, expected_owner)
+        ):
+            return None
+    if (
+        old_owner != owner_agent
+        and canonical_agent_name(config, old_owner) != canonical_agent_name(config, owner_agent)
+    ):
+        return None
+
+    if expected_reviewer is not None:
+        if (
+            old_reviewer != expected_reviewer.strip()
+            and canonical_agent_name(config, old_reviewer) != canonical_agent_name(config, expected_reviewer)
+        ):
+            return None
+
+    if expected_status is not None and old_status != expected_status.strip():
+        return None
+
+    if expected_generation is not None and old_generation != expected_generation:
+        return None
+
+    reviewer = old_reviewer
     waiting_for = reviewer or owner_agent
     if any(
         str(blocker.get("task_id") or "") == task_id
@@ -8998,7 +9084,7 @@ def _prepare_missing_handoff_blocker_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             task.get("status"),
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -9035,20 +9121,52 @@ def _prepare_missing_handoff_blocker_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_status(config, status, source="supervisor-missing-handoff")
+    try:
+        write_status(config, status, source="supervisor-missing-handoff")
+    except Exception:
+        if _blocked_hold_already_committed(
+            config,
+            task_id=task_id,
+            waiting_for=waiting_for,
+            blocker_kind="missing_handoff",
+        ):
+            # The journal commit already landed the blocked hold; only the
+            # derived-file projection failed. Report the event as committed
+            # so the caller still runs sync_status_pipeline to repair
+            # projection, instead of pretending the write never happened.
+            return event
+        return None
     return event
 
 
-def record_missing_handoff_blocker(config: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
+def record_missing_handoff_blocker(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
+) -> dict[str, Any] | None:
     if not config.get("paths", {}).get("status_file"):
         return None
-    status_path = config_path(config, "status_file")
+    try:
+        status_path = config_path(config, "status_file")
+    except Exception:
+        return None
     with canonical_task_state_lock_file(
         status_path,
         shared=False,
         nonblocking=False,
     ):
-        event = _prepare_missing_handoff_blocker_locked(config, worker)
+        event = _prepare_missing_handoff_blocker_locked(
+            config,
+            worker,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
+        )
     if event is None:
         return None
     sync_status_pipeline(config)
@@ -9071,6 +9189,10 @@ def _prepare_failure_loop_blocker_locked(
     *,
     task_id: str,
     message: str,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
     """Record an actionable failure-loop hold for a task that keeps failing
     even after ``reconcile_failure_loops`` already tried reassigning it.
@@ -9084,14 +9206,44 @@ def _prepare_failure_loop_blocker_locked(
     if not config.get("paths", {}).get("status_file"):
         return None
 
-    status = load_status(config)
+    try:
+        status = load_status(config)
+    except Exception:
+        return None
     if status.get("status_activity_outbox") not in (None, {}, []):
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
         return None
+    if task.get("review_decision_intent") not in (None, {}, []):
+        return None
+    if task_has_active_worker_recovery(task):
+        return None
     if str(task.get("waiting_for") or "").strip():
         return None
+
+    old_owner = str(task.get("owner") or "").strip()
+    old_reviewer = str(task.get("reviewer") or "").strip()
+    old_status = str(task.get("status") or "").strip()
+    old_generation = task_generation(task)
+
+    if expected_owner is not None:
+        if (
+            old_owner != expected_owner.strip()
+            and canonical_agent_name(config, old_owner) != canonical_agent_name(config, expected_owner)
+        ):
+            return None
+    if expected_reviewer is not None:
+        if (
+            old_reviewer != expected_reviewer.strip()
+            and canonical_agent_name(config, old_reviewer) != canonical_agent_name(config, expected_reviewer)
+        ):
+            return None
+    if expected_status is not None and old_status != expected_status.strip():
+        return None
+    if expected_generation is not None and old_generation != expected_generation:
+        return None
+
     if any(
         str(blocker.get("task_id") or "") == task_id
         and str(blocker.get("status") or "") == "open"
@@ -9104,7 +9256,7 @@ def _prepare_failure_loop_blocker_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             task.get("status"),
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -9135,7 +9287,21 @@ def _prepare_failure_loop_blocker_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_status(config, status, source="supervisor-failure-loop")
+    try:
+        write_status(config, status, source="supervisor-failure-loop")
+    except Exception:
+        if _blocked_hold_already_committed(
+            config,
+            task_id=task_id,
+            waiting_for="Human/Ops",
+            blocker_kind="failure_loop",
+        ):
+            # The journal commit already landed the blocked hold; only the
+            # derived-file projection failed. Report the event as committed
+            # so the caller still runs sync_status_pipeline to repair
+            # projection, instead of pretending the write never happened.
+            return event
+        return None
     return event
 
 
@@ -9144,15 +9310,30 @@ def record_failure_loop_blocker(
     *,
     task_id: str,
     message: str,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
+    expected_generation: int | None = None,
 ) -> dict[str, Any] | None:
-    status_path = config_path(config, "status_file")
+    if not config.get("paths", {}).get("status_file"):
+        return None
+    try:
+        status_path = config_path(config, "status_file")
+    except Exception:
+        return None
     with canonical_task_state_lock_file(
         status_path,
         shared=False,
         nonblocking=False,
     ):
         event = _prepare_failure_loop_blocker_locked(
-            config, task_id=task_id, message=message
+            config,
+            task_id=task_id,
+            message=message,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
         )
     if event is None:
         return None
@@ -9261,7 +9442,9 @@ def _persist_worker_recovery_receipt_locked(
     event = _worker_recovery_activity_event(
         canonical,
         event_type=(
-            "worker_lost_lease_recovery_pending"
+            "worker_promotion_continuation_pending"
+            if canonical_status == "pending" and canonical.get("reason_kind") == "promotion_drained"
+            else "worker_lost_lease_recovery_pending"
             if canonical_status == "pending"
             else f"worker_lost_lease_recovery_{canonical_status}"
         ),
@@ -9918,6 +10101,7 @@ def mark_worker_recovery_materialized(
     task_generation: int,
     queue_event_id: str,
     worker_run_id: str,
+    sync_projection: bool = True,
 ) -> bool:
     if not all((receipt_id, task_id, queue_event_id, worker_run_id)):
         return False
@@ -9937,7 +10121,8 @@ def mark_worker_recovery_materialized(
         )
     if not applied:
         return False
-    sync_status_pipeline(config)
+    if sync_projection:
+        sync_status_pipeline(config)
     return True
 
 
@@ -10157,12 +10342,13 @@ def assignment_transiently_blocked_recoverable(
     owner: str,
     *,
     state: dict[str, Any],
+    agent_loads: Mapping[str, list[Any]] | None = None,
     fallback_candidates: list[str],
 ) -> str | None:
     """Return the load-balance reason when the owner cannot take this task
     right now for ANY reason -- stale/unknown health cache, a short
     retry-after window, zero capacity -- while a configured fallback
-    currently can.
+    currently has live spare capacity and satisfies dispatch readiness.
 
     Unlike ``assignment_terminal_unavailability`` this does not require the
     block to be durable: ``agent_can_take_task`` already fails closed on
@@ -10173,11 +10359,28 @@ def assignment_transiently_blocked_recoverable(
     ``assignment_saturated_recoverable`` before acting -- reassigning away
     from an owner that was about to recover on its own just churns
     ownership for nothing.
+
+    Requires at least one configured fallback candidate to have live spare
+    capacity (current load < dispatch capacity) according to the canonical
+    active-load model, and satisfy dispatch readiness via ``agent_can_take_task``.
+    A healthy fallback already at max_parallel is ineligible.
     """
 
     if agent_can_take_task(config, owner, task, state=state):
         return None
+    if agent_loads is None:
+        active_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("active_worker_statuses"), []
+        )
+        agent_loads = agent_dispatch_loads(config, state, active_statuses)
     for candidate in fallback_candidates:
+        candidate_capacity = agent_dispatch_capacity(config, normalize_agent_id(candidate))
+        if candidate_capacity <= 0:
+            continue
+        candidate_name = canonical_agent_name(config, candidate) or candidate
+        candidate_load = len(agent_loads.get(candidate, agent_loads.get(candidate_name, [])))
+        if candidate_load >= candidate_capacity:
+            continue
         if agent_can_take_task(config, candidate, task, state=state):
             return LOAD_BALANCE_TRANSIENT_REASON
     return None
@@ -10383,9 +10586,10 @@ def reconcile_unavailable_assignments(
     )
     agent_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
     load_balance_watch = state.setdefault("load_balance_watch", {})
+    changed = False
     for stale_task_id in [tid for tid in load_balance_watch if tid not in task_map]:
         load_balance_watch.pop(stale_task_id, None)
-    changed = False
+        changed = True
     actions: list[dict[str, Any]] = []
 
     for task in tasks:
@@ -10445,10 +10649,13 @@ def reconcile_unavailable_assignments(
                     task,
                     owner,
                     state=state,
+                    agent_loads=agent_loads,
                     fallback_candidates=fallback_candidates,
                 )
                 if saturation_reason is None:
-                    load_balance_watch.pop(task_id, None)
+                    if task_id in load_balance_watch:
+                        load_balance_watch.pop(task_id, None)
+                        changed = True
                 else:
                     watch_entry = load_balance_watch.get(task_id) or {}
                     first_seen_at = _parse_iso_utc(str(watch_entry.get("first_seen_at") or ""))
@@ -10458,6 +10665,7 @@ def reconcile_unavailable_assignments(
                             "first_seen_at": utc_now(),
                             "owner": owner,
                         }
+                        changed = True
                     elif (
                         now_at is not None
                         and (now_at - first_seen_at).total_seconds()
@@ -10474,7 +10682,11 @@ def reconcile_unavailable_assignments(
                             ),
                             reverse=True,
                         )
-                        load_balance_owner_candidates = fallback_candidates
+                        load_balance_owner_candidates = [
+                            name for name in fallback_candidates
+                            if agent_dispatch_capacity(config, normalize_agent_id(name))
+                            > len(agent_loads.get(name, agent_loads.get(canonical_agent_name(config, name), [])))
+                        ]
         if not role or not unavailable_reason:
             continue
 
@@ -10533,6 +10745,20 @@ def reconcile_unavailable_assignments(
             continue
         new_owner, new_reviewer = pair
         if is_load_balance:
+            current_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
+            owner_capacity = agent_dispatch_capacity(config, normalize_agent_id(new_owner))
+            assigned_in_cycle = sum(1 for a in actions if a.get("owner") == new_owner)
+            candidate_key = canonical_agent_name(config, new_owner) or new_owner
+            current_owner_load = (
+                len(current_loads.get(new_owner, current_loads.get(candidate_key, [])))
+                + assigned_in_cycle
+            )
+            if (
+                owner_capacity <= 0
+                or current_owner_load >= owner_capacity
+                or not agent_can_take_task(config, new_owner, task, state=state)
+            ):
+                continue
             if unavailable_reason == LOAD_BALANCE_TRANSIENT_REASON:
                 condition = "was blocked from auto-dispatch (unhealthy/stale probe/retry-after)"
             else:
@@ -10580,6 +10806,7 @@ def reconcile_unavailable_assignments(
         load_balance_watch.pop(task_id, None)
         task["owner"] = new_owner
         task["reviewer"] = new_reviewer
+        agent_loads.setdefault(new_owner, []).append(1)
         actions.append(
             {
                 "task_id": task_id,
@@ -10707,7 +10934,18 @@ def reconcile_failure_loops(config: dict[str, Any], state: dict[str, Any]) -> bo
                 f"under {owner} even after {attempts_used} auto-reassignment(s); "
                 f"holding for Human/Ops investigation."
             )
-            if record_failure_loop_blocker(config, task_id=task_id, message=message) is not None:
+            if (
+                record_failure_loop_blocker(
+                    config,
+                    task_id=task_id,
+                    message=message,
+                    expected_owner=owner,
+                    expected_reviewer=reviewer,
+                    expected_status=str(task.get("status") or ""),
+                    expected_generation=task_generation(task),
+                )
+                is not None
+            ):
                 watch.pop(task_id, None)
                 changed = True
 
@@ -11370,7 +11608,19 @@ def poll_worker_completion_stage(
             # handoff, not a provider failure. Reassigning or redispatching the
             # same owner reproduces the same clean exit every tick; surface the
             # concrete blocker instead and take the task out of owner dispatch.
-            blocker = record_missing_handoff_blocker(config, worker)
+            # Never substitute the task's current generation here: only an
+            # exact, validly-typed generation observed on this worker's own
+            # dispatch record may fence the write. record_missing_handoff_blocker
+            # refuses (no write) when this is None.
+            worker_task_gen = observed_worker_task_generation(worker)
+            blocker = record_missing_handoff_blocker(
+                config,
+                worker,
+                expected_owner=str(task.get("owner") or "") if task else None,
+                expected_reviewer=str(task.get("reviewer") or "") if task else None,
+                expected_status=str(task.get("status") or "") if task else None,
+                expected_generation=worker_task_gen,
+            )
             if blocker is not None:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
@@ -11391,6 +11641,7 @@ def poll_worker_completion_stage(
                     config, state, worker, "failed", MISSING_HANDOFF_EXIT_REASON
                 )
                 return {"changed": True, "stop": True}
+            return {"changed": False, "stop": True}
         generic_failure_summary = summarize_failure_reason(
             GENERIC_WORKER_EXIT_REASON,
             str(worker.get("provider") or worker.get("agent_id") or ""),
@@ -11785,6 +12036,8 @@ def poll_workers(
     activity_events: list[dict[str, Any]] | None = None,
     governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
+    if state.get("promotion") and state["promotion"].get("phase") not in {"ready", "rolled_back"}:
+        return False
     changed = False
     approval_state = load_approval_state(config)
     status_snapshot = load_status(config)
@@ -11829,6 +12082,9 @@ def poll_workers(
     if workers and not governance_activity_events:
         governance_activity_events = activity_events or recent_governance_activity_events(config)
     for run_id, worker in list(workers.items()):
+        if promotion_state.valid_promotion_drain(state, worker) and not pid_is_alive(worker.get("pid")):
+            changed = recover_lost_worker_lease(config, state, worker, reason_kind="promotion_drained", reason="Planned runtime promotion drain.", status=status_snapshot) or changed
+            continue
         orphan = poll_worker_orphan_stage(
             config,
             state,
@@ -12356,6 +12612,13 @@ def worker_recovery_assignment_pair(
     settings = worker_reassignment_settings(config)
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    if receipt.get("reason_kind") == "promotion_drained":
+        target = reviewer if receipt.get("recovery_role") == "reviewer" else owner
+        if owner and reviewer and _worker_recovery_candidate_has_capacity(
+            config, state, status, task, owner=owner, reviewer=reviewer, target_agent=target,
+        ):
+            return owner, reviewer
+        return None
     finalize_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("finalize_statuses"),
         ["review_approved"],
@@ -12722,12 +12985,33 @@ def recover_lost_worker_lease(
 ) -> bool:
     """Shared boot/poll recovery path for a missing PID or expired lease."""
 
+    drain = promotion_state.valid_promotion_drain(state, worker)
+    if drain:
+        runtime = status_command_runtime_record_from_env(status_command_runtime_env(config))
+        if not promotion_state.promotion_admission_allowed(state, runtime):
+            return False
+        reason_kind = "promotion_drained"
+        reason = "Planned runtime promotion drain; continue the existing task lease."
+    elif reason_kind == "promotion_drained":
+        return False
     status = status if isinstance(status, dict) else load_status(config)
     task_id = str(worker.get("task_id") or "")
     task = canonical_task_with_archive_proof(
         config, task_index_from_status(config, status).get(task_id), state=status,
     )
+    if drain and task is not None:
+        existing = _canonical_worker_recovery_receipt(status, task)
+        if existing and existing.get("receipt_id") == "promotion-drain-" + drain["digest"]:
+            # Replay after TaskStore committed but the detached runtime CAS
+            # lost. Adopt the one canonical continuation; never mint another.
+            drain["status"] = "consumed"
+            drain["recovery_receipt_id"] = existing["receipt_id"]
+            _fence_lost_worker_runtime(config, state, worker, existing)
+            return True
     if task is None or not worker_matches_current_task_generation(worker, task):
+        if drain:
+            drain["status"] = "consumed"
+            drain["resolution"] = "canonical_task_generation_advanced"
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12742,6 +13026,9 @@ def recover_lost_worker_lease(
         )
         if decision.get("action") != "terminate":
             return False
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12761,6 +13048,9 @@ def recover_lost_worker_lease(
         # without poisoning unrelated validated cleanup in the same CAS batch.
         return False
     if canonical_agent_name(config, actor).casefold() != canonical_agent_name(config, expected_actor).casefold():
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12769,6 +13059,9 @@ def recover_lost_worker_lease(
         # A pending review decision intent has its own typed recovery mechanism
         # (reconcile_review_decision_intent_lease_recovery). Fencing a generic lost
         # lease must not mutate generation, next, or last_update on this task.
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
@@ -12786,6 +13079,11 @@ def recover_lost_worker_lease(
         reason=reason,
         status="held" if held else "pending",
     )
+    if drain:
+        receipt["type"] = "worker_promotion_drained"
+        receipt["receipt_id"] = "promotion-drain-" + drain["digest"]
+        receipt["dedupe_key"] = "promotion-drain:" + drain["digest"]
+        receipt["promotion_drain"] = deepcopy(drain)
     persist_worker_recovery_receipt(
         config,
         receipt,
@@ -12808,15 +13106,24 @@ def recover_lost_worker_lease(
         # A competing detector may have won the canonical receipt+generation
         # CAS. This lease is stale either way; fence it immediately and let
         # the winning receipt remain the sole recovery authority.
+        if drain:
+            drain["status"] = "consumed"
+            drain.setdefault("resolution", "canonical_responsibility_advanced")
         worker["status"] = "superseded"
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
         return True
+    runtime_drain = state.get("promotion", {}).get("receipts", {}).get(str(worker.get("run_id") or ""))
+    if isinstance(runtime_drain, dict):
+        runtime_drain["status"] = "consumed"
+        runtime_drain["recovery_receipt_id"] = canonical["receipt_id"]
+        if not drain:
+            runtime_drain["resolution"] = "rejected_unverified_drain_ordinary_recovery"
     _fence_lost_worker_runtime(config, state, worker, canonical)
     write_activity_log(
         config,
         {
-            "type": "worker_lost_lease",
+            "type": "worker_promotion_drained" if drain else "worker_lost_lease",
             "task_id": task_id,
             "provider": worker.get("provider"),
             "worker_run_id": worker.get("run_id"),
@@ -13493,6 +13800,8 @@ def record_retry_exhausted_worker_terminal_outcome(
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    if state.get("promotion") and state["promotion"].get("phase") not in {"ready", "rolled_back"}:
+        return False
     # Account topology is V2 configuration, not runtime state to migrate.
     # Starting from a persisted V2 cache therefore needs no account rewrite.
     changed = False
@@ -13526,6 +13835,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if promotion_state.valid_promotion_drain(state, worker) and not pid_is_alive(worker.get("pid")):
+            changed = recover_lost_worker_lease(config, state, worker, reason_kind="promotion_drained", reason="Planned runtime promotion drain.", status=status_snapshot) or changed
+            continue
         if worker.get("status") not in active_statuses:
             continue
         marker_changed = update_worker_runtime_markers(worker)
@@ -14090,10 +14402,15 @@ def task_execution_dispatch_candidate(
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
-        and not task_has_current_canonical_integration_receipt(config, task)
+        and is_non_default_repository_finalization_pending(config, task)
     ):
         # Approval and cron integration are separate transactions. Closeout
         # starts only after the canonical integrator records this exact landing.
+        # Consume the same predicate evaluate_task_delivery_admission uses so
+        # planning, runtime reservation, and this freshness/candidate path
+        # cannot disagree about whether a receipt is required (any repository,
+        # Pantheon included, with a live review_binding stays gated until its
+        # exact receipt lands; a row with no PR delivery in flight is unaffected).
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.REVIEW_READY

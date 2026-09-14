@@ -1,0 +1,272 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "ff1e8781c05650868614b995edd29287cc01fc68",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity2"
+  },
+  "delivery_nature": {
+    "documentation_only": true,
+    "statement": "Only the two declared documentation/evidence artifacts change. No production source, runtime behavior, or test files are modified in this task. Establishes the canonical architectural decision and operational runbook for resolving the B06 command-admission and audit-projection seam via Qualified Ordered Overlap without DAG cycles."
+  },
+  "changed_files": [
+    "docs/operations/bff-test-migration-b06-audit-admission-projection-seam.md",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001/evidence.json"
+  ],
+  "document_proof": {
+    "docs/operations/bff-test-migration-b06-audit-admission-projection-seam.md": {
+      "sha256": "b565b1ff448c8948a67918a3e5b137f7f655ff170817a71fcb5333d8e3357f10",
+      "bytes": 59882
+    }
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "seam_analysis": {
+    "source_file": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+    "test_methods": [
+      "test_runtime_action_writes_audit_action_visible_in_bff_audit",
+      "test_audit_export_write_is_queryable_without_snapshot_fallback"
+    ],
+    "composition_import": {
+      "line": 13,
+      "import_statement": "import main as bff_main"
+    },
+    "global_monkeypatches": [
+      {
+        "line": 37,
+        "target": "bff_main.read_store = create_in_memory_read_surface_ports()"
+      },
+      {
+        "line": 38,
+        "target": "bff_main.command_store = CommandStore(os.path.join(td, 'commands.jsonl'))"
+      },
+      {
+        "line": 39,
+        "target": "bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()"
+      },
+      {
+        "line": 40,
+        "target": "bff_main._GOV_BFF_IDEMPOTENCY.clear()"
+      }
+    ],
+    "architectural_invariant_violations": [
+      "test_migrated_suites_do_not_import_main in test_bff_test_architecture.py",
+      "test_no_global_monkeypatching_in_migrated_suites in test_bff_test_architecture.py",
+      "test_migrated_suites_do_not_mutate_sys_path in test_bff_test_architecture.py"
+    ],
+    "original_assertions": [
+      "response.status_code == 202",
+      "response.json()['data']['receipt_id'] == command_id",
+      "foundation['audit_action']['action_type'] == 'bff.command.accepted'",
+      "foundation['audit_action']['target_ref'] == 'Runtime:runtime-042'",
+      "foundation['audit_action']['payload_checksum']",
+      "audit.json()['data'] contains event matching command_ref",
+      "event['actor'] == 'op-aud-002'",
+      "event['action_type'] == 'RuntimeAction'",
+      "event['target_id'] == 'runtime-042'",
+      "event['audit_context']['idempotency_key'] == 'aud-002-runtime-pause'",
+      "event['audit_action']['trace_id'].startswith('trace-')",
+      "client.get('/bff/audit/entities/Runtime/runtime-042') returns matching event",
+      "POST /bff/audit/export replay returns 202 with meta.idempotency.replayed is True and identical data.receipt_id",
+      "GET /bff/audit?target_type=AuditExport returns AuditExport event with payload_checksum"
+    ],
+    "probe_reproduction": {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -c \"<probe_script>\"",
+      "exit_code": 0,
+      "result": {
+        "runtime_action": {
+          "status": 202,
+          "receipt_id_present": false,
+          "foundation_audit_action_present": false
+        },
+        "audit_export": {
+          "status": 202,
+          "receipt_id_present": false,
+          "foundation_audit_action_present": false,
+          "audit_status": 200,
+          "audit_event_count": 0
+        },
+        "bff_main_loaded": false
+      }
+    }
+  },
+  "read_surface_distinction": {
+    "bff_audit": {
+      "path": "/bff/audit",
+      "router": "services/control-plane/bff/incidents/router.py",
+      "tests": [
+        "test_aud_002_audit_action_write_engine.py",
+        "test_bff_governance_runtime_risk_audit_contract.py"
+      ],
+      "backing_stores": "ReadSurfacePorts + AgoraAuditStore + CommandStore live projections",
+      "schema": "data/items, page_info, meta.read_meta"
+    },
+    "operator_governance_audit": {
+      "path": "/api/v1/operator/governance/audit",
+      "router": "services/control-plane/bff/governance/router.py",
+      "tests": [
+        "test_pkt009_governance_audit_contract.py"
+      ],
+      "backing_stores": "ReadSurfacePorts.list_governance_audit_events only",
+      "schema": "entries, page_info, meta.surfaces.audit_trail"
+    },
+    "invariance_rule": "B06 /bff/audit must not be satisfied by altering or redirecting to /api/v1/operator/governance/audit."
+  },
+  "candidate_evaluations": [
+    {
+      "candidate": "Candidate 1: Upstream Seam Extraction via Qualified Ordered Overlap (BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001)",
+      "status": "SELECTED",
+      "rationale": "Extracts monolithic command admission into services/control-plane/bff/command_adapters/admission.py and audit event projection into services/control-plane/bff/incidents/audit_projection.py. Injects explicit dependencies into existing routers. 100% preserves original assertions, eliminates main imports and monkeypatching, and follows topological DAG ordering with zero cycles."
+    },
+    {
+      "candidate": "Candidate 2: In-Test Mocking / Faking in B06",
+      "status": "REJECTED",
+      "rationale": "Replaces real command admission and audit projection with synthetic test mocks. Destroys regression protection for audit durability and fakes migration compliance."
+    },
+    {
+      "candidate": "Candidate 3: In-Batch Production Edit in B06",
+      "status": "REJECTED",
+      "rationale": "Violates B06's declared artifact contract (strictly 5 test suites + 1 evidence file). B06 possesses no grant on production source files."
+    },
+    {
+      "candidate": "Candidate 4: Reroute AUD-002 to /api/v1/operator/governance/audit",
+      "status": "REJECTED",
+      "rationale": "Changes the target read surface; breaks execute-plans route contract and evades verifying the live command audit projection engine."
+    },
+    {
+      "candidate": "Candidate 5: Direct Dependency on Parent or Downstream Tasks",
+      "status": "REJECTED",
+      "rationale": "Violates the 18-batch repartition DAG; depending on parent creates a cycle (B06 -> Parent -> B06), and downstream tasks run after test migration."
+    }
+  ],
+  "target_seam_contract": {
+    "admission_service": {
+      "module": "services/control-plane/bff/command_adapters/admission.py",
+      "class": "CommandAdmissionService",
+      "methods": [
+        "submit_action_command",
+        "submit_sem_command",
+        "build_foundation_context",
+        "submit_positional_resource_action"
+      ],
+      "injected_parameters": [
+        "command_store (required)",
+        "read_surface (optional)",
+        "extract_identity (fail-closed auth policy default)",
+        "require_operator_role (fail-closed write-role enforcement default)",
+        "utc_now (optional)",
+        "resolve_idempotency_key (fail-closed 400 validation default)",
+        "reject_body_idempotency_key (fail-closed 400 validation default)",
+        "bff_error (optional)"
+      ],
+      "negative_tests": [
+        "test_admission_service_rejects_missing_validation_dependencies (raises ValueError on None)",
+        "test_admission_service_rejects_unauthorized_identity_role (raises 403 Forbidden for viewer role)",
+        "test_admission_service_rejects_missing_idempotency_key (raises 400 Validation Error on missing header)",
+        "test_admission_service_rejects_body_idempotency_key (raises 400 Validation Error on payload idempotencyKey)"
+      ],
+      "caller_parameters_preserved": [
+        "background_tasks",
+        "payload",
+        "authorization",
+        "x_mfa_token",
+        "x_trace_id",
+        "x_correlation_id",
+        "x_request_id",
+        "x_confirm_token",
+        "idempotency_key",
+        "x_idempotency_key",
+        "route",
+        "source_route",
+        "foundation_raw_payload",
+        "audit_extra",
+        "extra_precondition",
+        "enqueue",
+        "include_durable_meta",
+        "response_deprecation"
+      ],
+      "caller_compatibility": [
+        "services/control-plane/bff/control_loops/router.py:289 (remediate_v5_intervention passing foundation_raw_payload and route)",
+        "services/control-plane/bff/command_adapters/router.py:250 (create_action_command_router)",
+        "services/control-plane/bff/command_adapters/router.py (create_command_adapters_router)",
+        "services/control-plane/bff/incidents/router.py:287 (create_incident_router retains 7-positional-argument callback _gov_bff_action_command; does NOT receive keyword-only _submit_final_command_admission)",
+        "services/control-plane/bff/tools_integrations/router.py (create_integrations_router)"
+      ],
+      "preserves": [
+        "response.json()['data']['receipt_id'] == command_id",
+        "record['foundation']['audit_action'] containing action_type, target_ref, payload_checksum",
+        "idempotency replay with meta.idempotency.replayed is True"
+      ]
+    },
+    "audit_projector": {
+      "module": "services/control-plane/bff/incidents/audit_projection.py",
+      "class": "CommandAuditProjector",
+      "methods": [
+        "project_command_record",
+        "list_governance_audit_events",
+        "get_entity_audit_events"
+      ],
+      "injected_parameters": [
+        "command_store",
+        "read_surface",
+        "agora_audit_store",
+        "utc_now"
+      ],
+      "preserves": [
+        "GET /bff/audit live projection of command_store records",
+        "GET /bff/audit/entities/{entity_type}/{entity_id} readback",
+        "command_ref, actor, action_type, target_id, audit_context, trace_id, payload_checksum"
+      ]
+    },
+    "negative_constraints": {
+      "prohibit_second_production_app_or_router": true,
+      "prohibit_proxy_or_forwarding_shims": true,
+      "prohibit_global_compatibility_store": true,
+      "prohibit_silent_fallback": true
+    },
+    "bounded_validation_commands": [
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_control_loops_router.py -k \"not test_ast_route_inventory_proves_single_owner_across_assembly_handoff\"",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_tools_integrations_router.py",
+      ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_incident_router.py",
+      ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/command_adapters/admission.py services/control-plane/bff/incidents/audit_projection.py services/control-plane/bff/main.py services/control-plane/bff/tests/test_command_admission_audit_projection_seam.py"
+    ],
+    "composition_binding": "services/control-plane/bff/main.py instantiates modular services and delegates _submit_final_command_admission, _gov_bff_action_command (retained 7-positional-argument incident action callback), _sem_command_response, _project_command_record_audit_event, and _list_governance_audit_events via explicit argument forwarding and default preservation (including foundation_raw_payload) without changing public route contracts.",
+    "test_binding": "test_aud_002_audit_action_write_engine.py directly injects CommandAdmissionService and CommandAuditProjector into router factories (without unsupported read_surface on create_action_command_router) on an isolated FastAPI test application, with 0 imports of main.py and 0 monkeypatching of globals."
+  },
+  "topological_ordering_proof": [
+    "1. BFF-TEST-MIGRATION-REPARTITION-PLAN-001 (done)",
+    "2. BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001 (done)",
+    "3. BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001 (this task; merged to dev via supervisor integration runner)",
+    "4. BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001 (admitted upstream seam extraction task; fresh-CAS B06 dependency update establishes writer order before source execution)",
+    "5. BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001 (governed hold during seam execution; unblocked child batch reopened from dev tip discarding PR #5747 anchor only after seam delivery merges to dev)",
+    "6. BFF-TEST-FULL-MIGRATION-CORRECTIVE-001 (parent test migration task)"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "8 passed in 1.95s; verified catalog inventory well-formed, all 5 architectural layers represented, and migrated suite rules hold."
+    },
+    {
+      "command": ".venv-pantheon/bin/python -c \"<seam_probe_script>\"",
+      "exit_code": 0,
+      "result": "Probe confirmed the mismatch: runtime_action has receipt_id_present=False and foundation_audit_action_present=False; audit_export has audit_event_count=0; bff_main_loaded=False."
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -v services/control-plane/bff/tests/test_incident_router.py",
+      "exit_code": 0,
+      "result": "11 passed in 12.51s; verified alert acknowledge, incident actions, and production app wiring invoke positional callbacks without TypeError."
+    },
+    {
+      "command": "git status -sb",
+      "exit_code": 0,
+      "result": "Branch task/BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001 tracking origin/dev with only the two declared documentation/evidence artifacts."
+    }
+  ]
+}

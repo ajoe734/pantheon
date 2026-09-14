@@ -49,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--packet-file", help="Path to packet JSON. Use '-' or omit to read stdin.")
     parser.add_argument("--repo-root", help="Pantheon repo root that owns .orchestrator and ai-status.json.")
     parser.add_argument("--inbox-dir", help="Inbox directory. Defaults to .orchestrator/assistant-dev-packets.")
-    parser.add_argument("--source", default="management_ai_frontend_handoff", help="Queue source label.")
+    parser.add_argument("--source", default="local_development_tooling", help="Queue source label.")
     return parser
 
 

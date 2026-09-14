@@ -1,0 +1,100 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-MANAGEMENT-SESSION-ROUTE-HARNESS-CORRECTIVE-001",
+  "base_ref": "dev@f89d998b9355b4485865385e7f9b7fbb63a5663f",
+  "artifacts": [
+    "services/control-plane/bff/tests/management_session_harness.py",
+    "services/control-plane/bff/tests/test_management_session_harness.py",
+    "docs/deployment/evidence/BFF-MANAGEMENT-SESSION-ROUTE-HARNESS-CORRECTIVE-001/evidence.json"
+  ],
+  "scope_boundaries": {
+    "zero_main_imports": true,
+    "main_py_untouched": true,
+    "b03_artifacts_untouched": true,
+    "production_routers_untouched": true,
+    "parent_gate_files_untouched": true,
+    "synthetic_routes_used": false
+  },
+  "mounted_real_routers": [
+    "create_auth_router",
+    "create_personas_router",
+    "create_strategies_router",
+    "create_management_router"
+  ],
+  "mounted_real_endpoints": [
+    "/bff/me",
+    "/bff/management/persona-fleet",
+    "/bff/strategies",
+    "/bff/personas",
+    "/bff/management/human-inbox",
+    "/bff/management/evidence"
+  ],
+  "session_lifecycle_isolation": {
+    "injected_store": "SessionLifecycleStore",
+    "two_instance_isolation": "verified: logging out instance 1 yields 401 SESSION_LOGGED_OUT across all 6 endpoints while instance 2 remains 200 OK",
+    "roleless_rejection": "verified: 403 precondition_failed=role_check across all 6 endpoints",
+    "cross_tenant_rejection": "verified: 403 precondition_failed=tenant_scope across all 6 endpoints",
+    "cookie_auth_and_logout": "verified: cookie pantheon_session 200 OK, logout clears cookie and terminates session, returning 401 across all 6 endpoints",
+    "jwt_auth_and_logout": "verified: HS256 JWT 200 OK, logout terminates session, returning 401 across all 6 endpoints",
+    "logout_idempotency": "verified: replaying with same Idempotency-Key returns 200 OK and meta.idempotency.replayed=True"
+  },
+  "typed_test_doubles": {
+    "InMemoryRankingWriteOwner": "implements put_ranking_snapshot, get_ranking_snapshot, list_ranking_snapshots",
+    "InMemoryManagementReadStore": "implements list_approval_records, list_records, list_evidence_records, list_personas, get_persona, list_persona_league, list_bindings, etc.",
+    "InMemoryStrategyReadStore": "implements list_strategy_summaries, get_strategy_spec, get_strategy_spec_detail, list_strategy_spec_versions"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_session_harness.py -v",
+      "exit_code": 0,
+      "result": "11 passed, 3 warnings in 15.65s",
+      "executed": 11,
+      "collected": 11,
+      "tests": [
+        "test_standalone_import_no_main",
+        "test_harness_mounts_all_six_endpoints",
+        "test_independent_session_lifecycle_stores_and_logout_isolation",
+        "test_roleless_rejection_across_all_endpoints",
+        "test_cross_tenant_rejection_across_all_endpoints",
+        "test_cookie_session_flow_and_logout_across_all_endpoints",
+        "test_jwt_signed_token_flow_and_logout",
+        "test_logout_idempotency",
+        "test_typed_test_doubles_and_store_isolation",
+        "test_context_manager_cleanup",
+        "test_async_client_support[asyncio]"
+      ]
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/auth/test_policy.py -v",
+      "exit_code": 0,
+      "result": "16 passed, 3 warnings in 16.89s",
+      "executed": 16,
+      "collected": 16
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_router.py -v",
+      "exit_code": 0,
+      "result": "41 passed, 1 warning in 28.78s",
+      "executed": 41,
+      "collected": 41
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py -q",
+      "exit_code": 0,
+      "result": "98 passed, 146 warnings in 44.47s",
+      "executed": 98,
+      "collected": 98
+    }
+  ],
+  "consumer_handoff": {
+    "target_task": "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+    "summary": "ManagementSessionHarness is fully operational and standalone. B03 migration tests can import ManagementSessionHarness from services.control_plane.bff.tests.management_session_harness to decouple from main.py and global session_lifecycle_store fixture mutation.",
+    "import_path": "from services.control_plane.bff.tests.management_session_harness import ManagementSessionHarness, InMemoryManagementReadStore, InMemoryStrategyReadStore, InMemoryRankingWriteOwner",
+    "recommended_fixture_pattern": "with ManagementSessionHarness(store=SessionLifecycleStore(str(tmp_path / 'session.json'))) as harness:\n    client = harness.create_client()\n    headers = {'Authorization': harness.make_bearer_token()}\n    resp = client.get('/bff/me', headers=headers)"
+  },
+  "review": {
+    "owner": "Antigravity2",
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  }
+}

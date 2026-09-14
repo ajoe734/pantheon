@@ -1,0 +1,152 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+  "base_ref": "dev@e401682d1fa8cc90e7820c1b39d396ccb4e5b477",
+  "decision_ref": "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001 (docs/operations/bff-test-migration-b14-loops-paper-v5-projection-ownership.md)",
+  "scope": "V2 U2 persona projection/cache single owner: retain services/control-plane/bff/personas/service.py PersonaService as the sole owner of the source-health overlay (10 exact-AST-match functions plus the approximate _overlay_source_health_truth/_source_ingest_truth_by_connector pair) and the 395-line execution persona-health builder (_build_persona_health_items). Move the no-counterpart helpers (_first_binding_for_persona, _runtime_for_pool) into personas/service.py. Give the source-health overlay an instance-owned TTL cache (source_health_clock, self._source_health_cache) instead of a module-global dict. main.py constructs one app-scoped PersonaService ahead of runtime router assembly and injects its bound methods (persona_service.overlay_source_health_truth, persona_service.build_persona_health_items) into the persona DTO/list call sites and the runtime router's '_build_persona_health_items' dependency key. Migrate the five B05/B07/B14/B15-remainder consumer test files off main-loader patches onto the real PersonaService instance and explicit read-port fixtures, preserving all named assertions. Add a single-owner AST/behavioral gate suite.",
+  "source_hashes": {
+    "services/control-plane/bff/main.py": "d8c0500e25745e9a0e16ec16a1ee1866cb5bea7f09e811b25ce0f19aaba4ec6f",
+    "services/control-plane/bff/personas/service.py": "241742549eeab34898d1159fe848be021a5c1cd6cf5cca6af8038b116de89292",
+    "services/control-plane/bff/personas/router.py": "1659152341d8b9c572653be501ec777a98678348efd18a423ddb957add483f46",
+    "services/control-plane/bff/runtime/router.py": "7678db04c980e4fd43f6a2320c740b367a7079dd178ff534b5c36622f201de8a",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py": "ceaf0a55972f41ab7471817d37b197210bb8bcb29ffc9ad26899e701851cc5b7",
+    "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py": "b4eeedcf3728c2db06fb471ee443fcaec37755b612ab673f1eed56a3727c3069",
+    "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py": "d6eb1c1517fc38ca281bdd910b1a24342560c62b3f731f0ea3235002fc7dd490",
+    "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py": "d3477858e515f4030fa86163e2dcc9f55e1a7987f7c0a9382d2f0de40c900a76",
+    "services/control-plane/bff/test_srclive_overlay_contract.py": "7c686457462a44b3e5e0fcfa16980ef2951c45036b9daf5c2c2532ad9561478b",
+    "services/control-plane/bff/tests/test_bff_main_composition.py": "46b696fa0a9b70b9bcc8677618b1384cd65a58efab03a3a6ac8203505e188a4a",
+    "services/control-plane/bff/tests/test_persona_health_single_owner.py": "f414ef7a513b977228f9339b41efa7f4313bcf5b51690660204ff7767f744f0e"
+  },
+  "removed_from_main_py": {
+    "ast_duplicate_group_11": [
+      "_trading_performance_delta",
+      "_source_ingest_truth_by_connector",
+      "_connector_candidates_for_provider",
+      "_source_failure_reason",
+      "_provider_status_from_truth",
+      "_source_truth_projection",
+      "_select_source_truth",
+      "_source_health_bindings_from_requirements",
+      "_data_source_ok_tone",
+      "_upgrade_all_green_data_source_state",
+      "_overlay_source_health_truth"
+    ],
+    "builder_and_no_counterpart_helpers": [
+      "_build_persona_health_items",
+      "_first_binding_for_persona",
+      "_runtime_for_pool"
+    ],
+    "module_global_cache_and_constants_retired": [
+      "_SOURCE_HEALTH_OVERLAY_CACHE",
+      "_SOURCE_HEALTH_OVERLAY_TTL",
+      "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+    ],
+    "orphaned_after_builder_removal_also_deleted": [
+      "_as_float",
+      "_persona_health_status",
+      "_management_fleet_ooda_label",
+      "_management_fleet_autonomy",
+      "_persona_fleet_mutation_id",
+      "_persona_fleet_mutation_projection",
+      "_persona_fleet_active_incidents_for_row",
+      "_persona_fleet_capital_mode",
+      "_persona_fleet_live_capital_pool_id",
+      "_persona_fleet_paper_ledger_id",
+      "_persona_fleet_paper_ledger",
+      "_persona_fleet_record_value",
+      "_persona_fleet_paper_budget",
+      "_PERSONA_FLEET_INVALID_MUTATION_IDS",
+      "_PERSONA_FLEET_DATE_MUTATION_ID"
+    ],
+    "note": "These were previously used exclusively by the deleted _build_persona_health_items and had no other main.py caller (confirmed by tests/test_bff_main_composition.py::test_zero_unreferenced_dead_functions_in_main_py, which returns to its exact 8-function pre-existing baseline after this deletion). Functions still used elsewhere in main.py (e.g. _persona_id, _persona_fleet_context_overlay, _persona_fleet_context_defaults_by_market, _management_telemetry_rollup) were intentionally left in place: they belong to the separate general fleet/capital duplication that this packet's boundary explicitly defers to a later corrective."
+  },
+  "personas_service_additions": {
+    "PersonaService.__init__": "new source_health_clock: Callable[[], float] = time.monotonic constructor kwarg; new self._source_health_cache instance dict (at/by_connector/truth_by_connector), replacing the removed module-global _SOURCE_HEALTH_OVERLAY_CACHE.",
+    "PersonaService._source_ingest_truth_by_connector": "sole TTL-cached registry/snapshot read-port implementation, cache owned per instance.",
+    "PersonaService.overlay_source_health_truth": "sole source-health overlay implementation (public method).",
+    "PersonaService.build_persona_health_items": "sole execution persona-health builder implementation (public method); sets the _current_persona_service contextvar and delegates to the module-level _build_persona_health_items_impl, matching the file's existing read_surface_meta/dataset_surface_status method pattern.",
+    "module_level_first_binding_and_runtime_helpers": "_first_binding_for_persona and _runtime_for_pool added as module functions using the existing _get_active_read_store() context-resolution pattern (no counterpart existed before this packet).",
+    "module_level_resolvers_retained": "_source_ingest_truth_by_connector() and _overlay_source_health_truth() remain as thin module-level bare-function resolvers (delegating to _active_persona_service()) only because personas/service.py's own pre-existing internal callers (_project_persona_dto, _project_persona_fleet_list_row) invoke them as bare functions inside an already-active PersonaService method context -- the same established pattern as _get_active_read_store(). The real, single implementation lives on PersonaService."
+  },
+  "main_py_wiring": {
+    "persona_service_construction": "persona_service = PersonaService(...) moved to immediately before `from .runtime.router import create_runtime_router`, so it is constructed exactly once and before runtime router assembly.",
+    "runtime_router_injection": "('_build_persona_health_items', persona_service.build_persona_health_items) -- bound instance method, not a bare function.",
+    "persona_dto_call_site": "main.py:~9401 now calls persona_service.overlay_source_health_truth(...).",
+    "generic_list_call_site": "the /bff/v5/execution/persona-health handler now calls persona_service.build_persona_health_items(snapshot_at).",
+    "personas_router_registration": "later in main.py, create_personas_router(service=persona_service, ...) reuses the same instance (no second construction)."
+  },
+  "consumer_test_migrations": {
+    "test_p0_tw_paper_activate_honesty.py": "Replaced `from main import _build_persona_health_items, _trading_performance_delta` with the canonical service delta (personas.service._trading_performance_delta) and a real PersonaService instance driven by an explicit empty/seeded read fixture (seeds a persona-tw-equity market-default persona). Preserved: delta-is-None assertion, TW default persona, seed_row, has_trading_telemetry, perf_delta assertions.",
+    "test_loop_auto_bff004_cross_loop_drill.py": "TestDrill1SourceToHealth.test_source_health_connector_truth_projects_to_persona_panel migrated from patching bff_main._source_ingest_truth_by_connector / calling bff_main._overlay_source_health_truth to patching bff_main.persona_service.get_read_store()'s get_source_connector_registry/get_source_health_usage_snapshot and calling bff_main.persona_service.overlay_source_health_truth(...), with an explicit cache-reset to avoid TTL leakage from prior calls on the shared app-scoped instance. Preserved provider/binding/health-source/live-ingestion assertions. Other drills (Drill 2, loop-health) untouched -- out of this packet's scope.",
+    "test_srclive_overlay_contract.py": "All five main-loader patches/overlay calls replaced with a _FixtureReadStore exercising the real registry/snapshot read ports through a freshly constructed PersonaService instance per test. Preserved all-green summary, TW/US/crypto connector mapping, unavailable-credential and missing-truth assertions.",
+    "test_pathreon_market_persona_fleet_contract.py": "Five personas_service._source_ingest_truth_by_connector patches / bare _overlay_source_health_truth calls (B07 source-truth overlay tests) replaced with a local _SourceTruthReadStore fixture and a module-level _overlay_source_health_truth(dss, sources, *, required_data_sources=None, truths=None) test helper that constructs a real PersonaService per call. The two pre-existing FinMind tests (test_overlay_live_finmind_health_flips_to_read_ok, test_overlay_live_finmind_health_noop_when_unavailable) were already fully self-contained test-local shims unrelated to production main.py/personas.service and required no change; left untouched per the decision doc's instruction not to restore or newly assert against the absent production names.",
+    "test_bff_promotion_review_governance.py": "test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one: replaced monkeypatch.setattr(bff_main, '_source_ingest_truth_by_connector', forbidden_subread) with monkeypatch.setattr(bff_main.read_store, 'get_source_connector_registry'/'get_source_health_usage_snapshot', forbidden_subread) on the same read-store object persona_service was constructed with (bff_main.read_store is bff_main.persona_service.get_read_store()). Preserves the existing two-batched-reads assertion plus the five other forbidden fleet subreads."
+  },
+  "new_test_file": {
+    "services/control-plane/bff/tests/test_persona_health_single_owner.py": "AST gate proving main.py no longer (re)defines any of the 11+2 retired duplicate functions or the module-global cache constants, that persona_service is constructed exactly once and before the runtime router, and that the runtime/overlay/builder call sites go through the bound instance. Behavioral tests prove PersonaService.build_persona_health_items/overlay_source_health_truth work end-to-end against explicit fixtures, that perf_delta stays None, and -- the core regression this packet fixes -- that two separate PersonaService instances never share or leak their source-health TTL cache (registry_calls counters stay isolated), with an explicit TTL hit/refresh test using an injected clock."
+  },
+  "verification": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/gov-approval-venv/bin/python3 python3 scripts/dev/provision_python_distribution.py && \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_persona_health_single_owner.py",
+      "exit_code": 0,
+      "result": "13 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "exit_code": 1,
+      "result": "22 passed, 3 failed",
+      "note": "The 3 failures (test_zero_unreferenced_dead_functions_in_main_py at its exact pre-existing 8-function baseline, test_bootstrap_app_dependencies_contract missing strategy_write_owner, test_main_py_zero_lambda_read_store_service_locator_seams) are byte-identical to the failures reproduced on unmodified dev (verified via git stash before/after); none reference persona-health/source-health projection and none are new."
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_bff_runtimes_contract.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py",
+      "exit_code": 0,
+      "result": "25 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+      "exit_code": 0,
+      "result": "2 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+      "exit_code": 0,
+      "result": "5 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_srclive_overlay_contract.py",
+      "exit_code": 0,
+      "result": "5 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+      "exit_code": 0,
+      "result": "16 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_persona_health_single_owner.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py services/control-plane/bff/test_srclive_overlay_contract.py services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/test_normalized_route_uniqueness.py",
+      "exit_code": 1,
+      "result": "68 passed, 3 failed (same 3 pre-existing failures above)"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py::test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one",
+      "exit_code": null,
+      "result": "not executed: pytest collection of this file (`ImportError: attempted relative import with no known parent package` from `command_queue.py`'s `from .models import ...` when this file is collected as the sole/first target) fails identically on unmodified dev (verified via git stash before/after), in every tried invocation (standalone, paired with test_pathreon_market_persona_fleet_contract.py, with --import-mode=importlib, and from the bff/ directory). This is a pre-existing sandbox import-order limitation, not caused by this packet. The edit itself follows the exact working pattern already proven for list_personas/list_persona_league monkeypatches earlier in the same test function against the identical bff_main.read_store object (bff_main.read_store is bff_main.persona_service.get_read_store())."
+    }
+  ],
+  "results": {
+    "single_projection_implementation": true,
+    "single_source_health_cache_owner": "instance-scoped, verified isolated across two PersonaService instances and TTL-correct with an injected clock",
+    "runtime_persona_assistant_share_one_instance": "runtime router injected persona_service.build_persona_health_items; personas router constructed with service=persona_service; both reuse the one app-scoped instance built before runtime router assembly",
+    "no_old_name_aliases_or_wrappers_in_main_py": true,
+    "five_mandatory_test_files_migrated": true,
+    "b07_b15_done_tasks_not_reopened": "no artifact/dependency-contract changes made; only the already-granted test files were edited in place",
+    "live_credentials_changed": false,
+    "production_grants_changed": false,
+    "hosted_deployment_performed": false
+  },
+  "review": {
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  }
+}

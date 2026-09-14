@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-COMMAND-STORE-CONTRACT-DECISION-001",
+  "scope": "D-COMMAND design only; two declared documentation artifacts; no runtime source, deployment, grants or data migration",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "source_baseline": "e401682d1fa8cc90e7820c1b39d396ccb4e5b477",
+  "decision": {
+    "backend": "existing local JSONL CommandStore with one sidecar-locked fresh-read atomic-replacement transaction",
+    "document": "docs/operations/bff-upstream-v2-20260911/decisions/command-store.md",
+    "document_sha256": "65a3e2174c3b5631740e7da6346fc957a7e119951e73c0f0e7642eaf9c2c9d4d",
+    "operator_decision_required_for_selected_scope": false,
+    "expansion_requires_decision": [
+      "cross-host writers/HA",
+      "data migration/backfill",
+      "new database/security grants"
+    ],
+    "implementation_status": "not implemented by this documentation task"
+  },
+  "source_blobs": {
+    "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md": "5a8e15868d02e329cac50c900f8c52efbdb48bfa",
+    "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md": "7a2483de4b7c3c59bae32831616f95f3edee097d",
+    "docker-compose.yml": "e8fddb527fbb58f97a60609dc1594a816e8ef761",
+    "docker-compose.control.yml": "2970f32acfa390df89645a2df1020b52ba75a370",
+    "docs/deployment/vm-dev-staging-prod-management-plan.md": "a4d96c2ce7f3e8d5c8eebf410fdb18f4330a59b3",
+    "docs/operations/bff-upstream-v2-20260911/02_RESEARCH_AND_DESIGN.md": "a170fe610deec840f3fba01299e45799fc339dad",
+    "docs/operations/bff-upstream-v2-20260911/dispatch-map.json": "bf0a974521566874fbccfec97c5719235c454c2d",
+    "services/foundation/reliable_delivery.py": "bd1c8c630529deadc96d9bf6b346700d60d6b464",
+    "services/control-plane/bff/Dockerfile": "3068f0d7bde1b039ae69bf77801b4feaddec9798",
+    "services/control-plane/bff/bootstrap/dependencies.py": "bacffb79aadf797263363e81df70caccdb99169e",
+    "services/control-plane/bff/command_queue.py": "37b3010d040dd1c0eaac13c3e0ee9b63fc893308",
+    "services/control-plane/bff/command_adapters/service.py": "302c579356f0b3e0aa4f1b1b5e74a9eaeb83e735",
+    "services/control-plane/bff/command_adapters/router.py": "a73b4713e6b0bc524ddbe6dd8e229c94913ac1c4",
+    "services/control-plane/bff/command_executor.py": "ec23f8ebba80bf49ffeedcbfbe10f89c3abb1d24",
+    "services/control-plane/bff/personas/service.py": "df0d2266953390ebe9c712f90e84d7a120f8188a",
+    "services/control-plane/bff/main.py": "e2895535980483cc12b9711fbd268d3639256e9a",
+    "services/control-plane/bff/models.py": "7630c6257b04b709f2ce9d540386742771d7e642",
+    "services/control-plane/bff/auth/policy.py": "b5d54724cc9fac0bffd284fed6f730b443a29484",
+    "services/control-plane/bff/tests/test_bff_test_architecture.py": "b7768abd3ff610e75ae8f28c1b40c69b4053bb4c"
+  },
+  "local_topology_observation": {
+    "observed_on": "2026-09-13",
+    "container_id": "cd11db368e38",
+    "project": "l12closure20260904",
+    "visible_operator_bff_containers": 1,
+    "processes": [
+      "uvicorn"
+    ],
+    "command": [
+      "uvicorn",
+      "services.control_plane.bff.main:app",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8001"
+    ],
+    "bff_data_dir": "/data/bff",
+    "volume_driver": "local",
+    "filesystem": "ext4",
+    "writable": true,
+    "commands": [
+      "docker ps --filter name=operator-bff --format '{{.ID}} {{.Names}} {{.Image}}'",
+      "docker inspect cd11db368e38 --format '{{json .Config.Cmd}} {{json .Mounts}}'",
+      "docker top cd11db368e38 -eo pid,comm",
+      "docker exec cd11db368e38 python -c 'import os; print(\"BFF_DATA_DIR=\" + os.environ.get(\"BFF_DATA_DIR\", \"<unset>\"))'",
+      "docker exec cd11db368e38 python -c 'print(\"\".join(line for line in open(\"/proc/self/mountinfo\") if \" /data/bff \" in line))'"
+    ],
+    "exit_codes": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "collection": "terminal",
+    "limitation": "local process/storage shape only; project is not claimed as current dev serving identity or accepted hosted FE/BFF pair; no business data accessed"
+  },
+  "u3_composition": {
+    "task_id": "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+    "exact_source_scope": [
+      "docs/deployment/evidence/BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001/evidence.json",
+      "services/control-plane/bff/action_catalog.py",
+      "services/control-plane/bff/agora/identity/router.py",
+      "services/control-plane/bff/agora/personalization/router.py",
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/agora/service.py",
+      "services/control-plane/bff/command_adapters/contracts.py",
+      "services/control-plane/bff/command_adapters/preconditions.py",
+      "services/control-plane/bff/command_adapters/receipts.py",
+      "services/control-plane/bff/command_adapters/registry.py",
+      "services/control-plane/bff/command_adapters/router.py",
+      "services/control-plane/bff/command_adapters/service.py",
+      "services/control-plane/bff/command_queue.py",
+      "services/control-plane/bff/control_loops/router.py",
+      "services/control-plane/bff/deployment/router.py",
+      "services/control-plane/bff/evolution/router.py",
+      "services/control-plane/bff/governance/command_audit.py",
+      "services/control-plane/bff/governance/router.py",
+      "services/control-plane/bff/governance/service.py",
+      "services/control-plane/bff/incidents/router.py",
+      "services/control-plane/bff/incidents/service.py",
+      "services/control-plane/bff/jobs/router.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/models.py",
+      "services/control-plane/bff/personas/router.py",
+      "services/control-plane/bff/personas/routes/common.py",
+      "services/control-plane/bff/personas/routes/lifecycle.py",
+      "services/control-plane/bff/personas/routes/ranking.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/research/router.py",
+      "services/control-plane/bff/runtime/router.py",
+      "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+      "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+      "services/control-plane/bff/test_v5_interventions.py",
+      "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+      "services/control-plane/bff/tests/test_command_adapters_router.py",
+      "services/control-plane/bff/tests/test_command_admission_single_owner.py",
+      "services/control-plane/bff/tests/test_command_audit_scope.py",
+      "services/control-plane/bff/tests/test_command_store_multiprocess.py",
+      "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "services/control-plane/bff/tools_integrations/router.py",
+      "services/control-plane/bff/tools_integrations/service.py"
+    ],
+    "path_count": 42,
+    "authority": "snapshot from approved dispatch-map; current canonical grants/writer dependencies control execution",
+    "source_edits_in_this_task": []
+  },
+  "static_persist_candidates": [
+    {
+      "path": "services/control-plane/bff/agora/identity/router.py",
+      "line": 541,
+      "function": "create_identity_router.sem_agora_ask",
+      "call": "cmd_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/agora/service.py",
+      "line": 3118,
+      "function": "submit_action_command",
+      "call": "cmd_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/command_adapters/service.py",
+      "line": 477,
+      "function": "record_command_confirmation_redeem",
+      "call": "store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/command_adapters/service.py",
+      "line": 608,
+      "function": "sem_command_response",
+      "call": "store.submit_terminal_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/command_adapters/service.py",
+      "line": 618,
+      "function": "sem_command_response",
+      "call": "store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/incidents/router.py",
+      "line": 944,
+      "function": "create_incident_router.bff_alert_acknowledge",
+      "call": "cmd_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 3447,
+      "function": "_persist_admitted_command_with_confirm_token",
+      "call": "command_store.submit_command_if_no_active_target",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 3464,
+      "function": "_persist_admitted_command_with_confirm_token",
+      "call": "command_store.submit_command_with_confirm_token_redeem_if_no_active_target",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 8030,
+      "function": "_capital_bff_action_command",
+      "call": "command_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 8722,
+      "function": "_strategy_persona_action_command",
+      "call": "command_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 19262,
+      "function": "_evol_exp_bff_action_command",
+      "call": "command_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 19502,
+      "function": "_gov_bff_action_command",
+      "call": "command_store.submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 19737,
+      "function": "_sem_command_response",
+      "call": "command_store.submit_terminal_command_if_no_active_target",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/main.py",
+      "line": 19752,
+      "function": "_sem_command_response",
+      "call": "command_store.submit_command_if_no_active_target",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "line": 999,
+      "function": "_strategy_persona_action_command",
+      "call": "_get_active_command_store().submit_command",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "line": 13636,
+      "function": "_sem_command_response",
+      "call": "_get_active_command_store().submit_terminal_command_if_no_active_target",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "line": 13651,
+      "function": "_sem_command_response",
+      "call": "_get_active_command_store().submit_command_if_no_active_target",
+      "disposition": "static candidate; U3 must verify reachability and classify aggregate semantics"
+    }
+  ],
+  "candidate_boundary": "Fresh AST candidate inventory, not dynamic reachability, completed classification, deletion evidence or passed test count. U3 must classify all live callers against V2 inventory. Discovery selects attribute calls to five CommandStore submission methods whose receiver contains store/command, excluding test paths; 17 candidates from this narrower query do not replace the V2 20-candidate/65-caller inventory.",
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 1,
+      "collection": "terminal",
+      "result": "No candidate interpreter had pytest; resolved by isolated dependency venv below, no runtime change"
+    },
+    {
+      "command": "python3 -m venv /tmp/bff-command-contract-deps && /tmp/bff-command-contract-deps/bin/pip install pytest pydantic fastapi httpx PyYAML",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "isolated dependency interpreter provisioned"
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-command-contract-deps/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "checkout-scoped .venv-pantheon verified from foreign cwd"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "collected": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "elapsed_seconds_reported_by_pytest": 1.31,
+      "stdout": "........ [100%]\n8 passed in 1.31s",
+      "limitation": "full architecture file only; not runtime admission/confirmation acceptance"
+    },
+    {
+      "command": "timeout 30 .venv-pantheon/bin/python3 /tmp/bff-command-contract-probe.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "observations": 4,
+      "results": {
+        "stale_prewarmed_instance": true,
+        "nested_return_aliases_cache": true,
+        "lookup_cannot_select_tenant_b": true,
+        "existing_guarded_pair_replace_failure_keeps_old_file": true
+      },
+      "limitation": "Three deficiencies reproduced and existing pre-replace paired-write guarantee observed; no new implementation or passing U3 tests"
+    },
+    {
+      "command": "python3 /tmp/validate-bff-command-evidence.py && git diff --check",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "Document digest, 19 immutable source blobs, 42 exact U3 paths, validation terminal state and embedded probe syntax verified; whitespace clean"
+    }
+  ],
+  "probe_source": "import json\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom unittest.mock import patch\n\nfrom services.control_plane.bff.command_queue import CommandStore\nfrom services.control_plane.bff.models import CommandType, ObjectType, TargetObject\n\n\ndef submit(store, command_id, tenant=\"tenant-a\"):\n    return store.submit_command(\n        command_id, CommandType.PERSONA_ACTION,\n        TargetObject(type=ObjectType.PERSONA, id=command_id),\n        \"2026-09-13T00:00:00Z\", {\"action\": \"suspend\"},\n        {\"actor\": \"actor-a\", \"tenant_id\": tenant},\n        {\"idempotency_record\": {\"idempotency_key\": \"same-key\", \"request_hash\": \"hash-a\"}},\n    )\n\n\nobservations = {}\nwith TemporaryDirectory() as td:\n    path = str(Path(td) / \"commands.jsonl\")\n    writer, reader = CommandStore(path), CommandStore(path)\n    assert reader._get_all_commands() == []\n    submit(writer, \"cmd-a\")\n    observations[\"stale_prewarmed_instance\"] = (\n        reader.get_command(\"cmd-a\") is None\n        and CommandStore(path).get_command(\"cmd-a\") is not None\n    )\n\n    fresh = CommandStore(path)\n    returned = fresh.get_command(\"cmd-a\")\n    returned[\"params\"][\"action\"] = \"changed-by-reader\"\n    observations[\"nested_return_aliases_cache\"] = (\n        fresh.get_command(\"cmd-a\")[\"params\"][\"action\"] == \"changed-by-reader\"\n        and CommandStore(path).get_command(\"cmd-a\")[\"params\"][\"action\"] == \"suspend\"\n    )\n\n    submit(writer, \"cmd-b\", tenant=\"tenant-b\")\n    found = CommandStore(path).get_command_by_idempotency_key(\"same-key\", operator_id=\"actor-a\")\n    observations[\"lookup_cannot_select_tenant_b\"] = found[\"audit\"][\"tenant_id\"] == \"tenant-a\"\n\n    store = CommandStore(path)\n    before = Path(path).read_bytes()\n    with patch(\"services.control_plane.bff.command_queue.os.replace\", side_effect=OSError(\"probe replace failure\")):\n        try:\n            with store.serialized_transaction():\n                store.submit_command_with_confirm_token_redeem_if_no_active_target(\n                    \"cmd-guarded\", CommandType.PERSONA_ACTION,\n                    TargetObject(type=ObjectType.PERSONA, id=\"guarded\"),\n                    \"2026-09-13T00:00:00Z\", {}, {\"actor\": \"actor-a\"}, {},\n                    confirm_token_id=\"token-a\", confirmation_id=\"confirmation-a\",\n                    confirmation_command_id=\"redeem-a\", confirmation_idempotency_key=\"confirm-key\",\n                    confirmation_request_hash=\"confirm-hash\", operator_id=\"actor-a\",\n                )\n        except OSError:\n            pass\n        else:\n            raise AssertionError(\"replace failure did not propagate\")\n    observations[\"existing_guarded_pair_replace_failure_keeps_old_file\"] = Path(path).read_bytes() == before\n\nassert all(observations.values()), observations\nprint(json.dumps({\"observations\": observations, \"count\": len(observations),\n                  \"interpretation\": \"three current deficiencies reproduced; existing pre-replace pair protection retained; not implementation acceptance\"}, sort_keys=True))\n",
+  "probe_reproduction": "Write probe_source verbatim to an external temporary .py file, then execute with the provisioned checkout interpreter under timeout 30; all records are created in TemporaryDirectory; imports exclude bff.main.",
+  "deletion_evidence": {
+    "runtime_paths_changed": [],
+    "runtime_paths_deleted": [],
+    "claim": "none; D-COMMAND is documentation-only; U3 owns old admission/cache/consumer removal; U9 owns generic old-POST retirement"
+  },
+  "not_run": [
+    "full B03/B04/B05/B06/B14/B16 regressions",
+    "proposed multiprocess/replay/confirmation failure matrix",
+    "hosted probes/deployments"
+  ],
+  "changed_paths": [
+    "docs/operations/bff-upstream-v2-20260911/decisions/command-store.md",
+    "docs/deployment/evidence/BFF-COMMAND-STORE-CONTRACT-DECISION-001/evidence.json"
+  ],
+  "delivery": {
+    "target_branch": "dev",
+    "source_base_sha": "e401682d1fa8cc90e7820c1b39d396ccb4e5b477",
+    "anchor_commit": "b5570084e089e7127a4419a672d951604f81ea50",
+    "rebased_base_sha": "a7ef52ca906e09780e6767a5964bbe861f77a426",
+    "head_sha": null,
+    "pr": null,
+    "merge_commit": null,
+    "independent_review": "pending",
+    "ci": "pending",
+    "binding": "Final PR/head/current base/manifest blob bound through governed owner handoff; canonical reviewer and supervisor supply approval/merge. This committed manifest cannot embed its own commit hash and is not changed after approval for bookkeeping."
+  },
+  "artifact_validator_source": "import hashlib\nimport json\nimport subprocess\nfrom pathlib import Path\n\nmanifest = Path(\"docs/deployment/evidence/BFF-COMMAND-STORE-CONTRACT-DECISION-001/evidence.json\")\ne = json.loads(manifest.read_text())\ndoc = Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(doc.read_bytes()).hexdigest() == e[\"decision\"][\"document_sha256\"]\ndispatch = json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nu3 = next(t for t in dispatch[\"tasks\"] if t[\"unit\"] == \"U3\")\nassert e[\"u3_composition\"][\"exact_source_scope\"] == u3[\"exact_source_scope\"]\nassert e[\"u3_composition\"][\"path_count\"] == 42\nfor path, blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\", \"hash-object\", path], text=True).strip() == blob, path\nassert set(e[\"changed_paths\"]) == {str(doc), str(manifest)}\nassert all(v[\"collection\"] == \"terminal\" for v in e[\"validation\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"] == []\nassert e[\"delivery\"][\"merge_commit\"] is None\ncompile(e[\"probe_source\"], \"embedded-probe\", \"exec\")\nfor marker in [\"trusted_tenant_id\", \"authenticated_actor_id\", \"operator-command/v1\",\n               \"directory fsync\", \"reviewer/admin\", \"Legacy JSONL\", \"42-path\", \"Twenty\"]:\n    assert marker in doc.read_text(), marker\nprint(\"Evidence valid: document digest, 19 source blobs, 42 exact U3 paths, terminal validation records, embedded probe syntax; no runtime change or merge claim.\")\n"
+}

@@ -239,434 +239,64 @@ _BFF_AUTH_STUB_ENV = auth_policy._BFF_AUTH_STUB_ENV
 _BFF_STUB_LEGACY_BARE_TOKENS_ENV = auth_policy._BFF_STUB_LEGACY_BARE_TOKENS_ENV
 _BFF_STUB_CAPABILITY_ROLES = auth_policy._BFF_STUB_CAPABILITY_ROLES
 _PRODUCTION_STRICT_ENVIRONMENTS = auth_policy._PRODUCTION_STRICT_ENVIRONMENTS
-_DEFAULT_LOVABLE_CORS_ORIGINS = [
-    # Pantheon-owned self-hosted dev frontend (execute-plans). This replaced the
-    # Lovable-hosted dev FE; it is the current dev acceptance origin. Dev-only:
-    # it must be filtered out by the production-strict CORS filter below.
-    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-    # TODO(off-lovable): staging-live and prod FE are also migrating off Lovable
-    # to self-hosted sslip.io origins. Replace the staging/prod *.lovable.app
-    # entries below once the new self-hosted URLs are provisioned.
-    # Lovable shared-preview and published URLs for the Pantheon UI lanes.
-    "https://preview--pantheon-dev.lovable.app",
-    "https://preview--pantheon-ai-system-front-dev.lovable.app",
-    "https://preview--pantheon-ai-system-front-staging-live.lovable.app",
-    "https://preview--pantheon.lovable.app",
-    "https://preview--pantheon-ai-system-front.lovable.app",
-    "https://pantheon-dev.lovable.app",
-    "https://pantheon-ai-system-front-dev.lovable.app",
-    "https://pantheon-ai-system-front-staging-live.lovable.app",
-    "https://pantheon.lovable.app",
-    "https://pantheon-ai-system-front.lovable.app",
-    # BFF-CONSOL-022: Pantheon Frontend Lovable project preview URLs.
-    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
-    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
-    # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
-    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
-]
-_DEV_LOOPBACK_CORS_ORIGINS = [
-    "http://127.0.0.1:4173",
-    "http://localhost:4173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-]
-_DEV_LOVABLE_CORS_ORIGINS = {
-    # Self-hosted dev FE origin is dev-only: production-strict mode must filter it.
-    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-    "https://preview--pantheon-dev.lovable.app",
-    "https://preview--pantheon-ai-system-front-dev.lovable.app",
-    "https://pantheon-dev.lovable.app",
-    "https://pantheon-ai-system-front-dev.lovable.app",
-    # Pantheon Frontend Lovable project preview URLs (dev tier).
-    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
-    # Static id-preview URLs are Lovable-hosted strict-preview origins; keep them
-    # out of the dev-only set so production-strict preflight can still succeed.
-    # BFF-B1-001-DELTA: 140c41d5 published URL intentionally NOT in dev-only set —
-    # it must survive the production-strict filter so live OPTIONS succeeds.
-}
-_LOVABLE_PREVIEW_UUIDS = (
-    "b75d3452-f667-4cf4-893a-1061de45b347"
-    "|140c41d5-9cd8-4d6b-ba02-66d5941d0dbe"
-)
-_LOVABLE_PREVIEW_ORIGIN_REGEX = (
-    r"https://id-preview(?:-[a-f0-9]+)?--({})"
-    r"\.lovable\.app"
-).format(_LOVABLE_PREVIEW_UUIDS)
-_LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(
-    r"^" + _LOVABLE_PREVIEW_ORIGIN_REGEX + r"$"
-)
-class _PantheonCORSMiddleware(CORSMiddleware):
-    def preflight_response(self, request_headers: Any) -> Response:
-        response = super().preflight_response(request_headers)
-        if response.status_code != 200:
-            return response
-        headers = dict(response.headers)
-        headers.pop("content-length", None)
-        headers.pop("content-type", None)
-        return Response(status_code=204, headers=headers)
-def _normalized_origin(origin: str) -> str:
-    return origin.strip().rstrip("/")
-def _dedupe_origins(origins: List[str]) -> List[str]:
-    deduped: List[str] = []
-    seen = set()
-    for origin in origins:
-        cleaned = _normalized_origin(origin)
-        if cleaned and cleaned not in seen:
-            deduped.append(cleaned)
-            seen.add(cleaned)
-    return deduped
 _BFF_VALID_AUTH_MODES = auth_policy._BFF_VALID_AUTH_MODES
 _bff_auth_mode = auth_policy.bff_auth_mode
 _is_production_strict_mode = auth_policy.is_production_strict_mode
 _bff_auth_stub_enabled = auth_policy.bff_auth_stub_enabled
-def _cors_origins_from_env() -> List[str]:
-    raw = os.getenv("PANTHEON_BFF_CORS_ORIGINS", "")
-    origins = _dedupe_origins(raw.split(",")) if raw.strip() else list(_DEFAULT_LOVABLE_CORS_ORIGINS)
-    if _is_production_strict_mode():
-        origins = [
-            origin
-            for origin in origins
-            if origin not in _DEV_LOVABLE_CORS_ORIGINS and origin != "*"
-        ]
-    else:
-        # Non-strict (dev/test) tiers always accept the loopback origins the
-        # FE-BFF integration gate and local vite servers use, regardless of the
-        # deploy-time PANTHEON_BFF_CORS_ORIGINS override.
-        origins = origins + _DEV_LOOPBACK_CORS_ORIGINS
-    return _dedupe_origins(origins)
-_SECURITY_RESPONSE_HEADERS = (
-    (b"x-content-type-options", b"nosniff"),
-    (b"x-frame-options", b"DENY"),
-    (b"referrer-policy", b"no-referrer"),
+from .core.http_security import _cors_origin_allowed
+from .core.errors import _pack_d_direct_error_response
+from .core.lifespan import (
+    create_lifespan,
+    refresh_provider_readiness,
 )
-class _SecurityHeadersMiddleware:
-    """Pure-ASGI middleware that appends baseline security headers.
-
-    Implemented at the ASGI layer (not BaseHTTPMiddleware) so it does not buffer
-    or break StreamingResponse / SSE endpoints.
-    """
-
-    def __init__(self, app: Any) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope.get("type") != "http":
-            await self.app(scope, receive, send)
-            return
-
-        async def _send(message: Any) -> None:
-            if message.get("type") == "http.response.start":
-                headers = message.setdefault("headers", [])
-                present = {name.lower() for name, _ in headers}
-                for name, value in _SECURITY_RESPONSE_HEADERS:
-                    if name not in present:
-                        headers.append((name, value))
-            await send(message)
-
-        await self.app(scope, receive, _send)
+from .auth.service import ProviderReadinessCache
+from .core.app_factory import build_bff_app
 
 
-def _cors_origin_allowed(origin: Optional[str]) -> bool:
-    if not origin:
-        return False
-    normalized = _normalized_origin(origin)
-    if normalized in _cors_origins:
-        return True
-    if not _is_production_strict_mode() and _LOVABLE_PREVIEW_ORIGIN_PATTERN.fullmatch(origin):
-        return True
-    return False
-
-def _clean_correlation_id(value: Any) -> Optional[str]:
-    raw = str(value or "").strip()
-    return raw or None
-
-def _error_response_correlation_id(request: Optional[Request], headers: Optional[Dict[str, Any]] = None) -> str:
-    if headers:
-        for key in ("X-Correlation-Id", "x-correlation-id", "correlationId", "correlation_id"):
-            val = _clean_correlation_id(headers.get(key))
-            if val:
-                return val
-    if request is not None:
-        for key in ("X-Correlation-Id", "x-correlation-id", "X-Request-Id", "x-request-id"):
-            val = _clean_correlation_id(request.headers.get(key))
-            if val:
-                return val
-    return str(uuid.uuid4())
-
-def _status_error_code(status_code: int) -> str:
-    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.VALIDATION_FAILED.value)
-
-def _canonical_error_code_value(code: Any, *, status_code: Optional[int] = None) -> str:
-    raw = str(getattr(code, "value", code) or "").strip()
-    if not raw and status_code is not None:
-        return _status_error_code(status_code)
-    candidate = _LEGACY_ERROR_CODE_ALIASES.get(raw, raw)
+def _default_openclaw_provider_probe() -> Dict[str, Any]:
     try:
-        return ErrorCode(candidate).value
-    except ValueError:
-        if status_code is not None:
-            return _status_error_code(status_code)
-        return ErrorCode.INTERNAL_ERROR.value
-
-def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> Dict[str, Any]:
-    code_value = _canonical_error_code_value(code, status_code=status_code)
-    behavior = _PACK_D_D21_ERROR_BEHAVIOR.get(
-        code_value,
-        _PACK_D_D21_ERROR_BEHAVIOR[ErrorCode.INTERNAL_ERROR.value],
-    )
-    return {
-        "code": code_value,
-        "i18nKey": f"errors.{code_value}",
-        "retryable": behavior["retryable"],
-        "userActionable": behavior["userActionable"],
-    }
-
-def _status_error_message(status_code: int, fallback: Any = None) -> str:
-    clean = str(fallback or "").strip()
-    if clean and clean != "{}":
-        return clean
-    if status_code == 404:
-        return "Not Found"
-    if status_code == 422:
-        return "Request validation failed"
-    if status_code >= 500:
-        return "Internal server error"
-    return "Request failed"
-
-def _error_details_without_correlation(value: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(value, dict):
-        return None
-    return {
-        key: item
-        for key, item in value.items()
-        if key != "correlationId"
-    }
-
-def _pack_d_error_response(
-    *,
-    status_code: int,
-    code: Any,
-    message: Any,
-    correlation_id: str,
-    details: Optional[Dict[str, Any]] = None,
-    headers: Optional[Dict[str, Any]] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> JSONResponse:
-    metadata = _pack_d_error_metadata(code, status_code=status_code)
-    error_payload: Dict[str, Any] = {
-        "code": metadata["code"],
-        "i18nKey": metadata["i18nKey"],
-        "message": str(message or _status_error_message(status_code)),
-        "retryable": metadata["retryable"],
-        "userActionable": metadata["userActionable"],
-    }
-    if details is not None:
-        error_payload["details"] = details
-    content: Dict[str, Any] = {
-        "error": error_payload,
-        "meta": {"correlationId": correlation_id},
-    }
-    if extra:
-        content.update(extra)
-    response_headers = dict(headers or {})
-    response_headers["X-Correlation-Id"] = correlation_id
-    return JSONResponse(
-        status_code=status_code,
-        content=jsonable_encoder(content),
-        headers=response_headers,
-    )
-
-
-def _pack_d_direct_error_response(
-    *,
-    status_code: int,
-    code: Any,
-    message: Any,
-    details: Optional[Dict[str, Any]] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> JSONResponse:
-    return _pack_d_error_response(
-        status_code=status_code,
-        code=code,
-        message=message,
-        correlation_id=str(uuid.uuid4()),
-        details=details,
-        extra=extra,
-    )
-
-
-def _with_cors_actual_response_headers(request: Request, headers: Dict[str, str]) -> Dict[str, str]:
-    response_headers = dict(headers)
-    origin = request.headers.get("origin")
-    if not origin or not _cors_origin_allowed(origin):
-        return response_headers
-
-    response_headers.setdefault("Access-Control-Allow-Origin", _normalized_origin(origin))
-    response_headers.setdefault("Access-Control-Allow-Credentials", "true")
-    response_headers.setdefault("Access-Control-Expose-Headers", ", ".join(_CORS_EXPOSE_HEADERS))
-
-    vary_value = response_headers.get("Vary") or response_headers.get("vary") or ""
-    vary_parts = [part.strip() for part in vary_value.split(",") if part.strip()]
-    if "Origin" not in {part.title() for part in vary_parts}:
-        vary_parts.append("Origin")
-    if vary_parts:
-        response_headers["Vary"] = ", ".join(vary_parts)
-    return response_headers
-
-def _pack_d_http_exception_response(
-    request: Request,
-    exc: StarletteHTTPException,
-) -> JSONResponse:
-    headers = _with_cors_actual_response_headers(
-        request,
-        dict(getattr(exc, "headers", None) or {}),
-    )
-    correlation_id = _error_response_correlation_id(request, headers)
-    detail = exc.detail
-    source = detail
-    if (
-        isinstance(detail, dict)
-        and isinstance(detail.get("detail"), dict)
-        and "error" in detail["detail"]
-    ):
-        source = detail["detail"]
-
-    error: Dict[str, Any] = {}
-    if isinstance(source, dict) and isinstance(source.get("error"), dict):
-        error = dict(source["error"])
-    elif isinstance(source, dict) and source.get("error") is not None:
-        error = {
-            "code": source.get("error"),
-            "message": source.get("message") or source.get("error"),
+        from .openclaw_ops_client import OpenClawOpsClient
+        client = OpenClawOpsClient()
+        if not client.configured:
+            return {
+                "provider": "openclaw",
+                "ready": False,
+                "status": "unavailable",
+                "reason": "openclaw_adapter_unconfigured",
+            }
+        status = client.get_upstream_status()
+        ready = bool(
+            status.get("reachable")
+            or status.get("ready")
+            or status.get("status") in {"ready", "ok", "healthy"}
+        )
+        return {
+            "provider": "openclaw",
+            "ready": ready,
+            "status": "ready" if ready else "unavailable",
+            "raw": status,
+        }
+    except Exception as exc:
+        return {
+            "provider": "openclaw",
+            "ready": False,
+            "status": "unavailable",
+            "reason": type(exc).__name__,
         }
 
-    code = error.get("code") or _status_error_code(exc.status_code)
-    message = error.get("message") or _status_error_message(exc.status_code, detail)
-    details = _error_details_without_correlation(error.get("details"))
-    if details is None and not isinstance(source, dict):
-        details = {"reason": str(source or message)}
 
-    extra: Dict[str, Any] = {}
-    if isinstance(source, dict):
-        for key, value in source.items():
-            if key in {"error", "correlationId", "meta", "detail"}:
-                continue
-            extra[key] = value
+provider_readiness_cache = ProviderReadinessCache(
+    probe=_default_openclaw_provider_probe,
+    provider="openclaw",
+)
+_bff_lifespan = create_lifespan(provider_readiness_cache)
 
-    return _pack_d_error_response(
-        status_code=exc.status_code,
-        code=code,
-        message=message,
-        correlation_id=correlation_id,
-        details=details,
-        headers=headers,
-        extra=extra,
-    )
-
-async def _bff_http_exception_handler(
-    request: Request,
-    exc: StarletteHTTPException | HTTPException,
-) -> JSONResponse:
-    return _pack_d_http_exception_response(request, exc)
-
-async def _bff_request_validation_error_handler(
-    request: Request,
-    exc: RequestValidationError,
-) -> JSONResponse:
-    correlation_id = _error_response_correlation_id(request)
-    return _pack_d_error_response(
-        status_code=422,
-        code=ErrorCode.VALIDATION_FAILED.value,
-        message="Request validation failed",
-        correlation_id=correlation_id,
-        details={
-            "reason": "REQUEST_VALIDATION_ERROR",
-            "errors": exc.errors(),
-        },
-    )
-
-async def _bff_value_error_handler(
-    request: Request,
-    exc: ValueError,
-) -> JSONResponse:
-    correlation_id = _error_response_correlation_id(request)
-    return _pack_d_error_response(
-        status_code=400,
-        code=ErrorCode.VALIDATION_FAILED.value,
-        message=str(exc) or "Invalid request",
-        correlation_id=correlation_id,
-        details={"reason": "VALUE_ERROR"},
-    )
-
-async def _bff_unhandled_exception_handler(
-    request: Request,
-    exc: Exception,
-) -> JSONResponse:
-    log.exception("Unhandled BFF request error", exc_info=True)
-    correlation_id = _error_response_correlation_id(request)
-    return _pack_d_error_response(
-        status_code=500,
-        code=ErrorCode.INTERNAL_ERROR.value,
-        message="Internal server error",
-        correlation_id=correlation_id,
-        details={"reason": "INTERNAL_SERVER_ERROR"},
-        # Starlette's outer error handler runs after the CORS middleware has
-        # unwound. Preserve the same allowlist on this terminal response.
-        headers=_with_cors_actual_response_headers(request, {}),
-    )
-
-def _build_bff_app() -> FastAPI:
-    cors_origins = _cors_origins_from_env()
-    strict = _is_production_strict_mode()
-    preview_regex = None if strict else _LOVABLE_PREVIEW_ORIGIN_REGEX
-    built_app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
-    if cors_origins or preview_regex:
-        middleware_kwargs: Dict[str, Any] = dict(
-            allow_origins=cors_origins,
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=_CORS_ALLOW_HEADERS,
-            expose_headers=_CORS_EXPOSE_HEADERS,
-        )
-        if preview_regex:
-            middleware_kwargs["allow_origin_regex"] = preview_regex
-        built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
-    built_app.add_middleware(_SecurityHeadersMiddleware)
-    built_app.add_exception_handler(HTTPException, _bff_http_exception_handler)
-    built_app.add_exception_handler(StarletteHTTPException, _bff_http_exception_handler)
-    built_app.add_exception_handler(RequestValidationError, _bff_request_validation_error_handler)
-    built_app.add_exception_handler(ValueError, _bff_value_error_handler)
-    built_app.add_exception_handler(Exception, _bff_unhandled_exception_handler)
-    return built_app
-_cors_origins = _cors_origins_from_env()
-_CORS_ALLOW_HEADERS = [
-    "Accept",
-    "Accept-Language",
-    "Authorization",
-    "Cache-Control",
-    "Content-Type",
-    "If-Match",
-    "X-BFF-Api-Version",
-    "X-Confirm-Token",
-    "Idempotency-Key",
-    "Last-Event-ID",
-    "X-Correlation-Id",
-    "X-Dry-Run",
-    "X-Idempotency-Key",
-    "X-Locale",
-    "X-MFA-Token",
-    "X-Request-Id",
-    "X-Refresh-Token",
-    "X-Tenant-Id",
-    "X-Trace-Id",
-]
-_CORS_EXPOSE_HEADERS = [
-    "ETag",
-    "X-BFF-Api-Version",
-    "X-Correlation-Id",
-    "X-Request-Id",
-]
-app = _build_bff_app()
+app = build_bff_app(
+    lifespan=_bff_lifespan,
+    dev_login_enabled=lambda: auth_policy.dev_login_enabled(),
+    origin_allowed=_cors_origin_allowed,
+    validate_session=lambda token: _raise_if_session_logged_out(_extract_identity(f"Bearer {token}")),
+)
 _OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
 def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -938,7 +568,6 @@ def _retryable_terminal_capital_command(record: Dict[str, Any]) -> bool:
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 _DEV_LOGIN_IDENTITY_DEFS = auth_policy._DEV_LOGIN_IDENTITY_DEFS
 _dev_login_forbidden_environment = auth_policy.dev_login_forbidden_environment
-_dev_login_bool_env = auth_policy.dev_login_bool_env
 _dev_login_identity_registry = auth_policy.dev_login_identity_registry
 _dev_login_enabled = auth_policy.dev_login_enabled
 
@@ -1016,6 +645,8 @@ def _foundation_request_payload(
     return payload
 def _foundation_idempotency_payload(request_payload: Dict[str, Any]) -> Dict[str, Any]:
     payload = json.loads(json.dumps(request_payload))
+    payload.pop("route", None)
+    payload.pop("source_route", None)
     audit_context = payload.get("audit_context")
     if isinstance(audit_context, dict):
         audit_context.pop("timestamp", None)
@@ -1402,97 +1033,11 @@ def _audit_datetime(value: Any) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-def _project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    command_id = str(record.get("command_id") or "").strip()
-    if not command_id:
-        return None
-    target = record.get("target") if isinstance(record.get("target"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
-    audit_action = _command_audit_action_from_record(record)
-    idempotency_record = (
-        foundation.get("idempotency_record")
-        if isinstance(foundation.get("idempotency_record"), dict)
-        else {}
-    )
-    audit_actor_ref = audit_action.get("actor_ref") if isinstance(audit_action.get("actor_ref"), dict) else {}
-    metadata = audit_action.get("metadata") if isinstance(audit_action.get("metadata"), dict) else {}
-    trace_context = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
-    action_type = str(record.get("type") or metadata.get("command") or "").strip()
-    target_type = str(target.get("type") or "").strip()
-    target_id = str(target.get("id") or "").strip()
-    timestamp = str(
-        audit.get("timestamp")
-        or audit_action.get("timestamp")
-        or record.get("submitted_at")
-        or utc_now()
-    )
-    reason = str(audit.get("reason") or audit_action.get("reason") or action_type or "operator command")
-    event = {
-        "entry_id": str(audit_action.get("action_id") or f"audit-{command_id}"),
-        "actor": str(
-            audit.get("operator_id")
-            or audit.get("actor")
-            or audit_actor_ref.get("actor_id")
-            or "operator"
-        ),
-        "action_type": action_type,
-        "target_type": target_type,
-        "target_id": target_id,
-        "timestamp": timestamp,
-        "outcome": "accepted" if record.get("status") == CommandStatus.SUBMITTED.value else record.get("status"),
-        "audit_context": {
-            "reason": reason,
-            "command_id": command_id,
-            "receipt_id": command_id,
-            "idempotency_key": (
-                idempotency_record.get("idempotency_key")
-                or metadata.get("idempotency_key")
-                or audit.get("idempotency_key")
-            ),
-            "action_id": audit.get("action_id"),
-            "foundation_action_type": audit_action.get("action_type"),
-        },
-        "evidence_refs": audit.get("evidence_refs") if isinstance(audit.get("evidence_refs"), list) else [],
-        "command_ref": command_id,
-        "trace_id": audit_action.get("trace_id") or trace_context.get("trace_id"),
-        "correlation_id": (
-            audit_action.get("correlation_id")
-            or trace_context.get("correlation_id")
-        ),
-        "payload_checksum": audit_action.get("payload_checksum"),
-        "audit_action": audit_action or None,
-        "metadata": {
-            "source": "command_store",
-            "route": metadata.get("route"),
-            "source_route": metadata.get("source_route"),
-            "live_capital_side_effects": audit.get("live_capital_side_effects", False),
-        },
-    }
-    return json.loads(json.dumps(event))
-def _audit_event_matches(
-    event: Dict[str, Any],
-    *,
-    actor: Optional[str] = None,
-    action_types: Optional[List[str]] = None,
-    target_type: Optional[str] = None,
-    from_ts: Optional[datetime] = None,
-    to_ts: Optional[datetime] = None,
-) -> bool:
-    if actor and event.get("actor") != actor:
-        return False
-    if action_types:
-        allowed = {value for value in action_types if value}
-        if event.get("action_type") not in allowed:
-            return False
-    if target_type and event.get("target_type") != target_type:
-        return False
-    event_dt = _audit_datetime(event.get("timestamp"))
-    if from_ts is not None and (event_dt is None or event_dt < from_ts):
-        return False
-    if to_ts is not None and (event_dt is None or event_dt > to_ts):
-        return False
-    return True
+from .governance.command_audit import (
+    project_command_record_audit_event as _project_command_record_audit_event,
+    audit_event_matches as _audit_event_matches,
+    list_projected_governance_audit_events as _list_projected_governance_audit_events,
+)
 def _list_governance_audit_events(
     *,
     actor: Optional[str] = None,
@@ -1538,17 +1083,14 @@ def _list_governance_audit_events(
                 event,
             )
     if include_command_store:
-        for record in command_store._get_all_commands():
-            event = _project_command_record_audit_event(record)
-            if not event or not _audit_event_matches(
-                event,
-                actor=actor,
-                action_types=action_types,
-                target_type=target_type,
-                from_ts=from_ts,
-                to_ts=to_ts,
-            ):
-                continue
+        for event in _list_projected_governance_audit_events(
+            command_store,
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ):
             events_by_id.setdefault(str(event.get("entry_id")), event)
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
@@ -1767,25 +1309,7 @@ def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, A
             "runtime kill-switch, and broker rehearsal gates are verified"
         ),
     )
-def _require_admin_mfa(identity: OperatorIdentity, command_name: str) -> None:
-    if "admin" not in identity.roles:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            f"{command_name} requires 'admin' role",
-            "Operator does not hold the admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to an admin-role operator",
-        )
-    if not identity.mfa_verified:
-        raise _bff_error(
-            403,
-            ErrorCode.AUTH_REQUIRED,
-            f"{command_name} requires MFA verification",
-            "Admin action requires MFA validation",
-            precondition_failed="mfa_check",
-            suggestion="Provide a valid MFA token in your session",
-        )
+_require_admin_mfa = auth_policy.require_admin_mfa
 def _deployment_review_href(plan_id: str) -> str:
     return f"{_OPERATOR_DEPLOYMENT_REVIEW_ROUTE}?plan={plan_id}"
 def _incident_detail_href(incident_id: str) -> str:
@@ -2626,6 +2150,8 @@ _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
     CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
     CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
+    CommandType.PAUSE_PAPER_RUNTIME: ObjectType.RUNTIME,
+    CommandType.RESUME_PAPER_RUNTIME: ObjectType.RUNTIME,
 }
 def _validate_final_command_target_type(cmd: OperatorCommand) -> None:
     expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
@@ -2672,6 +2198,49 @@ def _validate_capital_authority_target_binding(cmd: OperatorCommand) -> None:
             ),
             precondition_failed="capital_target_id_mismatch",
         )
+def _validate_paper_runtime_authority_target_binding(cmd: OperatorCommand) -> None:
+    if cmd.command not in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+        return
+    if cmd.target.type != ObjectType.RUNTIME:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            f"{cmd.command.value} requires target.type = Runtime",
+            "Canonical paper commands only accept Runtime targets",
+            precondition_failed="target.type",
+        )
+    target_id = str(cmd.target.id or "").strip()
+    if not target_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            f"{cmd.command.value} requires a non-empty runtime target id",
+            "target.id must be a non-empty runtime id",
+            precondition_failed="target.id",
+        )
+    aliases = ("runtime_id", "runtimeId", "entity_id", "entityId")
+    supplied = {
+        str(cmd.params.get(alias) or "").strip()
+        for alias in aliases
+        if str(cmd.params.get(alias) or "").strip()
+    }
+    if supplied and supplied != {target_id}:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            f"runtime_id must match command target.id for {cmd.command.value}",
+            (
+                f"Canonical paper command targets {target_id!r}, but params supplied "
+                f"{sorted(supplied)!r}"
+            ),
+            precondition_failed="target_redirection_detected",
+        )
+    # Discard caller-supplied verified_binding/verified_binding_id
+    cmd.params.pop("verified_binding", None)
+    cmd.params.pop("verified_binding_id", None)
+    cmd.params.pop("verified_runtime_binding_id", None)
+    cmd.params["runtime_id"] = target_id
+    cmd.params["entity_id"] = target_id
 def _canonicalize_validated_precondition_evidence(
     stored_params: Dict[str, Any],
     evidence: Dict[str, str],
@@ -3293,18 +2862,40 @@ def _stored_command_params(
     elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
         params.pop("personaId", None)
         params["persona_id"] = cmd.target.id
+    elif cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+        target_rt_id = str(cmd.target.id).strip()
+        params["runtime_id"] = target_rt_id
+        params["entity_id"] = target_rt_id
+        params.pop("runtimeId", None)
+        params.pop("entityId", None)
+        params.pop("verified_binding", None)
+        params.pop("verified_binding_id", None)
+        params.pop("verified_runtime_binding_id", None)
+        if raw_payload and "bounded_duration_minutes" in raw_payload and "bounded_duration_minutes" not in params:
+            params["bounded_duration_minutes"] = raw_payload["bounded_duration_minutes"]
+        bdm = params.get("bounded_duration_minutes")
+        if bdm is not None:
+            try:
+                bdm_val = int(bdm)
+                if bdm_val > 0:
+                    params["duration_seconds"] = bdm_val * 60
+            except (ValueError, TypeError):
+                pass
     canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
         cmd.command,
         cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
     )
     if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
         canonical_action_id = "submit_recommendation"
+    canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
+    if canonical_paper:
+        canonical_action_id = cmd.command.value
     # The target/action/actor fields come from the validated command envelope,
     # never from caller params.  Apart from fixing null adapter receipts, this
     # prevents a caller from redirecting an admitted command after validation.
     params.update(
         {
-            "entity_type": cmd.params.get("entity_type") or cmd.target.type.value,
+            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
             "entity_id": cmd.target.id,
             "action_id": canonical_action_id,
             "actionId": canonical_action_id,
@@ -3406,6 +2997,21 @@ def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, An
     command_type = CommandType(record["type"])
     params = dict(record.get("params") or {})
     if command_type not in _DRAWER_RUNTIME_COMMANDS:
+        if command_type in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
+            params.update(entity_type="Runtime", action_id=command_type.value, actionId=command_type.value)
+            target = record.get("target") or {}
+            rt_id = str(target.get("id") or "").strip()
+            # Discard caller-supplied verified_binding/verified_binding_id;
+            # server resolve authoritative owner both admission and execution;
+            # never replace immutable target with binding.runtime_id.
+            params.pop("verified_binding", None)
+            params.pop("verified_binding_id", None)
+            params.pop("verified_runtime_binding_id", None)
+            if rt_id:
+                params["runtime_id"] = rt_id
+                params["entity_id"] = rt_id
+                params.pop("runtimeId", None)
+                params.pop("entityId", None)
         return params
 
     target = record.get("target") or {}
@@ -4614,6 +4220,36 @@ def _validate_quarterly_ranking_recommendation_submit(
             f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
             precondition_failed="recommendation_action_id",
         )
+def _check_binding_tenant_ownership(binding: Any, identity: OperatorIdentity) -> str:
+    binding_tenant = ""
+    metadata = binding.get("metadata") if isinstance(binding, dict) else getattr(binding, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("tenant_id", "tenantId", "tenant"):
+            val = metadata.get(key)
+            if val is not None and str(val).strip():
+                binding_tenant = str(val).strip()
+                break
+    if not binding_tenant:
+        for key in ("tenant_id", "tenantId", "tenant"):
+            val = binding.get(key) if isinstance(binding, dict) else getattr(binding, key, None)
+            if val is not None and str(val).strip():
+                binding_tenant = str(val).strip()
+                break
+    if not binding_tenant:
+        raise _bff_error(403, ErrorCode.FORBIDDEN, "Runtime tenant is unavailable", "Cannot determine the runtime owner tenant", precondition_failed="cross_tenant")
+
+    # Reuse the existing tenant resolver; do not maintain another claims policy.
+    try:
+        _bff_me_tenant_payload(identity, requested_tenant=binding_tenant)
+    except HTTPException as exc:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Cross-tenant access forbidden",
+            f"Caller cannot operate on runtime binding in tenant '{binding_tenant}'",
+            precondition_failed="cross_tenant",
+        ) from exc
+    return binding_tenant
 def _enforce_ops_console_preconditions(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -4631,7 +4267,7 @@ def _enforce_ops_console_preconditions(
             or params.get("entityId")
             or ""
         ).strip()
-    elif entity_type == "runtime":
+    elif entity_type in ("runtime", "paper-runtime"):
         runtime_id = (
             params.get("runtime_id")
             or params.get("runtimeId")
@@ -4694,11 +4330,21 @@ def _enforce_ops_console_preconditions(
                             precondition_failed="capital_binding_missing",
                         )
 
-    runtime_id = (
-        params.get("runtime_id")
-        or params.get("runtimeId")
-        or ""
-    ).strip()
+    # Item 4: generic _enforce_ops_console_preconditions must NOT derive runtime_id from entity_id
+    # for persona actions Observe/RequestReview/etc. Runtime fallback only actual Runtime targets/paper runtime commands.
+    is_runtime_target = (
+        entity_type in ("runtime", "paper-runtime")
+        or (required_bindings and "paper" in required_bindings)
+        or str(params.get("target_type") or "").strip().lower() in ("runtime", "paper-runtime")
+    )
+    if not runtime_id and is_runtime_target:
+        runtime_id = (
+            params.get("runtime_id")
+            or params.get("runtimeId")
+            or params.get("entity_id")
+            or params.get("entityId")
+            or ""
+        ).strip()
     if runtime_id:
         binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
         if not binding:
@@ -4708,8 +4354,51 @@ def _enforce_ops_console_preconditions(
                 "Runtime not found",
                 f"Runtime {runtime_id} does not exist",
             )
+        resolved_rt_id = (
+            binding.get("runtime_id") or binding.get("runtimeId")
+            if isinstance(binding, dict)
+            else getattr(binding, "runtime_id", getattr(binding, "runtimeId", None))
+        )
+        resolved_rt_id = str(resolved_rt_id or "").strip()
+        if resolved_rt_id and resolved_rt_id != runtime_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Runtime ID mismatch",
+                f"Binding runtime ID '{resolved_rt_id}' does not match requested runtime ID '{runtime_id}'",
+                precondition_failed="runtime_id_mismatch",
+            )
+        payload_binding_id = str(
+            params.get("binding_id")
+            or params.get("bindingId")
+            or params.get("runtime_binding_id")
+            or params.get("runtimeBindingId")
+            or ""
+        ).strip()
+        actual_binding_id = (
+            binding.get("binding_id") or binding.get("id") or binding.get("bindingId")
+            if isinstance(binding, dict)
+            else getattr(binding, "binding_id", getattr(binding, "id", getattr(binding, "bindingId", None)))
+        )
+        actual_binding_id = str(actual_binding_id or "").strip()
+        if payload_binding_id and actual_binding_id and payload_binding_id != actual_binding_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Binding ID mismatch",
+                f"Payload binding ID '{payload_binding_id}' does not match resolved binding '{actual_binding_id}'",
+                precondition_failed="binding_mismatch",
+            )
+        params["tenant_id"] = _check_binding_tenant_ownership(binding, identity)
         if required_bindings and "paper" in required_bindings:
-            stage = str(binding.get("deployment_stage") or binding.get("stage") or "").strip().lower()
+            stage = (
+                binding.get("deployment_mode")
+                or binding.get("deployment_stage")
+                or binding.get("stage")
+                if isinstance(binding, dict)
+                else getattr(binding, "deployment_mode", getattr(binding, "deployment_stage", getattr(binding, "stage", "")))
+            )
+            stage = str(stage or "").strip().lower()
             if stage != "paper":
                 raise _bff_error(
                     422,
@@ -4718,6 +4407,12 @@ def _enforce_ops_console_preconditions(
                     "Action is restricted to paper runtimes only",
                     precondition_failed="stage_mismatch",
                 )
+        # Discard caller-supplied verified_binding/verified_binding_id; server resolve authoritative owner
+        params.pop("verified_binding", None)
+        params.pop("verified_binding_id", None)
+        params.pop("verified_runtime_binding_id", None)
+        if actual_binding_id:
+            params["runtime_binding_id"] = actual_binding_id
 def _validate_observe(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
@@ -4756,8 +4451,13 @@ def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIden
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    runtime_id = params.get("runtime_id") or params.get("runtimeId")
-    if not runtime_id:
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or params.get("entity_id")
+        or params.get("entityId")
+    )
+    if not runtime_id or not str(runtime_id).strip():
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
@@ -4765,6 +4465,21 @@ def _validate_pause_paper_runtime(params: Dict[str, Any], identity: OperatorIden
             "runtime_id must be provided",
             precondition_failed="missing_runtime",
         )
+    if "bounded_duration_minutes" in params and params["bounded_duration_minutes"] is not None:
+        val = params["bounded_duration_minutes"]
+        valid = False
+        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+            valid = True
+        elif isinstance(val, str) and val.strip().isdigit() and int(val.strip()) > 0:
+            valid = True
+        if not valid:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid bounded_duration_minutes",
+                "bounded_duration_minutes must be a positive integer",
+                precondition_failed="bounded_duration_minutes",
+            )
     _enforce_ops_console_preconditions(params, identity, required_bindings=["paper"])
 def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     if not {"operator", "approver", "admin"}.intersection(identity.roles):
@@ -4775,8 +4490,13 @@ def _validate_resume_paper_runtime(params: Dict[str, Any], identity: OperatorIde
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    runtime_id = params.get("runtime_id") or params.get("runtimeId")
-    if not runtime_id:
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtimeId")
+        or params.get("entity_id")
+        or params.get("entityId")
+    )
+    if not runtime_id or not str(runtime_id).strip():
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
@@ -7230,6 +6950,33 @@ def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
             "replayed": False,
         },
     }
+_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+from .command_adapters.service import CommandAdapterService as _CommandAdapterService
+
+_command_adapter_service = _CommandAdapterService(
+    command_store=lambda: command_store,
+    read_surface=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_operator_role=_require_operator_role,
+    require_read_role=_require_read_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    validators=_VALIDATORS,
+    process_command_task=lambda cmd_id: _process_command_stub(cmd_id),
+    check_read_surface_state=_check_read_surface_state,
+    final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
+    gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+    publish_event=lambda event_type, data: _publish_event(
+        _sse_buffers["audit"],
+        _sse_subscribers["audit"],
+        event_type,
+        data,
+    ),
+)
+command_adapter_service = _command_adapter_service
+
 def _submit_final_command_admission(
     *,
     background_tasks: BackgroundTasks,
@@ -7252,318 +6999,25 @@ def _submit_final_command_admission(
     response_deprecation: Optional[Dict[str, Any]] = None,
 ) -> CommandResponse[Dict[str, Any]]:
     """Submit a final-contract command through the shared BFF command admission path."""
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
-    cmd = _normalize_operator_command_payload(payload)
-
-    # Resolve idempotency key before building foundation context so the key is
-    # present in the trace from the start.
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
-    foundation_context = _build_foundation_command_context(
-        cmd=cmd,
-        identity=identity,
-        raw_payload=(
-            foundation_raw_payload
-            if foundation_raw_payload is not None
-            else payload
-        ),
-        trace_id=x_trace_id,
-        correlation_id=x_correlation_id,
-        request_id=x_request_id,
-        idempotency_key=resolved_key,
+    return _command_adapter_service.submit_command_admission(
+        background_tasks=background_tasks,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
         route=route,
         source_route=source_route,
-    )
-
-    try:
-        _reject_body_idempotency_key(payload)
-        _reject_server_managed_rebalance_evidence_command(cmd)
-        if extra_precondition is not None:
-            extra_precondition(identity, cmd)
-        _validate_audit_context(cmd)
-        _validate_capital_authority_target_binding(cmd)
-        _ensure_live_broker_scope_allowed(cmd, payload)
-        _validate_drawer_runtime_target(cmd)
-        _validate_final_command_target_type(cmd)
-        validator = _VALIDATORS.get(cmd.command)
-        if validator:
-            validator(cmd.params, identity)
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key,
-        operator_id=identity.operator_id,
-    )
-    if duplicate:
-        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
-        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-            raise _foundation_idempotency_conflict_error(
-                foundation_context=foundation_context,
-                existing_command_id=str(duplicate.get("command_id") or ""),
-            )
-        _assert_duplicate_confirm_token_matches(
-            duplicate=duplicate,
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            foundation_context=foundation_context,
-        )
-        duplicate_status = CommandStatus(
-            duplicate.get("status") or CommandStatus.SUBMITTED.value
-        )
-        if enqueue and _retryable_terminal_capital_command(duplicate):
-            command_store.update_status(
-                str(duplicate["command_id"]),
-                CommandStatus.SUBMITTED,
-                audit={"retry_requested_at": utc_now()},
-            )
-            background_tasks.add_task(
-                _process_command_stub, str(duplicate["command_id"])
-            )
-            duplicate_status = CommandStatus.SUBMITTED
-        if route == "POST /api/v1/operator/commands":
-            return _project_command_submission_response(
-                command_id=duplicate["command_id"],
-                command=cmd.command,
-                accepted_at=duplicate.get("submitted_at") or utc_now(),
-                status=duplicate_status,
-                staleness_warning=None,
-            )
-        return _project_final_command_response(
-            command_id=duplicate["command_id"],
-            command=cmd.command,
-            accepted_at=duplicate.get("submitted_at") or utc_now(),
-            status=duplicate_status,
-            staleness_warning=None,
-            meta=_command_response_durable_meta(resolved_key, replayed=True)
-            if include_durable_meta
-            else None,
-            deprecation=response_deprecation,
-        )
-
-    try:
-        if route == "POST /api/v1/operator/commands":
-            precondition_evidence = (
-                _require_final_command_preconditions(
-                    cmd=cmd,
-                    payload=payload,
-                    confirm_token=x_confirm_token,
-                    identity=identity,
-                    correlation_id=foundation_context["trace_context"].correlation_id,
-                )
-                if cmd.command in {
-                    CommandType.APPROVED_APPLY,
-                    CommandType.EMERGENCY_CONTAINMENT,
-                }
-                else {}
-            )
-        else:
-            precondition_evidence = _require_final_command_preconditions(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
-    stored_params["idempotency_key"] = resolved_key
-    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-    _canonicalize_validated_precondition_evidence(
-        stored_params,
-        precondition_evidence,
-    )
-
-    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
-    if active:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-
-    staleness_warning = _check_read_surface_state()
-    if _request_dry_run_requested():
-        command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-        if route == "POST /api/v1/operator/commands":
-            return _project_command_submission_response(
-                command_id=command_envelope.command_id,
-                command=cmd.command,
-                accepted_at=utc_now(),
-                status=CommandStatus.SUBMITTED,
-                staleness_warning=staleness_warning,
-            )
-        return _project_final_command_response(
-            command_id=command_envelope.command_id,
-            command=cmd.command,
-            accepted_at=utc_now(),
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=staleness_warning,
-            meta=_command_response_dry_run_meta(resolved_key),
-            deprecation=response_deprecation,
-        )
-
-    command_envelope = foundation_context["command_envelope"]
-    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
-    idempotency_record = idempotency_record.with_status(
-        "succeeded",
-        result_ref=f"command:{command_envelope.command_id}",
-    )
-    foundation_context["idempotency_record"] = idempotency_record
-    command_id = command_envelope.command_id
-    submitted_at = utc_now()
-    receipt_dual_write = _command_dual_write_receipts(
-        command_id=command_id,
-        command=cmd.command.value,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=submitted_at,
-    )
-
-    auth_context = _command_runtime_auth_context(
-        command_id=command_id,
-        authorization=authorization,
-        mfa_token=x_mfa_token,
-        identity=identity,
-    )
-
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "mfa_verified": identity.mfa_verified,
-        "reason": cmd.audit_context.reason,
-        "incident_id": cmd.audit_context.incident_id,
-        "preconditions_checked": [
-            "authentication", "authorization", "params_shape", "concurrent_safety"
-        ],
-        "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth": auth_context,
-        "foundation": _serialize_foundation_context(foundation_context),
-        "receipt_dual_write": receipt_dual_write,
-    }
-    if precondition_evidence:
-        audit_record["precondition_evidence"] = precondition_evidence
-    if audit_extra:
-        audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
-
-    serialized_foundation = _serialize_foundation_context(foundation_context)
-    with command_store.serialized_transaction():
-        duplicate_after_precheck = command_store.get_command_by_idempotency_key(
-            resolved_key,
-            operator_id=identity.operator_id,
-        )
-        if duplicate_after_precheck:
-            duplicate_record = (
-                (duplicate_after_precheck.get("foundation") or {})
-                .get("idempotency_record")
-                or {}
-            )
-            if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-                raise _foundation_idempotency_conflict_error(
-                    foundation_context=foundation_context,
-                    existing_command_id=str(duplicate_after_precheck.get("command_id") or ""),
-                )
-            _assert_duplicate_confirm_token_matches(
-                duplicate=duplicate_after_precheck,
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                foundation_context=foundation_context,
-            )
-            if route == "POST /api/v1/operator/commands":
-                return _project_command_submission_response(
-                    command_id=duplicate_after_precheck["command_id"],
-                    command=cmd.command,
-                    accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
-                    status=CommandStatus(
-                        duplicate_after_precheck.get("status")
-                        or CommandStatus.SUBMITTED.value
-                    ),
-                    staleness_warning=None,
-                )
-            return _project_final_command_response(
-                command_id=duplicate_after_precheck["command_id"],
-                command=cmd.command,
-                accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
-                status=CommandStatus(
-                    duplicate_after_precheck.get("status")
-                    or CommandStatus.SUBMITTED.value
-                ),
-                staleness_warning=None,
-                meta=_command_response_durable_meta(resolved_key, replayed=True)
-                if include_durable_meta
-                else None,
-                deprecation=response_deprecation,
-            )
-
-        if precondition_evidence.get("confirm_token_id"):
-            try:
-                revalidated_token_id = _require_final_command_confirm_token(
-                    cmd=cmd,
-                    payload=payload,
-                    confirm_token=x_confirm_token,
-                    identity=identity,
-                    correlation_id=foundation_context["trace_context"].correlation_id,
-                )
-            except HTTPException as exc:
-                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-            if revalidated_token_id:
-                precondition_evidence["confirm_token_id"] = revalidated_token_id
-
-        record, active_after_precheck = _persist_admitted_command_with_confirm_token(
-            command_id=command_id,
-            command_type=cmd.command,
-            target=cmd.target,
-            submitted_at=submitted_at,
-            params=stored_params,
-            audit_context=audit_record,
-            foundation_context=serialized_foundation,
-            precondition_evidence=precondition_evidence,
-            identity=identity,
-        )
-    if active_after_precheck:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-    assert record is not None
-
-    log.info(
-        "Accepted final-contract command %s (%s) for %s:%s by operator %s",
-        command_id, cmd.command.value, cmd.target.type.value, cmd.target.id, identity.operator_id,
-    )
-
-    if enqueue:
-        background_tasks.add_task(_process_command_stub, command_id)
-
-    if route == "POST /api/v1/operator/commands":
-        return _project_command_submission_response(
-            command_id=command_id,
-            command=cmd.command,
-            accepted_at=submitted_at,
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=staleness_warning,
-        )
-    return _project_final_command_response(
-        command_id=command_id,
-        command=cmd.command,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-        meta=_command_response_durable_meta(resolved_key, replayed=False)
-        if include_durable_meta
-        else None,
-        deprecation=response_deprecation,
+        foundation_raw_payload=foundation_raw_payload,
+        audit_extra=audit_extra,
+        extra_precondition=extra_precondition,
+        enqueue=enqueue,
+        include_durable_meta=include_durable_meta,
+        response_deprecation=response_deprecation,
     )
 _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
@@ -9592,7 +9046,7 @@ def _project_persona_dto(
         else []
     )
     if isinstance(metadata.get("data_source_status"), dict) or isinstance(metadata.get("data_sources"), list) or required_data_sources:
-        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+        data_source_status, data_sources, source_health_bindings = persona_service.overlay_source_health_truth(
             metadata.get("data_source_status") if isinstance(metadata.get("data_source_status"), dict) else {},
             metadata.get("data_sources") if isinstance(metadata.get("data_sources"), list) else [],
             required_data_sources=required_data_sources,
@@ -9623,9 +9077,6 @@ def _project_persona_dto(
             if v is not None:
                 dto[k] = v
     return dto
-def _routed_strategies_for_persona(persona_id: str) -> int:
-    items = read_store.list_strategy_specs(persona_id=persona_id) or []
-    return len(items)
 def _list_strategy_summaries() -> List[Dict[str, Any]]:
     """Return canonical strategy specs from read_store."""
     return list(read_store.list_strategy_specs() or [])
@@ -13411,6 +12862,12 @@ def _mgmt_nl_action_params_valid(kind: str, params: Dict[str, Any]) -> bool:
     if kind == "refreshCurrentView":
         return True
     if kind == "runBffAction":
+        if (
+            params.get("entityType") == "Runtime"
+            and params.get("actionId") in {"PausePaperRuntime", "ResumePaperRuntime"}
+            and str(params.get("entityId") or "").strip()
+        ):
+            return True
         endpoint = str(params.get("endpoint") or "").strip()
         return endpoint.startswith("/bff/") or endpoint.startswith("/api/v1/")
     return False
@@ -15436,6 +14893,9 @@ def _mgmt_nl_provider_prompt(
         "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
         "Treat backend.management_nl.data.conversation.client_hint as a frontend hint, never as the conversation source of truth.",
         "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
+        'For an action proposal, return a JSON object {"answer": "...", "actions": '
+        '[{"id": "...", "kind": "...", "label": "...", "params": {}, "requiresConfirmation": true}]} '
+        "without markdown fences; use the advertised paramsSchema. Plain answers may remain text.",
         "Any runBffAction or write-style action must require confirmation.",
         "If evidence is missing or stale, say so and keep the answer concise.",
         f"Focus: {focus}",
@@ -16758,6 +16218,7 @@ def bff_management_nl_ask_stream(
         )
         chunks: List[str] = []
         final_text: Optional[str] = None
+        final_event: Dict[str, Any] = {}
         had_error = False
         failure_event: Optional[Dict[str, Any]] = None
         try:
@@ -16774,6 +16235,9 @@ def bff_management_nl_ask_stream(
                     chunks.append(str(evt.get("text") or ""))
                 elif evt.get("type") == "done":
                     final_text = str(evt.get("text") or "")
+                    final_event = dict(evt)
+                    # Only emit the BFF's filtered, persisted completion below.
+                    continue
                 elif evt.get("type") == "error":
                     had_error = True
                     failure_event = {
@@ -16829,8 +16293,27 @@ def bff_management_nl_ask_stream(
             yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
             )
-        answer = "".join(chunks).strip() or (final_text or "").strip()
+        raw_answer = (final_text or "").strip() or "".join(chunks).strip()
+        answer = _mgmt_nl_text_from_provider_value(_mgmt_nl_jsonish(raw_answer)) or raw_answer
+        if not final_event and not had_error:
+            had_error = True
+            failure_event = {
+                "event_type": "management_ai.provider.failed",
+                "session_id": session_id, "message_id": message_id, "trace_id": trace_id,
+                "provider_run_id": provider_run_id, "actor_id": identity.operator_id,
+                "provider": "openclaw", "mode": provider_mode,
+                "error_code": "OPENCLAW_STREAM_INCOMPLETE",
+                "error_message": "Provider stream ended without a terminal result.",
+            }
+            yield _mgmt_nl_sse_frame({
+                "type": "error", "error_code": failure_event["error_code"],
+                "message": failure_event["error_message"],
+            })
         if answer and not had_error:
+            actions = _mgmt_nl_extract_provider_actions(
+                {**final_event, "text": raw_answer},
+                allowed_action_kinds=_mgmt_nl_allowed_action_kinds(ui_snapshot),
+            )
             duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
             _management_ai_record_event(
                 {
@@ -16842,6 +16325,7 @@ def bff_management_nl_ask_stream(
                     "actor_id": identity.operator_id,
                     "provider": "openclaw",
                     "provider_state": "completed",
+                    "action_count": len(actions),
                     "mode": provider_mode,
                     "duration_ms": duration_ms,
                     "output_summary": {
@@ -16865,8 +16349,12 @@ def bff_management_nl_ask_stream(
                 created_at=utc_now(),
                 trace_id=trace_id,
                 provider_status=provider_status,
+                ui_actions=actions,
             )
-            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "provider_status": provider_status})
+            yield _mgmt_nl_sse_frame({
+                "type": "done", "text": answer,
+                "provider_status": provider_status, "ui_actions": actions,
+            })
         elif failure_event is not None:
             _management_ai_record_event(failure_event)
         yield _mgmt_nl_sse_frame("[DONE]")
@@ -19085,7 +18573,7 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
     )
 _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
-_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+# _GOV_BFF_IDEMPOTENCY defined earlier
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),
@@ -19293,7 +18781,7 @@ def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
     return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
-_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+# _FINAL_CONTRACT_IDEMPOTENCY defined earlier
 def _sem_command_payload_from_record(
     record: Dict[str, Any],
     *,
@@ -19393,143 +18881,19 @@ def _sem_command_response(
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
 ) -> JSONResponse:
-    payload = dict(payload or {})
-    _reject_body_idempotency_key(payload)
-    clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    # For routes that generate the target_id server-side (CREATE without a client-supplied id),
-    # exclude target_id from the idempotency hash so that retries with the same Idempotency-Key
-    # replay correctly rather than conflicting due to a different random id per call.
-    hash_body: Dict[str, Any] = {
-        "command": command_type.value,
-        "target_type": target_type.value,
-        "payload": payload,
-    }
-    if not server_generated_target:
-        hash_body["target_id"] = target_id
-    request_hash = _stable_json_hash(hash_body)
-    cache_key = _scoped_idempotency_cache_key(clean_key, identity.operator_id)
-    if _request_dry_run_requested():
-        return JSONResponse(
-            status_code=200,
-            content=_sem_command_dry_run_payload(
-                command_type=command_type,
-                target_type=target_type,
-                target_id=target_id,
-                payload=payload,
-                identity=identity,
-                idempotency_key=clean_key,
-            ),
-        )
-    existing = _FINAL_CONTRACT_IDEMPOTENCY.get(cache_key)
-    if existing:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was reused with a different command payload",
-                "The idempotency key already belongs to another command payload",
-                precondition_failed="idempotency_key",
-            )
-        replay = dict(existing["result"])
-        replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-        return JSONResponse(status_code=status_code, content=replay)
-    existing_record = command_store.get_command_by_idempotency_key(
-        clean_key,
-        operator_id=identity.operator_id,
-    )
-    if existing_record:
-        stored_hash = (existing_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
-        if stored_hash and stored_hash != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was reused with a different command payload",
-                "The idempotency key already belongs to another command payload",
-                precondition_failed="idempotency_key",
-            )
-        response = _sem_command_payload_from_record(existing_record, idempotency_key=clean_key, replayed=True)
-        return JSONResponse(status_code=status_code, content=response)
-
-    now = utc_now()
-    command_id = f"cmd-{uuid.uuid4().hex[:16]}"
-    receipt_dual_write = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command_type.value,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=now,
-    )
-    reason = str(payload.get("reason") or command_type.value)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
+    return _command_adapter_service.sem_command_response(
         command_type=command_type,
         target_type=target_type,
         target_id=target_id,
         payload=payload,
-        reason=reason,
-        command_id=command_id,
-        idempotency_key=clean_key,
-        route="POST /bff/semantic-command",
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        status_code=status_code,
+        server_generated_target=server_generated_target,
+        trusted_evidence_producer=trusted_evidence_producer,
+        terminal_on_persist=terminal_on_persist,
     )
-    foundation_ctx = {
-        "idempotency_record": {
-            "idempotency_key": clean_key,
-            "request_hash": request_hash,
-            "status": "succeeded",
-            "trace_id": audit_action.trace_id,
-        },
-        "audit_action": audit_action.to_dict(),
-    }
-    if trusted_evidence_producer:
-        foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-    audit_context = {
-        "actor": identity.operator_id,
-        "operator_id": identity.operator_id,
-        "reason": reason,
-        "live_capital_side_effects": False,
-        "receipt_dual_write": receipt_dual_write,
-        "foundation": foundation_ctx,
-    }
-    if trusted_evidence_producer:
-        audit_context["trusted_evidence_producer"] = trusted_evidence_producer
-    if terminal_on_persist:
-        audit_context["execution_completed_at"] = now
-        record, active = command_store.submit_terminal_command_if_no_active_target(
-            command_id,
-            command_type,
-            TargetObject(type=target_type, id=target_id),
-            now,
-            payload,
-            audit_context,
-            foundation_ctx,
-            {
-                "command_id": command_id,
-                "status": "recorded",
-                "recorded_at": now,
-            },
-        )
-    else:
-        record, active = command_store.submit_command_if_no_active_target(
-            command_id,
-            command_type,
-            TargetObject(type=target_type, id=target_id),
-            now,
-            payload,
-            audit_context,
-            foundation_ctx,
-        )
-    if active:
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active['command_id']} is currently {active['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-    assert record is not None
-    result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
-    _FINAL_CONTRACT_IDEMPOTENCY[cache_key] = {"request_hash": request_hash, "result": result}
-    return JSONResponse(status_code=status_code, content=result)
 def _confirm_token_records(token_id: str) -> List[Dict[str, Any]]:
     return [
         record
@@ -19874,407 +19238,6 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
             "surface_key": "ooda_control_room_status",
         },
     }
-def _as_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-def _persona_id(record: Dict[str, Any]) -> str:
-    return str(record.get("persona_id") or record.get("id") or "").strip()
-def _first_binding_for_persona(
-    persona_id: str,
-    *,
-    include_market_persona_defaults: bool = False,
-) -> Optional[Dict[str, Any]]:
-    if include_market_persona_defaults:
-        bindings = read_store.list_bindings(
-            persona_id=persona_id,
-            include_market_persona_defaults=True,
-        )
-    else:
-        bindings = read_store.get_bindings_for_persona(persona_id)
-    if not bindings:
-        return None
-    active = [
-        binding
-        for binding in bindings
-        if str(binding.get("status") or binding.get("validity") or "").lower()
-        in {"active", "ready", "bound"}
-    ]
-    return active[0] if active else bindings[0]
-def _runtime_for_pool(
-    pool_id: Optional[str],
-    *,
-    include_market_persona_defaults: bool = False,
-) -> Optional[Dict[str, Any]]:
-    if not pool_id:
-        return None
-    for runtime in read_store.list_runtime_bindings(
-        include_market_persona_defaults=include_market_persona_defaults,
-    ):
-        if str(runtime.get("capital_pool_id") or "") == str(pool_id):
-            return runtime
-    return None
-def _persona_health_status(
-    *,
-    lifecycle_state: str,
-    league_entry: Dict[str, Any],
-    risk_flags: List[str],
-) -> str:
-    league_status = str(league_entry.get("status") or "").strip().lower()
-    if league_status in {"critical", "frozen", "halted"}:
-        return "critical"
-    if int(league_entry.get("metrics", {}).get("violation_count") or 0) > 0:
-        return "critical"
-    if risk_flags or league_status in {"needs_human_approval", "degraded", "under_review"}:
-        return "degraded"
-    if lifecycle_state in {"frozen", "retired"}:
-        return "critical"
-    return "healthy"
-def _management_fleet_ooda_label(value: Any) -> str:
-    stage = str(value or "").strip().lower()
-    return {
-        "observe": "Observe",
-        "oriented": "Orient",
-        "orient": "Orient",
-        "decided": "Decide",
-        "decide": "Decide",
-        "acted": "Act",
-        "act": "Act",
-    }.get(stage, "Observe")
-def _management_fleet_autonomy(
-    *,
-    deployment_stage: str,
-    governance_required: bool,
-    human_needed: bool,
-) -> str:
-    stage = str(deployment_stage or "").strip().lower()
-    if human_needed or governance_required:
-        return "supervised"
-    if stage == "live":
-        return "autonomous"
-    return "manual"
-def _trading_performance_delta() -> Optional[float]:
-    """Return no delta until telemetry defines a canonical trading-return field."""
-
-    return None
-_SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
-_SOURCE_HEALTH_OVERLAY_TTL = 60.0
-_SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
-    "finmind": (
-        "tw-finmind-datasets",
-        "tw-finmind-broker-daily-report",
-        "tw-finmind-broker-bulk-parquet",
-    ),
-    "twse": ("tw-twse-tpex-official-market",),
-    "tpex": ("tw-twse-tpex-official-market",),
-    "mops": ("tw-mops-official-disclosures",),
-    # US research sources (SRCLIVE-005). The Yahoo chart connector was removed:
-    # its terms forbid programmatic access, so no ingest path may resolve to it.
-    "stooq": ("us-stooq-daily-ohlcv",),
-    "sec_edgar": ("us-sec-edgar-filings",),
-    "finra": ("us-finra-short-sale",),
-    "fred": ("us-fred-macro",),
-    "polygon": ("us-polygon-daily-ohlcv",),
-    "alphavantage": ("us-alpha-vantage-daily-ohlcv",),
-    # Crypto sources (SRCLIVE-003)
-    "coingecko": ("crypto-coingecko-spot",),
-}
-def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
-    now = time.monotonic()
-    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("truth_by_connector")
-    if cached is not None and (now - float(_SOURCE_HEALTH_OVERLAY_CACHE.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
-        return cached
-
-    truth: Dict[str, Dict[str, Any]] = {}
-    try:
-        registry = read_store.get_source_connector_registry()
-        for connector in (registry.get("connectors") or []):
-            if not isinstance(connector, dict):
-                continue
-            connector_id = str(connector.get("connector_id") or "").strip()
-            if connector_id:
-                truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
-    except Exception:  # read-only enrichment must never break persona surfaces
-        pass
-
-    try:
-        snapshot = read_store.get_source_health_usage_snapshot()
-        for source in (snapshot.get("sources") or []):
-            if not isinstance(source, dict):
-                continue
-            health = source.get("health") if isinstance(source.get("health"), dict) else {}
-            connector_id = str(health.get("source_id") or "").strip()
-            if connector_id:
-                truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
-                truth[connector_id]["usage_aggregate_30d"] = json.loads(
-                    json.dumps(source.get("usage_aggregate_30d") or {})
-                )
-                if source.get("recommendation") is not None:
-                    truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
-    except Exception:  # read-only enrichment must never break persona surfaces
-        pass
-
-    _SOURCE_HEALTH_OVERLAY_CACHE["at"] = now
-    _SOURCE_HEALTH_OVERLAY_CACHE["truth_by_connector"] = truth
-    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = {
-        connector_id: payload["health"]
-        for connector_id, payload in truth.items()
-        if isinstance(payload.get("health"), dict)
-    }
-    return truth
-def _connector_candidates_for_provider(source: Dict[str, Any]) -> List[str]:
-    candidates: List[str] = []
-    for key in ("connector_id", "connectorId", "source_id", "sourceId"):
-        value = str(source.get(key) or "").strip()
-        if value:
-            candidates.append(value)
-    provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip().lower()
-    candidates.extend(_SOURCE_PROVIDER_CONNECTOR_CANDIDATES.get(provider_key, ()))
-    return list(dict.fromkeys(candidates))
-def _source_failure_reason(health: Dict[str, Any], connector: Dict[str, Any]) -> Optional[str]:
-    metadata = health.get("metadata") if isinstance(health.get("metadata"), dict) else {}
-    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
-    state = connector.get("state") if isinstance(connector.get("state"), dict) else {}
-    for candidate in (
-        metadata.get("source_error"),
-        metadata.get("last_failure_error"),
-        health_metrics.get("source_error"),
-        state.get("last_error"),
-    ):
-        text = str(candidate or "").strip()
-        if text:
-            return text
-    return None
-def _provider_status_from_truth(health: Dict[str, Any], connector: Dict[str, Any]) -> str:
-    status = str(health.get("status") or "").strip().lower()
-    if status:
-        return "read_ok" if status == "ok" else f"source_health_{status}"
-    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
-    freshness_status = str(freshness.get("status") or "").strip().lower()
-    if freshness_status:
-        return f"connector_{freshness_status}"
-    return "connector_configured_no_health"
-def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[str, Any]:
-    health = truth.get("health") if isinstance(truth.get("health"), dict) else {}
-    connector = truth.get("connector") if isinstance(truth.get("connector"), dict) else {}
-    schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
-    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
-    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), dict) else {}
-    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
-    status = _provider_status_from_truth(health, connector)
-    last_fetch_at = (
-        latest_run.get("finished_at")
-        or latest_run.get("started_at")
-        or health.get("last_failure_at")
-        or health.get("last_success_at")
-        or freshness.get("last_success_at")
-    )
-    last_push_at = (
-        health.get("last_success_at")
-        or health_metrics.get("last_success_at")
-        or freshness.get("last_success_at")
-    )
-    failure_reason = _source_failure_reason(health, connector)
-    projection = {
-        "schema_version": "bff_source_health_truth.v1",
-        "connector_id": connector_id,
-        "connectorId": connector_id,
-        "health_source": "source_ingest",
-        "healthSource": "source_ingest",
-        "static_label": False,
-        "staticLabel": False,
-        "source_health_available": bool(health),
-        "sourceHealthAvailable": bool(health),
-        "health_status": health.get("status"),
-        "healthStatus": health.get("status"),
-        "connector_status": connector.get("status"),
-        "connectorStatus": connector.get("status"),
-        "status": status,
-        "last_success_at": health.get("last_success_at"),
-        "lastSuccessAt": health.get("last_success_at"),
-        "last_failure_at": health.get("last_failure_at"),
-        "lastFailureAt": health.get("last_failure_at"),
-        "last_fetch_at": last_fetch_at,
-        "lastFetchAt": last_fetch_at,
-        "last_push_at": last_push_at,
-        "lastPushAt": last_push_at,
-        "failure_reason": failure_reason,
-        "failureReason": failure_reason,
-        "latest_watermark": health.get("latest_watermark") or freshness.get("last_watermark"),
-        "latestWatermark": health.get("latest_watermark") or freshness.get("last_watermark"),
-        "row_count_last_run": health.get("row_count_last_run"),
-        "rowCountLastRun": health.get("row_count_last_run"),
-        "rejected_count_last_run": health.get("rejected_count_last_run"),
-        "rejectedCountLastRun": health.get("rejected_count_last_run"),
-        "connector_schedule": json.loads(json.dumps(schedule)),
-        "connectorSchedule": json.loads(json.dumps(schedule)),
-        "connector_freshness": json.loads(json.dumps(freshness)),
-        "connectorFreshness": json.loads(json.dumps(freshness)),
-        "source_health": json.loads(json.dumps(health)),
-        "sourceHealth": json.loads(json.dumps(health)),
-    }
-    if isinstance(truth.get("usage_aggregate_30d"), dict):
-        projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
-        projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
-    if truth.get("recommendation") is not None:
-        projection["recommendation"] = json.loads(json.dumps(truth["recommendation"]))
-    return projection
-def _select_source_truth(
-    candidate_ids: List[str],
-    truth_by_connector: Dict[str, Dict[str, Any]],
-) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    for connector_id in candidate_ids:
-        truth = truth_by_connector.get(connector_id)
-        if isinstance(truth, dict) and (truth.get("health") or truth.get("connector")):
-            return connector_id, truth
-    return None, None
-def _source_health_bindings_from_requirements(
-    required_data_sources: List[Dict[str, Any]],
-    truth_by_connector: Dict[str, Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    bindings: List[Dict[str, Any]] = []
-    for requirement in required_data_sources:
-        if not isinstance(requirement, dict):
-            continue
-        candidates = [
-            str(candidate).strip()
-            for candidate in (requirement.get("connector_candidates") or [])
-            if str(candidate).strip()
-        ]
-        connector_id, truth = _select_source_truth(candidates, truth_by_connector)
-        binding = {
-            "dataset": requirement.get("dataset"),
-            "market": requirement.get("market"),
-            "cadence": requirement.get("cadence"),
-            "source_class": requirement.get("source_class"),
-            "sourceClass": requirement.get("source_class"),
-            "connector_candidates": candidates,
-            "connectorCandidates": candidates,
-            "selected_connector_id": connector_id,
-            "selectedConnectorId": connector_id,
-            "health_source": "source_ingest" if truth else "unbound",
-            "healthSource": "source_ingest" if truth else "unbound",
-            "source_health_available": bool(truth and truth.get("health")),
-            "sourceHealthAvailable": bool(truth and truth.get("health")),
-        }
-        if truth and connector_id:
-            binding.update(_source_truth_projection(connector_id, truth))
-        elif str(requirement.get("source_class") or "") == "seed_only":
-            binding["health_source"] = "seed_only_not_live_binding"
-            binding["healthSource"] = "seed_only_not_live_binding"
-        bindings.append(binding)
-    return bindings
-def _data_source_ok_tone(value: Any) -> bool:
-    token = str(value or "").strip().lower()
-    return any(marker in token for marker in ("read_ok", "readback_ok", "smoke_ok"))
-def _upgrade_all_green_data_source_state(dss: Dict[str, Any]) -> None:
-    provider_statuses = dss.get("provider_statuses")
-    if not isinstance(provider_statuses, dict) or not provider_statuses:
-        return
-    if _data_source_ok_tone(dss.get("state")):
-        return
-    if not all(_data_source_ok_tone(status) for status in provider_statuses.values()):
-        return
-
-    provider_count = len(provider_statuses)
-    dss["state"] = "live_readback_ok"
-    dss["summary"] = (
-        f"All declared data-source providers ({provider_count}/{provider_count}) "
-        "report readback OK after live source-health overlay."
-    )
-def _overlay_source_health_truth(
-    data_source_status: Any,
-    data_sources: Any,
-    *,
-    required_data_sources: Optional[List[Dict[str, Any]]] = None,
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
-    srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
-    truth_by_connector = _source_ingest_truth_by_connector()
-    provider_statuses = dss.get("provider_statuses")
-    if not isinstance(provider_statuses, dict):
-        provider_statuses = {}
-        dss["provider_statuses"] = provider_statuses
-
-    connector_health: List[Dict[str, Any]] = []
-    live_connector_ids: List[str] = []
-    static_source_labels: List[str] = []
-    for source in srcs:
-        if not isinstance(source, dict):
-            continue
-        provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
-        connector_id, truth = _select_source_truth(
-            _connector_candidates_for_provider(source),
-            truth_by_connector,
-        )
-        if connector_id and truth:
-            projection = _source_truth_projection(connector_id, truth)
-            has_live_health = bool(projection.get("source_health_available"))
-            original_status = source.get("status")
-            original_reason = source.get("reason")
-            original_secret_ref = source.get("secret_ref")
-            source.update(projection)
-            if not has_live_health:
-                # Registry entry present but health-usage-snapshot has no live health;
-                # preserve the honest static defaults so read_unavailable /
-                # credential_unavailable are not silently overwritten.
-                if original_status:
-                    source["status"] = original_status
-                if original_reason is not None:
-                    source["reason"] = original_reason
-                if original_secret_ref is not None:
-                    source["secret_ref"] = original_secret_ref
-            elif original_status == "credential_unavailable":
-                # credential_unavailable is only upgraded when source-ingest confirms
-                # health.status=ok.  A degraded/failed health snapshot (e.g. missing
-                # API key reported by source-ingest) must NOT silently flip the status
-                # to source_health_degraded — the operator must see credential_unavailable
-                # with the secret_ref until the key is present and health is green.
-                if str(projection.get("health_status") or "").strip().lower() != "ok":
-                    source["status"] = original_status
-                    if original_reason is not None:
-                        source["reason"] = original_reason
-                    if original_secret_ref is not None:
-                        source["secret_ref"] = original_secret_ref
-            if provider_key:
-                provider_statuses[provider_key] = source["status"]
-            if has_live_health:
-                connector_health.append(projection)
-                live_connector_ids.append(connector_id)
-        else:
-            source.setdefault("health_source", "static_metadata")
-            source.setdefault("healthSource", "static_metadata")
-            source.setdefault("static_label", True)
-            source.setdefault("staticLabel", True)
-            if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
-                static_source_labels.append(provider_key)
-
-    bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
-    has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
-    dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
-    dss["sourceHealthSource"] = dss["source_health_source"]
-    dss["live_ingestion_enabled"] = bool(has_live_truth)
-    dss["connector_health"] = json.loads(json.dumps(connector_health))
-    dss["connectorHealth"] = json.loads(json.dumps(connector_health))
-    dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
-    dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
-    dss["static_source_labels"] = sorted(set(static_source_labels))
-    dss["staticSourceLabels"] = dss["static_source_labels"]
-    dss["required_source_health"] = json.loads(json.dumps(bindings))
-    dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
-    _upgrade_all_green_data_source_state(dss)
-    return dss, srcs, bindings
-_PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
-    "market_scope",
-    "asset_classes",
-    "data_source_status",
-    "data_sources",
-    "data_source_refs",
-    "research_status",
-    "research_refs",
-    "current_research_projects",
-)
 def _persona_fleet_context_missing(value: Any) -> bool:
     if value is None:
         return True
@@ -20362,674 +19325,6 @@ def _persona_fleet_context_overlay(
         if _persona_fleet_context_missing(context_metadata.get(key)) and not _persona_fleet_context_missing(default_metadata.get(key)):
             context_metadata[key] = json.loads(json.dumps(default_metadata[key]))
     return context_metadata, default_context.get("persona") if isinstance(default_context.get("persona"), dict) else {}
-_PERSONA_FLEET_INVALID_MUTATION_IDS = {
-    "",
-    "n/a",
-    "na",
-    "nan",
-    "none",
-    "null",
-    "undefined",
-}
-_PERSONA_FLEET_DATE_MUTATION_ID = re.compile(
-    r"^\d{4}[-/]\d{2}[-/]\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?$"
-)
-def _persona_fleet_mutation_id(value: Any) -> Optional[str]:
-    candidate = str(value or "").strip()
-    if candidate.lower() in _PERSONA_FLEET_INVALID_MUTATION_IDS:
-        return None
-    if _PERSONA_FLEET_DATE_MUTATION_ID.fullmatch(candidate):
-        return None
-    return candidate
-def _persona_fleet_mutation_projection(
-    *,
-    persona_id: str,
-    updated_at: Any,
-    evolution_decisions: Sequence[Dict[str, Any]],
-    artifact_ids: Set[str],
-    incident_ids: Set[str],
-) -> Dict[str, Any]:
-    matched: List[Tuple[Dict[str, Any], str]] = []
-    for decision in evolution_decisions:
-        targets_persona = str(decision.get("target_id") or "").strip() == persona_id
-        targets_artifact = str(decision.get("artifact_id") or "").strip() in artifact_ids
-        targets_incident = (
-            str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip()
-            in incident_ids
-        )
-        if not (targets_persona or targets_artifact or targets_incident):
-            continue
-        decision_id = _persona_fleet_mutation_id(decision.get("decision_id") or decision.get("id"))
-        if decision_id:
-            matched.append((decision, decision_id))
-
-    ordered = _sort_records_latest_first(
-        [decision for decision, _ in matched],
-        ("updated_at", "created_at", "occurred_at"),
-    )
-    decision_ids = {id(decision): decision_id for decision, decision_id in matched}
-
-    if ordered:
-        latest = ordered[0]
-        decision_id = decision_ids[id(latest)]
-        changed_at = (
-            latest.get("updated_at")
-            or latest.get("created_at")
-            or latest.get("occurred_at")
-            or updated_at
-        )
-        label = str(changed_at)[:10] if changed_at else None
-        href = (
-            "/management/evolution-journal"
-            f"?persona={quote(persona_id, safe='')}"
-            f"&mutation_review={quote(decision_id, safe='')}"
-        )
-        kind = "formal_mutation"
-        confidence = "formal"
-        diagnostics: List[str] = []
-    elif updated_at:
-        decision_id = None
-        changed_at = updated_at
-        label = str(updated_at)[:10]
-        href = (
-            "/management/evolution-journal"
-            f"?persona={quote(persona_id, safe='')}&source=fleet_summary"
-        )
-        kind = "fleet_summary"
-        confidence = "fallback"
-        diagnostics = ["No formal mutation entry id declared for this persona row."]
-    else:
-        decision_id = None
-        changed_at = None
-        label = None
-        href = None
-        kind = "unavailable"
-        confidence = "unavailable"
-        diagnostics = ["No recent-change data or fleet summary available for this persona."]
-
-    return {
-        "last_mutation_label": label,
-        "lastMutationLabel": label,
-        "last_mutation_at": changed_at,
-        "lastMutationAt": changed_at,
-        "last_mutation_kind": kind,
-        "lastMutationKind": kind,
-        "mutation_entry_id": decision_id,
-        "mutationEntryId": decision_id,
-        "evolution_entry_id": decision_id,
-        "evolutionEntryId": decision_id,
-        "evolution_href": href,
-        "evolutionHref": href,
-        "mutation_confidence": confidence,
-        "mutationConfidence": confidence,
-        "mutation_diagnostics": diagnostics,
-        "mutationDiagnostics": diagnostics,
-    }
-def _build_persona_health_items(
-    snapshot_at: str,
-    *,
-    include_market_persona_defaults: bool = False,
-) -> List[Dict[str, Any]]:
-    league_by_persona = {
-        str(item.get("persona_id") or item.get("id") or ""): item
-        for item in read_store.list_persona_league(
-            include_market_persona_defaults=include_market_persona_defaults,
-        )
-    }
-    context_defaults = (
-        _persona_fleet_context_defaults_by_market()
-        if include_market_persona_defaults
-        else {}
-    )
-    incidents_list = list(read_store.list_incidents() or [])
-    all_decisions = list(read_store.list_evolution_decisions() or [])
-    all_telemetry = list(read_store.list_telemetry_summaries() or [])
-    items: List[Dict[str, Any]] = []
-    for persona in read_store.list_personas(
-        include_market_persona_defaults=include_market_persona_defaults,
-    ):
-        persona_id = _persona_id(persona)
-        if not persona_id:
-            continue
-        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
-        context_metadata, context_persona = _persona_fleet_context_overlay(
-            persona,
-            metadata,
-            context_defaults,
-        )
-        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
-        if not is_default:
-            keys_to_strip = {
-                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
-                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
-                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
-                "league_rank", "rank", "league_score",
-                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
-                "ooda_stage", "ooda_status", "ooda",
-                "risk_flags", "risk_level", "violation_count", "risk",
-                "current_work",
-                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
-            }
-            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
-        league_entry = league_by_persona.get(persona_id, {})
-        league_metrics = (
-            league_entry.get("metrics")
-            if isinstance(league_entry.get("metrics"), dict)
-            else {}
-        )
-        performance = (
-            metadata.get("performance")
-            if isinstance(metadata.get("performance"), dict)
-            else {}
-        )
-        metrics = {**performance, **league_metrics}
-        binding = _first_binding_for_persona(
-            persona_id,
-            include_market_persona_defaults=include_market_persona_defaults,
-        ) or {}
-        pool_id = (
-            league_entry.get("capital_pool_id")
-            or metadata.get("capital_pool_id")
-            or context_metadata.get("capital_pool_id")
-            or binding.get("capital_pool_id")
-        )
-        runtime = _runtime_for_pool(
-            pool_id,
-            include_market_persona_defaults=include_market_persona_defaults,
-        ) or {}
-        runtime_id = (
-            league_entry.get("runtime_id")
-            or runtime.get("runtime_id")
-            or runtime.get("id")
-            or context_metadata.get("runtime_id")
-            or context_metadata.get("runtime_binding_id")
-            or metadata.get("runtime_binding_id")
-        )
-        deployment_stage = (
-            league_entry.get("deployment_stage")
-            or runtime.get("deployment_stage")
-            or runtime.get("deployment_mode")
-            or metadata.get("deployment_stage")
-            or context_metadata.get("deployment_stage")
-            or "none"
-        )
-        capital_mode = _persona_fleet_capital_mode(
-            league_entry=league_entry,
-            raw_metadata=metadata,
-            binding=binding,
-            runtime=runtime,
-            deployment_stage=deployment_stage,
-        )
-        live_pool_id = _persona_fleet_live_capital_pool_id(
-            capital_mode=capital_mode,
-            pool_id=pool_id,
-            league_entry=league_entry,
-            raw_metadata=metadata,
-            context_metadata=context_metadata,
-            binding=binding,
-        )
-        paper_ledger_id = _persona_fleet_paper_ledger_id(
-            persona_id=persona_id,
-            capital_mode=capital_mode,
-            league_entry=league_entry,
-            raw_metadata=metadata,
-            context_metadata=context_metadata,
-            binding=binding,
-            runtime=runtime,
-        )
-        paper_ledger = _persona_fleet_paper_ledger(
-            paper_ledger_id=paper_ledger_id,
-            persona_id=persona_id,
-            league_entry=league_entry,
-            raw_metadata=metadata,
-            context_metadata=context_metadata,
-        )
-        market_scope = list(
-            league_entry.get("market_scope")
-            or context_metadata.get("market_scope")
-            or []
-        )
-        asset_classes = list(context_metadata.get("asset_classes") or [])
-        risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
-        lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
-        health = _persona_health_status(
-            lifecycle_state=lifecycle_state,
-            league_entry=league_entry,
-            risk_flags=risk_flags,
-        )
-        score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0)
-        routed = _routed_strategies_for_persona(persona_id)
-        open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
-        drill_target = runtime_id or persona_id
-        governance_required = bool(
-            league_entry.get("governance_required")
-            if "governance_required" in league_entry
-            else context_metadata.get("governance_required", True)
-        )
-        recommendation = (
-            league_entry.get("recommendation")
-            or context_metadata.get("recommended_governance_action")
-            or ""
-        )
-        persona_status = str(
-            metadata.get("persona_status")
-            or league_entry.get("status")
-            or persona.get("status")
-            or lifecycle_state
-        )
-        data_source_status = (
-            context_metadata.get("data_source_status")
-            if isinstance(context_metadata.get("data_source_status"), dict)
-            else {}
-        )
-        data_sources = (
-            context_metadata.get("data_sources")
-            if isinstance(context_metadata.get("data_sources"), list)
-            else []
-        )
-        required_data_sources = (
-            persona.get("required_data_sources")
-            if isinstance(persona.get("required_data_sources"), list)
-            else []
-        )
-        if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
-            required_data_sources = context_persona.get("required_data_sources") or []
-        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
-            data_source_status,
-            data_sources,
-            required_data_sources=required_data_sources,
-        )
-        data_source_refs = (
-            context_metadata.get("data_source_refs")
-            if isinstance(context_metadata.get("data_source_refs"), list)
-            else []
-        )
-        research_status = (
-            context_metadata.get("research_status")
-            if isinstance(context_metadata.get("research_status"), dict)
-            else {}
-        )
-        research_refs = (
-            context_metadata.get("research_refs")
-            if isinstance(context_metadata.get("research_refs"), list)
-            else []
-        )
-        current_research_projects = (
-            context_metadata.get("current_research_projects")
-            if isinstance(context_metadata.get("current_research_projects"), list)
-            else []
-        )
-        human_needed = governance_required and str(recommendation).strip().lower() not in {
-            "",
-            "none",
-            "no_change",
-        }
-        updated_at = (
-            league_entry.get("updated_at")
-            or persona.get("updated_at")
-            or persona.get("last_active_at")
-            or snapshot_at
-        )
-        ooda_stage = league_entry.get("ooda_stage") or context_metadata.get("ooda_stage")
-
-        binding_ids = {str(binding.get("id") or binding.get("binding_id") or "").strip()}
-        binding_ids.discard("")
-        capital_pool_ids = {str(pool_id or "").strip()}
-        capital_pool_ids.discard("")
-        runtime_ids = {
-            str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
-        }
-        runtime_ids.discard("")
-        active_incidents = _persona_fleet_active_incidents_for_row(
-            incidents=incidents_list,
-            persona_id=persona_id,
-            binding_ids=binding_ids,
-            capital_pool_ids=capital_pool_ids,
-            runtime_ids=runtime_ids,
-        )
-
-        artifact_ids = set()
-        if runtime:
-            art_id = str(runtime.get("artifact_id") or "").strip()
-            if art_id:
-                artifact_ids.add(art_id)
-
-        incident_ids = {
-            str(incident.get("incident_id") or incident.get("id") or "").strip()
-            for incident in active_incidents
-            if str(incident.get("incident_id") or incident.get("id") or "").strip()
-        }
-
-        telemetry_summaries = [
-            t for t in all_telemetry
-            if t.get("persona_id") == persona_id or t.get("runtime_id") == runtime_id
-        ]
-        telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
-        telemetry_sharpe_values = [
-            value
-            for value in (
-                _management_first_float(
-                    summary,
-                    "sharpe",
-                    "sharpe_ratio",
-                    "summary.sharpe",
-                    "summary.sharpe_ratio",
-                )
-                for summary in telemetry_summaries
-            )
-            if value is not None
-        ]
-        telemetry_trade_values = [
-            value
-            for value in (
-                _management_first_float(summary, "total_trades", "summary.total_trades")
-                for summary in telemetry_summaries
-            )
-            if value is not None
-        ]
-        telemetry_metrics = {
-            "pnl": telemetry_rollup.get("total_pnl"),
-            "max_drawdown": telemetry_rollup.get("max_drawdown"),
-            "fill_rate": telemetry_rollup.get("average_fill_rate"),
-            "total_trades": int(sum(telemetry_trade_values)) if telemetry_trade_values else None,
-            "sharpe": _management_avg(telemetry_sharpe_values),
-        }
-        telemetry_has_performance = any(value is not None for value in telemetry_metrics.values())
-        is_seed_row = bool(metadata.get("is_market_persona_default") or metadata.get("seed_row"))
-
-        mutation_projection = _persona_fleet_mutation_projection(
-            persona_id=persona_id,
-            updated_at=updated_at,
-            evolution_decisions=all_decisions,
-            artifact_ids=artifact_ids,
-            incident_ids=incident_ids,
-        )
-
-        item = {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "personaId": persona_id,
-            **mutation_projection,
-            "name": persona.get("name") or persona_id,
-            "persona_name": persona.get("name") or persona_id,
-            "personaName": persona.get("name") or persona_id,
-            "owner": metadata.get("owner")
-            or metadata.get("owner_id")
-            or "pathreon-management",
-            "mode": deployment_stage,
-            "status": health,
-            "health": health,
-            "score": score,
-            "ooda": _management_fleet_ooda_label(ooda_stage),
-            "autonomy": _management_fleet_autonomy(
-                deployment_stage=deployment_stage,
-                governance_required=governance_required,
-                human_needed=human_needed,
-            ),
-            "perf_delta": _trading_performance_delta(),
-            "perfDelta": _trading_performance_delta(),
-            "has_trading_telemetry": telemetry_has_performance,
-            "hasTradingTelemetry": telemetry_has_performance,
-            "is_market_persona_default": is_seed_row,
-            "isMarketPersonaDefault": is_seed_row,
-            "seed_row": is_seed_row,
-            "seedRow": is_seed_row,
-            "human_needed": human_needed,
-            "humanNeeded": human_needed,
-            "last_mutation": str(updated_at)[:10],
-            "lastMutation": str(updated_at)[:10],
-            "state": persona_status,
-            "current_work": context_metadata.get("current_work"),
-            "currentWork": context_metadata.get("current_work"),
-            "routed_strategies": routed,
-            "routedStrategies": routed,
-            "open_findings": open_findings,
-            "openFindings": open_findings,
-            "market_scope": market_scope,
-            "marketScope": market_scope,
-            "asset_classes": asset_classes,
-            "assetClasses": asset_classes,
-            "capital_mode": capital_mode,
-            "capitalMode": capital_mode,
-            "paper_ledger_id": paper_ledger_id,
-            "paperLedgerId": paper_ledger_id,
-            "paper_ledger": paper_ledger,
-            "paperLedger": paper_ledger,
-            "legacy_paper_capital_pool_id": pool_id if capital_mode == "paper" else None,
-            "legacyPaperCapitalPoolId": pool_id if capital_mode == "paper" else None,
-            "capital_pool_id": live_pool_id,
-            "capitalPoolId": live_pool_id,
-            "runtime_id": runtime_id,
-            "runtimeId": runtime_id,
-            "deployment_stage": deployment_stage,
-            "deploymentStage": deployment_stage,
-            "ooda_stage": ooda_stage,
-            "oodaStage": ooda_stage,
-            "recommendation": recommendation,
-            "governance_required": governance_required,
-            "governanceRequired": governance_required,
-            "data_source_status": json.loads(json.dumps(data_source_status)),
-            "dataSourceStatus": json.loads(json.dumps(data_source_status)),
-            "data_sources": json.loads(json.dumps(data_sources)),
-            "dataSources": json.loads(json.dumps(data_sources)),
-            "data_source_refs": json.loads(json.dumps(data_source_refs)),
-            "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
-            "required_data_sources": json.loads(json.dumps(required_data_sources)),
-            "requiredDataSources": json.loads(json.dumps(required_data_sources)),
-            "source_health_bindings": json.loads(json.dumps(source_health_bindings)),
-            "sourceHealthBindings": json.loads(json.dumps(source_health_bindings)),
-            "research_status": json.loads(json.dumps(research_status)),
-            "researchStatus": json.loads(json.dumps(research_status)),
-            "research_refs": json.loads(json.dumps(research_refs)),
-            "researchRefs": json.loads(json.dumps(research_refs)),
-            "current_research_projects": json.loads(json.dumps(current_research_projects)),
-            "currentResearchProjects": json.loads(json.dumps(current_research_projects)),
-            "metrics": {
-                "pnl": _as_float(metrics.get("pnl")),
-                "sharpe": _as_float(metrics.get("sharpe")),
-                "sortino": _as_float(metrics.get("sortino")),
-                "max_drawdown": _as_float(metrics.get("max_drawdown")),
-                "win_rate": _as_float(metrics.get("win_rate")),
-                "trading_cost_bps": _as_float(metrics.get("trading_cost_bps")),
-                "stability_score": _as_float(metrics.get("stability_score")),
-                "human_interventions": int(metrics.get("human_interventions") or 0),
-                "training_improvement_pct": _as_float(metrics.get("training_improvement_pct")),
-                "violation_count": int(metrics.get("violation_count") or 0),
-            },
-            "risk_flags": risk_flags,
-            "riskFlags": risk_flags,
-            "updated_at": updated_at,
-            "drill_down": {
-                "kind": "runtime" if runtime_id else "persona",
-                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
-                "runtime_id": runtime_id,
-                "persona_id": persona_id,
-            },
-            "drillDown": {
-                "kind": "runtime" if runtime_id else "persona",
-                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
-                "runtimeId": runtime_id,
-                "personaId": persona_id,
-            },
-        }
-        items.append(item)
-    return sorted(
-        items,
-        key=lambda item: (
-            -_as_float(item.get("score")),
-            str(item.get("persona_id") or ""),
-        ),
-    )
-def _persona_fleet_active_incidents_for_row(
-    *,
-    incidents: List[Dict[str, Any]],
-    persona_id: str,
-    binding_ids: Set[str],
-    capital_pool_ids: Set[str],
-    runtime_ids: Set[str],
-) -> List[Dict[str, Any]]:
-    active_statuses = {"open", "active", "investigating"}
-    return [
-        incident
-        for incident in incidents
-        if str(incident.get("status") or "").lower() in active_statuses
-        and (
-            str(incident.get("persona_id") or "").strip() == persona_id
-            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
-            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
-            or str(incident.get("runtime_id") or "").strip() in runtime_ids
-        )
-    ]
-_PERSONA_FLEET_RUNNING_STAGE_STATES = {
-    "paper": "paper_running",
-    "canary": "canary_running",
-    "live": "live_running",
-}
-def _persona_fleet_record_value(record: Dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    for nested_key in ("params", "metadata"):
-        nested = record.get(nested_key)
-        if not isinstance(nested, dict):
-            continue
-        for key in keys:
-            value = nested.get(key)
-            if value not in (None, ""):
-                return value
-    return None
-def _persona_fleet_capital_mode(
-    *,
-    league_entry: Dict[str, Any],
-    raw_metadata: Dict[str, Any],
-    binding: Dict[str, Any],
-    runtime: Dict[str, Any],
-    deployment_stage: Any,
-) -> str:
-    for value in (
-        league_entry.get("capital_mode"),
-        league_entry.get("capitalMode"),
-        raw_metadata.get("capital_mode"),
-        raw_metadata.get("capitalMode"),
-        _persona_fleet_record_value(binding, "capital_mode", "capitalMode", "allowed_deployment_scope"),
-        _persona_fleet_record_value(runtime, "capital_mode", "capitalMode", "runtime_kind"),
-        deployment_stage,
-    ):
-        normalized = str(value or "").strip().lower()
-        if normalized in _PERSONA_FLEET_RUNNING_STAGE_STATES:
-            return normalized
-    return "none"
-def _persona_fleet_live_capital_pool_id(
-    *,
-    capital_mode: str,
-    pool_id: Any,
-    league_entry: Dict[str, Any],
-    raw_metadata: Dict[str, Any],
-    context_metadata: Dict[str, Any],
-    binding: Dict[str, Any],
-) -> Optional[str]:
-    if capital_mode != "paper":
-        clean = str(pool_id or "").strip()
-        return clean or None
-    for value in (
-        league_entry.get("target_capital_pool_id"),
-        league_entry.get("targetCapitalPoolId"),
-        raw_metadata.get("target_capital_pool_id"),
-        raw_metadata.get("targetCapitalPoolId"),
-        context_metadata.get("target_capital_pool_id"),
-        context_metadata.get("targetCapitalPoolId"),
-        league_entry.get("live_capital_pool_id"),
-        raw_metadata.get("live_capital_pool_id"),
-        context_metadata.get("live_capital_pool_id"),
-        _persona_fleet_record_value(binding, "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id"),
-    ):
-        clean = str(value or "").strip()
-        if clean:
-            return clean
-    return None
-def _persona_fleet_paper_ledger_id(
-    *,
-    persona_id: str,
-    capital_mode: str,
-    league_entry: Dict[str, Any],
-    raw_metadata: Dict[str, Any],
-    context_metadata: Dict[str, Any],
-    binding: Dict[str, Any],
-    runtime: Dict[str, Any],
-) -> Optional[str]:
-    if capital_mode != "paper":
-        return None
-    paper_ledger = context_metadata.get("paper_ledger") if isinstance(context_metadata.get("paper_ledger"), dict) else {}
-    raw_paper_ledger = raw_metadata.get("paper_ledger") if isinstance(raw_metadata.get("paper_ledger"), dict) else {}
-    for value in (
-        league_entry.get("paper_ledger_id"),
-        league_entry.get("paperLedgerId"),
-        raw_metadata.get("paper_ledger_id"),
-        raw_metadata.get("paperLedgerId"),
-        context_metadata.get("paper_ledger_id"),
-        context_metadata.get("paperLedgerId"),
-        paper_ledger.get("id"),
-        raw_paper_ledger.get("id"),
-        _persona_fleet_record_value(binding, "paper_ledger_id", "paperLedgerId"),
-        _persona_fleet_record_value(runtime, "paper_ledger_id", "paperLedgerId"),
-    ):
-        clean = str(value or "").strip()
-        if clean:
-            return clean
-    return f"paper-ledger-{persona_id}"
-def _persona_fleet_paper_budget(
-    *,
-    league_entry: Dict[str, Any],
-    raw_metadata: Dict[str, Any],
-    context_metadata: Dict[str, Any],
-) -> Optional[float]:
-    paper_ledger = context_metadata.get("paper_ledger") if isinstance(context_metadata.get("paper_ledger"), dict) else {}
-    for value in (
-        league_entry.get("paper_benchmark_budget"),
-        league_entry.get("paperBenchmarkBudget"),
-        raw_metadata.get("paper_benchmark_budget"),
-        raw_metadata.get("paperBenchmarkBudget"),
-        context_metadata.get("paper_benchmark_budget"),
-        context_metadata.get("paperBenchmarkBudget"),
-        paper_ledger.get("benchmark_budget"),
-        paper_ledger.get("benchmarkBudget"),
-        raw_metadata.get("paper_budget"),
-        context_metadata.get("paper_budget"),
-    ):
-        if value in (None, "") or isinstance(value, bool):
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-def _persona_fleet_paper_ledger(
-    *,
-    paper_ledger_id: Optional[str],
-    persona_id: str,
-    league_entry: Dict[str, Any],
-    raw_metadata: Dict[str, Any],
-    context_metadata: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
-    if not paper_ledger_id:
-        return None
-    out: Dict[str, Any] = {
-        "id": paper_ledger_id,
-        "mode": "paper",
-        "persona_id": persona_id,
-        "is_isolated": True,
-        "isolated": True,
-    }
-    budget = _persona_fleet_paper_budget(
-        league_entry=league_entry,
-        raw_metadata=raw_metadata,
-        context_metadata=context_metadata,
-    )
-    if budget is not None:
-        out["benchmark_budget"] = budget
-        out["benchmarkBudget"] = budget
-    return out
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(
@@ -21166,7 +19461,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
         league_surface = _dataset_surface_status("persona_league", snapshot_at=snapshot_at)
-        health_items = _build_persona_health_items(snapshot_at)
+        health_items = persona_service.build_persona_health_items(snapshot_at)
         return {
             "data": health_items,
             "items": health_items,
@@ -22055,6 +20350,16 @@ app.include_router(
         dataset_surface_status=_dataset_surface_status,
     )
 )
+from .personas.service import PersonaService
+# Constructed once, ahead of runtime router assembly, so runtime, persona and
+# assistant consumers all bind to this single app-scoped PersonaService
+# instance (single projection implementation, single source-health cache).
+persona_service = PersonaService(
+    write_owner=app_deps.persona_write_owner,
+    read_store=app_deps.read_surface,
+    ranking_write_owner=app_deps.ranking_write_owner,
+    command_store=app_deps.command_store,
+)
 from .runtime.router import create_runtime_router as _create_runtime_router
 _runtime_router = _create_runtime_router(
     read_surface=app_deps.read_surface,
@@ -22066,7 +20371,7 @@ _runtime_router = _create_runtime_router(
             ("_aggregate_group_surface", _aggregate_group_surface),
             ("_alert_target_ref", _alert_target_ref),
             ("_bff_error", _bff_error),
-            ("_build_persona_health_items", _build_persona_health_items),
+            ("_build_persona_health_items", persona_service.build_persona_health_items),
             ("_capital_bff_idempotency_check", _capital_bff_idempotency_check),
             ("_capital_bff_idempotency_store", _capital_bff_idempotency_store),
             ("_composed_dataset_surface_status", _composed_dataset_surface_status),
@@ -22154,22 +20459,7 @@ app.include_router(
 )
 app.include_router(
     _create_command_adapters_router(
-        command_store=app_deps.command_store,
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_operator_role=_require_operator_role,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        submit_command_admission=_submit_final_command_admission,
-        publish_event=lambda event_type, data: _publish_event(
-            _sse_buffers["audit"],
-            _sse_subscribers["audit"],
-            event_type,
-            data,
-        ),
-        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
-        check_read_surface_state=_check_read_surface_state,
+        service=_command_adapter_service,
     )
 )
 from .management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router
@@ -22474,8 +20764,9 @@ auth_handlers = create_auth_handlers(dependencies=auth_deps)
 auth_facade_service = AuthFacadeService(
     local_readiness=auth_handlers["bff_auth_readiness"],
     handlers=auth_handlers,
+    provider_readiness_cache=provider_readiness_cache,
 )
-app.include_router(create_auth_router(service=auth_facade_service))
+app.include_router(create_auth_router(service=auth_facade_service, browser_origin_allowed=_cors_origin_allowed))
 from .core.app_factory import (
     create_settings_router,
     create_assistant_management_router,
@@ -22510,13 +20801,6 @@ _core_handlers = {
 app.include_router(create_assistant_management_router(_core_handlers))
 app.include_router(create_core_router(_core_handlers))
 from .personas.router import create_personas_router
-from .personas.service import PersonaService
-persona_service = PersonaService(
-    write_owner=app_deps.persona_write_owner,
-    read_store=app_deps.read_surface,
-    ranking_write_owner=app_deps.ranking_write_owner,
-    command_store=app_deps.command_store,
-)
 app.include_router(
     create_personas_router(
         service=persona_service,
@@ -22634,7 +20918,7 @@ _agora_router = _create_agora_router(
     get_audit_store=lambda: agora_audit_store,
     command_store=app_deps.command_store,
     persona_write_owner=app_deps.persona_write_owner,
-    get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
+    get_trade_journey_store=app_deps.read_surface.trade_journey_projection_reader,
     sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
     canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     idempotency_store=_AGORA_CORE_BFF_IDEMPOTENCY,

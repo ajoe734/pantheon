@@ -33,6 +33,7 @@ from services.research.experiments.models import (
     ExperimentTask,
     validate_experiment_run_against_task,
 )
+from services.service_token_file import configured_service_token
 
 from .queue import AlphaReplicationQueue, _require_text
 
@@ -426,7 +427,11 @@ class AlphaRevalidationWorker:
             f"{urllib.parse.quote(canonical_id, safe='')}"
         )
         try:
-            request = urllib.request.Request(url, method="GET")
+            headers = {}
+            token = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = urllib.request.Request(url, headers=headers, method="GET")
             with urllib.request.urlopen(request, timeout=10) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:

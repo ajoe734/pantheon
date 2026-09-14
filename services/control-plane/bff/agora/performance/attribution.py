@@ -2,61 +2,35 @@
 
 Implements owner/tenant isolation for Agora performance attribution.
 Alice cannot observe Bob's strategy existence, metrics, or trade journeys.
-Missing or partial sources are typed explicitly without fabricated data.
+Trade journeys come from the configured Postgres projection reader; a real
+empty scope, a truncated scan, and an unavailable reader are typed apart and
+never collapsed into fabricated zero performance.
 Carries no_order_route_proof=agora_performance_read_only.
 """
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Set
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel, ConfigDict, Field
 
-_USER_SCOPE_FIELDS = ("owner_user_id", "agora_user_id", "user_id")
+from .journeys import (
+    JourneyScanStatus,
+    parse_timestamp as _parse_timestamp,
+    projection_strategy_id as _projection_strategy_id,
+    scan_owner_journeys,
+)
 
 
-def _parse_timestamp(value: Any) -> Optional[datetime]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
-
-
-def _timestamp_in_period(value: Any, *, period: str, now: datetime) -> bool:
-    if period in {"all", "latest"}:
-        return True
-    parsed = _parse_timestamp(value)
-    if parsed is None:
-        return False
-    days = 7 if period == "7d" else 30
-    return parsed >= now - timedelta(days=days)
-
-
-def _event_user_ids(event: Mapping[str, Any]) -> set[str]:
-    return {
-        str(event.get(field) or "").strip()
-        for field in _USER_SCOPE_FIELDS
-        if str(event.get(field) or "").strip()
-    }
-
-
-def _projection_visible_to_user(projection: Any, user_id: str) -> bool:
-    scoped_values: set[str] = set()
-    for event in getattr(projection, "timeline", []) or []:
-        scoped_values.update(_event_user_ids(event))
-    return scoped_values == {user_id}
-
-
-def _projection_strategy_id(projection: Any) -> str:
-    identifiers = getattr(projection, "snapshot", {}).get("identifiers") or {}
-    values = identifiers.get("strategy_id") or []
-    return str(values[0]) if len(values) == 1 else ""
+def _latest_journey_updated_at(projections: List[Any]) -> Optional[str]:
+    stamps = [
+        str(value)
+        for projection in projections
+        for value in [(getattr(projection, "snapshot", {}) or {}).get("updated_at")]
+        if _parse_timestamp(value) is not None
+    ]
+    return max(stamps, key=lambda value: _parse_timestamp(value)) if stamps else None
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +129,8 @@ class TradingRoomPerformanceAttributionMeta(BaseModel):
     scope: Dict[str, str]
     period: str = "latest"
     snapshot_at: str
+    availability: JourneyScanStatus = "available"
+    unavailable_sources: List[str] = Field(default_factory=list)
     composition_sources: List[str] = Field(
         default_factory=lambda: ["strategy_directory", "telemetry", "trade_journeys"]
     )
@@ -181,11 +157,12 @@ def project_agora_performance_attribution_by_strategy(
     *,
     tenant_id: str,
     owner_user_id: str,
+    environment: str = "paper",
     period: str = "latest",
     page_size: int = 50,
     page_token: Optional[str] = None,
     strategy_id_filter: Optional[str] = None,
-    journey_store: Optional[Any] = None,
+    projection_reader: Optional[Any] = None,
     workshop_store: Optional[Any] = None,
     suggestion_store: Optional[Any] = None,
     utc_now: Callable[[], str],
@@ -198,6 +175,8 @@ def project_agora_performance_attribution_by_strategy(
         raise ValueError(
             f"Invalid page_size '{page_size}', must be between 1 and 200"
         )
+    if not str(environment or "").strip():
+        raise ValueError("environment is required for performance attribution")
     snapshot_at = utc_now()
     now = _parse_timestamp(snapshot_at) or datetime.now(timezone.utc)
 
@@ -231,27 +210,31 @@ def project_agora_performance_attribution_by_strategy(
         except Exception:
             pass
 
-    materializer = journey_store.materializer() if journey_store is not None and hasattr(journey_store, "materializer") else None
+    # Owner-scoped, period-scoped journeys from the configured projection reader.
+    # The scan already applies tenant/environment (reader scope), period, and
+    # owner visibility; only the strategy grouping happens here.
+    clean_strat_filter = str(strategy_id_filter or "").strip()
+    scan = scan_owner_journeys(
+        projection_reader,
+        tenant_id=tenant_id,
+        environment=environment,
+        owner_user_id=owner_user_id,
+        period=period,
+        now=now,
+        strategy_id=clean_strat_filter or None,
+    )
     scoped_projections: List[Any] = []
     projections_by_strategy: Dict[str, List[Any]] = defaultdict(list)
-
-    if materializer is not None:
-        for projection in getattr(materializer, "projections", []):
-            if (
-                getattr(projection, "tenant_id", None) == tenant_id
-                and _projection_visible_to_user(projection, owner_user_id)
-            ):
-                s_id = _projection_strategy_id(projection)
-                if s_id:
-                    user_strategies.setdefault(s_id, {"strategy_id": s_id, "title": s_id})
-                    updated_at = projection.snapshot.get("updated_at")
-                    if _timestamp_in_period(updated_at, period=period, now=now):
-                        scoped_projections.append(projection)
-                        projections_by_strategy[s_id].append(projection)
+    for projection in scan.projections:
+        s_id = _projection_strategy_id(projection)
+        if not s_id:
+            continue
+        user_strategies.setdefault(s_id, {"strategy_id": s_id, "title": s_id})
+        scoped_projections.append(projection)
+        projections_by_strategy[s_id].append(projection)
 
     # Filter by strategy_id if provided
-    if strategy_id_filter:
-        clean_strat_filter = strategy_id_filter.strip()
+    if clean_strat_filter:
         if clean_strat_filter in user_strategies:
             target_strategy_ids = [clean_strat_filter]
         else:
@@ -362,8 +345,10 @@ def project_agora_performance_attribution_by_strategy(
         if has_telemetry:
             all_telemetry_source_ids.update(runtime_ids)
 
-        avg_fill = (sum(fill_rates) / len(fill_rates)) if fill_rates else (1.0 if total_trades > 0 else None)
-        avg_slip = (sum(slippages) / len(slippages)) if slippages else (0.0 if total_trades > 0 else None)
+        # Fill rate and slippage are only reported from recorded measurements;
+        # the existence of trades is not evidence of a perfect fill.
+        avg_fill = (sum(fill_rates) / len(fill_rates)) if fill_rates else None
+        avg_slip = (sum(slippages) / len(slippages)) if slippages else None
 
         runtime_count = len(runtime_ids)
         telemetry_runtime_count = runtime_count if has_telemetry else 0
@@ -493,12 +478,26 @@ def project_agora_performance_attribution_by_strategy(
         basis="owner_scoped_strategy_attribution",
     )
 
-    # 6. Source surfaces typing
+    # 6. Source surfaces typing. A reachable reader with zero owner journeys is
+    # a real empty scope (available, no rows); a truncated scan is partial; a
+    # missing or failing reader is unavailable and never reported as empty.
     has_strategy_dir = len(user_strategies) > 0
     has_telemetry_src = len(all_telemetry_source_ids) > 0
-    has_journey_src = len(scoped_projections) > 0
+    journeys_status: JourneyScanStatus = scan.status
+    journeys_reachable = scan.reader_available
 
     journey_ids = sorted({getattr(p, "journey_id", "") for p in scoped_projections if getattr(p, "journey_id", "")})
+    journeys_as_of = _latest_journey_updated_at(scoped_projections) or (
+        snapshot_at if journeys_reachable else None
+    )
+    if has_telemetry_src:
+        telemetry_status: JourneyScanStatus = (
+            "partial" if journeys_status == "partial" else "available"
+        )
+        telemetry_reason = scan.reason
+    else:
+        telemetry_status = "unavailable"
+        telemetry_reason = "no_current_rows" if journeys_reachable else "trade_journeys_unavailable"
 
     surfaces = {
         "strategy_directory": {
@@ -508,23 +507,34 @@ def project_agora_performance_attribution_by_strategy(
             "reason": None if has_strategy_dir else "no_strategies_found",
         },
         "telemetry": {
-            "status": "available" if has_telemetry_src else "unavailable",
+            "status": telemetry_status,
             "as_of": max_telemetry_at if has_telemetry_src else None,
             "source_ids": sorted(list(all_telemetry_source_ids)),
-            "reason": None if has_telemetry_src else "no_current_rows",
+            "reason": telemetry_reason,
         },
+        # Only the owner's own journey ids are exposed; scan counts cover other
+        # owners in the same tenant and stay internal.
         "trade_journeys": {
-            "status": "available" if has_journey_src else "unavailable",
-            "as_of": max_telemetry_at if has_journey_src else None,
+            "status": journeys_status,
+            "as_of": journeys_as_of,
             "source_ids": journey_ids,
-            "reason": None if has_journey_src else "no_journey_records",
+            "reason": scan.reason,
         },
     }
+    unavailable_sources = sorted(
+        name for name, surface in surfaces.items() if surface["status"] == "unavailable"
+    )
 
     meta = TradingRoomPerformanceAttributionMeta(
-        scope={"tenant_id": tenant_id, "owner_user_id": owner_user_id},
+        scope={
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
+            "environment": environment,
+        },
         period=period,
         snapshot_at=snapshot_at,
+        availability=journeys_status,
+        unavailable_sources=unavailable_sources,
         composition_sources=["strategy_directory", "telemetry", "trade_journeys"],
         surfaces=surfaces,
         policy="read_only_performance_attribution",

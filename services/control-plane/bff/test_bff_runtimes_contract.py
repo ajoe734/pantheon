@@ -8,12 +8,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.runtime.router import create_runtime_router
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 HEADERS = {"Authorization": "Bearer rt-003-operator:operator"}
@@ -109,12 +111,53 @@ class RuntimesTestReadPorts(ReadSurfacePorts):
 def _isolated_runtime_bff(
     runtime_bindings: list[dict[str, Any]] | None,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    bff_main.read_store = RuntimesTestReadPorts(runtime_bindings)
-    try:
-        yield TestClient(bff_main.app)
-    finally:
-        bff_main.read_store = original_store
+    store = RuntimesTestReadPorts(runtime_bindings)
+
+    def _utc_now() -> str:
+        return "2026-05-16T06:00:00Z"
+
+    def _dataset_surface_status(dataset: str, *, snapshot_at: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        return store.dataset_surface_status(dataset, snapshot_at=snapshot_at or _utc_now(), **kwargs)
+
+    def _snapshot_meta(snapshot_at: str) -> dict[str, Any]:
+        return {"snapshot_at": snapshot_at}
+
+    def _page_slice(items: list, page_token: str | None, page_size: int) -> tuple[list, str | None]:
+        return items[:page_size], None
+
+    def _raise_if_read_surface_unavailable(surface: dict[str, Any], *, label: str) -> None:
+        if surface.get("status") == "unavailable":
+            raise auth_policy.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                f"{label} read surface unavailable",
+                str(surface.get("message") or surface.get("note") or f"{label} downstream read source is unavailable."),
+                precondition_failed="read_surface_unavailable",
+                suggestion="Verify the owning service URL and health before retrying this read.",
+            )
+
+    router = create_runtime_router(
+        read_surface=store,
+        dependencies={
+            "_extract_identity": auth_policy.extract_identity,
+            "_require_read_role": auth_policy.require_read_role,
+            "utc_now": _utc_now,
+            "_dataset_surface_status": _dataset_surface_status,
+            "_snapshot_meta": _snapshot_meta,
+            "_page_slice": _page_slice,
+            "_meta_staleness": lambda: None,
+            "_bff_error": auth_policy.bff_error,
+            "_raise_if_read_surface_unavailable": _raise_if_read_surface_unavailable,
+        },
+    )
+    app = FastAPI()
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Any, exc: HTTPException) -> JSONResponse:
+        content = exc.detail if isinstance(exc.detail, (dict, list)) else {"detail": exc.detail}
+        return JSONResponse(status_code=exc.status_code, content=content)
+
+    app.include_router(router)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 def _runtime_records() -> list[dict[str, Any]]:

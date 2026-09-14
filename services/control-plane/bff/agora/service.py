@@ -3114,8 +3114,8 @@ class AgoraService:
             "command_id": command_id,
         }
         cmd_store = self.command_store
-        if cmd_store is not None and hasattr(cmd_store, "submit_command"):
-            cmd_store.submit_command(
+        if cmd_store is not None and hasattr(cmd_store, "submit_terminal_command"):
+            cmd_store.submit_terminal_command(
                 command_id=command_id,
                 command_type=command_type,
                 target=target,

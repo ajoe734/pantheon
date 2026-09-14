@@ -327,14 +327,6 @@ def create_core_router(handlers: Mapping[str, RouteHandler]) -> APIRouter:
     return router
 
 
-def _default_extract_identity(_authorization: Optional[str], **_kwargs: Any) -> object:
-    return object()
-
-
-def _default_require_admin_mfa(_identity: Any, _action: str) -> None:
-    return None
-
-
 def _assert_route_assignment(app: FastAPI) -> None:
     actual: set[tuple[str, str]] = set()
     pending = list(app.routes)
@@ -354,3 +346,68 @@ def _assert_route_assignment(app: FastAPI) -> None:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         raise RuntimeError(f"core route assignment mismatch: missing={missing}, extra={extra}")
+
+
+def build_bff_app(
+    *,
+    lifespan: Optional[Any] = None,
+    dev_login_enabled: Optional[Callable[[], bool]] = None,
+    origin_allowed: Optional[Callable[[Optional[str]], bool]] = None,
+    validate_session: Optional[Callable[[str], Any]] = None,
+    title: str = "Pantheon Operator BFF",
+    version: str = "0.2.0",
+) -> FastAPI:
+    """Build and configure the single Operator BFF FastAPI application.
+
+    Wires browser session middleware, CORS preflight and allowed origins,
+    pure-ASGI security headers, and Pack D exception handlers.
+    """
+    from ..auth.browser_session import DevBrowserSessionMiddleware
+    from .http_security import (
+        _CORS_ALLOW_HEADERS,
+        _CORS_EXPOSE_HEADERS,
+        _LOVABLE_PREVIEW_ORIGIN_REGEX,
+        _PantheonCORSMiddleware,
+        _SecurityHeadersMiddleware,
+        _cors_origin_allowed,
+        _cors_origins_from_env,
+        _is_production_strict_mode,
+    )
+    from .errors import register_error_handlers
+
+    effective_origin_allowed = origin_allowed or _cors_origin_allowed
+    cors_origins = _cors_origins_from_env()
+    strict = _is_production_strict_mode()
+    preview_regex = None if strict else _LOVABLE_PREVIEW_ORIGIN_REGEX
+
+    app_kwargs: dict[str, Any] = {"title": title, "version": version}
+    if lifespan is not None:
+        app_kwargs["lifespan"] = lifespan
+
+    built_app = FastAPI(**app_kwargs)
+
+    if dev_login_enabled is not None and validate_session is not None:
+        built_app.add_middleware(
+            DevBrowserSessionMiddleware,
+            enabled=dev_login_enabled,
+            origin_allowed=effective_origin_allowed,
+            validate_session=validate_session,
+        )
+
+    if cors_origins or preview_regex:
+        middleware_kwargs: dict[str, Any] = dict(
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=_CORS_ALLOW_HEADERS,
+            expose_headers=_CORS_EXPOSE_HEADERS,
+        )
+        if preview_regex:
+            middleware_kwargs["allow_origin_regex"] = preview_regex
+        built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
+
+    built_app.add_middleware(_SecurityHeadersMiddleware)
+    register_error_handlers(built_app, origin_allowed_fn=effective_origin_allowed)
+
+    return built_app
+

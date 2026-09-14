@@ -1,0 +1,191 @@
+{
+  "manifest_version": "1.0",
+  "contract_family": "agora.v1.13",
+  "environment": "dev",
+  "generated": true,
+  "backend": {
+    "repo": "ajoe734/pantheon",
+    "branch": "dev",
+    "runtime_commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+    "contract_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec",
+    "handoff_commit": "cd71b0ba4d92a18c955a21282755bb5be17f4c34",
+    "bundle_index_sha256": "f621c694f5e74d15b81d5cf016dd2684e364b8fac849047263acdf69d94943c9",
+    "openapi_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
+    "capability_manifest_sha256": "e17b120832bc92ed81d2edd7de3b11267ecb2fa82cfc4986cf2ac467a053f613"
+  },
+  "frontend": {
+    "repo": "ajoe734/execute-plans",
+    "branch": "dev",
+    "runtime_commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "handoff_commit": "b9fee329cb7dd2bcb5f2e45fc4624ec5167b10c1",
+    "generated_from_contract_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec",
+    "bundle_index_sha256": "f621c694f5e74d15b81d5cf016dd2684e364b8fac849047263acdf69d94943c9",
+    "openapi_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
+    "generated_types_sha256": "2b57c86327dc15e559d41ff22bed425a8e9b5600378301d5c63457fa31630dd9"
+  },
+  "contract_bundle": {
+    "bundle_index_path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
+    "openapi_path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
+    "capability_manifest_path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
+    "generated_type_paths": [
+      "src/lib/bff-v1/agora/contract-snapshot.json",
+      "src/lib/bff-v1/agora/types.ts"
+    ]
+  },
+  "source_handoffs": {
+    "backend": {
+      "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+      "commit": "cd71b0ba4d92a18c955a21282755bb5be17f4c34",
+      "sha256": "31128a0a6abb2710bea6874cf634109cfe6267fc45e9226a76d402071e7595ae"
+    },
+    "frontend": {
+      "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+      "commit": "b9fee329cb7dd2bcb5f2e45fc4624ec5167b10c1",
+      "sha256": "501ba5db172c76f0ca4922bd033ecb53ef981b37f30b4bdcd4be31b6d975aebe"
+    }
+  },
+  "required_capabilities": [
+    {
+      "name": "agora.candidate.truth.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.dashboard.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.dashboard.v2",
+      "version": "2.0",
+      "required": true
+    },
+    {
+      "name": "agora.governance.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.identity.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.performance.truth.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.governed_action_authority.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.interaction.daily.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.interaction.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.opinion_consultation.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.provider_content.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.recommended_measure.governance.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.personalization.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.research.v1",
+      "version": "1.1",
+      "required": true
+    },
+    {
+      "name": "agora.servant.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.session.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.trading.v1",
+      "version": "1.1",
+      "required": true
+    },
+    {
+      "name": "agora.trading_room.widget_revision.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.trading_room.workspace_editing.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.trading_room.workspace_proposal.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.trading_room.workspace_versions.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.winner_branch.completeness.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.workshop.live_operations.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.workshop.operations.durable.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.workshop.v1",
+      "version": "1.3",
+      "required": true
+    },
+    {
+      "name": "agora.workshop.versions.durable.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "pantheon.ooda.readback.v1",
+      "version": "1.0",
+      "required": true
+    }
+  ],
+  "hash_policy": {
+    "file_hash": "sha256-exact-git-bytes-v1",
+    "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+  },
+  "compatibility_status": "accepted",
+  "blocking_reasons": [],
+  "generated_at": "2026-09-09T04:56:44+00:00"
+}

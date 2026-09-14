@@ -507,3 +507,87 @@ def test_metrics_persist_without_becoming_run_authority(tmp_path) -> None:
     assert metrics["run_count"] == 1
     assert metrics["last_success_at"] is not None
     assert metrics["last_run_strategy_spec_ids"] == [payload["strategy_spec_id"]]
+
+
+def test_alpha_revalidation_fetch_strategy_spec_authorization_and_rotation(tmp_path, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+
+    token_file = tmp_path / "reval_token"
+    token_file.write_text("token-reval-1\n", encoding="utf-8")
+    token_file.chmod(0o600)
+
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", "stale-env-token")
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=10):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'{"entry": {"strategy_spec_id": "spec-1"}}'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. Exact GET request with token-reval-1
+    res1 = worker._fetch_strategy_spec_entry("spec-1")
+    assert res1 == {"strategy_spec_id": "spec-1"}
+    req1 = captured_requests[-1]
+    assert req1.get_method() == "GET"
+    assert req1.get_header("Authorization") == "Bearer token-reval-1"
+    assert req1.full_url == f"{worker._registry_url}/api/registry/strategy-specs/spec-1"
+
+    # 2. Rotate token in file: next call immediately sees rotated token
+    token_file.write_text("token-reval-2\n", encoding="utf-8")
+
+    res2 = worker._fetch_strategy_spec_entry("spec-1")
+    assert res2 == {"strategy_spec_id": "spec-1"}
+    req2 = captured_requests[-1]
+    assert req2.get_header("Authorization") == "Bearer token-reval-2"
+
+
+def test_alpha_revalidation_fetch_strategy_spec_missing_blank_and_file_error(tmp_path, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+    from services.research.alpha_replication.revalidation_worker import RevalidationAttemptError
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=10):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'{"entry": {"strategy_spec_id": "spec-1"}}'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. Missing / unconfigured: preserves unauthenticated test/local behavior
+    monkeypatch.delenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", raising=False)
+
+    worker._fetch_strategy_spec_entry("spec-1")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 2. Blank env token: no header
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", "   ")
+    worker._fetch_strategy_spec_entry("spec-1")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 3. File error: raises RevalidationAttemptError and does not log credentials
+    bad_token_file = tmp_path / "bad_token"
+    bad_token_file.write_text("secret-reval-token", encoding="utf-8")
+    bad_token_file.chmod(0o644)
+
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", str(bad_token_file))
+
+    with pytest.raises(RevalidationAttemptError) as exc_info:
+        worker._fetch_strategy_spec_entry("spec-1")
+    assert "Configured service credential unavailable" in str(exc_info.value)
+    assert "secret-reval-token" not in str(exc_info.value)

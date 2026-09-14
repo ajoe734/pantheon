@@ -25,7 +25,7 @@ or exclusion decisions can be audited without re-deriving the query logic.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional
 
 # ---------------------------------------------------------------------------
@@ -123,6 +123,7 @@ class DesiredFleetBinding:
     persona_capital_binding_id: str
     effective_at: str
     policy_envelope: PolicyEnvelope
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -137,6 +138,7 @@ class DesiredFleetBinding:
             "persona_capital_binding_id": self.persona_capital_binding_id,
             "effective_at": self.effective_at,
             "policy_envelope": self.policy_envelope.to_dict(),
+            "metadata": self.metadata,
         }
 
 
@@ -155,6 +157,14 @@ class ExcludedBinding:
     deployment_mode: str
     status: str
     exclusion_reason: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    runtime_id: str = ""
+    capital_pool_id: str = ""
+    plan_id: str = ""
+    artifact_id: str = ""
+    artifact_version: str = ""
+    persona_capital_binding_id: str = ""
+    effective_at: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -162,6 +172,14 @@ class ExcludedBinding:
             "deployment_mode": self.deployment_mode,
             "status": self.status,
             "exclusion_reason": self.exclusion_reason,
+            "metadata": self.metadata,
+            "runtime_id": self.runtime_id,
+            "capital_pool_id": self.capital_pool_id,
+            "plan_id": self.plan_id,
+            "artifact_id": self.artifact_id,
+            "artifact_version": self.artifact_version,
+            "persona_capital_binding_id": self.persona_capital_binding_id,
+            "effective_at": self.effective_at,
         }
 
 
@@ -376,6 +394,7 @@ def build_fleet_desired_state(
 
     for b in bindings:
         stage = str(b.get("deployment_mode") or "")
+        metadata = dict(b["metadata"]) if isinstance(b.get("metadata"), Mapping) else {}
 
         if stage_filter is not None and stage != stage_filter:
             continue
@@ -398,6 +417,7 @@ def build_fleet_desired_state(
                     ),
                     effective_at=str(b.get("effective_at") or ""),
                     policy_envelope=envelope,
+                    metadata=metadata,
                 )
             )
         else:
@@ -407,6 +427,14 @@ def build_fleet_desired_state(
                     deployment_mode=stage,
                     status=str(b.get("status") or ""),
                     exclusion_reason=envelope.exclusion_reason or "unknown",
+                    metadata=metadata,
+                    runtime_id=str(b.get("runtime_id") or ""),
+                    capital_pool_id=str(b.get("capital_pool_id") or ""),
+                    plan_id=str(b.get("plan_id") or ""),
+                    artifact_id=str(b.get("artifact_id") or ""),
+                    artifact_version=str(b.get("artifact_version") or ""),
+                    persona_capital_binding_id=str(b.get("persona_capital_binding_id") or ""),
+                    effective_at=str(b.get("effective_at") or ""),
                 )
             )
 

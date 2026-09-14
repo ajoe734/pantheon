@@ -4,14 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       bff_base_url:
-        description: "Pantheon-owned dev BFF HTTPS origin"
-        required: true
-        default: "https://api.dev.mvl-cap.tw"
+        description: "Optional dev BFF override; defaults to DEV_BFF_URL"
+        required: false
         type: string
       fe_base_url:
-        description: "Pantheon-owned dev frontend HTTPS origin"
-        required: true
-        default: "https://app.dev.mvl-cap.tw"
+        description: "Optional dev FE override; defaults to DEV_FE_URL"
+        required: false
         type: string
       expected_bff_sha:
         description: "Exact current dev BFF commit SHA"
@@ -46,8 +44,10 @@ jobs:
     environment: dev
     timeout-minutes: 35
     env:
-      BFF_BASE_URL: ${{ inputs.bff_base_url }}
-      FE_BASE_URL: ${{ inputs.fe_base_url }}
+      BFF_BASE_URL: ${{ inputs.bff_base_url || vars.DEV_BFF_URL }}
+      FE_BASE_URL: ${{ inputs.fe_base_url || vars.DEV_FE_URL }}
+      CANONICAL_DEV_BFF_URL: ${{ vars.DEV_BFF_URL }}
+      CANONICAL_DEV_FE_URL: ${{ vars.DEV_FE_URL }}
       EXPECTED_BFF_SHA: ${{ inputs.expected_bff_sha }}
       EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
       TENANT_ID: ${{ inputs.tenant_id }}
@@ -58,10 +58,10 @@ jobs:
       AGORA_HOSTED_PEER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
       AGORA_HOSTED_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
       AGORA_HOSTED_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
-      REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-      DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+      REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+      DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
 
     steps:
       - name: Checkout dispatched Pantheon revision
@@ -77,6 +77,7 @@ jobs:
           [[ "${GITHUB_REF}" == "refs/heads/dev" ]]
           [[ "${EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "${CANONICAL_DEV_BFF_URL}" && -n "${CANONICAL_DEV_FE_URL}" ]]
           [[ "${BFF_BASE_URL%/}" == "${CANONICAL_DEV_BFF_URL%/}" ]]
           [[ "${FE_BASE_URL%/}" == "${CANONICAL_DEV_FE_URL%/}" ]]
           [[ "$(git rev-parse HEAD)" == "${EXPECTED_BFF_SHA}" ]]

@@ -184,12 +184,36 @@ class TestDrill1SourceToHealth:
           - health_source = source_ingest  (not static metadata)
           - live_ingestion_enabled = True
           - provider_statuses.finmind = read_ok  (not read_unavailable)
+
+        Migrated by BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001: the
+        overlay is now solely owned by the app-scoped ``persona_service``
+        instance and its own TTL cache; drive it through its real
+        registry/health-snapshot read ports instead of patching a bare
+        module-level loader.
         """
+        read_store = bff_main.persona_service.get_read_store()
         monkeypatch.setattr(
-            bff_main,
-            "_source_ingest_truth_by_connector",
-            lambda: _SOURCE_HEALTH_TRUTH,
+            read_store,
+            "get_source_connector_registry",
+            lambda: {"connectors": [truth["connector"] for truth in _SOURCE_HEALTH_TRUTH.values()]},
         )
+        monkeypatch.setattr(
+            read_store,
+            "get_source_health_usage_snapshot",
+            lambda: {
+                "sources": [
+                    {"health": truth["health"], "usage_aggregate_30d": {}}
+                    for truth in _SOURCE_HEALTH_TRUTH.values()
+                ]
+            },
+        )
+        # Force a cache miss so this instance's TTL-cached truth (if any prior
+        # test/request already populated it) does not shadow the fixture above.
+        bff_main.persona_service._source_health_cache = {
+            "at": 0.0,
+            "by_connector": None,
+            "truth_by_connector": None,
+        }
 
         dss: Dict[str, Any] = {
             "state": "partial_readback",
@@ -206,7 +230,7 @@ class TestDrill1SourceToHealth:
             }
         ]
 
-        out_dss, out_sources, bindings = bff_main._overlay_source_health_truth(
+        out_dss, out_sources, bindings = bff_main.persona_service.overlay_source_health_truth(
             dss,
             sources,
             required_data_sources=required_sources,

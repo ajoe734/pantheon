@@ -468,6 +468,49 @@ class DeploymentPlannerService:
             risk_policy=request.risk_policy,
             risk_policy_context=request.risk_policy_context,
         )
+        # Inline approved paper artifacts still need the existing runner's
+        # Object Store projection. An active binding alone is not executable.
+        registry_metadata = registry_entry.get("metadata") or {}
+        if request.target_stage.value == "paper" and "strategy_artifact" in registry_metadata:
+            from services.registry.strategy_artifact import (
+                StrategyArtifactValidationError,
+                strategy_artifact_checksum,
+                validate_strategy_artifact,
+            )
+
+            artifact = registry_metadata["strategy_artifact"]
+            try:
+                validate_strategy_artifact(artifact)
+            except StrategyArtifactValidationError as exc:
+                raise DeploymentPlanError(str(exc)) from exc
+            for artifact_field, registry_field in (
+                ("artifact_id", "registry_id"), ("strategy_id", "strategy_id"), ("version", "version"),
+            ):
+                if artifact[artifact_field] != registry_entry.get(registry_field):
+                    raise DeploymentPlanError(f"StrategyArtifact {artifact_field} does not match Registry")
+            checksum = strategy_artifact_checksum(artifact)
+            if checksum != registry_entry.get("checksum"):
+                raise DeploymentPlanError("StrategyArtifact checksum does not match approved Registry entry")
+            projection = self.planner.build_execution_projection(plan, registry_entry)
+            artifact_text = json.dumps(artifact, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            object_store = dict(plan.metadata.get("object_store") or {})
+            object_store[projection.metadata_key] = projection.metadata
+            object_store[projection.artifact_key] = artifact_text
+            plan.metadata["object_store"] = object_store
+            plan.metadata["strategy_id"] = artifact["strategy_id"]
+            plan.metadata["artifact_checksum"] = checksum
+            parameters = artifact["parameters"]
+            if not plan.metadata.get("symbol"):
+                symbols = parameters.get("symbols")
+                if not isinstance(symbols, list) or len(symbols) != 1 or not isinstance(symbols[0], str) or not symbols[0].strip():
+                    raise DeploymentPlanError("Inline paper artifact requires an explicit symbol or one approved symbol")
+                plan.metadata["symbol"] = symbols[0]
+            plan.metadata.setdefault("market_data_policy", {
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "minimum_closes": parameters[artifact["strategy_logic"]["lookback_parameter"]],
+                "max_age_seconds": 86400,
+            })
         if persist:
             self.plan_store.put(plan)
         return plan
