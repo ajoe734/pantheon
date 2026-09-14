@@ -10,7 +10,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
-from .models import CommandStatus, CommandType, ObjectType, TargetObject
+try:
+    from .models import CommandStatus, CommandType, ObjectType, TargetObject
+except ImportError:
+    from models import CommandStatus, CommandType, ObjectType, TargetObject
 
 log = logging.getLogger(__name__)
 

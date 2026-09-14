@@ -20,15 +20,26 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 
 from fastapi import HTTPException
 
-from ..models import (
-    BffErrorEnvelope,
-    BffErrorPayload,
-    ErrorCode,
-    ErrorDetail,
-    EVIDENCE_CAPABILITY_MAP,
-    OperatorIdentity,
-    utc_now as default_utc_now,
-)
+try:
+    from ..models import (
+        BffErrorEnvelope,
+        BffErrorPayload,
+        ErrorCode,
+        ErrorDetail,
+        EVIDENCE_CAPABILITY_MAP,
+        OperatorIdentity,
+        utc_now as default_utc_now,
+    )
+except (ImportError, ValueError):
+    from models import (
+        BffErrorEnvelope,
+        BffErrorPayload,
+        ErrorCode,
+        ErrorDetail,
+        EVIDENCE_CAPABILITY_MAP,
+        OperatorIdentity,
+        utc_now as default_utc_now,
+    )
 
 try:
     from services.foundation import AuditAction, ErrorEnvelope, PolicyDecision

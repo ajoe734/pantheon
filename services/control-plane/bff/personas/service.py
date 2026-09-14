@@ -137,6 +137,11 @@ except ImportError:
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.governance.command_audit import (
+    project_command_record_audit_event as _project_command_record_audit_event,
+    audit_event_matches as _audit_event_matches,
+)
 from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_persona_registry_write_owner,
@@ -13543,143 +13548,26 @@ def _sem_command_response(
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
 ) -> JSONResponse:
-    payload = dict(payload or {})
-    _reject_body_idempotency_key(payload)
-    clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    # For routes that generate the target_id server-side (CREATE without a client-supplied id),
-    # exclude target_id from the idempotency hash so that retries with the same Idempotency-Key
-    # replay correctly rather than conflicting due to a different random id per call.
-    hash_body: Dict[str, Any] = {
-        "command": command_type.value,
-        "target_type": target_type.value,
-        "payload": payload,
-    }
-    if not server_generated_target:
-        hash_body["target_id"] = target_id
-    request_hash = _stable_json_hash(hash_body)
-    cache_key = _scoped_idempotency_cache_key(clean_key, identity.operator_id)
-    if _request_dry_run_requested():
-        return JSONResponse(
-            status_code=200,
-            content=_sem_command_dry_run_payload(
-                command_type=command_type,
-                target_type=target_type,
-                target_id=target_id,
-                payload=payload,
-                identity=identity,
-                idempotency_key=clean_key,
-            ),
-        )
-    existing = _FINAL_CONTRACT_IDEMPOTENCY.get(cache_key)
-    if existing:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was reused with a different command payload",
-                "The idempotency key already belongs to another command payload",
-                precondition_failed="idempotency_key",
-            )
-        replay = dict(existing["result"])
-        replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-        return JSONResponse(status_code=status_code, content=replay)
-    existing_record = _get_active_command_store().get_command_by_idempotency_key(
-        clean_key,
-        operator_id=identity.operator_id,
+    adapter_svc = CommandAdapterService(
+        command_store=_get_active_command_store,
+        read_surface=_get_active_read_store,
+        extract_identity=_extract_identity,
+        bff_error=_bff_error,
+        utc_now=utc_now,
     )
-    if existing_record:
-        stored_hash = (existing_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
-        if stored_hash and stored_hash != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was reused with a different command payload",
-                "The idempotency key already belongs to another command payload",
-                precondition_failed="idempotency_key",
-            )
-        response = _sem_command_payload_from_record(existing_record, idempotency_key=clean_key, replayed=True)
-        return JSONResponse(status_code=status_code, content=response)
-
-    now = utc_now()
-    command_id = f"cmd-{uuid.uuid4().hex[:16]}"
-    receipt_dual_write = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command_type.value,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=now,
-    )
-    reason = str(payload.get("reason") or command_type.value)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
+    return adapter_svc.sem_command_response(
         command_type=command_type,
         target_type=target_type,
         target_id=target_id,
         payload=payload,
-        reason=reason,
-        command_id=command_id,
-        idempotency_key=clean_key,
-        route="POST /bff/semantic-command",
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        status_code=status_code,
+        server_generated_target=server_generated_target,
+        trusted_evidence_producer=trusted_evidence_producer,
+        terminal_on_persist=terminal_on_persist,
     )
-    foundation_ctx = {
-        "idempotency_record": {
-            "idempotency_key": clean_key,
-            "request_hash": request_hash,
-            "status": "succeeded",
-            "trace_id": audit_action.trace_id,
-        },
-        "audit_action": audit_action.to_dict(),
-    }
-    if trusted_evidence_producer:
-        foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-    audit_context = {
-        "actor": identity.operator_id,
-        "operator_id": identity.operator_id,
-        "reason": reason,
-        "live_capital_side_effects": False,
-        "receipt_dual_write": receipt_dual_write,
-        "foundation": foundation_ctx,
-    }
-    if trusted_evidence_producer:
-        audit_context["trusted_evidence_producer"] = trusted_evidence_producer
-    if terminal_on_persist:
-        audit_context["execution_completed_at"] = now
-        record, active = _get_active_command_store().submit_terminal_command_if_no_active_target(
-            command_id,
-            command_type,
-            TargetObject(type=target_type, id=target_id),
-            now,
-            payload,
-            audit_context,
-            foundation_ctx,
-            {
-                "command_id": command_id,
-                "status": "recorded",
-                "recorded_at": now,
-            },
-        )
-    else:
-        record, active = _get_active_command_store().submit_command_if_no_active_target(
-            command_id,
-            command_type,
-            TargetObject(type=target_type, id=target_id),
-            now,
-            payload,
-            audit_context,
-            foundation_ctx,
-        )
-    if active:
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active['command_id']} is currently {active['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-    assert record is not None
-    result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
-    _FINAL_CONTRACT_IDEMPOTENCY[cache_key] = {"request_hash": request_hash, "result": result}
-    return JSONResponse(status_code=status_code, content=result)
 
 
 # --- _as_float ---

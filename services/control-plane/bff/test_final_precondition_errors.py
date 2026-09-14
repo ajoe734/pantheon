@@ -119,7 +119,7 @@ def test_bff_v1_commands_missing_approval_returns_409_envelope() -> None:
         _assert_precondition_error(
             response,
             status_code=409,
-            code="APPROVAL_REQUIRED",
+            code="HUMAN_GATE_PENDING",
             action_id="ApproveDecision",
             entity_type="ApprovalDecision",
             entity_id="appr-final-precondition-001",
@@ -154,7 +154,7 @@ def test_bff_v1_commands_missing_two_man_returns_409_envelope() -> None:
         _assert_precondition_error(
             response,
             status_code=409,
-            code="TWO_MAN_REQUIRED",
+            code="TWO_MAN_SIGNATURE_REQUIRED",
             action_id="ActivateKillSwitch",
             entity_type="KillSwitchOrder",
             entity_id="ks-final-precondition-001",

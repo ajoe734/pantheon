@@ -204,7 +204,10 @@ def create_control_loops_router(
                 precondition_failed="submit_final_command_admission",
             )
         result = submit_final_command_admission(**kwargs)
-        return await result if inspect.isawaitable(result) else result
+        resolved = await result if inspect.isawaitable(result) else result
+        if hasattr(resolved, "model_dump"):
+            return resolved.model_dump(by_alias=True)
+        return resolved
 
     # 1-2: OODA packet management reads.
     @router.get("/bff/ooda/packets")
@@ -285,7 +288,7 @@ def create_control_loops_router(
             x_confirm_token=x_confirm_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            route=_FOUNDATION_COMMAND_ROUTE,
+            route="POST /bff/v5/interventions/{intervention_id}/remediate",
             foundation_raw_payload={**payload, "intervention_id": clean_id},
         )
 
