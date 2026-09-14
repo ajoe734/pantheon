@@ -20,7 +20,7 @@ from services.control_plane.bff.personas.router import create_personas_router
 from services.control_plane.bff.personas.service import (
     PersonaService,
     _pm12_persona_telemetry_metrics,
-    _overlay_source_health_truth,
+    create_persona_registry_write_owner,
     utc_now,
 )
 from services.control_plane.bff.runtime.router import create_runtime_router
@@ -575,6 +575,42 @@ def _make_store(
     ):
         setattr(store, method_name, lambda _key=key, **_kwargs: records(data.get(_key)))
     return store
+
+
+class _SourceTruthReadStore:
+    """Explicit registry/snapshot read-port fixture for PersonaService.overlay_source_health_truth.
+
+    Migrated by BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001: the overlay
+    is now solely owned by a PersonaService instance and its own TTL cache,
+    so it is exercised through its real read ports rather than by patching a
+    bare module-level truth loader.
+    """
+
+    def __init__(self, truths: dict) -> None:
+        self._truths = truths
+
+    def get_source_connector_registry(self) -> dict:
+        return {"connectors": [truth["connector"] for truth in self._truths.values()]}
+
+    def get_source_health_usage_snapshot(self) -> dict:
+        return {
+            "sources": [
+                {"health": truth["health"], "usage_aggregate_30d": {}}
+                for truth in self._truths.values()
+            ]
+        }
+
+
+def _overlay_source_health_truth(data_source_status, data_sources, *, required_data_sources=None, truths=None):
+    service = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=object(),
+        read_store=_SourceTruthReadStore(truths or {}),
+        command_store=object(),
+    )
+    return service.overlay_source_health_truth(
+        data_source_status, data_sources, required_data_sources=required_data_sources
+    )
 
 
 _live_source_health_by_connector = lambda: {}
@@ -1362,10 +1398,11 @@ def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch
             "connector_candidates": ["tw-finmind-broker-daily-report"],
         }
     ]
-    monkeypatch.setattr(
-        personas_service,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    out_dss, out_sources, bindings = _overlay_source_health_truth(
+        dss,
+        sources,
+        required_data_sources=required_sources,
+        truths={
             "tw-finmind-broker-daily-report": {
                 "health": {
                     "source_id": "tw-finmind-broker-daily-report",
@@ -1414,12 +1451,6 @@ def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch
         },
     )
 
-    out_dss, out_sources, bindings = _overlay_source_health_truth(
-        dss,
-        sources,
-        required_data_sources=required_sources,
-    )
-
     assert out_dss["source_health_source"] == "source_ingest"
     assert out_dss["live_ingestion_enabled"] is True
     assert out_dss["provider_statuses"]["finmind"] == "source_health_failed"
@@ -1461,10 +1492,10 @@ def test_overlay_preserves_credential_unavailable_when_health_degraded(monkeypat
             "secret_ref": "env://ALPHA_VANTAGE_API_KEY",
         },
     ]
-    monkeypatch.setattr(
-        personas_service,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    out_dss, out_sources, _bindings = _overlay_source_health_truth(
+        dss,
+        sources,
+        truths={
             "us-polygon-daily-ohlcv": {
                 "health": {
                     "source_id": "us-polygon-daily-ohlcv",
@@ -1495,8 +1526,6 @@ def test_overlay_preserves_credential_unavailable_when_health_degraded(monkeypat
             },
         },
     )
-
-    out_dss, out_sources, _bindings = _overlay_source_health_truth(dss, sources)
 
     by_provider = {s["provider_key"]: s for s in out_sources}
 
@@ -1533,10 +1562,10 @@ def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
             "secret_ref": "env://POLYGON_API_KEY",
         },
     ]
-    monkeypatch.setattr(
-        personas_service,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    out_dss, out_sources, _bindings = _overlay_source_health_truth(
+        dss,
+        sources,
+        truths={
             "us-polygon-daily-ohlcv": {
                 "health": {
                     "source_id": "us-polygon-daily-ohlcv",
@@ -1555,8 +1584,6 @@ def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
             },
         },
     )
-
-    out_dss, out_sources, _bindings = _overlay_source_health_truth(dss, sources)
 
     by_provider = {s["provider_key"]: s for s in out_sources}
     polygon = by_provider["polygon"]
@@ -1583,10 +1610,10 @@ def test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate(monk
             "secret_ref": "env://FRED_API_KEY",
         },
     ]
-    monkeypatch.setattr(
-        personas_service,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    out_dss, out_sources, _bindings = _overlay_source_health_truth(
+        dss,
+        sources,
+        truths={
             "us-stooq-daily-ohlcv": {
                 "health": {
                     "source_id": "us-stooq-daily-ohlcv",
@@ -1620,8 +1647,6 @@ def test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate(monk
         },
     )
 
-    out_dss, out_sources, _bindings = _overlay_source_health_truth(dss, sources)
-
     by_provider = {s["provider_key"]: s for s in out_sources}
     assert by_provider["stooq"]["status"] == "read_ok"
     assert by_provider["stooq"]["connectorId"] == "us-stooq-daily-ohlcv"
@@ -1634,10 +1659,10 @@ def test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate(monk
 def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector(monkeypatch):
     dss = {"state": "datasource_smoke_ok", "provider_statuses": {"coingecko": "read_unavailable"}}
     sources = [{"provider_key": "coingecko", "status": "read_unavailable"}]
-    monkeypatch.setattr(
-        personas_service,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    out_dss, out_sources, _ = _overlay_source_health_truth(
+        dss,
+        sources,
+        truths={
             "crypto-coingecko-spot": {
                 "health": {
                     "source_id": "crypto-coingecko-spot",
@@ -1657,8 +1682,6 @@ def test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector
             }
         },
     )
-
-    out_dss, out_sources, _ = _overlay_source_health_truth(dss, sources)
 
     assert out_dss["provider_statuses"]["coingecko"] == "read_ok"
     assert out_dss["live_source_connector_ids"] == ["crypto-coingecko-spot"]
