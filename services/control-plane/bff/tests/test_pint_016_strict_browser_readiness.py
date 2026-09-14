@@ -13,6 +13,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.core.errors import (
+    _pack_d_error_response,
+    _error_response_correlation_id,
+)
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
@@ -98,11 +102,11 @@ class _Pint016Middleware:
             if path == "/bff/auth/readiness":
                 auth_header = headers.get(b"authorization", b"").decode("latin-1")
                 if "pint-016-stub" in auth_header or (auth_header.startswith("Bearer ") and ":" in auth_header):
-                    resp = bff_main._pack_d_error_response(
+                    resp = _pack_d_error_response(
                         status_code=403,
                         code=bff_main.ErrorCode.FORBIDDEN,
                         message="Stub sessions cannot satisfy strict browser readiness",
-                        correlation_id=bff_main._error_response_correlation_id(None),
+                        correlation_id=_error_response_correlation_id(None),
                         details={
                             "reason": "AUTH_STUB_SESSION_REJECTED",
                             "precondition_failed": "session_kind",
@@ -118,11 +122,11 @@ class _Pint016Middleware:
                     origin = headers.get(b"origin", b"").decode("latin-1")
                     allowed = [o.strip() for o in os.getenv("PANTHEON_BFF_CORS_ORIGINS", "").split(",") if o.strip()]
                     if not origin or origin not in allowed:
-                        resp = bff_main._pack_d_error_response(
+                        resp = _pack_d_error_response(
                             status_code=403,
                             code=bff_main.ErrorCode.FORBIDDEN,
                             message="Cookie session mutation origin is not allowed",
-                            correlation_id=bff_main._error_response_correlation_id(None),
+                            correlation_id=_error_response_correlation_id(None),
                             details={
                                 "reason": "COOKIE_SESSION_ORIGIN_DENIED",
                                 "precondition_failed": "origin",

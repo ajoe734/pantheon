@@ -8,14 +8,19 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import json
 from pathlib import Path
 
+_BFF_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BFF_DIR.parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import json
+
 import main as bff_main
-from command_queue import CommandStore
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core import http_security
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 _DATA_PATH = Path(__file__).resolve().parent / "data" / "read_surfaces.json"
 with open(_DATA_PATH, "r", encoding="utf-8") as _f:
@@ -466,12 +471,12 @@ def test_submit_command_rejects_live_runtime_scope_when_disabled(monkeypatch) ->
 
 
 def test_cors_origin_env_parser_trims_and_normalizes(monkeypatch) -> None:
-    monkeypatch.setattr(bff_main, "_is_production_strict_mode", lambda: True)
+    monkeypatch.setattr(http_security, "_is_production_strict_mode", lambda: True)
     monkeypatch.setenv(
         "PANTHEON_BFF_CORS_ORIGINS",
         " https://dev.lovable.app/, https://staging.lovable.app ",
     )
-    assert bff_main._cors_origins_from_env() == [
+    assert http_security._cors_origins_from_env() == [
         "https://dev.lovable.app",
         "https://staging.lovable.app",
     ]

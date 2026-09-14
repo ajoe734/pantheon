@@ -1,0 +1,532 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "scope": "documentation and contract decision only",
+  "source_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
+  "decision": {
+    "document": "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md",
+    "document_sha256": "b4482bb08e1ab5c061a3156640304af8a3ece5b9d05af2b08ab67fd2ca084c7c",
+    "status": "operator_decisions_recorded",
+    "production_implementation": false,
+    "new_execution_authority": false
+  },
+  "source_blobs": {
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md": "746419bd832f2c745d6d14e5fac7fda6bacd5128",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md": "f0fe2788f8b4d26e3803a27290e3b35f793edec4",
+    "PAPER_CANARY_LIVE_POLICY.md": "d1887489be3e07f398dbd769f64b2bceea00cd92",
+    "docs/operations/bff-upstream-v2-20260911/dispatch-map.json": "bf0a974521566874fbccfec97c5719235c454c2d",
+    "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md": "e983512193387899577cf4cf3a16e36553e6ad3a",
+    "services/control-plane/bff/command_adapters/evolution_adapter.py": "72f1ac9abb37a30054c18deb82f56137ae8696c4",
+    "services/control-plane/bff/evolution/router.py": "5ea2fc678b214e31507aed5b342061f59b75bc1a",
+    "services/control-plane/bff/evolution/service.py": "bd58c3c63573a9485fc33375a4540677fdb0347e",
+    "services/control-plane/bff/evolution/test_router.py": "7c1bf47bf831da03e92687e0798e328ed76e4062",
+    "services/control-plane/bff/ports/persona_capital_runtime.py": "219f8c8ce23b48aacbd5fd82c76ce97ec33f7b45",
+    "services/control-plane/bff/ports/read_surface_ports.py": "c3fc88e5e1e40c005f502af42a3b7a2faf691b5a",
+    "services/control-plane/bff/research/service.py": "4b1d2fffbf399ff5178b7e3fc472895c2895f3de",
+    "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py": "69048e8c539a69c5ae1db72fdfa2e09376132c08",
+    "services/control-plane/bff/test_evolution_center_contract.py": "02a11524416ad5ad11cd4e91b9f631008338c8f6",
+    "services/control-plane/bff/test_ew04_inspiration_graph_contract.py": "aef74b6f062e18a7e94f7a311b070dd77567d3d1",
+    "services/control-plane/bff/test_ew05_mutation_review_contract.py": "c3a4fdb5f45da1db3f886065c1390412e14b1c4d",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json": "553c27c7468271907fc90a51c8eb7afd62abd5c2",
+    "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py": "f341bd41ca2a4eab017fb1c985daca0a2e4b1be1",
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py": "1dde2c2e58bf5d4735da7b1f6678688219cf9e6e",
+    "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py": "b80cefde5b96872141e804e0e9716ea8191af339",
+    "services/control-plane/bff/tests/test_evolution_programs_population_contract.py": "50f1837b60b6cde296e34452fcd38f1366408c8f",
+    "services/control-plane/bff/tests/test_evolution_router.py": "b62366992200b8fee30fc473c08e4a9586b61990",
+    "services/control-plane/governance/evolution_controller_contract.md": "94cb52c556c330e37c488b61a1cb5a4bedddefb9",
+    "services/evolution/client.py": "7a8cecc6f2d36ebe632a5277a7c8a47fef1a24fc",
+    "services/evolution/dispatch_outbox.py": "518d7b31d223c1e9b6180c7620e17eaef3be2b44",
+    "services/evolution/dispatch_receipts.py": "efffc7e6c9f92b89675581637d8d1596aeaca3b5",
+    "services/evolution/dispatch_worker.py": "1a7572b2beb2e25887837df575ecaa7f0cf87b79",
+    "services/evolution/main.py": "8abf127f8847f1aaef2539a7146de0115db63e29",
+    "services/evolution/models.py": "0b230f5ba724e49016ecbb1d4e3c96d175480559",
+    "services/evolution/test_dispatch_worker.py": "d625e9097acb4efb490c320b34a7820b56519a12",
+    "services/foundation/postgres_json_store.py": "748418d9f3b436e021218ff33dc840b86d9f89c2",
+    "services/research/experiments/models.py": "8ab8baa7d0e4edc051547913b380bb486f15aba6",
+    "services/research/main.py": "c3c73a478abebde22703595a72f4079a658dcba4",
+    "services/research/store.py": "a5d002212f39cf796ee728d3d935187e028690a9"
+  },
+  "frontend_source": {
+    "repository": "ajoe734/execute-plans",
+    "ref": "dev",
+    "commit": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+    "remote_verification_command": "git -C /home/chloe_ong_dev_cctech_support_com/code/execute-plans ls-remote origin refs/heads/dev",
+    "exit_code": 0,
+    "collection": "terminal",
+    "source_blobs": {
+      "src/lib/bff-v1/dto.ts": "e37678d677aa8ac65d4e58fe8bfb4b110c5039ea",
+      "src/lib/bff-v1/evolution.ts": "ab03a1950a7f23e11716b5ca028ef5c4a6c42f0a",
+      "src/lib/bff-v1/writes.ts": "06b8c6513de6f30669eb2705511e7ce9ebe8770b",
+      "src/lib/stateMachines/coverage.test.ts": "54b4bf61e37a2e23dea5be794c1828849e1f1e07",
+      "src/lib/stateMachines/index.ts": "de062aac7e4cea31e000f3393b8cd3868c3be36b",
+      "src/lib/stateMachines/stateMachines.test.ts": "83ef8c25e06c8d4f5f0827530948f47d5568f00f",
+      "src/lib/v3/status.ts": "c7e683d67c6a2ee7aa2af44ec4999f5b82d779dc",
+      "src/management/components/detail/EvolutionCandidatesTab.tsx": "416f059532eed879a28f9960464dbbb06e613363",
+      "src/management/components/detail/EvolutionFreezePanel.tsx": "2bf0acb4bbf5b0c37f4227bd08b05d6cd6e85b1c",
+      "src/management/components/detail/EvolutionRunsPanel.tsx": "8a42d64941ce56b40ead40a8fca7741d2f9c4c45",
+      "src/management/components/detail/FitnessFormulaPanel.tsx": "da4da6251c4be4478f306fa077150a256ede334e",
+      "src/management/components/detail/MutationRuleManager.tsx": "9842ce2ecb0b01b8e917af3fa0f9738003226886",
+      "src/management/components/detail/PromotionPanel.tsx": "56820b8c8e984ee42c03764f2a604cb4b6f2fa38",
+      "src/management/pages/EvolutionDetail.tsx": "182b4d0c568f74a8f37ea308bb26c3dbec647edc",
+      "src/management/pages/Lists.tsx": "0370ebe8853bd1c0333097ea8455c312fa83ab2d",
+      "src/management/pages/StrategyDetail.tsx": "9d17ce8ee72ebdc13bb5084bdb3d5238a1a6d3f8",
+      "src/lib/v3/evolutionSchemas.ts": "c6e33dcfd7819768f4a8162129836efc6505d270"
+    },
+    "method": "git show/rev-parse immutable remote commit; local checkout HEAD is older and was not used for contract truth",
+    "fetch_attempt": {
+      "exit_code": null,
+      "result": "git fetch refused read-only .git/FETCH_HEAD; existing origin/dev identity independently matched live ls-remote; no checkout mutation",
+      "exit_status_note": "failure observed from git error; enclosing multi-command batch exit was 0; not a successful fetch"
+    }
+  },
+  "ordered_composition": {
+    "U7": {
+      "task_id": "BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001",
+      "exact_source_scope": [
+        "docs/deployment/evidence/BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/governance/router.py",
+        "services/control-plane/bff/governance/service.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_evolution_center_contract.py",
+        "services/control-plane/bff/test_ew05_mutation_review_contract.py",
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+        "services/control-plane/bff/tests/test_mutation_review_projection_policy.py"
+      ]
+    },
+    "U8A": {
+      "task_id": "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+      "exact_source_scope": [
+        "docker-compose.control.yml",
+        "docker-compose.yml",
+        "docs/deployment/evidence/EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/ports/evolution_program_commands.py",
+        "services/control-plane/bff/ports/persona_capital_runtime.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "services/control-plane/bff/test_idempotency_concurrency_guard.py",
+        "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+        "services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+        "services/control-plane/bff/tests/test_evolution_programs_population_contract.py",
+        "services/evolution/client.py",
+        "services/evolution/dispatch_outbox.py",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/main.py",
+        "services/evolution/models.py",
+        "services/evolution/program_router.py",
+        "services/evolution/program_service.py",
+        "services/evolution/program_store.py",
+        "services/evolution/test_compose_activation.py",
+        "services/evolution/test_l12_evo_001_process_recovery.py",
+        "services/evolution/test_program_owner.py",
+        "services/evolution/tests/test_postmortem_evolution_decision_e2e.py"
+      ]
+    },
+    "U8B": {
+      "task_id": "EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001",
+      "exact_source_scope": [
+        "docs/deployment/evidence/EVO-PROGRAM-ACTIONS-CLOSURE-CORRECTIVE-001/evidence.json",
+        "services/control-plane/bff/action_catalog.py",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/command_adapters/registry.py",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
+        "services/evolution/client.py",
+        "services/evolution/dispatch_outbox.py",
+        "services/evolution/dispatch_receipts.py",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/main.py",
+        "services/evolution/models.py",
+        "services/evolution/program_router.py",
+        "services/evolution/program_service.py",
+        "services/evolution/program_store.py",
+        "services/evolution/test_program_owner.py"
+      ]
+    },
+    "U8B-FE": {
+      "task_id": "FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001",
+      "exact_source_scope": [
+        "execute-plans/src/lib/bff-v1/dto.ts",
+        "execute-plans/src/lib/bff-v1/evolution.ts",
+        "execute-plans/src/lib/bff-v1/writes.ts",
+        "execute-plans/src/lib/stateMachines/coverage.test.ts",
+        "execute-plans/src/lib/stateMachines/index.ts",
+        "execute-plans/src/lib/stateMachines/stateMachines.test.ts",
+        "execute-plans/src/lib/v3/status.ts",
+        "execute-plans/src/management/components/detail/EvolutionCandidatesTab.tsx",
+        "execute-plans/src/management/components/detail/EvolutionFreezePanel.tsx",
+        "execute-plans/src/management/components/detail/EvolutionRunsPanel.tsx",
+        "execute-plans/src/management/components/detail/FitnessFormulaPanel.tsx",
+        "execute-plans/src/management/components/detail/MutationRuleManager.tsx",
+        "execute-plans/src/management/components/detail/PromotionPanel.tsx",
+        "execute-plans/src/management/pages/EvolutionDetail.tsx",
+        "execute-plans/src/management/pages/Lists.tsx",
+        "execute-plans/src/management/pages/StrategyDetail.tsx",
+        "execute-plans/docs/deployment/evidence/FE-EVOLUTION-PROGRAM-ACTIONS-CLOSURE-001/evidence.json"
+      ]
+    }
+  },
+  "program_transitions": [
+    [
+      "draft",
+      "under_review",
+      "submit_evolution_review"
+    ],
+    [
+      "under_review",
+      "active",
+      "approve_program"
+    ],
+    [
+      "active",
+      "paused",
+      "pause_program"
+    ],
+    [
+      "paused",
+      "active",
+      "resume_program"
+    ],
+    [
+      "active",
+      "completed",
+      "complete_program"
+    ],
+    [
+      "completed",
+      "retired",
+      "retire_program"
+    ]
+  ],
+  "run_transitions": [
+    [
+      "queued",
+      "running",
+      "start"
+    ],
+    [
+      "running",
+      "paused",
+      "pause"
+    ],
+    [
+      "paused",
+      "running",
+      "resume"
+    ],
+    [
+      "running",
+      "completed",
+      "complete"
+    ],
+    [
+      "running",
+      "failed",
+      "fail"
+    ],
+    [
+      "queued",
+      "cancelled",
+      "cancel"
+    ],
+    [
+      "running",
+      "cancelled",
+      "cancel"
+    ]
+  ],
+  "experiment_transitions": [
+    [
+      "draft",
+      "queued",
+      "run_experiment"
+    ],
+    [
+      "queued",
+      "running",
+      "job_started"
+    ],
+    [
+      "running",
+      "completed",
+      "job_completed"
+    ],
+    [
+      "running",
+      "failed",
+      "job_failed"
+    ],
+    [
+      "completed",
+      "attached_to_review",
+      "attach_to_review"
+    ],
+    [
+      "completed",
+      "invalidated",
+      "invalidate_result"
+    ],
+    [
+      "failed",
+      "queued",
+      "retry"
+    ],
+    [
+      "completed",
+      "archived",
+      "archive"
+    ]
+  ],
+  "operator_decisions": [
+    {
+      "id": "D1",
+      "status": "adopted",
+      "topic": "program pause/stop/resume and nonterminal run handling",
+      "proposal": "pause halts new generation admission while current runs drain; stop additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts; resume schedules eligible new attempts and never revives cancelled runs",
+      "decision": "ADOPT THE PROPOSED CHOICE - pause halts new generation admission while current runs drain; stop additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts; resume schedules eligible new attempts and never revives cancelled runs",
+      "rejected_alternative": "Stop is only the same drain behavior as Pause",
+      "authority": "recorded 2026-09-14 by Human/Ops"
+    },
+    {
+      "id": "D2",
+      "status": "adopted",
+      "topic": "generation freeze scope, promotion and release",
+      "proposal": "freeze seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review",
+      "decision": "ADOPT THE PROPOSED CHOICE - freeze seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review",
+      "rejected_alternative": "also stop current generation runs",
+      "authority": "recorded 2026-09-14 by Human/Ops"
+    },
+    {
+      "id": "D3",
+      "status": "adopted",
+      "topic": "constraints/formula/mutation-rule scope and effect timing",
+      "proposal": "program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry",
+      "decision": "ADOPT THE PROPOSED CHOICE - program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry",
+      "rejected_alternative": "separate explicit active-run editing protocol",
+      "authority": "recorded 2026-09-14 by Human/Ops"
+    }
+  ],
+  "retained_b10_inventory": {
+    "source": "governed show BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001 plus unchanged inspected base files",
+    "source_paths": [
+      "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+      "services/control-plane/bff/test_evolution_center_contract.py",
+      "services/control-plane/bff/test_ew04_inspiration_graph_contract.py",
+      "services/control-plane/bff/test_ew05_mutation_review_contract.py",
+      "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+      "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+      "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py",
+      "services/control-plane/bff/tests/test_evolution_programs_population_contract.py"
+    ],
+    "static_test_function_names": {
+      "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py": [
+        "test_evolution_programs_list_empty",
+        "test_evolution_programs_create_and_get",
+        "test_evolution_programs_patch",
+        "test_evolution_programs_404_on_missing",
+        "test_evolution_programs_runs_list",
+        "test_evolution_programs_candidates_list",
+        "test_evolution_programs_action",
+        "test_evolution_programs_action_404",
+        "test_experiments_list",
+        "test_experiments_create_and_get",
+        "test_experiments_404_on_missing",
+        "test_experiments_logs",
+        "test_experiments_metrics",
+        "test_experiments_artifacts",
+        "test_experiments_action",
+        "test_experiments_idempotency_replay",
+        "test_experiments_idempotency_conflict",
+        "test_jobs_list_empty",
+        "test_jobs_list_with_seed",
+        "test_jobs_get_detail",
+        "test_jobs_get_404",
+        "test_jobs_get_logs",
+        "test_jobs_get_logs_404",
+        "test_jobs_action",
+        "test_jobs_action_404",
+        "test_events_list",
+        "test_events_list_filter_by_type",
+        "test_events_list_degraded_when_unavailable",
+        "test_events_stream_non_404"
+      ],
+      "services/control-plane/bff/test_evolution_center_contract.py": [
+        "test_evolution_decisions_list_contract",
+        "test_evolution_decision_detail_contract",
+        "test_freeze_orders_contract",
+        "test_rollbacks_contract"
+      ],
+      "services/control-plane/bff/test_ew04_inspiration_graph_contract.py": [
+        "test_ew04_inspiration_graph_contract_returns_published_projection",
+        "test_ew04_inspiration_graph_returns_unavailable_surface_when_dataset_is_missing",
+        "test_ew04_inspiration_graph_returns_404_for_unknown_artifact_even_when_dataset_is_missing",
+        "test_ew04_inspiration_graph_fallback_from_lineage_edges_does_not_synthesize_constant_weight"
+      ],
+      "services/control-plane/bff/test_ew05_mutation_review_contract.py": [
+        "test_mutation_review_projection_contract",
+        "test_mutation_review_reviewer_visibility_contract",
+        "test_mutation_review_review_action_allowed_when_proposed",
+        "test_mutation_review_execute_action_allowed_when_approved",
+        "test_mutation_review_returns_503_when_required_evidence_is_unavailable"
+      ],
+      "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py": [
+        "test_bff_evolution_programs_list_envelope",
+        "test_bff_evolution_programs_list_unauthorized",
+        "test_bff_evolution_program_detail_found",
+        "test_bff_evolution_program_detail_not_found",
+        "test_bff_evolution_program_detail_unauthorized",
+        "test_bff_evolution_program_runs_list",
+        "test_bff_evolution_program_runs_not_found",
+        "test_bff_evolution_program_candidates_list",
+        "test_bff_jobs_list_envelope",
+        "test_bff_jobs_list_unauthorized",
+        "test_bff_job_detail_not_found",
+        "test_bff_job_detail_unauthorized",
+        "test_bff_job_detail_found_via_overlay",
+        "test_bff_alerts_list_envelope",
+        "test_bff_alerts_list_unauthorized",
+        "test_bff_incidents_list_envelope",
+        "test_bff_incidents_list_unauthorized",
+        "test_bff_audit_list_envelope",
+        "test_bff_audit_list_unauthorized",
+        "test_bff_artifacts_list_envelope",
+        "test_bff_artifacts_list_unauthorized",
+        "test_bff_runtimes_list_envelope",
+        "test_bff_runtimes_list_unauthorized",
+        "test_bff_runtime_detail_not_found",
+        "test_bff_runtime_detail_unauthorized",
+        "test_bff_loop_runs_list_envelope",
+        "test_bff_loop_runs_list_unauthorized",
+        "test_bff_loop_run_detail_not_found",
+        "test_bff_loop_run_detail_unauthorized",
+        "test_bff_sentinel_finding_detail_not_found",
+        "test_bff_sentinel_finding_detail_unauthorized"
+      ],
+      "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py": [
+        "test_evolution_journal_composes_required_sources",
+        "test_evolution_journal_supports_filters_and_pagination",
+        "test_evolution_journal_server_side_filtering_and_origin",
+        "test_evolution_journal_requires_read_authentication",
+        "test_evochain_007_filters_provenance_and_decoys",
+        "test_evochain_007_filter_dependency_failure",
+        "test_evochain_007_persona_mutation_review_collision",
+        "test_evochain_007_origin_exact_match_not_broad_substring",
+        "test_evochain_007_persona_lineage_shared_artifact_boundary",
+        "test_evochain_007_persona_lineage_namespace_collision",
+        "test_evochain_007_persona_lineage_pool_only_convergence",
+        "test_evochain_007_persona_lineage_capital_binding_only_convergence",
+        "test_evochain_007_persona_lineage_deep_chain_requires_fixed_point",
+        "test_evochain_007_persona_lineage_canonical_binding_without_runtime_row",
+        "test_evochain_007_persona_lineage_shared_pool_does_not_cross_persona_ownership",
+        "test_evochain_007_persona_lineage_typed_namespaces_reject_cross_type_string_collision",
+        "test_evochain_007_seed_registry_recognizes_registered_families",
+        "test_evochain_007_filter_dependency_surfaces_reported_and_fail_closed"
+      ],
+      "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py": [
+        "test_healthy_empty_service_is_ok_and_does_not_mix_local_seed",
+        "test_explicit_governance_url_wins_over_legacy_evolution_alias",
+        "test_populated_service_records_are_filtered_sorted_and_projected",
+        "test_invalid_or_not_found_list_payload_is_not_a_healthy_empty_store",
+        "test_local_snapshot_is_used_only_after_service_failure"
+      ],
+      "services/control-plane/bff/tests/test_evolution_programs_population_contract.py": [
+        "test_evolution_programs_count_gt_zero",
+        "test_evolution_programs_surface_status_not_unavailable",
+        "test_evolution_programs_evo_vslice_1_detail",
+        "test_evolution_programs_projection_shape"
+      ]
+    },
+    "meaning": "Static case inventory, not passed count. Original source assertions unchanged; U7 must rerun the existing eight blocked review/journal cases and B10 all original cases after dependencies.",
+    "canonical_prior_result": "92 passed / 8 blocked in historical task note; not executed or claimed passed by this decision task"
+  },
+  "validation": [
+    {
+      "command": "timeout 60 env PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-command-contract-deps/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "checkout-scoped interpreter provisioned; package import paths verified from foreign cwd"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/evolution/test_router.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "collected": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "warnings": 2,
+      "elapsed_seconds_reported_by_pytest": 2.79,
+      "stdout_summary": "8 passed, 2 warnings in 2.79s",
+      "limitation": "Existing full-file characterization; injected router/receipt doubles are not new program persistence, real owner effects or hosted proof."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/evolution/test_dispatch_worker.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "collected": 22,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "warnings": 2,
+      "elapsed_seconds_reported_by_pytest": 7.17,
+      "stdout_summary": "22 passed, 2 warnings in 7.17s",
+      "limitation": "Existing full-file characterization; injected router/receipt doubles are not new program persistence, real owner effects or hosted proof."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/control-plane/bff/tests/test_evolution_router.py",
+      "exit_code": 0,
+      "collection": "terminal",
+      "collected": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "warnings": 2,
+      "elapsed_seconds_reported_by_pytest": 3.38,
+      "stdout_summary": "9 passed, 2 warnings in 3.38s",
+      "limitation": "Existing full-file characterization; injected router/receipt doubles are not new program persistence, real owner effects or hosted proof."
+    },
+    {
+      "command": "python3 /tmp/validate-evolution-contract-evidence.py && git diff --check",
+      "exit_code": 0,
+      "collection": "terminal",
+      "result": "Document links/digest, source blobs, granted scopes, retained original B10 cases and 21 FE edges checked; 39 existing full-file tests recorded; D1-D3 operator decisions adopted."
+    }
+  ],
+  "deletion_evidence": {
+    "runtime_paths_changed": [],
+    "runtime_paths_deleted": [],
+    "claim": "none; scoped implementation owners retain all removals listed in decision document"
+  },
+  "not_run": [
+    "B10 eight-file/full-migration regression",
+    "real PostgreSQL program concurrency and failure matrix",
+    "new program control/steering/promotion success cases",
+    "FE build/browser/contract tests",
+    "hosted acceptance/deployment"
+  ],
+  "changed_paths": [
+    "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md",
+    "docs/deployment/evidence/BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001/evidence.json"
+  ],
+  "delivery": {
+    "target_branch": "dev",
+    "source_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
+    "anchor_commit": "690d836cc269754491932c9b0d7f82247637e7b9",
+    "head_sha": null,
+    "pr": 5819,
+    "merge_commit": null,
+    "independent_review": "pending exact-head review by Antigravity2",
+    "ci": "pending",
+    "binding": "Commit cannot contain its own head hash. PR #5819 head/base/manifest blob frozen by governed handoff to Antigravity2; do not amend manifest after approval."
+  },
+  "artifact_validator_source": "import ast, hashlib, json, re, subprocess\nfrom pathlib import Path\np=Path(\"docs/deployment/evidence/BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001/evidence.json\")\ne=json.loads(p.read_text()); d=Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(d.read_bytes()).hexdigest()==e[\"decision\"][\"document_sha256\"]\nfor path,blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\",\"rev-parse\",e[\"source_base_sha\"]+\":\"+path],text=True).strip()==blob,path\n    assert subprocess.check_output([\"git\",\"hash-object\",path],text=True).strip()==blob,path\nm=json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nfor unit,s in e[\"ordered_composition\"].items():\n    t=next(t for t in m[\"tasks\"] if t[\"unit\"]==unit)\n    assert s[\"task_id\"]==t[\"task_id\"] and s[\"exact_source_scope\"]==t[\"exact_source_scope\"]\nfor path,names in e[\"retained_b10_inventory\"][\"static_test_function_names\"].items():\n    tree=ast.parse(Path(path).read_text())\n    assert names==[n.name for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name.startswith(\"test_\")]\nfor name in [\"submit_evolution_review\",\"approve_program\",\"pause_program\",\"resume_program\",\"complete_program\",\"retire_program\",\"stop\",\"freeze_generation\",\"promote_candidate_paper\",\"promote_candidate_live\",\"approve_mutation\",\"reject_mutation\",\"run_experiment\",\"attach_to_review\",\"invalidate_result\",\"retry\",\"archive\",\"promote_artifact\"]:\n    assert \"`\"+name+\"`\" in d.read_text(),name\nfor target in re.findall(r\"\\]\\(([^)]+)\\)\",d.read_text()):\n    assert (d.parent/target.split(\"#\")[0]).exists(),target\nassert len(e[\"program_transitions\"] )==6\nassert len(e[\"run_transitions\"])==7\nassert len(e[\"experiment_transitions\"])==8\nassert all(v[\"collection\"]==\"terminal\" and v[\"exit_code\"]==0 for v in e[\"validation\"])\nassert sum(v.get(\"passed\",0) for v in e[\"validation\"])==39\nassert e[\"decision\"][\"status\"]==\"operator_decisions_recorded\"\nassert [x[\"id\"] for x in e[\"operator_decisions\"] if x[\"status\"]==\"adopted\"]==[\"D1\",\"D2\",\"D3\"]\nassert not any(x[\"status\"]==\"open\" for x in e[\"operator_decisions\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"]==[]\nassert e[\"delivery\"][\"merge_commit\"] is None\nassert set(e[\"changed_paths\"])=={str(d),str(p)}\nprint(\"Evidence valid: document links/digest, immutable source blobs, ordered scopes, retained B10 inventory, 21 FE edges, 39 baseline tests and adopted D1-D3 operator decisions; no implementation or merge claim.\")\n"
+}
