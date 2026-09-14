@@ -39,16 +39,21 @@ def _get_runtime_manager_client():
     return mod.RuntimeManagerClient()
 
 
-def _get_read_store():
-    try:
-        from .. import main as bff_main
-        return getattr(bff_main, "read_store", None)
-    except Exception:
+_READ_STORE_PROVIDER: Optional[Callable[[], Any]] = None
+
+
+def set_read_store_provider(provider: Optional[Callable[[], Any]]) -> None:
+    global _READ_STORE_PROVIDER
+    _READ_STORE_PROVIDER = provider
+
+
+def _get_read_store() -> Any:
+    if _READ_STORE_PROVIDER is not None:
         try:
-            import main as bff_main
-            return getattr(bff_main, "read_store", None)
+            return _READ_STORE_PROVIDER()
         except Exception:
             return None
+    return None
 
 
 class RuntimeCommandAdapter(DomainCommandAdapter):

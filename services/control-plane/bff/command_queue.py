@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from threading import RLock
 from typing import Any, Dict, Iterator, List, Optional
 
 from .models import CommandStatus, CommandType, ObjectType, TargetObject
@@ -17,8 +18,9 @@ log = logging.getLogger(__name__)
 class CommandStore:
     def __init__(self, file_path: str = "commands.jsonl"):
         self.file_path = file_path
-        self._lock = RLock()
-        self._cache: Optional[List[Dict[str, Any]]] = None
+        self.lock_path = f"{os.path.abspath(self.file_path)}.lock"
+        self._thread_lock = threading.RLock()
+        self._local = threading.local()
         parent = os.path.dirname(os.path.abspath(self.file_path))
         os.makedirs(parent, exist_ok=True)
         # Initialize the file if it doesn't exist
@@ -26,62 +28,89 @@ class CommandStore:
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.flush()
                 os.fsync(f.fileno())
+        if not os.path.exists(self.lock_path):
+            with open(self.lock_path, "a", encoding="utf-8") as f:
+                f.flush()
+                os.fsync(f.fileno())
 
     @contextmanager
     def serialized_transaction(self) -> Iterator[None]:
-        """Serialize a multi-step admission check and its durable write."""
-        with self._lock:
-            yield
+        """Serialize a multi-step admission check and its durable write across threads and processes."""
+        with self._thread_lock:
+            depth = getattr(self._local, "lock_depth", 0)
+            if depth == 0:
+                lock_fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                self._local.lock_fd = lock_fd
+            self._local.lock_depth = depth + 1
+            try:
+                yield
+            finally:
+                self._local.lock_depth -= 1
+                if self._local.lock_depth == 0:
+                    lock_fd = getattr(self._local, "lock_fd", None)
+                    if lock_fd is not None:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        finally:
+                            os.close(lock_fd)
+                        del self._local.lock_fd
 
     def _save_command(self, command: Dict[str, Any]):
-        with self._lock:
+        with self.serialized_transaction():
             with open(self.file_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(command) + "\n")
+                f.write(json.dumps(command, ensure_ascii=False) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            if self._cache is not None:
-                self._cache.append(command)
 
     def _get_all_commands(self) -> List[Dict[str, Any]]:
-        with self._lock:
-            if self._cache is not None:
-                return list(self._cache)
-            commands = []
+        with self.serialized_transaction():
             if not os.path.exists(self.file_path):
-                self._cache = commands
-                return list(commands)
+                return []
+            commands = []
             with open(self.file_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    if line.strip():
-                        commands.append(json.loads(line))
-            self._cache = commands
-            return list(commands)
+                    line_str = line.strip()
+                    if line_str:
+                        try:
+                            commands.append(json.loads(line_str))
+                        except json.JSONDecodeError:
+                            continue
+            return commands
 
     def _update_commands(self, commands: List[Dict[str, Any]]):
-        with self._lock:
+        with self.serialized_transaction():
             temp_path = f"{self.file_path}.{uuid.uuid4().hex}.tmp"
             with open(temp_path, "w", encoding="utf-8") as f:
                 for cmd in commands:
-                    f.write(json.dumps(cmd) + "\n")
+                    f.write(json.dumps(cmd, ensure_ascii=False) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp_path, self.file_path)
-            self._cache = list(commands)
+            try:
+                dir_fd = os.open(os.path.dirname(os.path.abspath(self.file_path)), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except Exception:
+                pass
 
     def submit_command(
         self,
         command_id: str,
         command_type: CommandType,
-        target: TargetObject,
+        target: TargetObject | Dict[str, Any],
         submitted_at: str,
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
         foundation_context: Optional[Dict[str, Any]] = None,
     ):
+        target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
         record = {
             "command_id": command_id,
-            "type": command_type.value,
-            "target": target.model_dump(),
+            "type": command_type.value if hasattr(command_type, "value") else str(command_type),
+            "target": target_dump,
             "submitted_at": submitted_at,
             "status": CommandStatus.SUBMITTED.value,
             "params": params,
@@ -97,7 +126,7 @@ class CommandStore:
         self,
         command_id: str,
         command_type: CommandType,
-        target: TargetObject,
+        target: TargetObject | Dict[str, Any],
         submitted_at: str,
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
@@ -105,10 +134,11 @@ class CommandStore:
         result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Append one already-complete command record without a crash window."""
+        target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
         record = {
             "command_id": command_id,
-            "type": command_type.value,
-            "target": target.model_dump(),
+            "type": command_type.value if hasattr(command_type, "value") else str(command_type),
+            "target": target_dump,
             "submitted_at": submitted_at,
             "status": CommandStatus.EXECUTED.value,
             "params": params,
@@ -124,15 +154,17 @@ class CommandStore:
         self,
         command_id: str,
         command_type: CommandType,
-        target: TargetObject,
+        target: TargetObject | Dict[str, Any],
         submitted_at: str,
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
         foundation_context: Optional[Dict[str, Any]] = None,
         result: Optional[Dict[str, Any]] = None,
     ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        with self._lock:
-            active = self.get_active_commands_for_target(target.type.value, target.id)
+        target_type = target.type.value if hasattr(target, "type") and hasattr(target.type, "value") else (target.get("type") if isinstance(target, dict) else str(getattr(target, "type", "")))
+        target_id = target.id if hasattr(target, "id") else (target.get("id") if isinstance(target, dict) else "")
+        with self.serialized_transaction():
+            active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]
             return self.submit_terminal_command(
@@ -150,14 +182,16 @@ class CommandStore:
         self,
         command_id: str,
         command_type: CommandType,
-        target: TargetObject,
+        target: TargetObject | Dict[str, Any],
         submitted_at: str,
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
         foundation_context: Optional[Dict[str, Any]] = None,
     ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        with self._lock:
-            active = self.get_active_commands_for_target(target.type.value, target.id)
+        target_type = target.type.value if hasattr(target, "type") and hasattr(target.type, "value") else (target.get("type") if isinstance(target, dict) else str(getattr(target, "type", "")))
+        target_id = target.id if hasattr(target, "id") else (target.get("id") if isinstance(target, dict) else "")
+        with self.serialized_transaction():
+            active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]
             return self.submit_command(
@@ -174,7 +208,7 @@ class CommandStore:
         self,
         command_id: str,
         command_type: CommandType,
-        target: TargetObject,
+        target: TargetObject | Dict[str, Any],
         submitted_at: str,
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
@@ -194,15 +228,18 @@ class CommandStore:
         keeps that validation, the active-target check, and this single atomic
         file replacement in one critical section.
         """
-        with self._lock:
-            active = self.get_active_commands_for_target(target.type.value, target.id)
+        target_type = target.type.value if hasattr(target, "type") and hasattr(target.type, "value") else (target.get("type") if isinstance(target, dict) else str(getattr(target, "type", "")))
+        target_id = target.id if hasattr(target, "id") else (target.get("id") if isinstance(target, dict) else "")
+        target_dump = target.model_dump() if hasattr(target, "model_dump") else dict(target)
+        with self.serialized_transaction():
+            active = self.get_active_commands_for_target(str(target_type), str(target_id))
             if active:
                 return None, active[0]
 
             command_record = {
                 "command_id": command_id,
-                "type": command_type.value,
-                "target": target.model_dump(),
+                "type": command_type.value if hasattr(command_type, "value") else str(command_type),
+                "target": target_dump,
                 "submitted_at": submitted_at,
                 "status": CommandStatus.SUBMITTED.value,
                 "params": params,
@@ -257,7 +294,7 @@ class CommandStore:
 
     def get_command(self, command_id: str) -> Optional[Dict[str, Any]]:
         for cmd in self._get_all_commands():
-            if cmd["command_id"] == command_id:
+            if cmd.get("command_id") == command_id:
                 return cmd
         return None
 
@@ -275,13 +312,29 @@ class CommandStore:
         value = str(actor_ref.get("actor_id") or "").strip()
         return value or None
 
+    @staticmethod
+    def _tenant_id_from_command(command: Dict[str, Any]) -> Optional[str]:
+        audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+        for key in ("tenant_id", "tenant"):
+            value = str(audit.get(key) or "").strip()
+            if value:
+                return value
+
+        foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+        trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+        tenant_ref = trace.get("tenant_ref") if isinstance(trace.get("tenant_ref"), dict) else {}
+        value = str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip()
+        return value or None
+
     def get_command_by_idempotency_key(
         self,
         idempotency_key: str,
         *,
         operator_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         clean_operator_id = str(operator_id or "").strip()
+        clean_tenant_id = str(tenant_id or "").strip()
         for cmd in self._get_all_commands():
             foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
             record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
@@ -289,6 +342,10 @@ class CommandStore:
                 continue
             if clean_operator_id and self._operator_id_from_command(cmd) != clean_operator_id:
                 continue
+            if clean_tenant_id:
+                cmd_tenant = self._tenant_id_from_command(cmd)
+                if cmd_tenant and cmd_tenant != clean_tenant_id:
+                    continue
             return cmd
         return None
 
@@ -300,12 +357,12 @@ class CommandStore:
         error: Optional[Dict[str, Any]] = None,
         audit: Optional[Dict[str, Any]] = None,
     ):
-        with self._lock:
+        with self.serialized_transaction():
             commands = self._get_all_commands()
             updated = False
             for i, cmd in enumerate(commands):
-                if cmd["command_id"] == command_id:
-                    commands[i]["status"] = status.value
+                if cmd.get("command_id") == command_id:
+                    commands[i]["status"] = status.value if hasattr(status, "value") else str(status)
                     if result is not None:
                         commands[i]["result"] = result
                     if error is not None:
