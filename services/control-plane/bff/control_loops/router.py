@@ -39,8 +39,25 @@ _TWO_MAN_SIGNER_FIELDS = {
     "signer_operator_id",
     "operatorId",
     "operator_id",
+    "first_operator_id",
+    "firstOperatorId",
+    "primary_operator_id",
+    "primaryOperatorId",
+    "second_operator_id",
+    "secondOperatorId",
+    "secondOperatorSignature",
+    "second_operator_signature",
+    "signed_by",
+    "signedBy",
+    "confirmed_by",
+    "confirmedBy",
 }
-_TWO_MAN_SIGNER_LIST_FIELDS = {"signerOperatorIds", "signer_operator_ids"}
+_TWO_MAN_SIGNER_LIST_FIELDS = {
+    "signerOperatorIds",
+    "signer_operator_ids",
+    "operator_ids",
+    "operatorIds",
+}
 _V5_TWO_MAN_EVIDENCE_PRODUCER = "bff.v5.intervention.two-man-sign"
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 
@@ -381,6 +398,15 @@ def create_control_loops_router(
         trusted_evidence_producer: Optional[str] = None
         terminal_on_persist = False
         if action == "two-man-sign":
+            roles = set(getattr(identity, "roles", []) or [])
+            if not {"operator", "approver", "admin"}.intersection(roles):
+                raise _err(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Two-man evidence requires operator authority",
+                    "Reviewer and viewer roles cannot sign guarded command evidence",
+                    precondition_failed="role_check",
+                )
             signature_id = str(
                 payload.get("twoManSignatureId") or payload.get("two_man_signature_id") or ""
             ).strip()
