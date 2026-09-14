@@ -1,0 +1,170 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-HTTP-AUTH-COMPOSITION-SEAM-CORRECTIVE-001",
+  "base_ref": "dev@249efe49ca775e09948db3773c7dfd25820a7d60",
+  "scope": "V2 U1 single-owner HTTP/Auth composition seam: extract stateless CORS/security and Pack D error handlers from main.py into core/http_security.py and core/errors.py; assemble app_factory, lifespan, and auth facade on a single unified ProviderReadinessCache and refresh loop; restore JWKS prewarm with bounded failure swallowing and fail-closed auth; eliminate duplicated policies, dead code, and no-op guards in main.py.",
+  "source_hashes": {
+    "services/control-plane/bff/main.py": "55ab06661cb24bb7f23ce09998faa20f2a4ab02f3c1473956fc355de110b8e57",
+    "services/control-plane/bff/core/app_factory.py": "539bd763e096ae788af4485d2fabd26a78a77b710b0945de92a29b43d072c6b4",
+    "services/control-plane/bff/core/errors.py": "9e72a219d5d86ac7c2426775d2e9425579e0a14003e764dd4390aae0c997753c",
+    "services/control-plane/bff/core/http_security.py": "75e91ce12db199d6e71b56a38e98820dd4811c62282f16e11b2dcd24785b8fc0",
+    "services/control-plane/bff/core/lifespan.py": "8c3d6f35206c516dd287947a6c1aa1416cc5da071002a34c22dbe6c87d617324",
+    "services/control-plane/bff/tests/test_http_auth_composition_owner.py": "27ae133321478f1a839a75aca625830321ee2219ab4779c44dc41391f3f4d7a0",
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py": "49d557f46fee3abf07fa950cbfe6844fe1aeb83c06603b06462f101e3eefed2d",
+    "services/control-plane/bff/tests/test_bff_auth_facade.py": "e7f91b8a5a9bf91b641bc6183e50ef1beb619769ab9f9b249a97619004b638b1",
+    "services/control-plane/bff/test_governance_command_submission.py": "c66d8051058bbaa5909828dd599a2f978762699dd76c07dfa99fc4c222ca3a86",
+    "services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py": "84ef632c3c603af6cfe0e9ce5e77539b091355c3779449154b19267df8e65b6f"
+  },
+  "counterexample_reproductions": [
+    {
+      "issue": "Missing JWKS cache prewarm causing cold-start auth latency and failure to resolve keys before traffic",
+      "reproduction_before": "test_bff_jwks_prewarm.py failed because _prewarm_jwks_cache was pruned from main.py and lifespan",
+      "resolution_after": "Restored _prewarm_jwks_cache in core/lifespan.py and main.py; wired into create_lifespan; 5/5 tests in test_bff_jwks_prewarm.py pass"
+    },
+    {
+      "issue": "Static CORS origin evaluation preventing runtime env-based origin override in strict mode",
+      "reproduction_before": "test_production_strict_mode_excludes_dev_loopback_origins failed with static _cors_origins",
+      "resolution_after": "Evaluated CORS origins dynamically via _cors_origins_from_env() in core/http_security.py; 26/26 tests in test_auth_jwks_strict.py pass"
+    },
+    {
+      "issue": "Missing single-owner test proving composition of app_factory, errors, http_security, and lifespan",
+      "reproduction_before": "No unified composition test existed verifying single ProviderReadinessCache instance, single refresh loop, prewarm fail-closed auth, and CORS on Pack D errors",
+      "resolution_after": "Created test_http_auth_composition_owner.py with comprehensive tests; all pass"
+    },
+    {
+      "issue": "OpenClaw probe calling configured boolean property as function and ignoring reachable upstream field",
+      "reproduction_before": "main.py called OpenClawOpsClient.configured() raising TypeError swallowed as ready=false, reason=TypeError; reachable field in status response ignored",
+      "resolution_after": "Accessed client.configured property; checked status.get('reachable'); tested healthy and unavailable cases through production lifespan/cache/readiness"
+    },
+    {
+      "issue": "Pack D error response shape regressions in core/errors.py",
+      "reproduction_before": "REQUEST_VALIDATION_ERROR plus errors and VALUE_ERROR reason were missing; test_bff_error_envelope_shape.py failed",
+      "resolution_after": "Restored REQUEST_VALIDATION_ERROR plus errors list and VALUE_ERROR reason in core/errors.py; test_bff_error_envelope_shape.py passes 8/8"
+    },
+    {
+      "issue": "Canonical correlation metadata overwritten when source exception detail contained meta",
+      "reproduction_before": "Source dict extra unpacked into error response envelope overwriting meta.correlationId with upstream correlation ID",
+      "resolution_after": "Preserved reserved envelope keys; guaranteed meta.correlationId matches canonical request correlation ID and response header"
+    },
+    {
+      "issue": "Incomplete U1 cleanup across main.py, app_factory.py, and test imports",
+      "reproduction_before": "main.py retained forwarding wrappers and duplicated _require_admin_mfa body; app_factory had no-op defaults and optional session validation; tests imported main wrappers",
+      "resolution_after": "Removed forwarding wrappers; moved require_admin_mfa to auth/policy.py; tests updated to canonical modules; reused asgi_request from tests/conftest.py"
+    },
+    {
+      "issue": "Consumer test suites directly calling moved auth/error/middleware seam via main wrappers",
+      "reproduction_before": "test_governance_command_submission.py failed on bare imports and main._cors_origins_from_env; test_pint_016_strict_browser_readiness.py returned 500 when calling bff_main._pack_d_error_response; command admission without idempotency key bypassed foundation audit context",
+      "resolution_after": "Migrated test imports to canonical services.control_plane.bff and core modules (http_security, errors) without main wrappers; moved idempotency key validation inside try block to produce validation foundation error and audit record; 23/23 and 7/7 tests pass"
+    }
+  ],
+  "results": {
+    "http_security_stateless": {
+      "file": "services/control-plane/bff/core/http_security.py",
+      "detail": "Extracted _PantheonCORSMiddleware (204 preflight), _SecurityHeadersMiddleware, _cors_origin_allowed, _cors_origins_from_env, and CORS response header injection."
+    },
+    "errors_stateless": {
+      "file": "services/control-plane/bff/core/errors.py",
+      "detail": "Extracted Pack D error envelope formatter, correlation ID resolution, status-to-code mapping, and global exception handlers for HTTPException, RequestValidationError, and unhandled 500 exceptions with CORS preservation."
+    },
+    "lifespan_and_cache": {
+      "file": "services/control-plane/bff/core/lifespan.py",
+      "detail": "Assembled single ProviderReadinessCache instance with single background refresh loop task, clean cancellation on shutdown, and JWKS cache prewarm."
+    },
+    "app_factory": {
+      "file": "services/control-plane/bff/core/app_factory.py",
+      "detail": "build_bff_app connects DevBrowserSessionMiddleware, _PantheonCORSMiddleware, _SecurityHeadersMiddleware, Pack D error handlers, and lifespan."
+    },
+    "main_clean_extraction": {
+      "file": "services/control-plane/bff/main.py",
+      "detail": "Extracted 430+ lines of duplicated middleware, error handler, and app builder bodies; shared provider_readiness_cache instance injected into auth_facade_service and lifespan; retained backwards-compatible exports."
+    },
+    "live_credentials_changed": false,
+    "production_grants_changed": false,
+    "permission_policy_changed": false,
+    "hosted_deployment_performed": false
+  },
+  "verification": [
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_http_auth_composition_owner.py",
+      "exit_code": 0,
+      "result": "21 passed",
+      "executed": 21,
+      "collected": 21
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "exit_code": 0,
+      "result": "31 passed",
+      "executed": 31,
+      "collected": 31
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_bff_jwks_prewarm.py",
+      "exit_code": 0,
+      "result": "5 passed",
+      "executed": 5,
+      "collected": 5
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_auth_jwks_strict.py",
+      "exit_code": 0,
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_unhandled_error_cors.py",
+      "exit_code": 0,
+      "result": "2 passed",
+      "executed": 2,
+      "collected": 2
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/test_bff_auth_facade.py",
+      "exit_code": 0,
+      "result": "85 passed",
+      "executed": 85,
+      "collected": 85
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_bff_auth_facade.py",
+      "exit_code": 0,
+      "result": "7 passed",
+      "executed": 7,
+      "collected": 7
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/test_security_headers.py",
+      "exit_code": 0,
+      "result": "4 passed",
+      "executed": 4,
+      "collected": 4
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/smoke_test.py",
+      "exit_code": 0,
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/test_governance_command_submission.py",
+      "exit_code": 0,
+      "result": "23 passed",
+      "executed": 23,
+      "collected": 23
+    },
+    {
+      "command": "PYTHONPATH=. pytest services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py",
+      "exit_code": 0,
+      "result": "7 passed",
+      "executed": 7,
+      "collected": 7
+    }
+  ],
+  "review": {
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}
