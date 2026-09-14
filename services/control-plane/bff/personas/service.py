@@ -237,6 +237,16 @@ def _get_active_read_store(explicit: Optional[Any] = None) -> Any:
     return read_store
 
 
+def _active_persona_service() -> "PersonaService":
+    svc = _current_persona_service.get()
+    if svc is None:
+        raise RuntimeError(
+            "Source-health projection helper called without an active PersonaService "
+            "context; call it through a PersonaService instance method."
+        )
+    return svc
+
+
 def _get_active_command_store(explicit: Optional[Any] = None) -> Any:
     if explicit is not None:
         return explicit
@@ -13717,7 +13727,9 @@ def _trading_performance_delta() -> Optional[float]:
 
 
 # --- _source_health_overlay_helpers ---
-_SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
+# Cache ownership lives on each PersonaService instance (see
+# PersonaService._source_ingest_truth_by_connector); there is no module-global
+# cache so two service instances never share or clobber each other's state.
 _SOURCE_HEALTH_OVERLAY_TTL = 60.0
 _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "finmind": (
@@ -13742,48 +13754,16 @@ _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
 
 
 def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
-    now = time.monotonic()
-    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("truth_by_connector")
-    if cached is not None and (now - float(_SOURCE_HEALTH_OVERLAY_CACHE.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
-        return cached
+    """Resolve through the active PersonaService instance's own cache.
 
-    truth: Dict[str, Dict[str, Any]] = {}
-    try:
-        registry = _get_active_read_store().get_source_connector_registry()
-        for connector in (registry.get("connectors") or []):
-            if not isinstance(connector, dict):
-                continue
-            connector_id = str(connector.get("connector_id") or "").strip()
-            if connector_id:
-                truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
-    except Exception:  # read-only enrichment must never break persona surfaces
-        pass
+    This module function exists only so the pre-existing bare-function call
+    sites inside this module (which already run inside a PersonaService
+    method's context, the same pattern as ``_get_active_read_store``) keep
+    working. The single real implementation and its TTL cache live on
+    ``PersonaService._source_ingest_truth_by_connector``.
+    """
 
-    try:
-        snapshot = _get_active_read_store().get_source_health_usage_snapshot()
-        for source in (snapshot.get("sources") or []):
-            if not isinstance(source, dict):
-                continue
-            health = source.get("health") if isinstance(source.get("health"), dict) else {}
-            connector_id = str(health.get("source_id") or "").strip()
-            if connector_id:
-                truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
-                truth[connector_id]["usage_aggregate_30d"] = json.loads(
-                    json.dumps(source.get("usage_aggregate_30d") or {})
-                )
-                if source.get("recommendation") is not None:
-                    truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
-    except Exception:  # read-only enrichment must never break persona surfaces
-        pass
-
-    _SOURCE_HEALTH_OVERLAY_CACHE["at"] = now
-    _SOURCE_HEALTH_OVERLAY_CACHE["truth_by_connector"] = truth
-    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = {
-        connector_id: payload["health"]
-        for connector_id, payload in truth.items()
-        if isinstance(payload.get("health"), dict)
-    }
-    return truth
+    return _active_persona_service()._source_ingest_truth_by_connector()
 
 
 def _live_source_health_by_connector() -> Dict[str, Any]:
@@ -13976,82 +13956,463 @@ def _overlay_source_health_truth(
     *,
     required_data_sources: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
-    srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
-    truth_by_connector = _source_ingest_truth_by_connector()
-    provider_statuses = dss.get("provider_statuses")
-    if not isinstance(provider_statuses, dict):
-        provider_statuses = {}
-        dss["provider_statuses"] = provider_statuses
+    """Resolve through the active PersonaService instance.
 
-    connector_health: List[Dict[str, Any]] = []
-    live_connector_ids: List[str] = []
-    static_source_labels: List[str] = []
-    for source in srcs:
-        if not isinstance(source, dict):
-            continue
-        provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
-        connector_id, truth = _select_source_truth(
-            _connector_candidates_for_provider(source),
-            truth_by_connector,
+    See ``_source_ingest_truth_by_connector`` above: this keeps the existing
+    bare-function call sites in this module working while
+    ``PersonaService.overlay_source_health_truth`` remains the sole
+    implementation and cache owner.
+    """
+
+    return _active_persona_service().overlay_source_health_truth(
+        data_source_status,
+        data_sources,
+        required_data_sources=required_data_sources,
+    )
+
+
+def _first_binding_for_persona(
+    persona_id: str,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> Optional[Dict[str, Any]]:
+    read_store = _get_active_read_store()
+    if include_market_persona_defaults:
+        bindings = read_store.list_bindings(
+            persona_id=persona_id,
+            include_market_persona_defaults=True,
         )
-        if connector_id and truth:
-            projection = _source_truth_projection(connector_id, truth)
-            has_live_health = bool(projection.get("source_health_available"))
-            original_status = source.get("status")
-            original_reason = source.get("reason")
-            original_secret_ref = source.get("secret_ref")
-            source.update(projection)
-            if not has_live_health:
-                # Registry entry present but health-usage-snapshot has no live health;
-                # preserve the honest static defaults so read_unavailable /
-                # credential_unavailable are not silently overwritten.
-                if original_status:
-                    source["status"] = original_status
-                if original_reason is not None:
-                    source["reason"] = original_reason
-                if original_secret_ref is not None:
-                    source["secret_ref"] = original_secret_ref
-            elif original_status == "credential_unavailable":
-                # credential_unavailable is only upgraded when source-ingest confirms
-                # health.status=ok.  A degraded/failed health snapshot (e.g. missing
-                # API key reported by source-ingest) must NOT silently flip the status
-                # to source_health_degraded — the operator must see credential_unavailable
-                # with the secret_ref until the key is present and health is green.
-                if str(projection.get("health_status") or "").strip().lower() != "ok":
-                    source["status"] = original_status
-                    if original_reason is not None:
-                        source["reason"] = original_reason
-                    if original_secret_ref is not None:
-                        source["secret_ref"] = original_secret_ref
-            if provider_key:
-                provider_statuses[provider_key] = source["status"]
-            if has_live_health:
-                connector_health.append(projection)
-                live_connector_ids.append(connector_id)
-        else:
-            source.setdefault("health_source", "static_metadata")
-            source.setdefault("healthSource", "static_metadata")
-            source.setdefault("static_label", True)
-            source.setdefault("staticLabel", True)
-            if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
-                static_source_labels.append(provider_key)
+    else:
+        bindings = read_store.get_bindings_for_persona(persona_id)
+    if not bindings:
+        return None
+    active = [
+        binding
+        for binding in bindings
+        if str(binding.get("status") or binding.get("validity") or "").lower()
+        in {"active", "ready", "bound"}
+    ]
+    return active[0] if active else bindings[0]
 
-    bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
-    has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
-    dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
-    dss["sourceHealthSource"] = dss["source_health_source"]
-    dss["live_ingestion_enabled"] = bool(has_live_truth)
-    dss["connector_health"] = json.loads(json.dumps(connector_health))
-    dss["connectorHealth"] = json.loads(json.dumps(connector_health))
-    dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
-    dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
-    dss["static_source_labels"] = sorted(set(static_source_labels))
-    dss["staticSourceLabels"] = dss["static_source_labels"]
-    dss["required_source_health"] = json.loads(json.dumps(bindings))
-    dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
-    _upgrade_all_green_data_source_state(dss)
-    return dss, srcs, bindings
+
+def _runtime_for_pool(
+    pool_id: Optional[str],
+    *,
+    include_market_persona_defaults: bool = False,
+) -> Optional[Dict[str, Any]]:
+    if not pool_id:
+        return None
+    for runtime in _get_active_read_store().list_runtime_bindings(
+        include_market_persona_defaults=include_market_persona_defaults,
+    ):
+        if str(runtime.get("capital_pool_id") or "") == str(pool_id):
+            return runtime
+    return None
+
+
+def _build_persona_health_items_impl(
+    snapshot_at: str,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> List[Dict[str, Any]]:
+    """Sole implementation of the execution persona-health projection.
+
+    Runs inside the active PersonaService's context (set by
+    ``PersonaService.build_persona_health_items``), the same pattern used by
+    every other bare-function helper in this module.
+    """
+
+    read_store = _get_active_read_store()
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or ""): item
+        for item in read_store.list_persona_league(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+    }
+    context_defaults = (
+        _persona_fleet_context_defaults_by_market()
+        if include_market_persona_defaults
+        else {}
+    )
+    incidents_list = list(read_store.list_incidents() or [])
+    all_decisions = list(read_store.list_evolution_decisions() or [])
+    all_telemetry = list(read_store.list_telemetry_summaries() or [])
+    items: List[Dict[str, Any]] = []
+    for persona in read_store.list_personas(
+        include_market_persona_defaults=include_market_persona_defaults,
+    ):
+        persona_id = _persona_id(persona)
+        if not persona_id:
+            continue
+        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        context_metadata, context_persona = _persona_fleet_context_overlay(
+            persona,
+            metadata,
+            context_defaults,
+        )
+        is_default = persona_id in ("persona-us-equity", "persona-tw-equity", "persona-crypto")
+        if not is_default:
+            keys_to_strip = {
+                "runtime_id", "runtime_binding_id", "legacy_paper_capital_pool_id", "capital_pool_id", "deployment_stage",
+                "target_capital_pool_id", "targetCapitalPoolId", "live_capital_pool_id",
+                "paper_ledger_id", "paperLedgerId", "paper_ledger", "paper_benchmark_budget", "paperBenchmarkBudget", "paper_budget",
+                "league_rank", "rank", "league_score",
+                "review_id", "review_type", "review", "inbox_id", "recommendation", "recommended_governance_action",
+                "ooda_stage", "ooda_status", "ooda",
+                "risk_flags", "risk_level", "violation_count", "risk",
+                "current_work",
+                "performance", "metrics", "pnl", "sharpe", "sortino", "max_drawdown", "win_rate", "trading_cost_bps", "stability_score", "human_interventions", "training_improvement_pct"
+            }
+            context_metadata = {k: v for k, v in context_metadata.items() if k not in keys_to_strip}
+        league_entry = league_by_persona.get(persona_id, {})
+        league_metrics = (
+            league_entry.get("metrics")
+            if isinstance(league_entry.get("metrics"), dict)
+            else {}
+        )
+        performance = (
+            metadata.get("performance")
+            if isinstance(metadata.get("performance"), dict)
+            else {}
+        )
+        metrics = {**performance, **league_metrics}
+        binding = _first_binding_for_persona(
+            persona_id,
+            include_market_persona_defaults=include_market_persona_defaults,
+        ) or {}
+        pool_id = (
+            league_entry.get("capital_pool_id")
+            or metadata.get("capital_pool_id")
+            or context_metadata.get("capital_pool_id")
+            or binding.get("capital_pool_id")
+        )
+        runtime = _runtime_for_pool(
+            pool_id,
+            include_market_persona_defaults=include_market_persona_defaults,
+        ) or {}
+        runtime_id = (
+            league_entry.get("runtime_id")
+            or runtime.get("runtime_id")
+            or runtime.get("id")
+            or context_metadata.get("runtime_id")
+            or context_metadata.get("runtime_binding_id")
+            or metadata.get("runtime_binding_id")
+        )
+        deployment_stage = (
+            league_entry.get("deployment_stage")
+            or runtime.get("deployment_stage")
+            or runtime.get("deployment_mode")
+            or metadata.get("deployment_stage")
+            or context_metadata.get("deployment_stage")
+            or "none"
+        )
+        capital_mode = _persona_fleet_capital_mode(
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            binding=binding,
+            runtime=runtime,
+            deployment_stage=deployment_stage,
+        )
+        live_pool_id = _persona_fleet_live_capital_pool_id(
+            capital_mode=capital_mode,
+            pool_id=pool_id,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+            binding=binding,
+        )
+        paper_ledger_id = _persona_fleet_paper_ledger_id(
+            persona_id=persona_id,
+            capital_mode=capital_mode,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+            binding=binding,
+            runtime=runtime,
+        )
+        paper_ledger = _persona_fleet_paper_ledger(
+            paper_ledger_id=paper_ledger_id,
+            persona_id=persona_id,
+            league_entry=league_entry,
+            raw_metadata=metadata,
+            context_metadata=context_metadata,
+        )
+        market_scope = list(
+            league_entry.get("market_scope")
+            or context_metadata.get("market_scope")
+            or []
+        )
+        asset_classes = list(context_metadata.get("asset_classes") or [])
+        risk_flags = list(league_entry.get("risk_flags") or context_metadata.get("risk_flags") or [])
+        lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
+        health = _persona_health_status(
+            lifecycle_state=lifecycle_state,
+            league_entry=league_entry,
+            risk_flags=risk_flags,
+        )
+        score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0)
+        routed = _routed_strategies_for_persona(persona_id)
+        open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
+        drill_target = runtime_id or persona_id
+        governance_required = bool(
+            league_entry.get("governance_required")
+            if "governance_required" in league_entry
+            else context_metadata.get("governance_required", True)
+        )
+        recommendation = (
+            league_entry.get("recommendation")
+            or context_metadata.get("recommended_governance_action")
+            or ""
+        )
+        persona_status = str(
+            metadata.get("persona_status")
+            or league_entry.get("status")
+            or persona.get("status")
+            or lifecycle_state
+        )
+        data_source_status = (
+            context_metadata.get("data_source_status")
+            if isinstance(context_metadata.get("data_source_status"), dict)
+            else {}
+        )
+        data_sources = (
+            context_metadata.get("data_sources")
+            if isinstance(context_metadata.get("data_sources"), list)
+            else []
+        )
+        required_data_sources = (
+            persona.get("required_data_sources")
+            if isinstance(persona.get("required_data_sources"), list)
+            else []
+        )
+        if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
+            required_data_sources = context_persona.get("required_data_sources") or []
+        data_source_status, data_sources, source_health_bindings = _active_persona_service().overlay_source_health_truth(
+            data_source_status,
+            data_sources,
+            required_data_sources=required_data_sources,
+        )
+        data_source_refs = (
+            context_metadata.get("data_source_refs")
+            if isinstance(context_metadata.get("data_source_refs"), list)
+            else []
+        )
+        research_status = (
+            context_metadata.get("research_status")
+            if isinstance(context_metadata.get("research_status"), dict)
+            else {}
+        )
+        research_refs = (
+            context_metadata.get("research_refs")
+            if isinstance(context_metadata.get("research_refs"), list)
+            else []
+        )
+        current_research_projects = (
+            context_metadata.get("current_research_projects")
+            if isinstance(context_metadata.get("current_research_projects"), list)
+            else []
+        )
+        human_needed = governance_required and str(recommendation).strip().lower() not in {
+            "",
+            "none",
+            "no_change",
+        }
+        updated_at = (
+            league_entry.get("updated_at")
+            or persona.get("updated_at")
+            or persona.get("last_active_at")
+            or snapshot_at
+        )
+        ooda_stage = league_entry.get("ooda_stage") or context_metadata.get("ooda_stage")
+
+        binding_ids = {str(binding.get("id") or binding.get("binding_id") or "").strip()}
+        binding_ids.discard("")
+        capital_pool_ids = {str(pool_id or "").strip()}
+        capital_pool_ids.discard("")
+        runtime_ids = {
+            str(runtime.get("runtime_id") or runtime.get("runtime_binding_id") or runtime.get("id") or "").strip()
+        }
+        runtime_ids.discard("")
+        active_incidents = _persona_fleet_active_incidents_for_row(
+            incidents=incidents_list,
+            persona_id=persona_id,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_ids=runtime_ids,
+        )
+
+        artifact_ids = set()
+        if runtime:
+            art_id = str(runtime.get("artifact_id") or "").strip()
+            if art_id:
+                artifact_ids.add(art_id)
+
+        incident_ids = {
+            str(incident.get("incident_id") or incident.get("id") or "").strip()
+            for incident in active_incidents
+            if str(incident.get("incident_id") or incident.get("id") or "").strip()
+        }
+
+        telemetry_summaries = [
+            t for t in all_telemetry
+            if t.get("persona_id") == persona_id or t.get("runtime_id") == runtime_id
+        ]
+        telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
+        telemetry_sharpe_values = [
+            value
+            for value in (
+                _management_first_float(
+                    summary,
+                    "sharpe",
+                    "sharpe_ratio",
+                    "summary.sharpe",
+                    "summary.sharpe_ratio",
+                )
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_trade_values = [
+            value
+            for value in (
+                _management_first_float(summary, "total_trades", "summary.total_trades")
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_metrics = {
+            "pnl": telemetry_rollup.get("total_pnl"),
+            "max_drawdown": telemetry_rollup.get("max_drawdown"),
+            "fill_rate": telemetry_rollup.get("average_fill_rate"),
+            "total_trades": int(sum(telemetry_trade_values)) if telemetry_trade_values else None,
+            "sharpe": _management_avg(telemetry_sharpe_values),
+        }
+        telemetry_has_performance = any(value is not None for value in telemetry_metrics.values())
+        is_seed_row = bool(metadata.get("is_market_persona_default") or metadata.get("seed_row"))
+
+        mutation_projection = _persona_fleet_mutation_projection(
+            persona_id=persona_id,
+            updated_at=updated_at,
+            evolution_decisions=all_decisions,
+            artifact_ids=artifact_ids,
+            incident_ids=incident_ids,
+        )
+
+        item = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "personaId": persona_id,
+            **mutation_projection,
+            "name": persona.get("name") or persona_id,
+            "persona_name": persona.get("name") or persona_id,
+            "personaName": persona.get("name") or persona_id,
+            "owner": metadata.get("owner")
+            or metadata.get("owner_id")
+            or "pathreon-management",
+            "mode": deployment_stage,
+            "status": health,
+            "health": health,
+            "score": score,
+            "ooda": _management_fleet_ooda_label(ooda_stage),
+            "autonomy": _management_fleet_autonomy(
+                deployment_stage=deployment_stage,
+                governance_required=governance_required,
+                human_needed=human_needed,
+            ),
+            "perf_delta": _trading_performance_delta(),
+            "perfDelta": _trading_performance_delta(),
+            "has_trading_telemetry": telemetry_has_performance,
+            "hasTradingTelemetry": telemetry_has_performance,
+            "is_market_persona_default": is_seed_row,
+            "isMarketPersonaDefault": is_seed_row,
+            "seed_row": is_seed_row,
+            "seedRow": is_seed_row,
+            "human_needed": human_needed,
+            "humanNeeded": human_needed,
+            "last_mutation": str(updated_at)[:10],
+            "lastMutation": str(updated_at)[:10],
+            "state": persona_status,
+            "current_work": context_metadata.get("current_work"),
+            "currentWork": context_metadata.get("current_work"),
+            "routed_strategies": routed,
+            "routedStrategies": routed,
+            "open_findings": open_findings,
+            "openFindings": open_findings,
+            "market_scope": market_scope,
+            "marketScope": market_scope,
+            "asset_classes": asset_classes,
+            "assetClasses": asset_classes,
+            "capital_mode": capital_mode,
+            "capitalMode": capital_mode,
+            "paper_ledger_id": paper_ledger_id,
+            "paperLedgerId": paper_ledger_id,
+            "paper_ledger": paper_ledger,
+            "paperLedger": paper_ledger,
+            "legacy_paper_capital_pool_id": pool_id if capital_mode == "paper" else None,
+            "legacyPaperCapitalPoolId": pool_id if capital_mode == "paper" else None,
+            "capital_pool_id": live_pool_id,
+            "capitalPoolId": live_pool_id,
+            "runtime_id": runtime_id,
+            "runtimeId": runtime_id,
+            "deployment_stage": deployment_stage,
+            "deploymentStage": deployment_stage,
+            "ooda_stage": ooda_stage,
+            "oodaStage": ooda_stage,
+            "recommendation": recommendation,
+            "governance_required": governance_required,
+            "governanceRequired": governance_required,
+            "data_source_status": json.loads(json.dumps(data_source_status)),
+            "dataSourceStatus": json.loads(json.dumps(data_source_status)),
+            "data_sources": json.loads(json.dumps(data_sources)),
+            "dataSources": json.loads(json.dumps(data_sources)),
+            "data_source_refs": json.loads(json.dumps(data_source_refs)),
+            "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
+            "required_data_sources": json.loads(json.dumps(required_data_sources)),
+            "requiredDataSources": json.loads(json.dumps(required_data_sources)),
+            "source_health_bindings": json.loads(json.dumps(source_health_bindings)),
+            "sourceHealthBindings": json.loads(json.dumps(source_health_bindings)),
+            "research_status": json.loads(json.dumps(research_status)),
+            "researchStatus": json.loads(json.dumps(research_status)),
+            "research_refs": json.loads(json.dumps(research_refs)),
+            "researchRefs": json.loads(json.dumps(research_refs)),
+            "current_research_projects": json.loads(json.dumps(current_research_projects)),
+            "currentResearchProjects": json.loads(json.dumps(current_research_projects)),
+            "metrics": {
+                "pnl": _as_float(metrics.get("pnl")),
+                "sharpe": _as_float(metrics.get("sharpe")),
+                "sortino": _as_float(metrics.get("sortino")),
+                "max_drawdown": _as_float(metrics.get("max_drawdown")),
+                "win_rate": _as_float(metrics.get("win_rate")),
+                "trading_cost_bps": _as_float(metrics.get("trading_cost_bps")),
+                "stability_score": _as_float(metrics.get("stability_score")),
+                "human_interventions": int(metrics.get("human_interventions") or 0),
+                "training_improvement_pct": _as_float(metrics.get("training_improvement_pct")),
+                "violation_count": int(metrics.get("violation_count") or 0),
+            },
+            "risk_flags": risk_flags,
+            "riskFlags": risk_flags,
+            "updated_at": updated_at,
+            "drill_down": {
+                "kind": "runtime" if runtime_id else "persona",
+                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "runtime_id": runtime_id,
+                "persona_id": persona_id,
+            },
+            "drillDown": {
+                "kind": "runtime" if runtime_id else "persona",
+                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "runtimeId": runtime_id,
+                "personaId": persona_id,
+            },
+        }
+        items.append(item)
+    return sorted(
+        items,
+        key=lambda item: (
+            -_as_float(item.get("score")),
+            str(item.get("persona_id") or ""),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -14078,6 +14439,7 @@ class PersonaService:
         snapshot_meta_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         dataset_surface_status_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         raise_if_read_surface_unavailable_fn: Optional[Callable[..., None]] = None,
+        source_health_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         resolved_write_owner = write_owner
         if resolved_write_owner is None:
@@ -14120,6 +14482,11 @@ class PersonaService:
         self._raise_if_read_surface_unavailable = (
             raise_if_read_surface_unavailable_fn or _raise_if_read_surface_unavailable
         )
+        # Instance-owned source-health overlay cache/TTL. Deliberately not a
+        # module-global: two PersonaService instances (e.g. in isolated tests)
+        # must never share or invalidate each other's cached truth.
+        self._source_health_clock = source_health_clock
+        self._source_health_cache: Dict[str, Any] = {"at": 0.0, "by_connector": None, "truth_by_connector": None}
 
     def get_read_store(self) -> Any:
         return self._get_read_store()
@@ -14135,6 +14502,167 @@ class PersonaService:
 
     def get_write_owner(self) -> Any:
         return self._write_owner
+
+    def _source_ingest_truth_by_connector(self) -> Dict[str, Dict[str, Any]]:
+        """Sole implementation of the TTL-cached source-ingest truth read.
+
+        Cache state lives on this instance (``self._source_health_cache``),
+        not a module global, so runtime/persona/assistant consumers sharing
+        this one service instance also share this one cache, while two
+        separate PersonaService instances never leak state into each other.
+        """
+
+        now = self._source_health_clock()
+        cache = self._source_health_cache
+        cached = cache.get("truth_by_connector")
+        if cached is not None and (now - float(cache.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
+            return cached
+
+        read_store = self.get_read_store()
+        truth: Dict[str, Dict[str, Any]] = {}
+        try:
+            registry = read_store.get_source_connector_registry()
+            for connector in (registry.get("connectors") or []):
+                if not isinstance(connector, dict):
+                    continue
+                connector_id = str(connector.get("connector_id") or "").strip()
+                if connector_id:
+                    truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
+        except Exception:  # read-only enrichment must never break persona surfaces
+            pass
+
+        try:
+            snapshot = read_store.get_source_health_usage_snapshot()
+            for source in (snapshot.get("sources") or []):
+                if not isinstance(source, dict):
+                    continue
+                health = source.get("health") if isinstance(source.get("health"), dict) else {}
+                connector_id = str(health.get("source_id") or "").strip()
+                if connector_id:
+                    truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
+                    truth[connector_id]["usage_aggregate_30d"] = json.loads(
+                        json.dumps(source.get("usage_aggregate_30d") or {})
+                    )
+                    if source.get("recommendation") is not None:
+                        truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
+        except Exception:  # read-only enrichment must never break persona surfaces
+            pass
+
+        cache["at"] = now
+        cache["truth_by_connector"] = truth
+        cache["by_connector"] = {
+            connector_id: payload["health"]
+            for connector_id, payload in truth.items()
+            if isinstance(payload.get("health"), dict)
+        }
+        return truth
+
+    def overlay_source_health_truth(
+        self,
+        data_source_status: Any,
+        data_sources: Any,
+        *,
+        required_data_sources: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Sole implementation of the source-health overlay projection."""
+
+        dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
+        srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
+        truth_by_connector = self._source_ingest_truth_by_connector()
+        provider_statuses = dss.get("provider_statuses")
+        if not isinstance(provider_statuses, dict):
+            provider_statuses = {}
+            dss["provider_statuses"] = provider_statuses
+
+        connector_health: List[Dict[str, Any]] = []
+        live_connector_ids: List[str] = []
+        static_source_labels: List[str] = []
+        for source in srcs:
+            if not isinstance(source, dict):
+                continue
+            provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
+            connector_id, truth = _select_source_truth(
+                _connector_candidates_for_provider(source),
+                truth_by_connector,
+            )
+            if connector_id and truth:
+                projection = _source_truth_projection(connector_id, truth)
+                has_live_health = bool(projection.get("source_health_available"))
+                original_status = source.get("status")
+                original_reason = source.get("reason")
+                original_secret_ref = source.get("secret_ref")
+                source.update(projection)
+                if not has_live_health:
+                    # Registry entry present but health-usage-snapshot has no live health;
+                    # preserve the honest static defaults so read_unavailable /
+                    # credential_unavailable are not silently overwritten.
+                    if original_status:
+                        source["status"] = original_status
+                    if original_reason is not None:
+                        source["reason"] = original_reason
+                    if original_secret_ref is not None:
+                        source["secret_ref"] = original_secret_ref
+                elif original_status == "credential_unavailable":
+                    # credential_unavailable is only upgraded when source-ingest confirms
+                    # health.status=ok.  A degraded/failed health snapshot (e.g. missing
+                    # API key reported by source-ingest) must NOT silently flip the status
+                    # to source_health_degraded — the operator must see credential_unavailable
+                    # with the secret_ref until the key is present and health is green.
+                    if str(projection.get("health_status") or "").strip().lower() != "ok":
+                        source["status"] = original_status
+                        if original_reason is not None:
+                            source["reason"] = original_reason
+                        if original_secret_ref is not None:
+                            source["secret_ref"] = original_secret_ref
+                if provider_key:
+                    provider_statuses[provider_key] = source["status"]
+                if has_live_health:
+                    connector_health.append(projection)
+                    live_connector_ids.append(connector_id)
+            else:
+                source.setdefault("health_source", "static_metadata")
+                source.setdefault("healthSource", "static_metadata")
+                source.setdefault("static_label", True)
+                source.setdefault("staticLabel", True)
+                if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
+                    static_source_labels.append(provider_key)
+
+        bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
+        has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
+        dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
+        dss["sourceHealthSource"] = dss["source_health_source"]
+        dss["live_ingestion_enabled"] = bool(has_live_truth)
+        dss["connector_health"] = json.loads(json.dumps(connector_health))
+        dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+        dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
+        dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
+        dss["static_source_labels"] = sorted(set(static_source_labels))
+        dss["staticSourceLabels"] = dss["static_source_labels"]
+        dss["required_source_health"] = json.loads(json.dumps(bindings))
+        dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+        _upgrade_all_green_data_source_state(dss)
+        return dss, srcs, bindings
+
+    def build_persona_health_items(
+        self,
+        snapshot_at: str,
+        *,
+        include_market_persona_defaults: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Sole implementation of the execution persona-health projection.
+
+        Runtime, Persona and Assistant consumers all call this same bound
+        method on the one app-scoped PersonaService instance.
+        """
+
+        token = _current_persona_service.set(self)
+        try:
+            return _build_persona_health_items_impl(
+                snapshot_at,
+                include_market_persona_defaults=include_market_persona_defaults,
+            )
+        finally:
+            _current_persona_service.reset(token)
 
     def read_surface_meta(
         self,
