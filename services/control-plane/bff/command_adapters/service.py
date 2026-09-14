@@ -235,22 +235,13 @@ class CommandAdapterService:
     def extract_identity(self, authorization: Optional[str], mfa_token: Optional[str] = None) -> OperatorIdentity:
         if self._extract_identity is not None:
             return self._extract_identity(authorization, mfa_token=mfa_token)
-        if authorization and authorization.startswith("Bearer "):
-            token = authorization[7:].strip()
-            parts = token.split(":")
-            actor = parts[0] if parts else "system"
-            roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else ["operator"]
-            return OperatorIdentity(
-                operator_id=actor,
-                roles=roles,
-                auth_mode="bearer",
-                has_mfa=len(parts) > 2 and parts[2] == "mfa",
-            )
-        return OperatorIdentity(
-            operator_id="anonymous",
-            roles=["viewer"],
-            auth_mode="anonymous",
-            has_mfa=False,
+        raise self._raise_error(
+            401,
+            ErrorCode.AUTH_REQUIRED,
+            "Identity extraction is not configured",
+            "No extract_identity policy was injected into CommandAdapterService; refusing to guess an "
+            "identity from the raw token or fall back to an anonymous/viewer identity.",
+            precondition_failed="extract_identity_unconfigured",
         )
 
     def check_operator_role(self, identity: OperatorIdentity) -> None:
