@@ -1,13 +1,13 @@
 # Evolution lifecycle, metadata and actions contract
 
 Task: `BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001` (D-EVOLUTION).  
-Owner: Codex. Reviewer: Antigravity2. Date: 2026-09-13.  
-Status: **source-backed contract and operator decision packet; D1–D3 remain open**.
+Owner: Antigravity. Reviewer: Antigravity2. Date: 2026-09-14.
+Status: **source-backed contract and operator decision packet; D1–D3 operator decisions adopted 2026-09-14**.
 
 This record implements the approved V2 design boundary, not production code.
 It does not grant execution, deployment, live trading or capital authority.
-Unresolved product choices below prevent claiming this decision task complete.
-They do not remove the corresponding U8A/U8B/U8B-FE obligations.
+Operator decisions D1–D3 are recorded in Section 8; implementation obligations
+remain with U8A/U8B/U8B-FE.
 
 ## 1. Authority and observed source
 
@@ -122,12 +122,12 @@ No valid policy/approval evidence means unavailable or rejected, never success.
 |---|---|---|
 | `submit_evolution_review` | draft → under_review | operator; immutable program revision/config snapshot and durable `program_activate` review request; read the exact review ID and program revision. Submission is not approval. |
 | `approve_program` | under_review → active | approver plus applicable domain review owners; approved `program_activate` request must bind the same tenant/program/config revision. Read approval + active revision; no implicit research job/deploy. |
-| `pause_program` | active → paused | operator; record program control outcome. Active-run drain/checkpoint semantics require D1; never mark an individual run paused without its owner acknowledgement. |
-| `resume_program` | paused → active | operator; valid current approval/config and no unresolved freeze/policy restriction. Actual continuation/new-attempt semantics require D1. Resume cannot undo cancellation or grant promotion. |
+| `pause_program` | active → paused | operator; record program control outcome. Active-run drain semantics follow D1: pause halts new generation admission while current runs drain; never mark an individual run paused without its owner acknowledgement. |
+| `resume_program` | paused → active | operator; valid current approval/config and no unresolved freeze/policy restriction. Continuation semantics follow D1: resume schedules eligible new attempts and never revives cancelled runs. Resume cannot undo cancellation or grant promotion. |
 | `complete_program` | active → completed | operator; actual run outcomes and completion evidence. Require no unresolved active work; failures remain failures, not relabelled successful. Read program revision and linked terminal outcomes. |
 | `retire_program` | completed → retired | approver and domain policy; durable retirement/audit reference. Preserve history and prohibit new use. Retiring a program does not retire a live strategy or alter runtime bindings. |
-| `stop` | unresolved (D1); no seventh program state | operator (existing active caller); real cancellation/drain receipts required. Do not alias to pause/complete/retire without the operator choice. |
-| `freeze_generation` | orthogonal generation control, unresolved (D2) | approver plus applicable Governance risk review; bind exact program/generation/revision and durable freeze record. Do not equate generation freeze with a strategy freeze or rollback. |
+| `stop` | active/paused → paused (resolved per D1; no seventh program state) | operator (existing active caller); real cancellation/drain receipts required. D1 adopted: stop additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts. |
+| `freeze_generation` | orthogonal generation control (resolved per D2) | approver plus applicable Governance risk review; bind exact program/generation/revision and durable freeze record. D2 adopted: freeze seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review. Do not equate generation freeze with a strategy freeze or rollback. |
 | `promote_candidate_paper` | program lifecycle unchanged | approver plus paper stage gate; structured candidate_id, run_id, artifact_id/version/digest, approval ID and paper target; Governance/Promotion plan + registry readback. |
 | `promote_candidate_live` | program lifecycle unchanged | approver, bound confirmation/MFA where required, and full stage-specific Reviewer/Risk Owner/Operator approval; same artifact chain. No live/capital authorization is granted here. |
 | `approve_mutation` / `reject_mutation` | program lifecycle unchanged | approver plus decision risk matrix; explicit mutation review/decision ID, no reinterpretation of program_id as decision_id. U7 supplies identical direct/nested policy; decision API performs real review/approval/rejection. |
@@ -154,7 +154,7 @@ must not let a caller report `complete` or `job_completed` as authoritative.
 
 | Entity | Exact source → destination / action inventory | Owner and proof |
 |---|---|---|
-| Run | queued→running `start`; running→paused `pause`; paused→running `resume`; running→completed `complete`; running→failed `fail`; queued/running→cancelled `cancel` | Research execution owner, immutable run/attempt and matching worker receipts. A cancel request/202 is not proof of stopped execution; late completion must respect a cancellation fence. Paused→cancelled is not in the existing machine: D1 must explicitly settle stop's coverage. |
+| Run | queued→running `start`; running→paused `pause`; paused→running `resume`; running→completed `complete`; running→failed `fail`; queued/running→cancelled `cancel` | Research execution owner, immutable run/attempt and matching worker receipts. A cancel request/202 is not proof of stopped execution; late completion must respect a cancellation fence. Paused runs: settled by adopted D1 (stop additionally cancels all nonterminal runs including paused ones with owner stop/cancellation receipts). |
 | Experiment | draft→queued `run_experiment`; queued→running `job_started`; running→completed `job_completed`; running→failed `job_failed` | Research owner and real attempt/worker linkage, not an Evolution program metadata mutation. |
 | Experiment review | completed→attached_to_review `attach_to_review`; completed→invalidated `invalidate_result` | operator for attachment plus required review workflow; approver for invalidation; valid artifact, target review identity, reason and durable owner/audit readback. Attachment is not approval. Invalidated evidence cannot be promoted. |
 | Experiment retry/archive | failed→queued `retry`; completed→archived `archive` | operator, qualified owner policy; retry creates one linked new attempt per key and preserves failed attempt evidence. Archive changes visibility, never implies physical deletion. |
@@ -169,11 +169,11 @@ policy; missing support stays an outstanding obligation, not a passing 503 test.
 
 | Feature and FE consumer | Retained owner contract / acceptance boundary |
 |---|---|
-| Constraints: `EvolutionDetail.tsx`, `src/lib/v3/evolutionSchemas.ts` | Retain typed hard/soft fields, operators, values, penalty weight and enabled state. `create_constraint` currently transmits free text in memo; parsing, edit/delete and application policy are not proven. Proposed D3: versioned program-scoped configuration, Governance `constraint_change` approval, future-run pinning and durable readback. Never evaluate arbitrary expressions as code. |
-| Fitness: `FitnessFormulaPanel.tsx`, `evolution.ts` | Retain formula list/detail, ID/version, expression, metrics and applied scope. D3 chooses ownership/application rules; proposed program-scoped versions and `fitness_formula_change` review. No constant empty success or BFF shadow formula registry. |
-| Mutation: `MutationRuleManager.tsx`, `evolution.ts` | Preserve list, add and enable/disable obligations, scope/expression/rate/risk. Current add control is nonproduction and toggle disabled. D3 proposes program-scoped versioned configuration, reviewed before future runs; do not conflate rule editing with approving an EvolutionDecision mutation. |
+| Constraints: `EvolutionDetail.tsx`, `src/lib/v3/evolutionSchemas.ts` | Retain typed hard/soft fields, operators, values, penalty weight and enabled state. `create_constraint` currently transmits free text in memo; parsing, edit/delete and application policy are not proven. Resolved per D3: program-scoped versioned configuration, Governance `constraint_change` approval, future-run pinning and durable readback; legacy params preserved for migration. Never evaluate arbitrary expressions as code. |
+| Fitness: `FitnessFormulaPanel.tsx`, `evolution.ts` | Retain formula list/detail, ID/version, expression, metrics and applied scope. Resolved per D3: program-scoped versioned configuration and Governance `fitness_formula_change` review; affects future runs only while existing attempts retain pinned config. No constant empty success or BFF shadow formula registry. |
+| Mutation: `MutationRuleManager.tsx`, `evolution.ts` | Preserve list, add and enable/disable obligations, scope/expression/rate/risk. Current add control is nonproduction and toggle disabled. Resolved per D3: program-scoped versioned configuration, reviewed before future runs; affects future runs only while existing attempts retain pinned config. Do not conflate rule editing with approving an EvolutionDecision mutation. |
 | Budget changes | FE approval type `budget_increase` already exists; params cannot bypass it. This record introduces no capital operation or new allocation authority. |
-| Generation freeze: `EvolutionFreezePanel.tsx` | D2 must fix scope, existing runs, promotion and release semantics; read owner freeze record after command outcome. No optimistic frozen flag as truth. |
+| Generation freeze: `EvolutionFreezePanel.tsx` | Resolved per D2: seal current generation membership and artifact versions, prevent additions, mutations and promotion, allow in-flight runs to finish; release requires the same Governance review. Read owner freeze record after command outcome. No optimistic frozen flag as truth. |
 | Promotion: `PromotionPanel.tsx` | Preserve paper/live buttons, candidate comparison and history, with true artifact lineage and stage-specific approval. Remove `pr_local_*`; do not encode candidate identity in memo. Read actual registry/plan records and terminal failure as well as success. |
 
 ## 7. Existing execution chain and evidence semantics (U8B)
@@ -205,22 +205,21 @@ this source scope. Cooldown/observation retain the L1 acceptance-time boundary;
 U8B must test it separately from the terminal completion timestamp and report
 any implementation divergence instead of silently moving the clock.
 
-## 8. Operator decisions required before finalization
+## 8. Operator decisions recorded for finalization
 
-No current operator answer is recorded. These are concrete proposals, **not
-approved rules**. On reply record the exact chosen scope in this decision and
-evidence before independent review; do not infer approval from elapsed time.
+Operator decisions recorded 2026-09-14 by Human/Ops. All proposed choices are
+adopted; the alternatives in section 8 are **NOT approved**.
 
-| ID | Missing authority / question | Proposed choice and alternative | Blocking obligation |
-|---|---|---|---|
-| D1 | Stop, program pause/resume and effects on active/paused runs are not defined by §8.6 names or FE buttons. | Proposed: pause stops new generation admission while current runs drain; stop additionally cancels all nonterminal runs (including paused) and reaches program paused only after owner stop receipts; resume schedules eligible new attempts, never revives cancelled ones. Alternative: Stop is only the same drain behavior as Pause (requires explicit acceptance of alias removal and UI wording). | U8B control state/fencing and U8B-FE Stop/Resume; no implementation may invent which runs are killed or resumed. |
-| D2 | Generation freeze has no durable owner record or scope/release semantics. | Proposed: seal current generation membership and artifact versions, prevent additions/mutations and promotion, allow in-flight runs to finish; release requires the same Governance review. Alternative: also stop current generation runs, requiring D1 owner receipts. Neither choice freezes a live runtime. | U8A control record shape; U8B freeze/release and U8B-FE readback. |
-| D3 | Formula/rule scope and approval/application timing are not specified by display-only FE records. | Proposed: program-scoped, versioned steering; Governance-approved changes affect future runs only, existing attempts pin their original config. Alternative: a separate explicit protocol for editing active runs, including owner checkpoint and approval semantics. Preserve all legacy params for migration; add no global competing registry. | U8A typed configuration and U8B constraints/formulas/rules; FE edits remain undelivered until true effects/readback exist. |
+| ID | Missing authority / question | Adopted operator decision | Rejected alternative | Blocking obligation |
+|---|---|---|---|---|
+| D1 | Stop, program pause/resume and effects on active/paused runs are not defined by §8.6 names or FE buttons. | **ADOPT THE PROPOSED CHOICE**: `pause` halts new generation admission while current runs drain; `stop` additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts; `resume` schedules eligible new attempts and never revives cancelled runs. | Alternative NOT approved: Stop is only the same drain behavior as Pause (requires explicit acceptance of alias removal and UI wording). | U8B control state/fencing and U8B-FE Stop/Resume; no implementation may invent which runs are killed or resumed. |
+| D2 | Generation freeze has no durable owner record or scope/release semantics. | **ADOPT THE PROPOSED CHOICE**: `freeze` seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review. | Alternative NOT approved: also stop current generation runs, requiring D1 owner receipts. Neither choice freezes a live runtime. | U8A control record shape; U8B freeze/release and U8B-FE readback. |
+| D3 | Formula/rule scope and approval/application timing are not specified by display-only FE records. | **ADOPT THE PROPOSED CHOICE**: program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry. | Alternative NOT approved: a separate explicit protocol for editing active runs, including owner checkpoint and approval semantics. | U8A typed configuration and U8B constraints/formulas/rules; FE edits remain undelivered until true effects/readback exist. |
 
 The six existing program edges, entity separation, metadata safety, tenant and
 replay boundaries, approved-decision engine and feature inventory are already
-source-backed. D1–D3 only ask for genuinely missing semantics. A packet review
-may assess these findings, but cannot substitute for an operator product choice.
+source-backed. Operator decisions D1–D3 settle the missing product semantics for
+the downstream implementation tasks (U8A, U8B, U8B-FE).
 
 ## 9. Ordered ownership, cleanup and validation
 
@@ -265,5 +264,5 @@ collection and actual counts. No runtime deletion, 61-file regression, DB
 acceptance, FE build, hosted pair or deployment is claimed here. Unimplemented
 positive cases cannot be replaced with skipped tests or expected 503s to claim
 feature completion. Publish the two task artifacts, obtain exact-head review
-only after operator choices are resolved, and let the supervisor integrator
+with operator choices D1–D3 recorded, and let the supervisor integrator
 merge before owner `done`.

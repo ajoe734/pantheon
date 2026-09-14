@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "task_id": "BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001",
-  "owner": "Codex",
+  "owner": "Antigravity",
   "reviewer": "Antigravity2",
   "scope": "documentation and contract decision only",
   "source_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
   "decision": {
     "document": "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md",
-    "document_sha256": "31e1e2e6a3a42f63082432a28c2996aa51b7ca65919097969b1d11f57d76fa0b",
-    "status": "operator_decisions_pending",
+    "document_sha256": "b4482bb08e1ab5c061a3156640304af8a3ece5b9d05af2b08ab67fd2ca084c7c",
+    "status": "operator_decisions_recorded",
     "production_implementation": false,
     "new_execution_authority": false
   },
@@ -289,24 +289,30 @@
   "operator_decisions": [
     {
       "id": "D1",
-      "status": "open",
+      "status": "adopted",
       "topic": "program pause/stop/resume and nonterminal run handling",
-      "proposal": "pause drains; stop cancels all nonterminal including paused runs and acknowledges actual worker stop before program paused; resume creates eligible new attempts",
-      "authority": "operator answer required; no answer recorded"
+      "proposal": "pause halts new generation admission while current runs drain; stop additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts; resume schedules eligible new attempts and never revives cancelled runs",
+      "decision": "ADOPT THE PROPOSED CHOICE - pause halts new generation admission while current runs drain; stop additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts; resume schedules eligible new attempts and never revives cancelled runs",
+      "rejected_alternative": "Stop is only the same drain behavior as Pause",
+      "authority": "recorded 2026-09-14 by Human/Ops"
     },
     {
       "id": "D2",
-      "status": "open",
+      "status": "adopted",
       "topic": "generation freeze scope, promotion and release",
-      "proposal": "seal membership/artifact versions, disallow candidate additions/mutations and promotion; running work may finish; same governance chain for release",
-      "authority": "operator answer required; no answer recorded"
+      "proposal": "freeze seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review",
+      "decision": "ADOPT THE PROPOSED CHOICE - freeze seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review",
+      "rejected_alternative": "also stop current generation runs",
+      "authority": "recorded 2026-09-14 by Human/Ops"
     },
     {
       "id": "D3",
-      "status": "open",
+      "status": "adopted",
       "topic": "constraints/formula/mutation-rule scope and effect timing",
-      "proposal": "program-scoped versioned configuration; governance approval before future-run application; existing runs retain pinned config",
-      "authority": "operator answer required; no answer recorded"
+      "proposal": "program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry",
+      "decision": "ADOPT THE PROPOSED CHOICE - program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry",
+      "rejected_alternative": "separate explicit active-run editing protocol",
+      "authority": "recorded 2026-09-14 by Human/Ops"
     }
   ],
   "retained_b10_inventory": {
@@ -458,8 +464,8 @@
       "failed": 0,
       "skipped": 0,
       "warnings": 2,
-      "elapsed_seconds_reported_by_pytest": 5.1,
-      "stdout_summary": "8 passed, 2 warnings in 5.10s",
+      "elapsed_seconds_reported_by_pytest": 2.79,
+      "stdout_summary": "8 passed, 2 warnings in 2.79s",
       "limitation": "Existing full-file characterization; injected router/receipt doubles are not new program persistence, real owner effects or hosted proof."
     },
     {
@@ -471,8 +477,8 @@
       "failed": 0,
       "skipped": 0,
       "warnings": 2,
-      "elapsed_seconds_reported_by_pytest": 12.11,
-      "stdout_summary": "22 passed, 2 warnings in 12.11s",
+      "elapsed_seconds_reported_by_pytest": 7.17,
+      "stdout_summary": "22 passed, 2 warnings in 7.17s",
       "limitation": "Existing full-file characterization; injected router/receipt doubles are not new program persistence, real owner effects or hosted proof."
     },
     {
@@ -484,15 +490,15 @@
       "failed": 0,
       "skipped": 0,
       "warnings": 2,
-      "elapsed_seconds_reported_by_pytest": 5.4,
-      "stdout_summary": "9 passed, 2 warnings in 5.40s",
+      "elapsed_seconds_reported_by_pytest": 3.38,
+      "stdout_summary": "9 passed, 2 warnings in 3.38s",
       "limitation": "Existing full-file characterization; injected router/receipt doubles are not new program persistence, real owner effects or hosted proof."
     },
     {
       "command": "python3 /tmp/validate-evolution-contract-evidence.py && git diff --check",
       "exit_code": 0,
       "collection": "terminal",
-      "result": "Document links/digest, source blobs, granted scopes, retained original B10 cases and 21 FE edges checked; 39 existing full-file tests recorded; D1-D3 stay open."
+      "result": "Document links/digest, source blobs, granted scopes, retained original B10 cases and 21 FE edges checked; 39 existing full-file tests recorded; D1-D3 operator decisions adopted."
     }
   ],
   "deletion_evidence": {
@@ -516,11 +522,11 @@
     "source_base_sha": "b9143d5eb05cbf65394fc3e2e65531279f3f52c0",
     "anchor_commit": "690d836cc269754491932c9b0d7f82247637e7b9",
     "head_sha": null,
-    "pr": null,
+    "pr": 5819,
     "merge_commit": null,
-    "independent_review": "not requested; D1-D3 unresolved",
-    "ci": "not yet observed",
-    "binding": "Commit cannot contain its own head hash. Once operator choices resolve, final PR/head/base/manifest blob must be frozen by governed handoff; do not amend manifest after approval."
+    "independent_review": "pending exact-head review by Antigravity2",
+    "ci": "pending",
+    "binding": "Commit cannot contain its own head hash. PR #5819 head/base/manifest blob frozen by governed handoff to Antigravity2; do not amend manifest after approval."
   },
-  "artifact_validator_source": "import ast, hashlib, json, re, subprocess\nfrom pathlib import Path\np=Path(\"docs/deployment/evidence/BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001/evidence.json\")\ne=json.loads(p.read_text()); d=Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(d.read_bytes()).hexdigest()==e[\"decision\"][\"document_sha256\"]\nfor path,blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\",\"rev-parse\",e[\"source_base_sha\"]+\":\"+path],text=True).strip()==blob,path\n    assert subprocess.check_output([\"git\",\"hash-object\",path],text=True).strip()==blob,path\nm=json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nfor unit,s in e[\"ordered_composition\"].items():\n    t=next(t for t in m[\"tasks\"] if t[\"unit\"]==unit)\n    assert s[\"task_id\"]==t[\"task_id\"] and s[\"exact_source_scope\"]==t[\"exact_source_scope\"]\nfor path,names in e[\"retained_b10_inventory\"][\"static_test_function_names\"].items():\n    tree=ast.parse(Path(path).read_text())\n    assert names==[n.name for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name.startswith(\"test_\")]\nfor name in [\"submit_evolution_review\",\"approve_program\",\"pause_program\",\"resume_program\",\"complete_program\",\"retire_program\",\"stop\",\"freeze_generation\",\"promote_candidate_paper\",\"promote_candidate_live\",\"approve_mutation\",\"reject_mutation\",\"run_experiment\",\"attach_to_review\",\"invalidate_result\",\"retry\",\"archive\",\"promote_artifact\"]:\n    assert \"`\"+name+\"`\" in d.read_text(),name\nfor target in re.findall(r\"\\]\\(([^)]+)\\)\",d.read_text()):\n    assert (d.parent/target.split(\"#\")[0]).exists(),target\nassert len(e[\"program_transitions\"] )==6\nassert len(e[\"run_transitions\"])==7\nassert len(e[\"experiment_transitions\"])==8\nassert all(v[\"collection\"]==\"terminal\" and v[\"exit_code\"]==0 for v in e[\"validation\"])\nassert sum(v.get(\"passed\",0) for v in e[\"validation\"])==39\nassert e[\"decision\"][\"status\"]==\"operator_decisions_pending\"\nassert [x[\"id\"] for x in e[\"operator_decisions\"] if x[\"status\"]==\"open\"]==[\"D1\",\"D2\",\"D3\"]\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"]==[]\nassert e[\"delivery\"][\"merge_commit\"] is None\nassert set(e[\"changed_paths\"])=={str(d),str(p)}\nprint(\"Evidence valid: document links/digest, immutable source blobs, ordered scopes, retained B10 inventory, 21 FE edges, 39 baseline tests and open D1-D3; no implementation or merge claim.\")\n"
+  "artifact_validator_source": "import ast, hashlib, json, re, subprocess\nfrom pathlib import Path\np=Path(\"docs/deployment/evidence/BFF-EVOLUTION-LIFECYCLE-CONTRACT-DECISION-001/evidence.json\")\ne=json.loads(p.read_text()); d=Path(e[\"decision\"][\"document\"])\nassert hashlib.sha256(d.read_bytes()).hexdigest()==e[\"decision\"][\"document_sha256\"]\nfor path,blob in e[\"source_blobs\"].items():\n    assert subprocess.check_output([\"git\",\"rev-parse\",e[\"source_base_sha\"]+\":\"+path],text=True).strip()==blob,path\n    assert subprocess.check_output([\"git\",\"hash-object\",path],text=True).strip()==blob,path\nm=json.loads(Path(\"docs/operations/bff-upstream-v2-20260911/dispatch-map.json\").read_text())\nfor unit,s in e[\"ordered_composition\"].items():\n    t=next(t for t in m[\"tasks\"] if t[\"unit\"]==unit)\n    assert s[\"task_id\"]==t[\"task_id\"] and s[\"exact_source_scope\"]==t[\"exact_source_scope\"]\nfor path,names in e[\"retained_b10_inventory\"][\"static_test_function_names\"].items():\n    tree=ast.parse(Path(path).read_text())\n    assert names==[n.name for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name.startswith(\"test_\")]\nfor name in [\"submit_evolution_review\",\"approve_program\",\"pause_program\",\"resume_program\",\"complete_program\",\"retire_program\",\"stop\",\"freeze_generation\",\"promote_candidate_paper\",\"promote_candidate_live\",\"approve_mutation\",\"reject_mutation\",\"run_experiment\",\"attach_to_review\",\"invalidate_result\",\"retry\",\"archive\",\"promote_artifact\"]:\n    assert \"`\"+name+\"`\" in d.read_text(),name\nfor target in re.findall(r\"\\]\\(([^)]+)\\)\",d.read_text()):\n    assert (d.parent/target.split(\"#\")[0]).exists(),target\nassert len(e[\"program_transitions\"] )==6\nassert len(e[\"run_transitions\"])==7\nassert len(e[\"experiment_transitions\"])==8\nassert all(v[\"collection\"]==\"terminal\" and v[\"exit_code\"]==0 for v in e[\"validation\"])\nassert sum(v.get(\"passed\",0) for v in e[\"validation\"])==39\nassert e[\"decision\"][\"status\"]==\"operator_decisions_recorded\"\nassert [x[\"id\"] for x in e[\"operator_decisions\"] if x[\"status\"]==\"adopted\"]==[\"D1\",\"D2\",\"D3\"]\nassert not any(x[\"status\"]==\"open\" for x in e[\"operator_decisions\"])\nassert e[\"deletion_evidence\"][\"runtime_paths_changed\"]==[]\nassert e[\"delivery\"][\"merge_commit\"] is None\nassert set(e[\"changed_paths\"])=={str(d),str(p)}\nprint(\"Evidence valid: document links/digest, immutable source blobs, ordered scopes, retained B10 inventory, 21 FE edges, 39 baseline tests and adopted D1-D3 operator decisions; no implementation or merge claim.\")\n"
 }
