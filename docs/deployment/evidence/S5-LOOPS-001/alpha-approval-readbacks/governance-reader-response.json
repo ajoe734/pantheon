@@ -1,6 +1,45 @@
 {
-  "at": "2026-09-13T05:21:36+00:00",
-  "body": [],
-  "route": "/api/governance/approvals?target_id=reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-  "status": 200
+  "body": [
+    {
+      "decision_id": "apv-d3d2684ade22",
+      "target_type": "registry_entry",
+      "target_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+      "target_version": "1.0.0",
+      "decision": "approved",
+      "decision_state": "decided",
+      "actor_role": "governance_reviewer",
+      "actor_id": "pantheon-dev-approver",
+      "rationale": "Reviewed the exact fresh Source/distillation lineage and research-only schema. Input is explicitly simulated, not real market evidence. This permits Alpha research evaluation only, not paper/live execution or capital allocation.",
+      "created_at": "2026-09-14T23:33:09Z",
+      "decided_at": "2026-09-14T23:33:09Z",
+      "conditions": [],
+      "risk_level": "low",
+      "evidence_refs": [
+        {
+          "ref_type": "source_record",
+          "ref_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+        },
+        {
+          "ref_type": "distillation_job",
+          "ref_id": "distill-3474db6981626aa0ded8f2f5"
+        }
+      ],
+      "superseded_by": null,
+      "expires_at": null,
+      "capital_pool_id": null,
+      "persona_id": null,
+      "metadata": null,
+      "tenant_id": "tenant-dev",
+      "owner_user_id": "pantheon-dev-approver",
+      "proposal_id": null,
+      "proposal_revision": null,
+      "proposal_content_digest": null,
+      "validation_result_digest": null,
+      "revoked_at": null
+    }
+  ],
+  "http_status": 200,
+  "method": "GET",
+  "observed_at": "2026-09-14T23:33:09Z",
+  "route": "/api/governance/approvals?target_id=reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8"
 }

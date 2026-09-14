@@ -1,34 +1,41 @@
 {
   "body": {
+    "schema_version": "source_ingest_latest_market_snapshot.v1",
+    "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
+    "symbol": "SPY",
+    "event_time": "2026-09-14T23:33:06Z",
+    "observed_at": "2026-09-14T23:33:06Z",
     "closes": [
-      523.093425,
-      523.854427
+      520.876989,
+      520.876989,
+      520.876989
     ],
-    "event_time": "2026-09-13T03:59:39Z",
     "lineage": {
+      "source_ids": [
+        "src-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e-spy-anchor",
+        "src-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa-spy-anchor",
+        "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+      ],
       "connector_ids": [
-        "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+        "conn-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e",
+        "conn-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa",
+        "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
       ],
       "content_refs": [
-        "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-12",
-        "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-13"
+        "simulation://dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e/SPY/anchor",
+        "simulation://dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa/SPY/anchor",
+        "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor"
       ],
       "ingest_run_ids": [
-        "ingest-bd1a73d4864e"
-      ],
-      "source_ids": [
-        "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
-        "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous"
+        "ingest-4aacd33aff7a",
+        "ingest-6e63b51bdfa1",
+        "ingest-e276cb8baffe"
       ]
     },
-    "observed_at": "2026-09-13T04:04:39Z",
-    "schema_version": "source_ingest_latest_market_snapshot.v1",
-    "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
-    "source_ref": "source-ingest://snapshots/mss-318d9ad652c4a87f1b39c8ec",
-    "symbol": "SPY"
+    "source_ref": "source-ingest://snapshots/mss-c76a26dd68bd3e3ad2de513a"
   },
   "http_status": 200,
   "method": "GET",
-  "observed_at": "2026-09-13T04:04:40Z",
+  "observed_at": "2026-09-14T23:33:06Z",
   "route": "/api/source-ingest/snapshots/latest?symbol=SPY"
 }

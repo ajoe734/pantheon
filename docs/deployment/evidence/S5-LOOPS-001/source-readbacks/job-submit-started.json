@@ -1,8 +1,9 @@
 {
-  "at": "2026-09-13T04:04:39Z",
-  "request": {
-    "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
-    "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
-    "trigger_type": "manual"
-  }
+  "observed_at": "2026-09-14T23:33:06Z",
+  "payload": {
+    "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+    "trigger_type": "manual",
+    "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
+  },
+  "status": "job_post_begun"
 }

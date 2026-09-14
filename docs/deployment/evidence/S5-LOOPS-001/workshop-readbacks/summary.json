@@ -1,8 +1,8 @@
 {
-  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+  "stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
   "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
-  "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
-  "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+  "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8",
+  "registry_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
   "trigger_event_ids": [
     "6287a125-8d7d-4baa-8c5b-63638e40d199"
   ],

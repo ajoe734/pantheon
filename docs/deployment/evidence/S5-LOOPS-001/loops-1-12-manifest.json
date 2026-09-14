@@ -18,22 +18,22 @@
       "gap_reason": null,
       "loop_index": 1,
       "loop_name": "Source Ingestion",
-      "next_consumer_receipt_id": "distill-e99ee043788c7e6a21ebd8b0,distill-c4a34c2036cb1393c7e5ca8f",
-      "owner_container": "82a285494255",
-      "owner_worker_identity": "82a285494255ef272b412e48751e0a2c938366e2c5d1b8049a2d48c71c0501b0",
+      "next_consumer_receipt_id": "distill-a2f236c1eec81efeeffa2d85,distill-3474db6981626aa0ded8f2f5",
+      "owner_container": "0a8d968a3ec3",
+      "owner_worker_identity": "0a8d968a3ec3e9246475192d2e75f79e2895ec314b0fc58cdaf62137c47cfb82",
       "status": "accepted",
       "terminal_output_details": {
         "is_real": false,
         "provenance": "simulation",
         "rows_per_source": 30,
-        "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
+        "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
         "source_ids": [
-          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
-          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
+          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
         ]
       },
-      "terminal_output_id": "mss-318d9ad652c4a87f1b39c8ec",
-      "trigger_id": "ingest-bd1a73d4864e"
+      "terminal_output_id": "mss-c76a26dd68bd3e3ad2de513a",
+      "trigger_id": "ingest-e276cb8baffe"
     },
     {
       "canonical_id": "strategy_distillation",
@@ -46,18 +46,18 @@
       "gap_reason": null,
       "loop_index": 2,
       "loop_name": "Strategy Distillation",
-      "next_consumer_receipt_id": "adm-7d1bf7d5d2c6",
+      "next_consumer_receipt_id": "adm-dd1f83dfbd55",
       "owner_container": "distill-controller-5c099699",
       "owner_worker_identity": "distill-controller-5c099699",
       "status": "accepted",
       "terminal_output_details": {
         "execution_mode": "research_only",
-        "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-        "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+        "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8",
         "strategy_version": "1.0.0"
       },
-      "terminal_output_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-      "trigger_id": "distill-e99ee043788c7e6a21ebd8b0,distill-c4a34c2036cb1393c7e5ca8f"
+      "terminal_output_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+      "trigger_id": "distill-a2f236c1eec81efeeffa2d85,distill-3474db6981626aa0ded8f2f5"
     },
     {
       "canonical_id": "alpha_replication",
@@ -79,18 +79,18 @@
       "loop_index": 3,
       "loop_name": "Alpha Replication",
       "next_consumer_receipt_id": null,
-      "owner_container": "ad5146992ebdb5f27f92fe7995afaa871af4c27bb8dcdff84816d4d6561450e3",
+      "owner_container": "5238ef5f6ec3",
       "owner_worker_identity": "alpha-revalidation-worker",
       "status": "unaccepted",
       "terminal_output_details": {
-        "approval_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+        "approval_id": "apv-d3d2684ade22",
         "evaluation_type": "replication_gate_schema_governance",
-        "experiment_run_id": "erun-alpha-191f49482a35e074",
-        "research_authority_id": "rrun-20260913-001",
-        "research_task_id": "rtask-20260913-001"
+        "experiment_run_id": "erun-alpha-6f2010a83d50a15c",
+        "research_authority_id": "rrun-20260914-007",
+        "research_task_id": "rtask-20260914-007"
       },
-      "terminal_output_id": "erun-alpha-191f49482a35e074",
-      "trigger_id": "adm-7d1bf7d5d2c6"
+      "terminal_output_id": "erun-alpha-6f2010a83d50a15c",
+      "trigger_id": "adm-dd1f83dfbd55"
     },
     {
       "canonical_id": "persona_teaching",

@@ -1,10 +1,10 @@
 {
-  "alpha_admission_id": "adm-7d1bf7d5d2c6",
-  "decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
-  "distillation_job_id": "distill-c4a34c2036cb1393c7e5ca8f",
-  "governance_event_id": "7725b8d6-b98b-498b-a8e9-79e997921fdf",
-  "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
-  "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+  "alpha_admission_id": "adm-dd1f83dfbd55",
+  "decision_id": "apv-d3d2684ade22",
+  "distillation_job_id": "distill-3474db6981626aa0ded8f2f5",
+  "governance_event_id": null,
+  "registry_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+  "source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
   "status": "actual-alpha-admission-only-not-alpha-terminal-or-numeric-backtest",
-  "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+  "stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
 }

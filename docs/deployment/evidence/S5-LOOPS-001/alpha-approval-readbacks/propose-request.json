@@ -1,12 +1,12 @@
 {
-  "idempotency_key": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e:research-review:propose",
+  "idempotency_key": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da:research-review:propose",
   "payload": {
-    "candidate_digest": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+    "candidate_digest": "sha256:db3e2de4884fc63cc5c35a9f747337c2b58b5ae07093274097b89a93107f262d",
     "expected_version": 0,
-    "expires_at": "2026-09-13T11:21:37Z",
+    "expires_at": "2026-09-15T05:33:06Z",
     "owner_user_id": "pantheon-dev-approver",
     "risk_level": "low",
-    "target_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+    "target_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
     "target_type": "registry_entry",
     "target_version": "1.0.0",
     "tenant_id": "tenant-dev"

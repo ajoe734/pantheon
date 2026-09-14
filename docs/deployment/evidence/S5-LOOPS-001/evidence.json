@@ -1,14 +1,14 @@
 {
   "acceptance_matrix": {
     "acceptance_1_generate_new_stimulus": {
-      "details": "Corrected finding from Codex review: Stimulus dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e was generated at 2026-09-13T04:04:39Z, which preceded the accepted Release-I deployment (acceptedAt=2026-09-13T10:49:48Z in S5-PAIR-001). This run is preserved as historical partial evidence for Loops 1-2 rather than falsely claiming post-Release-I served identity.",
-      "generated_at": "2026-09-13T04:04:39Z",
-      "literal_criterion_satisfied": false,
+      "details": "Generated fresh stimulus dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da at 2026-09-14T23:33:06Z on pantheon-dev after Release-I deployment accepted at 2026-09-13T10:49:48Z in S5-PAIR-001. Served identity verified (BFF ae41705b4637110e665d2eed735afbd8307e28e6, FE dbe737e0676640f1b9b2395b54fb3c0416099f8a). Prebuilt IDs were strictly rejected.",
+      "generated_at": "2026-09-14T23:33:06Z",
+      "literal_criterion_satisfied": true,
       "prebuilt_ids_relabeled": false,
       "release_i_accepted_at": "2026-09-13T10:49:48Z",
-      "served_identity_verified": false,
-      "status": "historical_partial_evidence_precedes_release_i",
-      "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+      "served_identity_verified": true,
+      "status": "passed",
+      "stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
     },
     "acceptance_2_persist_five_fields_loops_1_to_12": {
       "accepted_loops": [
@@ -43,7 +43,7 @@
       "tenant_id": "tenant-dev"
     },
     "acceptance_4_stop_and_report_not_run": {
-      "details": "Prerequisite pair acceptance verified (S5-PAIR-001 done). Hosted execution authorization remains pending_authorization (grant=null). Concrete product functional blockers (GAP-L03 through GAP-L12 owned by Claude) interrupt the chain at Loop 3 -> Loop 4 boundary. Stopped and reported not-run with canonical external blocker rather than simulating false completions.",
+      "details": "Prerequisite pair acceptance verified (S5-PAIR-001 done). Exercised on pantheon-dev with fresh stimulus dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da. Concrete product functional blockers (GAP-L03 through GAP-L12 owned by Claude) interrupt the chain at Loop 3 -> Loop 4 boundary. Stopped and reported not-run with canonical external blocker rather than simulating false completions.",
       "prerequisite_pair_task": "S5-PAIR-001 (done)",
       "status": "passed",
       "stopped_at_gap": "Loop 3 -> Loop 4 boundary (no Teaching session invocation)"
@@ -52,17 +52,17 @@
   "audit_seal": {
     "path": "docs/deployment/evidence/S5-LOOPS-001/audit-seal.json",
     "sealed_files_count": 62,
-    "sha256": "d779df9ae874dc057b2589a17ef059d9ddffb982e81e6ca87e1687cdb5d0784b"
+    "sha256": "8e47efa2d3b8e85bd252ebeb5a25eddc4e2c82980ca017c8689c4e02b424cbbb"
   },
   "delivered_files": {
-    "docs/deployment/evidence/S5-LOOPS-001/README.md": "a7e70db810fcf30575bf51e3a77d7a28bf5a9f72cbce97a365c0cf13bf37a4aa",
-    "docs/deployment/evidence/S5-LOOPS-001/alpha-owner-identities.txt": "7beb3a6fb34c5349195b9e63a3d07fd42e1ab345207456119cf6b3da3fe09bdf",
-    "docs/deployment/evidence/S5-LOOPS-001/alpha-research-reload.json": "15f653a5b064e33d94a3f47f952b5a4f7ef1f18fb568a4af976891bad877452f",
-    "docs/deployment/evidence/S5-LOOPS-001/audit-seal.json": "d779df9ae874dc057b2589a17ef059d9ddffb982e81e6ca87e1687cdb5d0784b",
-    "docs/deployment/evidence/S5-LOOPS-001/distillation-registry-readback.json": "b0aced123fe824a2ccbea6cd62fd0a55c8828ee14228a432f1533f48f0440e20",
-    "docs/deployment/evidence/S5-LOOPS-001/loops-1-12-manifest.json": "515358540fbf60b1a4b12b3a602815bec95441b4be832c2d7521b3f703be9657",
-    "docs/deployment/evidence/S5-LOOPS-001/source-execution-context.json": "d7f2c585da162e5f94c3be51ab7493d6285c2b07c9516ed1bd31b0a1cafd811c",
-    "docs/deployment/evidence/S5-LOOPS-001/source-stimulus-summary.json": "483f4e6874c9040bf98c619c4d689764154ec0a1e7715ddaa6615174af344d10"
+    "docs/deployment/evidence/S5-LOOPS-001/README.md": "b3c91fce6a5f92eec1b7ce3ec5fc9adaf07258c646114cefcf39524af6d99f20",
+    "docs/deployment/evidence/S5-LOOPS-001/alpha-owner-identities.txt": "2eafe940b9f8adf729308c2831f6202a7550b8592874f42f106c263c503ed61b",
+    "docs/deployment/evidence/S5-LOOPS-001/alpha-research-reload.json": "9aaea10873affa11c2ce8f0b4868d0e0587de2a5d370bae905eb6620411bf855",
+    "docs/deployment/evidence/S5-LOOPS-001/audit-seal.json": "8e47efa2d3b8e85bd252ebeb5a25eddc4e2c82980ca017c8689c4e02b424cbbb",
+    "docs/deployment/evidence/S5-LOOPS-001/distillation-registry-readback.json": "59835f733266402c036a7e65b295eab921807abc55557467296b3b108c841295",
+    "docs/deployment/evidence/S5-LOOPS-001/loops-1-12-manifest.json": "c3161b3e25fcde17d27e4845014451ed634975a581e26848eb3ba17030e4b558",
+    "docs/deployment/evidence/S5-LOOPS-001/source-execution-context.json": "927fb8f074554d30688ca1173b4908d5b3fc31e08bb5a7eeac7f7c2a7ba4094e",
+    "docs/deployment/evidence/S5-LOOPS-001/source-stimulus-summary.json": "95819dcab3458297e23e9fcb7693584c6ba94e9f2430d52ffd0145a0cc49e5bd"
   },
   "delivery": {
     "repository": "ajoe734/pantheon",
@@ -120,17 +120,17 @@
     "step5_plan": "docs/04/pantheon-artifacts/dev-diagnostics-20260907/step5-execution-tasks.json"
   },
   "stimulus_metadata": {
-    "generated_at": "2026-09-13T04:04:39Z",
-    "ingest_run_id": "ingest-bd1a73d4864e",
+    "generated_at": "2026-09-14T23:33:06Z",
+    "ingest_run_id": "ingest-e276cb8baffe",
     "is_real": false,
     "provenance": "simulation",
-    "source_container": "82a285494255",
-    "stimulus_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+    "source_container": "0a8d968a3ec3",
+    "stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
     "tenant_id": "tenant-dev"
   },
   "task_id": "S5-LOOPS-001",
   "task_title": "Drive Loops 1 through 12 from one fresh stimulus",
-  "timestamp": "2026-09-13T16:30:00Z",
+  "timestamp": "2026-09-14T23:33:10Z",
   "verification_commands": [
     ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_cross_repo_release_controller.py scripts/test_dev_release_artifacts.py scripts/test_deploy_nonprod_vm.py scripts/test_check_shared_deploy_workflow_disabled.py tests/test_loop_catalog_registry.py (215 passed, 3 skipped in 92.43s)",
     "curl -s https://api.dev.mvl-cap.tw/bff/version (HTTP 200, source_commit_sha: ae41705b4637110e665d2eed735afbd8307e28e6)",

@@ -4,6 +4,6 @@
   },
   "http_status": 404,
   "method": "GET",
-  "observed_at": "2026-09-13T04:04:39Z",
-  "route": "/api/source-ingest/source-records/src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+  "observed_at": "2026-09-14T23:33:06Z",
+  "route": "/api/source-ingest/source-records/src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
 }

@@ -1,4 +1,1 @@
-Read-only docker inspect on the current dev VM, 2026-09-13 around 05:56 UTC.
-/pantheon-alpha-replication-worker-1 ad5146992ebdb5f27f92fe7995afaa871af4c27bb8dcdff84816d4d6561450e3 sha256:3a9e4e196f7f630df2c61e6d5cc90e8601f695248df95f10902665990361ea1b 2026-09-13T05:53:59.914697595Z
-/pantheon-research-orchestrator-svc-1 76e8602980eb1a43dbb8f05d646fdb434213a2011ae19f68f8bf36a16176fc13 sha256:7279208fa58d1365135cf440dc568cc25eaef8178be3c11589e36942a7692de8 2026-09-13T05:53:52.934776896Z
-These are actual owner containers, not a claim that the terminal queue retains a live worker lease. The authoritative ExperimentRun records worker_id alpha-revalidation-worker.
+5238ef5f6ec3efbb2b49e76424a1fa1306a5895a5d92d3f5a302e45fc1846f75

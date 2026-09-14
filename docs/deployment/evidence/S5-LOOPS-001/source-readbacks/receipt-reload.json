@@ -1,107 +1,116 @@
 {
   "body": {
     "receipt": {
-      "connector_id": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
-      "created_at": "2026-09-13T04:04:39Z",
+      "schema_version": "source_ingest_receipt.v1",
+      "ingest_run_id": "ingest-e276cb8baffe",
+      "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "status": "completed",
+      "trigger_type": "manual",
+      "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "started_at": "2026-09-14T23:33:06Z",
+      "finished_at": "2026-09-14T23:33:06Z",
+      "raw_count": 2,
+      "normalized_count": 2,
+      "rejected_count": 0,
+      "watermark": null,
+      "source_timestamp": "2026-09-14T23:33:06Z",
+      "source_timestamp_status": "valid",
       "evidence_refs": {
         "distillation_admissions": {
-          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor": {
-            "job_id": "distill-c4a34c2036cb1393c7e5ca8f",
-            "source_digest": "sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor": {
+            "job_id": "distill-3474db6981626aa0ded8f2f5",
+            "source_digest": "sha256:b20788d168c84eded9871323bc086702fdf71c2ec811d44d2ff94440f455edf8",
             "status": "admitted"
           },
-          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous": {
-            "job_id": "distill-e99ee043788c7e6a21ebd8b0",
-            "source_digest": "sha256:e1ff23727e728d94d38817a76b6d1b77f875f8c4582244eca60391283f40835c",
+          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous": {
+            "job_id": "distill-a2f236c1eec81efeeffa2d85",
+            "source_digest": "sha256:a99d550a020681efbdf8d0088035977ad7cdc3df52cb92863f8a4e829bf754ea",
             "status": "admitted"
           }
         },
-        "evidence_bundle_id": "evbundle-ingest-bd1a73d4864e-b90c8729fc68",
+        "evidence_bundle_id": "evbundle-ingest-e276cb8baffe-880d02fe6c35",
         "evidence_item_ids": [
-          "evi-5128701cbddec026",
-          "evi-65a2b85bf3b5d051"
+          "evi-dbeac89f21ff5d0a",
+          "evi-49f0c8195068a8e9"
         ],
         "knowledge_object_ids": [
-          "ko-evi-5128701cbddec026-1f179f8ed550",
-          "ko-evi-65a2b85bf3b5d051-a4bd75912c92"
+          "ko-evi-dbeac89f21ff5d0a-be307e6fbd40",
+          "ko-evi-49f0c8195068a8e9-2cafbfeda562"
         ],
         "market_snapshots": {
           "accepted_record_count": 2,
-          "ingest_run_id": "ingest-bd1a73d4864e",
+          "ingest_run_id": "ingest-e276cb8baffe",
           "schema_version": "source_ingest_latest_market_snapshot_batch.v1",
           "snapshots": [
             {
               "closes": [
-                523.093425,
-                523.854427
+                520.876989,
+                520.876989,
+                520.876989
               ],
-              "event_time": "2026-09-13T03:59:39Z",
+              "event_time": "2026-09-14T23:33:06Z",
               "lineage": {
                 "connector_ids": [
-                  "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e"
+                  "conn-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e",
+                  "conn-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa",
+                  "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
                 ],
                 "content_refs": [
-                  "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-12",
-                  "simulation://dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e/SPY/2026-09-13"
+                  "simulation://dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e/SPY/anchor",
+                  "simulation://dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa/SPY/anchor",
+                  "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor"
                 ],
                 "ingest_run_ids": [
-                  "ingest-bd1a73d4864e"
+                  "ingest-4aacd33aff7a",
+                  "ingest-6e63b51bdfa1",
+                  "ingest-e276cb8baffe"
                 ],
                 "source_ids": [
-                  "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
-                  "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous"
+                  "src-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e-spy-anchor",
+                  "src-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa-spy-anchor",
+                  "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
                 ]
               },
-              "observed_at": "2026-09-13T04:04:39Z",
+              "observed_at": "2026-09-14T23:33:06Z",
               "schema_version": "source_ingest_latest_market_snapshot.v1",
-              "snapshot_id": "mss-318d9ad652c4a87f1b39c8ec",
-              "source_ref": "source-ingest://snapshots/mss-318d9ad652c4a87f1b39c8ec",
+              "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
+              "source_ref": "source-ingest://snapshots/mss-c76a26dd68bd3e3ad2de513a",
               "symbol": "SPY"
             }
           ],
           "updated_snapshot_count": 1
         },
         "source_ids": [
-          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-previous",
-          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
+          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
         ]
       },
-      "finished_at": "2026-09-13T04:04:39Z",
-      "ingest_run_id": "ingest-bd1a73d4864e",
-      "normalized_count": 2,
-      "raw_count": 2,
-      "rejected_count": 0,
-      "schema_version": "source_ingest_receipt.v1",
-      "source_timestamp": "2026-09-13T03:59:39Z",
-      "source_timestamp_status": "valid",
-      "started_at": "2026-09-13T04:04:39Z",
-      "status": "completed",
       "storage_refs": {
-        "created_at": "2026-09-13T04:04:39Z",
+        "created_at": "2026-09-14T23:33:06Z",
         "feature_refs": [],
-        "ingest_run_id": "ingest-bd1a73d4864e",
+        "ingest_run_id": "ingest-e276cb8baffe",
         "normalized_refs": [
           {
             "dataset": "market",
-            "date": "2026-09-13",
+            "date": "2026-09-14",
             "ref_type": "normalized_rows",
             "row_count": 2,
             "schema_hash": null,
-            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-13/ingest-bd1a73d4864e.jsonl"
+            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-14/ingest-e276cb8baffe.jsonl"
           }
         ],
         "raw_refs": [
           {
             "compression": "none",
             "dataset": "market",
-            "date": "2026-09-13",
+            "date": "2026-09-14",
             "ref_type": "raw_object",
             "retention_days": null,
             "retention_policy_ref": null,
             "row_count": 2,
-            "source": "conn-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+            "source": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
             "storage_class": null,
-            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260913t040439z-7935481ca72f49629606e01098c3a54e/market/date=2026-09-13/ingest-bd1a73d4864e.jsonl"
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260914t233306z-f967879acea34b45ae5c45d1133401da/market/date=2026-09-14/ingest-e276cb8baffe.jsonl"
           }
         ],
         "schema_version": "market_data_storage_manifest.v1",
@@ -112,14 +121,12 @@
           "raw_ref_count": 1
         }
       },
-      "trace_id": "dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
-      "trigger_type": "manual",
       "typed_failure": null,
-      "watermark": null
+      "created_at": "2026-09-14T23:33:06Z"
     }
   },
   "http_status": 200,
   "method": "GET",
-  "observed_at": "2026-09-13T04:04:40Z",
-  "route": "/api/source-ingest/receipts/ingest-bd1a73d4864e"
+  "observed_at": "2026-09-14T23:33:06Z",
+  "route": "/api/source-ingest/receipts/ingest-e276cb8baffe"
 }
