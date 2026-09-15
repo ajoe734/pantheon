@@ -645,6 +645,8 @@ def _foundation_request_payload(
     return payload
 def _foundation_idempotency_payload(request_payload: Dict[str, Any]) -> Dict[str, Any]:
     payload = json.loads(json.dumps(request_payload))
+    payload.pop("route", None)
+    payload.pop("source_route", None)
     audit_context = payload.get("audit_context")
     if isinstance(audit_context, dict):
         audit_context.pop("timestamp", None)
@@ -1031,97 +1033,11 @@ def _audit_datetime(value: Any) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-def _project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    command_id = str(record.get("command_id") or "").strip()
-    if not command_id:
-        return None
-    target = record.get("target") if isinstance(record.get("target"), dict) else {}
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
-    audit_action = _command_audit_action_from_record(record)
-    idempotency_record = (
-        foundation.get("idempotency_record")
-        if isinstance(foundation.get("idempotency_record"), dict)
-        else {}
-    )
-    audit_actor_ref = audit_action.get("actor_ref") if isinstance(audit_action.get("actor_ref"), dict) else {}
-    metadata = audit_action.get("metadata") if isinstance(audit_action.get("metadata"), dict) else {}
-    trace_context = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
-    action_type = str(record.get("type") or metadata.get("command") or "").strip()
-    target_type = str(target.get("type") or "").strip()
-    target_id = str(target.get("id") or "").strip()
-    timestamp = str(
-        audit.get("timestamp")
-        or audit_action.get("timestamp")
-        or record.get("submitted_at")
-        or utc_now()
-    )
-    reason = str(audit.get("reason") or audit_action.get("reason") or action_type or "operator command")
-    event = {
-        "entry_id": str(audit_action.get("action_id") or f"audit-{command_id}"),
-        "actor": str(
-            audit.get("operator_id")
-            or audit.get("actor")
-            or audit_actor_ref.get("actor_id")
-            or "operator"
-        ),
-        "action_type": action_type,
-        "target_type": target_type,
-        "target_id": target_id,
-        "timestamp": timestamp,
-        "outcome": "accepted" if record.get("status") == CommandStatus.SUBMITTED.value else record.get("status"),
-        "audit_context": {
-            "reason": reason,
-            "command_id": command_id,
-            "receipt_id": command_id,
-            "idempotency_key": (
-                idempotency_record.get("idempotency_key")
-                or metadata.get("idempotency_key")
-                or audit.get("idempotency_key")
-            ),
-            "action_id": audit.get("action_id"),
-            "foundation_action_type": audit_action.get("action_type"),
-        },
-        "evidence_refs": audit.get("evidence_refs") if isinstance(audit.get("evidence_refs"), list) else [],
-        "command_ref": command_id,
-        "trace_id": audit_action.get("trace_id") or trace_context.get("trace_id"),
-        "correlation_id": (
-            audit_action.get("correlation_id")
-            or trace_context.get("correlation_id")
-        ),
-        "payload_checksum": audit_action.get("payload_checksum"),
-        "audit_action": audit_action or None,
-        "metadata": {
-            "source": "command_store",
-            "route": metadata.get("route"),
-            "source_route": metadata.get("source_route"),
-            "live_capital_side_effects": audit.get("live_capital_side_effects", False),
-        },
-    }
-    return json.loads(json.dumps(event))
-def _audit_event_matches(
-    event: Dict[str, Any],
-    *,
-    actor: Optional[str] = None,
-    action_types: Optional[List[str]] = None,
-    target_type: Optional[str] = None,
-    from_ts: Optional[datetime] = None,
-    to_ts: Optional[datetime] = None,
-) -> bool:
-    if actor and event.get("actor") != actor:
-        return False
-    if action_types:
-        allowed = {value for value in action_types if value}
-        if event.get("action_type") not in allowed:
-            return False
-    if target_type and event.get("target_type") != target_type:
-        return False
-    event_dt = _audit_datetime(event.get("timestamp"))
-    if from_ts is not None and (event_dt is None or event_dt < from_ts):
-        return False
-    if to_ts is not None and (event_dt is None or event_dt > to_ts):
-        return False
-    return True
+from .governance.command_audit import (
+    project_command_record_audit_event as _project_command_record_audit_event,
+    audit_event_matches as _audit_event_matches,
+    list_projected_governance_audit_events as _list_projected_governance_audit_events,
+)
 def _list_governance_audit_events(
     *,
     actor: Optional[str] = None,
@@ -1167,17 +1083,14 @@ def _list_governance_audit_events(
                 event,
             )
     if include_command_store:
-        for record in command_store._get_all_commands():
-            event = _project_command_record_audit_event(record)
-            if not event or not _audit_event_matches(
-                event,
-                actor=actor,
-                action_types=action_types,
-                target_type=target_type,
-                from_ts=from_ts,
-                to_ts=to_ts,
-            ):
-                continue
+        for event in _list_projected_governance_audit_events(
+            command_store,
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ):
             events_by_id.setdefault(str(event.get("entry_id")), event)
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
@@ -7037,6 +6950,33 @@ def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
             "replayed": False,
         },
     }
+_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+from .command_adapters.service import CommandAdapterService as _CommandAdapterService
+
+_command_adapter_service = _CommandAdapterService(
+    command_store=lambda: command_store,
+    read_surface=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_operator_role=_require_operator_role,
+    require_read_role=_require_read_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    validators=_VALIDATORS,
+    process_command_task=lambda cmd_id: _process_command_stub(cmd_id),
+    check_read_surface_state=_check_read_surface_state,
+    final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
+    gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+    publish_event=lambda event_type, data: _publish_event(
+        _sse_buffers["audit"],
+        _sse_subscribers["audit"],
+        event_type,
+        data,
+    ),
+)
+command_adapter_service = _command_adapter_service
+
 def _submit_final_command_admission(
     *,
     background_tasks: BackgroundTasks,
@@ -7059,317 +6999,25 @@ def _submit_final_command_admission(
     response_deprecation: Optional[Dict[str, Any]] = None,
 ) -> CommandResponse[Dict[str, Any]]:
     """Submit a final-contract command through the shared BFF command admission path."""
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
-    cmd = _normalize_operator_command_payload(payload)
-
-    candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
-    foundation_context = _build_foundation_command_context(
-        cmd=cmd,
-        identity=identity,
-        raw_payload=(
-            foundation_raw_payload
-            if foundation_raw_payload is not None
-            else payload
-        ),
-        trace_id=x_trace_id,
-        correlation_id=x_correlation_id,
-        request_id=x_request_id,
-        idempotency_key=candidate_key,
+    return _command_adapter_service.submit_command_admission(
+        background_tasks=background_tasks,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
         route=route,
         source_route=source_route,
-    )
-
-    try:
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        _reject_body_idempotency_key(payload)
-        _reject_server_managed_rebalance_evidence_command(cmd)
-        if extra_precondition is not None:
-            extra_precondition(identity, cmd)
-        _validate_audit_context(cmd)
-        _validate_capital_authority_target_binding(cmd)
-        _validate_paper_runtime_authority_target_binding(cmd)
-        _ensure_live_broker_scope_allowed(cmd, payload)
-        _validate_drawer_runtime_target(cmd)
-        _validate_final_command_target_type(cmd)
-        validator = _VALIDATORS.get(cmd.command)
-        if validator:
-            validator(cmd.params, identity)
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key,
-        operator_id=identity.operator_id,
-    )
-    if duplicate:
-        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
-        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-            raise _foundation_idempotency_conflict_error(
-                foundation_context=foundation_context,
-                existing_command_id=str(duplicate.get("command_id") or ""),
-            )
-        _assert_duplicate_confirm_token_matches(
-            duplicate=duplicate,
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            foundation_context=foundation_context,
-        )
-        duplicate_status = CommandStatus(
-            duplicate.get("status") or CommandStatus.SUBMITTED.value
-        )
-        if enqueue and _retryable_terminal_capital_command(duplicate):
-            command_store.update_status(
-                str(duplicate["command_id"]),
-                CommandStatus.SUBMITTED,
-                audit={"retry_requested_at": utc_now()},
-            )
-            background_tasks.add_task(
-                _process_command_stub, str(duplicate["command_id"])
-            )
-            duplicate_status = CommandStatus.SUBMITTED
-        if route == "POST /api/v1/operator/commands":
-            return _project_command_submission_response(
-                command_id=duplicate["command_id"],
-                command=cmd.command,
-                accepted_at=duplicate.get("submitted_at") or utc_now(),
-                status=duplicate_status,
-                staleness_warning=None,
-            )
-        return _project_final_command_response(
-            command_id=duplicate["command_id"],
-            command=cmd.command,
-            accepted_at=duplicate.get("submitted_at") or utc_now(),
-            status=duplicate_status,
-            staleness_warning=None,
-            meta=_command_response_durable_meta(resolved_key, replayed=True)
-            if include_durable_meta
-            else None,
-            deprecation=response_deprecation,
-        )
-
-    try:
-        if route == "POST /api/v1/operator/commands":
-            precondition_evidence = (
-                _require_final_command_preconditions(
-                    cmd=cmd,
-                    payload=payload,
-                    confirm_token=x_confirm_token,
-                    identity=identity,
-                    correlation_id=foundation_context["trace_context"].correlation_id,
-                )
-                if cmd.command in {
-                    CommandType.APPROVED_APPLY,
-                    CommandType.EMERGENCY_CONTAINMENT,
-                }
-                else {}
-            )
-        else:
-            precondition_evidence = _require_final_command_preconditions(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
-    except HTTPException as exc:
-        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-
-    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
-    stored_params["idempotency_key"] = resolved_key
-    stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
-    _canonicalize_validated_precondition_evidence(
-        stored_params,
-        precondition_evidence,
-    )
-
-    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
-    if active:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-
-    staleness_warning = _check_read_surface_state()
-    if _request_dry_run_requested():
-        command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-        if route == "POST /api/v1/operator/commands":
-            return _project_command_submission_response(
-                command_id=command_envelope.command_id,
-                command=cmd.command,
-                accepted_at=utc_now(),
-                status=CommandStatus.SUBMITTED,
-                staleness_warning=staleness_warning,
-            )
-        return _project_final_command_response(
-            command_id=command_envelope.command_id,
-            command=cmd.command,
-            accepted_at=utc_now(),
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=staleness_warning,
-            meta=_command_response_dry_run_meta(resolved_key),
-            deprecation=response_deprecation,
-        )
-
-    command_envelope = foundation_context["command_envelope"]
-    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
-    idempotency_record = idempotency_record.with_status(
-        "succeeded",
-        result_ref=f"command:{command_envelope.command_id}",
-    )
-    foundation_context["idempotency_record"] = idempotency_record
-    command_id = command_envelope.command_id
-    submitted_at = utc_now()
-    receipt_dual_write = _command_dual_write_receipts(
-        command_id=command_id,
-        command=cmd.command.value,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=submitted_at,
-    )
-
-    auth_context = _command_runtime_auth_context(
-        command_id=command_id,
-        authorization=authorization,
-        mfa_token=x_mfa_token,
-        identity=identity,
-    )
-
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "mfa_verified": identity.mfa_verified,
-        "reason": cmd.audit_context.reason,
-        "incident_id": cmd.audit_context.incident_id,
-        "preconditions_checked": [
-            "authentication", "authorization", "params_shape", "concurrent_safety"
-        ],
-        "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth": auth_context,
-        "foundation": _serialize_foundation_context(foundation_context),
-        "receipt_dual_write": receipt_dual_write,
-    }
-    if precondition_evidence:
-        audit_record["precondition_evidence"] = precondition_evidence
-    if audit_extra:
-        audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
-
-    serialized_foundation = _serialize_foundation_context(foundation_context)
-    with command_store.serialized_transaction():
-        duplicate_after_precheck = command_store.get_command_by_idempotency_key(
-            resolved_key,
-            operator_id=identity.operator_id,
-        )
-        if duplicate_after_precheck:
-            duplicate_record = (
-                (duplicate_after_precheck.get("foundation") or {})
-                .get("idempotency_record")
-                or {}
-            )
-            if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
-                raise _foundation_idempotency_conflict_error(
-                    foundation_context=foundation_context,
-                    existing_command_id=str(duplicate_after_precheck.get("command_id") or ""),
-                )
-            _assert_duplicate_confirm_token_matches(
-                duplicate=duplicate_after_precheck,
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                foundation_context=foundation_context,
-            )
-            if route == "POST /api/v1/operator/commands":
-                return _project_command_submission_response(
-                    command_id=duplicate_after_precheck["command_id"],
-                    command=cmd.command,
-                    accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
-                    status=CommandStatus(
-                        duplicate_after_precheck.get("status")
-                        or CommandStatus.SUBMITTED.value
-                    ),
-                    staleness_warning=None,
-                )
-            return _project_final_command_response(
-                command_id=duplicate_after_precheck["command_id"],
-                command=cmd.command,
-                accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
-                status=CommandStatus(
-                    duplicate_after_precheck.get("status")
-                    or CommandStatus.SUBMITTED.value
-                ),
-                staleness_warning=None,
-                meta=_command_response_durable_meta(resolved_key, replayed=True)
-                if include_durable_meta
-                else None,
-                deprecation=response_deprecation,
-            )
-
-        if precondition_evidence.get("confirm_token_id"):
-            try:
-                revalidated_token_id = _require_final_command_confirm_token(
-                    cmd=cmd,
-                    payload=payload,
-                    confirm_token=x_confirm_token,
-                    identity=identity,
-                    correlation_id=foundation_context["trace_context"].correlation_id,
-                )
-            except HTTPException as exc:
-                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-            if revalidated_token_id:
-                precondition_evidence["confirm_token_id"] = revalidated_token_id
-
-        record, active_after_precheck = _persist_admitted_command_with_confirm_token(
-            command_id=command_id,
-            command_type=cmd.command,
-            target=cmd.target,
-            submitted_at=submitted_at,
-            params=stored_params,
-            audit_context=audit_record,
-            foundation_context=serialized_foundation,
-            precondition_evidence=precondition_evidence,
-            identity=identity,
-        )
-    if active_after_precheck:
-        error = _bff_error(
-            409, ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active_after_precheck['command_id']} is currently {active_after_precheck['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-        raise _foundation_bff_error(error, foundation_context=foundation_context)
-    assert record is not None
-
-    log.info(
-        "Accepted final-contract command %s (%s) for %s:%s by operator %s",
-        command_id, cmd.command.value, cmd.target.type.value, cmd.target.id, identity.operator_id,
-    )
-
-    if enqueue:
-        background_tasks.add_task(_process_command_stub, command_id)
-
-    if route == "POST /api/v1/operator/commands":
-        return _project_command_submission_response(
-            command_id=command_id,
-            command=cmd.command,
-            accepted_at=submitted_at,
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=staleness_warning,
-        )
-    return _project_final_command_response(
-        command_id=command_id,
-        command=cmd.command,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-        meta=_command_response_durable_meta(resolved_key, replayed=False)
-        if include_durable_meta
-        else None,
-        deprecation=response_deprecation,
+        foundation_raw_payload=foundation_raw_payload,
+        audit_extra=audit_extra,
+        extra_precondition=extra_precondition,
+        enqueue=enqueue,
+        include_durable_meta=include_durable_meta,
+        response_deprecation=response_deprecation,
     )
 _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
@@ -18925,7 +18573,7 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
     )
 _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
-_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+# _GOV_BFF_IDEMPOTENCY defined earlier
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),
@@ -19133,7 +18781,7 @@ def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
     return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
-_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+# _FINAL_CONTRACT_IDEMPOTENCY defined earlier
 def _sem_command_payload_from_record(
     record: Dict[str, Any],
     *,
@@ -19233,143 +18881,19 @@ def _sem_command_response(
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
 ) -> JSONResponse:
-    payload = dict(payload or {})
-    _reject_body_idempotency_key(payload)
-    clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    # For routes that generate the target_id server-side (CREATE without a client-supplied id),
-    # exclude target_id from the idempotency hash so that retries with the same Idempotency-Key
-    # replay correctly rather than conflicting due to a different random id per call.
-    hash_body: Dict[str, Any] = {
-        "command": command_type.value,
-        "target_type": target_type.value,
-        "payload": payload,
-    }
-    if not server_generated_target:
-        hash_body["target_id"] = target_id
-    request_hash = _stable_json_hash(hash_body)
-    cache_key = _scoped_idempotency_cache_key(clean_key, identity.operator_id)
-    if _request_dry_run_requested():
-        return JSONResponse(
-            status_code=200,
-            content=_sem_command_dry_run_payload(
-                command_type=command_type,
-                target_type=target_type,
-                target_id=target_id,
-                payload=payload,
-                identity=identity,
-                idempotency_key=clean_key,
-            ),
-        )
-    existing = _FINAL_CONTRACT_IDEMPOTENCY.get(cache_key)
-    if existing:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was reused with a different command payload",
-                "The idempotency key already belongs to another command payload",
-                precondition_failed="idempotency_key",
-            )
-        replay = dict(existing["result"])
-        replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-        return JSONResponse(status_code=status_code, content=replay)
-    existing_record = command_store.get_command_by_idempotency_key(
-        clean_key,
-        operator_id=identity.operator_id,
-    )
-    if existing_record:
-        stored_hash = (existing_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
-        if stored_hash and stored_hash != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was reused with a different command payload",
-                "The idempotency key already belongs to another command payload",
-                precondition_failed="idempotency_key",
-            )
-        response = _sem_command_payload_from_record(existing_record, idempotency_key=clean_key, replayed=True)
-        return JSONResponse(status_code=status_code, content=response)
-
-    now = utc_now()
-    command_id = f"cmd-{uuid.uuid4().hex[:16]}"
-    receipt_dual_write = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command_type.value,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=now,
-    )
-    reason = str(payload.get("reason") or command_type.value)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
+    return _command_adapter_service.sem_command_response(
         command_type=command_type,
         target_type=target_type,
         target_id=target_id,
         payload=payload,
-        reason=reason,
-        command_id=command_id,
-        idempotency_key=clean_key,
-        route="POST /bff/semantic-command",
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        status_code=status_code,
+        server_generated_target=server_generated_target,
+        trusted_evidence_producer=trusted_evidence_producer,
+        terminal_on_persist=terminal_on_persist,
     )
-    foundation_ctx = {
-        "idempotency_record": {
-            "idempotency_key": clean_key,
-            "request_hash": request_hash,
-            "status": "succeeded",
-            "trace_id": audit_action.trace_id,
-        },
-        "audit_action": audit_action.to_dict(),
-    }
-    if trusted_evidence_producer:
-        foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-    audit_context = {
-        "actor": identity.operator_id,
-        "operator_id": identity.operator_id,
-        "reason": reason,
-        "live_capital_side_effects": False,
-        "receipt_dual_write": receipt_dual_write,
-        "foundation": foundation_ctx,
-    }
-    if trusted_evidence_producer:
-        audit_context["trusted_evidence_producer"] = trusted_evidence_producer
-    if terminal_on_persist:
-        audit_context["execution_completed_at"] = now
-        record, active = command_store.submit_terminal_command_if_no_active_target(
-            command_id,
-            command_type,
-            TargetObject(type=target_type, id=target_id),
-            now,
-            payload,
-            audit_context,
-            foundation_ctx,
-            {
-                "command_id": command_id,
-                "status": "recorded",
-                "recorded_at": now,
-            },
-        )
-    else:
-        record, active = command_store.submit_command_if_no_active_target(
-            command_id,
-            command_type,
-            TargetObject(type=target_type, id=target_id),
-            now,
-            payload,
-            audit_context,
-            foundation_ctx,
-        )
-    if active:
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "A command is already in flight for this target",
-            f"Command {active['command_id']} is currently {active['status']}",
-            precondition_failed="concurrent_safety",
-            suggestion="Wait for the in-flight command to complete or time out before retrying",
-        )
-    assert record is not None
-    result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
-    _FINAL_CONTRACT_IDEMPOTENCY[cache_key] = {"request_hash": request_hash, "result": result}
-    return JSONResponse(status_code=status_code, content=result)
 def _confirm_token_records(token_id: str) -> List[Dict[str, Any]]:
     return [
         record
@@ -20935,22 +20459,7 @@ app.include_router(
 )
 app.include_router(
     _create_command_adapters_router(
-        command_store=app_deps.command_store,
-        read_surface=app_deps.read_surface,
-        extract_identity=_extract_identity,
-        require_operator_role=_require_operator_role,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        submit_command_admission=_submit_final_command_admission,
-        publish_event=lambda event_type, data: _publish_event(
-            _sse_buffers["audit"],
-            _sse_subscribers["audit"],
-            event_type,
-            data,
-        ),
-        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
-        check_read_surface_state=_check_read_surface_state,
+        service=_command_adapter_service,
     )
 )
 from .management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router

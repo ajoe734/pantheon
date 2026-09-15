@@ -13,12 +13,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-BFF_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-sys.path.insert(0, str(REPO_ROOT))
-
-import main as bff_main
+from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.core.app_factory import build_bff_app
 from services.control_plane.bff.core.http_security import (
     _cors_origins_from_env,
@@ -249,13 +244,13 @@ def test_dev_stub_is_disabled_in_strict_mode(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
 
-    assert bff_main._bff_auth_stub_enabled() is False
+    assert auth_policy.bff_auth_stub_enabled() is False
     with pytest.raises(HTTPException) as exc_info:
-        bff_main._extract_identity("Bearer op-dev:operator")
+        auth_policy.extract_identity("Bearer op-dev:operator")
     assert exc_info.value.status_code == 401
 
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    identity = bff_main._extract_identity("Bearer op-dev:operator")
+    identity = auth_policy.extract_identity("Bearer op-dev:operator")
     assert identity.operator_id == "op-dev"
 
 
@@ -326,7 +321,7 @@ def test_jwks_strict_accepts_configured_issuer_and_audience(monkeypatch) -> None
         monkeypatch.setenv(name, value)
 
     with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
-        identity = bff_main._extract_identity_jwt(f"Bearer {token}")
+        identity = auth_policy.extract_identity_jwt(f"Bearer {token}")
 
     assert identity.operator_id == "op-jwks"
     assert "operator" in identity.roles
@@ -341,7 +336,7 @@ def test_jwks_strict_rejects_issuer_mismatch(monkeypatch) -> None:
 
     with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
         with pytest.raises(HTTPException) as exc_info:
-            bff_main._extract_identity_jwt(f"Bearer {token}")
+            auth_policy.extract_identity_jwt(f"Bearer {token}")
 
     assert exc_info.value.status_code == 401
     assert "AUTH_JWT_ISSUER_MISMATCH" in json.dumps(exc_info.value.detail)
@@ -356,7 +351,7 @@ def test_jwks_strict_rejects_audience_mismatch(monkeypatch) -> None:
 
     with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
         with pytest.raises(HTTPException) as exc_info:
-            bff_main._extract_identity_jwt(f"Bearer {token}")
+            auth_policy.extract_identity_jwt(f"Bearer {token}")
 
     assert exc_info.value.status_code == 401
     assert "AUTH_JWT_AUDIENCE_MISMATCH" in json.dumps(exc_info.value.detail)
@@ -374,7 +369,7 @@ def test_jwks_strict_refreshes_once_for_rotated_kid(monkeypatch) -> None:
         "services.runtime_auth_inbound._fetch_jwks_keys",
         side_effect=[[old_jwk], [new_jwk]],
     ) as fetch:
-        identity = bff_main._extract_identity_jwt(f"Bearer {token}")
+        identity = auth_policy.extract_identity_jwt(f"Bearer {token}")
 
     assert identity.operator_id == "op-rotated"
     assert fetch.call_count == 2
