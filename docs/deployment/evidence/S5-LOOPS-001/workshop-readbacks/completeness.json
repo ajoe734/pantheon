@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-13T05:22:32.500842+00:00",
+  "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/completeness",
+  "status": 200,
+  "body": {
+    "data": null,
+    "meta": {
+      "snapshot_at": "2026-09-13T05:22:32Z",
+      "capability": "agora.workshop.v1",
+      "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a"
+    }
+  }
+}

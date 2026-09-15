@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-15T03:20:11Z",
+  "body": {
+    "decision_id": "apv-c83aa791b7a6",
+    "target_type": "registry_entry",
+    "target_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+    "target_version": "1.0.0",
+    "decision": null,
+    "decision_state": "proposed",
+    "actor_role": null,
+    "actor_id": null,
+    "rationale": null,
+    "created_at": "2026-09-15T03:20:11Z",
+    "decided_at": null,
+    "conditions": [],
+    "risk_level": "low",
+    "evidence_refs": [],
+    "superseded_by": null,
+    "expires_at": null,
+    "capital_pool_id": null,
+    "persona_id": null,
+    "metadata": null,
+    "tenant_id": "tenant-dev",
+    "owner_user_id": "pantheon-dev-approver",
+    "proposal_id": null,
+    "proposal_revision": null,
+    "proposal_content_digest": null,
+    "validation_result_digest": null,
+    "revoked_at": null
+  },
+  "route": "/api/governance/approvals/apv-c83aa791b7a6",
+  "status": 200
+}

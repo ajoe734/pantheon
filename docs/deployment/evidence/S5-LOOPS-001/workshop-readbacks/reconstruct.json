@@ -1,0 +1,134 @@
+{
+  "at": "2026-09-13T05:22:32.222561+00:00",
+  "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/reconstruct",
+  "status": 200,
+  "body": {
+    "data": {
+      "reconstruction_id": "recon-52946dbd93684fae",
+      "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "based_on_sequence_no": 1,
+      "strategy_map": {
+        "hypothesis": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "universe": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "data_requirements": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "signal_definition": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "entry_rules": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "exit_rules": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "position_sizing": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "risk_controls": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "cost_liquidity_capacity": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "validation_plan": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "regime_invalidation": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        },
+        "governance_constraints": {
+          "status": "missing",
+          "summary": null,
+          "details": {}
+        }
+      },
+      "explicit_facts": [
+        "Received 1 user message(s) up to sequence 1."
+      ],
+      "inferences": [],
+      "assumptions": [
+        "Assuming default daily asset trading scope if unspecified."
+      ],
+      "contradictions": [],
+      "evidence_refs": [
+        {
+          "ref_type": "conversation_sequence",
+          "ref_id": "seq-1",
+          "summary": "Messages up to sequence 1",
+          "data_cutoff": "2026-09-13T05:22:32Z"
+        }
+      ],
+      "completeness": {
+        "grade": "insufficient",
+        "blockers": [
+          "Missing core strategy hypothesis",
+          "Target asset universe is undefined",
+          "Entry trigger rules are undefined"
+        ],
+        "confirmed_fields": [],
+        "unconfirmed_fields": [
+          "hypothesis",
+          "universe",
+          "data_requirements",
+          "signal_definition",
+          "entry_rules",
+          "exit_rules",
+          "position_sizing",
+          "risk_controls",
+          "cost_liquidity_capacity",
+          "validation_plan",
+          "regime_invalidation",
+          "governance_constraints"
+        ]
+      },
+      "next_best_question": {
+        "question_id": "nbq-hyp-1",
+        "text": "What is the core economic or quantitative hypothesis behind your trading idea?",
+        "resolves": [
+          "hypothesis.summary"
+        ],
+        "why_now": "A strategy requires a clear hypothesis before defining signals and rules."
+      },
+      "draft_proposal": null,
+      "provider_lineage": {
+        "engine": "pantheon_reconstruction_v1",
+        "provider": "rule_based_analysis"
+      },
+      "created_at": "2026-09-13T05:22:32Z"
+    },
+    "meta": {
+      "snapshot_at": "2026-09-13T05:22:32Z",
+      "capability": "agora.workshop.v1",
+      "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a",
+      "job_status": "completed",
+      "registry_draft_ref": null
+    }
+  }
+}

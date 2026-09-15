@@ -1,0 +1,10 @@
+{
+  "alpha_admission_id": "adm-e520f214e792",
+  "decision_id": "apv-c83aa791b7a6",
+  "distillation_job_id": "distill-8f02947c217da2b3fe324803",
+  "governance_event_id": null,
+  "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+  "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+  "status": "actual-alpha-admission-only-not-alpha-terminal-or-numeric-backtest",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
+}
