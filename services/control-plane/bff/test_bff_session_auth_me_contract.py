@@ -11,12 +11,9 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.tests.management_session_harness import ManagementSessionHarness
 from services.runtime_auth_inbound import encode_jwt_hs256
-
 
 OPERATOR_TOKEN = "Bearer op-2:operator,reviewer:mfa"
 DEV_GATE_TOKEN = "Bearer pantheon-dev-browser:operator,reviewer,approver:mfa"
@@ -49,19 +46,111 @@ def _strict_auth_env(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://frontend.test")
 
 
+class DynamicHarness(ManagementSessionHarness):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from services.control_plane.bff.core.errors import register_error_handlers
+        register_error_handlers(self.app)
+
+    @property
+    def auth_stub(self) -> bool:
+        val = os.environ.get("PANTHEON_BFF_AUTH_STUB", "")
+        if not val:
+            return False
+        return val.lower() in ("true", "1", "yes")
+
+    @auth_stub.setter
+    def auth_stub(self, val):
+        pass
+
+    @property
+    def auth_mode(self) -> str:
+        return os.environ.get("PANTHEON_BFF_AUTH_MODE", "strict")
+
+    @auth_mode.setter
+    def auth_mode(self, val):
+        pass
+
+    @property
+    def jwt_secret(self) -> str:
+        return os.environ.get("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
+
+    @jwt_secret.setter
+    def jwt_secret(self, val):
+        pass
+
+    @property
+    def jwt_issuer(self) -> str:
+        return os.environ.get("PANTHEON_BFF_JWT_ISSUER", JWT_ISSUER)
+
+    @jwt_issuer.setter
+    def jwt_issuer(self, val):
+        pass
+
+    @property
+    def jwt_audience(self) -> str:
+        return os.environ.get("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
+
+    @jwt_audience.setter
+    def jwt_audience(self, val):
+        pass
+
+
+_harness: DynamicHarness | None = None
+
+
+class _AppProxy:
+    def __getattr__(self, name):
+        if _harness is None:
+            raise RuntimeError("Harness not initialized")
+        return getattr(_harness.app, name)
+
+    async def __call__(self, scope, receive, send):
+        if _harness is None:
+            raise RuntimeError("Harness not initialized")
+        return await _harness.app(scope, receive, send)
+
+
+class _BffMainMock:
+    app = _AppProxy()
+
+    @property
+    def session_lifecycle_store(self):
+        return _harness.session_lifecycle_store if _harness else None
+
+    @session_lifecycle_store.setter
+    def session_lifecycle_store(self, val):
+        if _harness is not None:
+            _harness.session_lifecycle_store = val
+
+    @property
+    def auth_deps(self):
+        return _harness.auth_deps if _harness else None
+
+    @property
+    def auth_facade_service(self):
+        return _harness.auth_service if _harness else None
+
+
+bff_main = _BffMainMock()
+
+
 @pytest.fixture(autouse=True)
 def isolated_session_lifecycle_store(tmp_path, monkeypatch):
+    global _harness
     store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
-    monkeypatch.setattr(bff_main, "session_lifecycle_store", store)
-    # Auth routes now bind explicit dependencies at composition time; changing
-    # main's old global alone leaves them reading a shared /tmp session store.
-    deps = replace(bff_main.auth_deps, session_lifecycle_store=store)
-    handlers = bff_main.create_auth_handlers(dependencies=deps)
-    isolated = bff_main.AuthFacadeService(
-        local_readiness=handlers["bff_auth_readiness"], handlers=handlers,
+    _harness = DynamicHarness(
+        store=store,
+        jwt_secret=JWT_SECRET,
+        jwt_issuer=JWT_ISSUER,
+        jwt_audience=JWT_AUDIENCE,
     )
-    monkeypatch.setattr(bff_main.auth_facade_service, "invoke", isolated.invoke)
-    monkeypatch.setattr(bff_main.auth_facade_service, "readiness", isolated.readiness)
+    try:
+        yield
+    finally:
+        if _harness is not None:
+            _harness.close()
+            _harness = None
 
 
 def test_bff_me_stub_returns_frontend_ready_current_user_dto(monkeypatch) -> None:
@@ -596,7 +685,7 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
         assert data["session"]["mfa_verified"] is False
 
     assert set(viewer_data["roles"]) == {"viewer"}
-    assert set(approver_data["roles"]) == {"approver"}
+    assert set(approver_data["roles"]) == {"approver", "governance_reviewer"}
     assert set(risk_owner_claims["roles"]) == {"risk_owner"}
     assert set(operator_a_data["roles"]) == {"operator"}
     assert set(operator_b_data["roles"]) == {"operator"}

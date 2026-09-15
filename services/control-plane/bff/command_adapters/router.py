@@ -28,25 +28,46 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Request, Response
 from starlette.responses import JSONResponse
 
-from ..models import (
-    ActionCommandStatus,
-    BffActionCatalogResponse,
-    CommandReceipt,
-    CommandReceiptStatus,
-    CommandResponse,
-    CommandResultMeta,
-    CommandStatus,
-    CommandStatusResponse,
-    CommandSubmissionResponse,
-    CommandType,
-    ErrorCode,
-    ObjectType,
-    OperatorCommand,
-    OperatorIdentity,
-    StalenessWarning,
-    TargetObject,
-    utc_now,
-)
+try:
+    from ..models import (
+        ActionCommandStatus,
+        BffActionCatalogResponse,
+        CommandReceipt,
+        CommandReceiptStatus,
+        CommandResponse,
+        CommandResultMeta,
+        CommandStatus,
+        CommandStatusResponse,
+        CommandSubmissionResponse,
+        CommandType,
+        ErrorCode,
+        ObjectType,
+        OperatorCommand,
+        OperatorIdentity,
+        StalenessWarning,
+        TargetObject,
+        utc_now,
+    )
+except (ImportError, ValueError):
+    from models import (
+        ActionCommandStatus,
+        BffActionCatalogResponse,
+        CommandReceipt,
+        CommandReceiptStatus,
+        CommandResponse,
+        CommandResultMeta,
+        CommandStatus,
+        CommandStatusResponse,
+        CommandSubmissionResponse,
+        CommandType,
+        ErrorCode,
+        ObjectType,
+        OperatorCommand,
+        OperatorIdentity,
+        StalenessWarning,
+        TargetObject,
+        utc_now,
+    )
 from .base import ActionUnavailableError
 from .registry import dispatch_domain_command
 from .service import CommandAdapterService
@@ -355,7 +376,8 @@ def create_action_command_router(
             "deprecated": True,
             "route": _CANONICAL_ACTIONS_ROUTE,
             "replacement": "/bff/v1/commands",
-            "sunset": "2026-06-15T00:00:00Z",
+            "deprecated_since": "2026-05-14",
+            "sunset": "2026-06-15",
             "message": "/bff/actions/* is deprecated; submit the equivalent command envelope to /bff/v1/commands",
         }
 

@@ -818,10 +818,7 @@ class GovernanceService:
         )
 
     def list_approval_queue(self, **filters: Any) -> List[Dict[str, Any]]:
-        try:
-            records = self._call("list_approval_queue_items", default=[], **filters)
-        except TypeError:
-            records = self._call("list_approval_queue_items", default=[])
+        records = self._call("list_approval_queue_items", default=[], **filters)
         return list(records or [])
 
     def list_audit_events(
@@ -833,19 +830,16 @@ class GovernanceService:
         from_ts: Any = None,
         to_ts: Any = None,
     ) -> List[Dict[str, Any]]:
-        try:
-            records = self._call(
-                "list_governance_audit_events",
-                actor=actor,
-                action_types=action_types,
-                target_type=target_type,
-                from_ts=from_ts,
-                to_ts=to_ts,
-                include_fixture_pack=False,
-                default=[],
-            )
-        except TypeError:
-            records = self._call("list_governance_audit_events", default=[])
+        records = self._call(
+            "list_governance_audit_events",
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            include_fixture_pack=False,
+            default=[],
+        )
         return list(records or [])
 
     def mutation_review(self, decision_id: str) -> Optional[Dict[str, Any]]:
@@ -944,50 +938,32 @@ class GovernanceService:
         identity: Any,
         idempotency_key: str,
     ) -> Any:
-        if self.submit_action is not None:
-            return await _maybe_await(
-                self.submit_action(
-                    action_kind=action_kind,
-                    target_id=target_id,
-                    action_id=action_id,
-                    payload=dict(payload),
-                    identity=identity,
-                    idempotency_key=idempotency_key,
-                )
+        if self.submit_action is None:
+            from fastapi import HTTPException
+            from ..models import ErrorCode
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": ErrorCode.DEPENDENCY_UNAVAILABLE.value,
+                        "message": "Governance action submission unavailable",
+                        "details": {
+                            "precondition_failed": "submit_action_unconfigured",
+                            "suggestion": "Configure command submission on GovernanceService",
+                        },
+                    }
+                },
             )
-        request_hash = stable_json_hash(
-            {
-                "action_kind": action_kind,
-                "target_id": target_id,
-                "action_id": action_id,
-                "payload": payload,
-            }
+        return await _maybe_await(
+            self.submit_action(
+                action_kind=action_kind,
+                target_id=target_id,
+                action_id=action_id,
+                payload=dict(payload),
+                identity=identity,
+                idempotency_key=idempotency_key,
+            )
         )
-        existing = self._idempotency.get(idempotency_key)
-        if existing:
-            if existing["request_hash"] != request_hash:
-                raise RuntimeError("idempotency_conflict")
-            return copy.deepcopy(existing["result"])
-        command_id = str(uuid.uuid4())
-        result = {
-            "status": "accepted",
-            "data": {
-                "command_id": command_id,
-                "commandId": command_id,
-                "target_id": target_id,
-                "action": action_id,
-            },
-            "meta": {
-                "snapshot_at": self.utc_now(),
-                "idempotency": {"idempotencyKey": idempotency_key, "replayed": False},
-                "actor_id": _identity_operator_id(identity),
-            },
-        }
-        self._idempotency[idempotency_key] = {
-            "request_hash": request_hash,
-            "result": copy.deepcopy(result),
-        }
-        return result
 
     def validate_decision(self, payload: Mapping[str, Any]) -> str:
         decision = str(payload.get("decision") or "").strip().lower()
