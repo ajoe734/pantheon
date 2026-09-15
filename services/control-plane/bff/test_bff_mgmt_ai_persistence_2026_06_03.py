@@ -18,13 +18,25 @@ from ports import ReadSurfacePorts
 import main as bff_main
 
 
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
+
+
 OPERATOR_HEADERS = {"Authorization": "Bearer operator-alpha:operator"}
 
 
 def _management_ai_route_client(monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._sse_buffers["ask"].clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
@@ -483,14 +495,12 @@ def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
 
     saved_store = bff_main._MGMT_AI_CONVERSATION_STORE
     saved_read_store = bff_main.read_store
-    saved_idem = dict(bff_main._MGMT_NL_IDEMPOTENCY)
 
     store = ManagementAiConversationStore(
         storage_path=str(store_path),
         attachment_store=ManagementAiAttachmentStore(storage_path=str(tmp_path / "attachments")),
     )
     bff_main._MGMT_AI_CONVERSATION_STORE = store
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main.read_store = MgmtAiPersistenceTestReadPorts()
     try:
@@ -498,8 +508,6 @@ def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
     finally:
         bff_main._MGMT_AI_CONVERSATION_STORE = saved_store
         bff_main.read_store = saved_read_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
-        bff_main._MGMT_NL_IDEMPOTENCY.update(saved_idem)
 
 
 def test_attachment_storage_base64_proxy_url_and_size_rejections(
@@ -882,12 +890,26 @@ def test_persist_turns(tmp_path: Path) -> None:
             f"After idempotency replay: expected 62 turns (60 + 2 from idem ask), got {len(after_idem)}"
         )
 
-        # Idempotency record must also be in the durable store (not only in-memory dict).
-        idem_record = (
-            store.get_idempotency(idem_key)
-            or next((v for k, v in bff_main._MGMT_NL_IDEMPOTENCY.items() if idem_key in str(k) or idem_key in str(v)), None)
-            or (list(bff_main._MGMT_NL_IDEMPOTENCY.values())[0] if bff_main._MGMT_NL_IDEMPOTENCY else None)
+        # Idempotency record must be in the durable Management NL command
+        # admission store -- BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001 removed
+        # the legacy in-memory dict and the ManagementAiConversationStore
+        # idempotency dual-write; ManagementNlCommandIdempotencyStore is now
+        # the sole mechanism.
+        command_store = bff_main._mgmt_nl_command_idempotency_store()
+        raw_records = json.loads(command_store.storage_path.read_text(encoding="utf-8"))["records"]
+        idem_record = next(
+            (
+                record
+                for record in raw_records.values()
+                if isinstance(record, dict)
+                and record.get("status") == "complete"
+                and isinstance(record.get("result"), dict)
+                and (record["result"].get("data") or {}).get("question") == idem_q
+            ),
+            None,
         )
-        assert idem_record is not None, "Idempotency record must be written to durable store"
+        assert idem_record is not None, "Idempotency record must be written to the durable command store"
         assert isinstance(idem_record.get("request_hash"), str)
-        assert idem_record.get("result") == first_body
+        assert (idem_record["result"].get("data") or {}).get("answer") == (
+            first_body.get("data") or {}
+        ).get("answer")

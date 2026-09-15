@@ -30,12 +30,27 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from ports import create_read_surface_ports
+
+
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
+
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6:operator"}
 IK = "test-idem-b6-001"
@@ -84,7 +99,6 @@ class _B6NlAskTestStore:
 def _fresh_client(td: str) -> TestClient:
     store = _B6NlAskTestStore()
     bff_main.read_store = store
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
@@ -356,7 +370,6 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
         store_path = os.path.join(td, "management-ai.json")
         try:
             bff_main.read_store = _B6NlAskTestStore()
-            bff_main._MGMT_NL_IDEMPOTENCY.clear()
             bff_main._MGMT_AI_AUDIT_EVENTS.clear()
             bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
                 storage_path=store_path,
@@ -525,7 +538,6 @@ def _nl_evidence_client() -> Iterator[TestClient]:
         )
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
         original_store = bff_main.read_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         try:
             bff_main.read_store = _B6NlAskTestStore()
             yield TestClient(bff_main.app)
