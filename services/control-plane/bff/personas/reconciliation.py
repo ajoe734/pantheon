@@ -2,7 +2,7 @@
 
 The provisioning reconciler reads through ``ReadSurfacePorts`` but its
 reconciled projection must be persisted through the authoritative Persona
-mutation owner.
+mutation owner (via ``build_provisioning_router`` / ``PersonaProvisioningReconciliationMutationPort``).
 Keeping this narrow command port separate makes that read/write boundary
 explicit and prevents a compatibility mutation method from reappearing on the
 read surface.
