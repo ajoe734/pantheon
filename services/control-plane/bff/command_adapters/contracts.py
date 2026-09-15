@@ -61,6 +61,7 @@ except (ImportError, ValueError):
     )
 
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
+_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
@@ -378,7 +379,7 @@ def foundation_request_payload(
     cmd: OperatorCommand,
     raw_payload: Dict[str, Any],
     *,
-    route: str = _FINAL_COMMAND_ROUTE,
+    route: str = _FOUNDATION_COMMAND_ROUTE,
     source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload = {
@@ -448,7 +449,7 @@ def build_foundation_command_context(
     correlation_id: Optional[str],
     request_id: Optional[str],
     idempotency_key: Optional[str],
-    route: str = _FINAL_COMMAND_ROUTE,
+    route: str = _FOUNDATION_COMMAND_ROUTE,
     source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     environment = foundation_environment_scope()
