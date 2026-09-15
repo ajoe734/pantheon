@@ -27,6 +27,7 @@ from services.control_plane.bff.auth.policy import (
     require_read_role,
 )
 from services.control_plane.bff.command_adapters.router import (
+    create_action_command_router,
     create_command_adapters_router,
 )
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
@@ -236,6 +237,16 @@ def _isolated_client() -> Iterator[TestClient]:
             )
         )
         app.include_router(create_command_adapters_router(service=svc))
+        app.include_router(
+            create_action_command_router(
+                submit_command_admission=svc.submit_command_admission,
+                command_store=_state.command_store,
+                extract_identity=_extract,
+                require_operator_role=require_operator_role,
+                bff_error=bff_error,
+                utc_now=utc_now,
+            )
+        )
 
         try:
             yield TestClient(app, raise_server_exceptions=False)

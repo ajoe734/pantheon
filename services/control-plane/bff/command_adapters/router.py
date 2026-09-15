@@ -64,6 +64,17 @@ from .service import CommandAdapterService
 log = logging.getLogger(__name__)
 
 
+def create_action_command_router(**_kwargs: Any) -> APIRouter:
+    """Retired: this factory used to register the legacy generic
+    ``POST /bff/actions/{type}/{id}/{action}`` route. That route has been
+    deleted; ``POST /bff/v1/commands`` (see :func:`create_command_adapters_router`)
+    is the sole canonical generic command write route. This stub is kept
+    only so existing callers/imports of this exact symbol do not need to
+    change; it registers zero routes.
+    """
+    return APIRouter()
+
+
 def create_command_adapters_router(
     *,
     command_store: Optional[Any] = None,

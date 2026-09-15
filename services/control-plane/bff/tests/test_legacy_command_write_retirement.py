@@ -26,13 +26,30 @@ from fastapi.testclient import TestClient
 AUTH_HEADER = {"Authorization": "Bearer op-1:operator,approver:mfa"}
 
 
+def test_create_action_command_router_is_a_zero_route_stub() -> None:
+    """create_action_command_router used to register the retired
+    POST /bff/actions/{type}/{id}/{action} route. It is kept as a callable
+    no-op stub (rather than deleted outright) only so that existing callers
+    of this exact symbol -- command_adapters/__init__.py's re-export and
+    test_v5_interventions.py's direct call -- do not need to change; it must
+    register zero routes.
+    """
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
+
+    router = create_action_command_router(anything="ignored", command_store=None)
+    assert router.routes == []
+
+
 def test_legacy_action_route_no_longer_matches_any_route() -> None:
-    """POST /bff/actions/{type}/{id}/{action} was fully deleted (the whole
-    create_action_command_router function is gone). Since GET /bff/actions
-    (no path suffix) is a distinct, still-registered route and no other
-    router in the app claims the /bff/actions/{...}/{...}/{...} shape,
-    FastAPI has no route to match this request against, so it falls through
-    to the framework's default "no route matched" handling: 404 Not Found.
+    """POST /bff/actions/{type}/{id}/{action} was fully retired: the route
+    registration inside create_action_command_router is gone (see
+    test_create_action_command_router_is_a_zero_route_stub above -- the
+    factory itself is kept only as a zero-route stub for import
+    compatibility). Since GET /bff/actions (no path suffix) is a distinct,
+    still-registered route and no other router in the app claims the
+    /bff/actions/{...}/{...}/{...} shape, FastAPI has no route to match this
+    request against, so it falls through to the framework's default "no
+    route matched" handling: 404 Not Found.
     """
     from services.control_plane.bff.main import app as main_app, command_store as main_command_store
 
