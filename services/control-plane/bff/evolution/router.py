@@ -413,8 +413,7 @@ def create_evolution_router(
     raise_if_read_surface_unavailable: Optional[Callable[..., None]] = None,
     meta_staleness: Optional[Callable[[], Any]] = None,
     submit_program_action: Optional[SubmitAction] = None,
-    mutation_review_inputs: Optional[Callable[[str], Tuple[Any, Any, Any, Any]]] = None,
-    mutation_review_projection: Optional[Callable[..., Dict[str, Any]]] = None,
+    mutation_review_projection: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
     evolution_service: Optional[EvolutionService] = None,
 ) -> APIRouter:
     """Build the canonical Evolution domain router (OPGAP-BE-EVOLUTION-ROUTER-20260830).
@@ -856,17 +855,12 @@ def create_evolution_router(
                     "threshold_snapshots",
                 )
             ):
-                if mutation_review_inputs is not None and mutation_review_projection is not None:
-                    _, app_dec, l_inc, l_pm = mutation_review_inputs(dec_id)
-                    proj = mutation_review_projection(
-                        dec,
-                        approval_decision=app_dec,
-                        linked_incident=l_inc,
-                        linked_postmortem=l_pm,
-                        identity=identity,
-                        snapshot_at=snapshot_at,
-                    )
-                else:
+                proj = (
+                    mutation_review_projection(dec_id, identity=identity, snapshot_at=snapshot_at)
+                    if mutation_review_projection is not None
+                    else None
+                )
+                if proj is None:
                     app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(dec.get("approval_decision_id"))
                     proj = {
                         "decision_id": dec_id,
@@ -903,9 +897,8 @@ def create_evolution_router(
                     route=f"/management/evolution-journal?mutation_review={dec_id}",
                     bff_detail_path=f"/api/v1/operator/mutation-review/{dec_id}",
                 )
-                mr_item["mutationReview"] = json.loads(json.dumps(proj))
-                mr_item["mutation_review"] = mr_item["mutationReview"]
-                mr_item["record"] = mr_item["mutationReview"]
+                mr_item["mutation_review"] = json.loads(json.dumps(proj))
+                mr_item["record"] = mr_item["mutation_review"]
                 items.append(mr_item)
 
         for pm in postmortems:

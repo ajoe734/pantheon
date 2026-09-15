@@ -340,7 +340,13 @@ def test_governance_queues_audit_and_mutation_review() -> None:
     assert review_queue.json()["items"][0]["item_id"] == "review-1"
     assert approval_queue.json()["page_info"]["total"] == 2
     assert audit.json()["items"][0]["id"] == "audit-1"
-    assert mutation.json()["approval_decision"]["decision_id"] == "approval-1"
+    assert mutation.json()["approval_decision_id"] == "approval-1"
+    assert mutation.json()["allowedActions"] == {
+        "canReviewMutation": True,
+        "canApproveMutation": False,
+        "canRejectMutation": True,
+        "canExecuteMutation": False,
+    }
     assert client.get("/api/v1/operator/mutation-review/missing").status_code == 404
 
 

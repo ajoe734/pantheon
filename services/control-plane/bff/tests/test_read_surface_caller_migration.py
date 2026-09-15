@@ -205,7 +205,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 )
 
     def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
-        """Prove that all 44 read_store attributes in main.py are inventoried and mapped or isolated.
+        """Prove that all 41 read_store attributes in main.py are inventoried and mapped or isolated.
 
         BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001 moved the
         `read_store.list_events_bff(...)` call for the assistant `recent_sse`
@@ -214,6 +214,16 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
         is reached through the injected `deps.read_store` collaborator
         instead of the main.py global -- main.py's static text no longer
         contains that one attribute access, dropping this count from 45 to 44.
+
+        BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001 consolidated the
+        mutation-review actor/state/evidence projection into
+        `GovernanceService.mutation_review_projection`, reached through the
+        injected `read_store` collaborator on that service instead of the
+        main.py global -- main.py's static text no longer contains direct
+        `read_store.get_evolution_decision_by_id(...)`,
+        `read_store.get_postmortem(...)`, or
+        `read_store.get_rollbacks_by_incident(...)` calls, dropping this
+        count from 44 to 41.
         """
         main_py = BFF_DIR / "main.py"
         self.assertTrue(main_py.exists(), f"main.py not found at {main_py}")
@@ -225,7 +235,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 if isinstance(node.value, ast.Name) and node.value.id == "read_store":
                     read_store_attrs.add(node.attr)
 
-        self.assertEqual(len(read_store_attrs), 44, "Expected exactly 44 read_store attributes in main.py")
+        self.assertEqual(len(read_store_attrs), 41, "Expected exactly 41 read_store attributes in main.py")
 
         ports_instance = create_read_surface_ports()
 
@@ -246,9 +256,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 43)
+        self.assertEqual(len(mapped_reads), 40)
         self.assertEqual(len(deferred_writes), 1)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 44)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 41)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
