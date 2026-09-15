@@ -55,7 +55,7 @@ except (ImportError, ValueError):
 from .contracts import foundation_route_metadata
 
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
-_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
+_FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 
 _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
@@ -326,7 +326,7 @@ def foundation_bff_error(
 ) -> HTTPException:
     fields = extract_error_fields(exc)
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
     source_route = str(foundation_context.get("source_route") or "").strip() or None
     route_metadata = foundation_route_metadata(admission_route, source_route)
     if fields["status_code"] == 403:
@@ -432,7 +432,7 @@ def foundation_idempotency_conflict_error(
 ) -> HTTPException:
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
-    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
     source_route = str(foundation_context.get("source_route") or "").strip() or None
     message = "Idempotency key was already used with a different command payload"
     reason = (

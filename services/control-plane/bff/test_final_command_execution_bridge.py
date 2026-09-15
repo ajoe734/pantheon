@@ -100,11 +100,22 @@ def test_command_routes_require_header_idempotency_and_reject_body_key() -> None
 def test_canonical_action_replay_uses_command_store_not_generic_memory_receipt() -> None:
     with _isolated_command_bridge() as client:
         headers = {**HEADERS, "Idempotency-Key": "sem-002-action"}
-        body = {"reason": "submit for semantic bridge proof"}
+        command_envelope = {
+            "command": "StrategyAction",
+            "target": {"type": "Strategy", "id": "stg-sem-002"},
+            "action": "submit",
+            "params": {
+                "action_id": "submit",
+                "entity_type": "strategy",
+                "entity_id": "stg-sem-002",
+                "reason": "submit for semantic bridge proof",
+            },
+            "audit_context": {"reason": "submit for semantic bridge proof"},
+        }
 
-        first = client.post("/bff/actions/strategy/stg-sem-002/submit", headers=headers, json=body)
+        first = client.post("/bff/v1/commands", headers=headers, json=command_envelope)
         bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-        replay = client.post("/bff/actions/strategy/stg-sem-002/submit", headers=headers, json=body)
+        replay = client.post("/bff/v1/commands", headers=headers, json=command_envelope)
 
         assert first.status_code == 202, first.text
         assert replay.status_code == 202, replay.text

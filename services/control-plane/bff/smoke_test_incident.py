@@ -428,7 +428,7 @@ def test_in05_kill_switch_admin_only():
 
 def test_in05_pause_execution_command_schema():
     resp = client.post(
-        "/api/v1/operator/commands",
+        "/bff/v1/commands",
         json=_incident_command_payload(
             "PauseExecution",
             {"pause_new_entries": True, "cancel_open_orders": False},
@@ -437,13 +437,13 @@ def test_in05_pause_execution_command_schema():
     )
     assert resp.status_code == 202, f"PauseExecution rejected: {resp.status_code} {resp.text}"
     body = resp.json()
-    assert body["command"] == "PauseExecution"
+    assert body["data"]["command"] == "PauseExecution"
     print("✅ IN-05: PauseExecution schema accepted")
 
 
 def test_in05_issue_risk_off_command_schema():
     resp = client.post(
-        "/api/v1/operator/commands",
+        "/bff/v1/commands",
         json=_incident_command_payload(
             "IssueRiskOff",
             {"reduce_exposure_pct": 100},
@@ -452,25 +452,25 @@ def test_in05_issue_risk_off_command_schema():
     )
     assert resp.status_code == 202, f"IssueRiskOff rejected: {resp.status_code} {resp.text}"
     body = resp.json()
-    assert body["command"] == "IssueRiskOff"
+    assert body["data"]["command"] == "IssueRiskOff"
     print("✅ IN-05: IssueRiskOff schema accepted")
 
 
 def test_in05_liquidate_all_command_schema():
     resp = client.post(
-        "/api/v1/operator/commands",
+        "/bff/v1/commands",
         json=_incident_command_payload("LiquidateAll", {}),
         headers=_command_headers(ADMIN_MFA_AUTH, "smoke-in05-liquidate-all"),
     )
     assert resp.status_code == 202, f"LiquidateAll rejected: {resp.status_code} {resp.text}"
     body = resp.json()
-    assert body["command"] == "LiquidateAll"
+    assert body["data"]["command"] == "LiquidateAll"
     print("✅ IN-05: LiquidateAll schema accepted")
 
 
 def test_in05_hard_rollback_command_schema():
     resp = client.post(
-        "/api/v1/operator/commands",
+        "/bff/v1/commands",
         json=_incident_command_payload(
             "HardRollback",
             {"target_artifact_id": "artifact-fallback-001"},
@@ -479,13 +479,13 @@ def test_in05_hard_rollback_command_schema():
     )
     assert resp.status_code == 202, f"HardRollback rejected: {resp.status_code} {resp.text}"
     body = resp.json()
-    assert body["command"] == "HardRollback"
+    assert body["data"]["command"] == "HardRollback"
     print("✅ IN-05: HardRollback schema accepted")
 
 
 def test_in05_issue_safe_mode_command_schema():
     resp = client.post(
-        "/api/v1/operator/commands",
+        "/bff/v1/commands",
         json=_incident_command_payload(
             "IssueSafeMode",
             {"safe_mode_level": "soft"},
@@ -494,7 +494,7 @@ def test_in05_issue_safe_mode_command_schema():
     )
     assert resp.status_code == 202, f"IssueSafeMode rejected: {resp.status_code} {resp.text}"
     body = resp.json()
-    assert body["command"] == "IssueSafeMode"
+    assert body["data"]["command"] == "IssueSafeMode"
     print("✅ IN-05: IssueSafeMode schema accepted")
 
 

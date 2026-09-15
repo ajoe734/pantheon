@@ -136,7 +136,7 @@ def _submit(client, token=APPROVER_TOKEN, **overrides):
     idempotency_key = overrides.pop("idempotency_key", None)
     payload.update(overrides)
     headers = _command_headers(token, idempotency_key)
-    return client.post("/api/v1/operator/commands", json=payload, headers=headers)
+    return client.post("/bff/v1/commands", json=payload, headers=headers)
 
 
 # ----------------------------------------------------------------- fixtures --
@@ -306,15 +306,16 @@ class TestOperatorBFF(unittest.TestCase):
         r = _submit(self.client, APPROVER_TOKEN)
         self.assertEqual(r.status_code, 202, r.text)
         body = r.json()
-        self.assertEqual(body["status"], CommandReceiptStatus.ACCEPTED.value)
-        self.assertEqual(body["command"], CommandType.APPROVE_DEPLOYMENT.value)
-        self.assertEqual(body["routing_path"], CommandRoutingPath.DIRECT.value)
-        self.assertIn("accepted_at", body)
-        self.assertIsNotNone(body["expected_completion_at"])
-        self.assertIsNone(body["error_message"])
-        self.assertIsNone(body.get("staleness_warning"))
+        data = body["data"]
+        self.assertEqual(data["status"], CommandReceiptStatus.ACCEPTED.value)
+        self.assertEqual(data["command"], CommandType.APPROVE_DEPLOYMENT.value)
+        self.assertEqual(data["routing_path"], CommandRoutingPath.DIRECT.value)
+        self.assertIn("accepted_at", data)
+        self.assertIsNotNone(data["expected_completion_at"])
+        self.assertIsNone(data["error_message"])
+        self.assertIsNone(data.get("staleness_warning"))
 
-        command_id = body["receipt_id"]
+        command_id = data["receipt_id"]
 
         # Poll
         r2 = self.client.get(
@@ -416,7 +417,7 @@ class TestOperatorBFF(unittest.TestCase):
     def test_pause_runtime_insufficient_role(self):
         # 'approver' role alone is not listed for PauseRuntime (needs operator or admin)
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "PauseRuntime",
                 "target": {"type": "RuntimeBinding", "id": "rb-1"},
@@ -434,7 +435,7 @@ class TestOperatorBFF(unittest.TestCase):
     # ---------------------------------------------------------------------- #
     def test_kill_switch_requires_mfa(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ActivateKillSwitch",
                 "target": {"type": "KillSwitchOrder", "id": "ks-1"},
@@ -449,7 +450,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_kill_switch_with_mfa_succeeds(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ActivateKillSwitch",
                 "target": {"type": "KillSwitchOrder", "id": "ks-2"},
@@ -463,7 +464,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_kill_switch_invalid_scope(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ActivateKillSwitch",
                 "target": {"type": "KillSwitchOrder", "id": "ks-3"},
@@ -488,7 +489,7 @@ class TestOperatorBFF(unittest.TestCase):
             params={"deployment_plan_id": target_id, "approval_decision": "approve"},
         )
         self.assertEqual(r1.status_code, 202, r1.text)
-        command_id = r1.json()["receipt_id"]
+        command_id = r1.json()["data"]["receipt_id"]
         command_store.update_status(command_id, CommandStatus.SUBMITTED)
 
         # Second command on same target while first is submitted/processing → CONCURRENT_MODIFICATION
@@ -510,15 +511,16 @@ class TestOperatorBFF(unittest.TestCase):
                     params={"deployment_plan_id": "dp-stale-001", "approval_decision": "approve"})
         self.assertEqual(r.status_code, 202, r.text)
         body = r.json()
-        self.assertIsNotNone(body.get("staleness_warning"))
-        self.assertEqual(body["staleness_warning"]["read_surface_state"], "degraded")
+        data = body["data"]
+        self.assertIsNotNone(data.get("staleness_warning"))
+        self.assertEqual(data["staleness_warning"]["read_surface_state"], "degraded")
 
     # ---------------------------------------------------------------------- #
     # All eight command types submit successfully with appropriate roles
     # ---------------------------------------------------------------------- #
     def test_pause_runtime_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "PauseRuntime",
                 "target": {"type": "RuntimeBinding", "id": "rb-happy"},
@@ -532,7 +534,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_execute_rollback_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ExecuteRollback",
                 "target": {"type": "DeploymentPlan", "id": "dp-rollback"},
@@ -550,7 +552,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_approve_rollback_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ApproveRollback",
                 "target": {"type": "Rollback", "id": "rollback-rb-001"},
@@ -567,7 +569,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_reject_rollback_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "RejectRollback",
                 "target": {"type": "Rollback", "id": "rollback-rb-001"},
@@ -584,7 +586,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_approve_evolution_decision_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ApproveEvolutionDecision",
                 "target": {"type": "EvolutionDecision", "id": "evo-001"},
@@ -603,7 +605,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_execute_evolution_action_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ExecuteEvolutionAction",
                 "target": {"type": "EvolutionDecision", "id": "evo-002"},
@@ -621,7 +623,7 @@ class TestOperatorBFF(unittest.TestCase):
 
     def test_execute_evolution_revalidate_action_submit(self):
         r = self.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ExecuteEvolutionAction",
                 "target": {"type": "EvolutionDecision", "id": "evo-reval-002"},

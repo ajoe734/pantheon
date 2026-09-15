@@ -182,7 +182,13 @@ def test_idempotency_conflict_on_hash_mismatch(temp_store: CommandStore):
     assert err_body.get("code") == ErrorCode.IDEMPOTENCY_CONFLICT.value
 
 
-def test_cross_transport_replay_parity(temp_store: CommandStore):
+def test_replay_on_canonical_route_is_idempotent(temp_store: CommandStore):
+    """Resubmitting the same idempotency key against the sole canonical
+    `POST /bff/v1/commands` route must replay the original command rather than
+    creating a duplicate. (Formerly this test proved cross-transport parity
+    between the legacy `/api/v1/operator/commands` route and `/bff/v1/commands`;
+    the legacy route has been retired, so only the canonical route remains.)
+    """
     service = CommandAdapterService(
         command_store=temp_store,
         extract_identity=_identity_resolver,
@@ -204,7 +210,7 @@ def test_cross_transport_replay_parity(temp_store: CommandStore):
         payload=payload,
         authorization=headers_auth,
         idempotency_key=idempotency_key,
-        route="POST /api/v1/operator/commands",
+        route="POST /bff/v1/commands",
     )
 
     bg2 = BackgroundTasks()

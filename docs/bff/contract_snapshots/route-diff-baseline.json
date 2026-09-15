@@ -233,13 +233,6 @@
         "status": "implemented"
       },
       {
-        "family": "sse-substrate",
-        "key": "GET /api/v1/kill-switch/updates",
-        "method": "GET",
-        "path": "/api/v1/kill-switch/updates",
-        "status": "implemented"
-      },
-      {
         "family": "api-v1",
         "key": "GET /api/v1/knowledge/evidence",
         "method": "GET",
@@ -619,6 +612,20 @@
       },
       {
         "family": "api-v1",
+        "key": "GET /api/v1/research/analyses",
+        "method": "GET",
+        "path": "/api/v1/research/analyses",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/analyses/{param}",
+        "method": "GET",
+        "path": "/api/v1/research/analyses/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
         "key": "GET /api/v1/research/analysis",
         "method": "GET",
         "path": "/api/v1/research/analysis",
@@ -629,6 +636,27 @@
         "key": "GET /api/v1/research/analysis/{param}",
         "method": "GET",
         "path": "/api/v1/research/analysis/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/artifacts",
+        "method": "GET",
+        "path": "/api/v1/research/artifacts",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/artifacts/compare",
+        "method": "GET",
+        "path": "/api/v1/research/artifacts/compare",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/artifacts/{param}",
+        "method": "GET",
+        "path": "/api/v1/research/artifacts/{param}",
         "status": "implemented"
       },
       {
@@ -1056,6 +1084,13 @@
         "key": "GET /bff/agora/me",
         "method": "GET",
         "path": "/bff/agora/me",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/operational-readiness",
+        "method": "GET",
+        "path": "/bff/agora/operational-readiness",
         "status": "implemented"
       },
       {
@@ -2469,25 +2504,17 @@
         "status": "implemented"
       },
       {
-        "covered_by": "PATCH /bff/ranking/formulas/{param}",
         "family": "capital-ranking-rebalance",
         "key": "PATCH /bff/ranking-formulas/{param}",
         "method": "PATCH",
         "path": "/bff/ranking-formulas/{param}",
-        "status": "alias"
+        "status": "implemented"
       },
       {
         "family": "capital-ranking-rebalance",
         "key": "PATCH /bff/rebalances/{param}",
         "method": "PATCH",
         "path": "/bff/rebalances/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "evolution-experiment-jobs-events",
-        "key": "PATCH /bff/research-experiments/{param}",
-        "method": "PATCH",
-        "path": "/bff/research-experiments/{param}",
         "status": "implemented"
       },
       {
@@ -2551,13 +2578,6 @@
         "key": "POST /api/v1/knowledge/notes",
         "method": "POST",
         "path": "/api/v1/knowledge/notes",
-        "status": "implemented"
-      },
-      {
-        "family": "operator",
-        "key": "POST /api/v1/operator/commands",
-        "method": "POST",
-        "path": "/api/v1/operator/commands",
         "status": "implemented"
       },
       {
@@ -2684,13 +2704,6 @@
         "key": "POST /api/v1/trainer/sessions/{param}/rapid-eval",
         "method": "POST",
         "path": "/api/v1/trainer/sessions/{param}/rapid-eval",
-        "status": "implemented"
-      },
-      {
-        "family": "final-contract",
-        "key": "POST /bff/actions/{param}/{param}/{param}",
-        "method": "POST",
-        "path": "/bff/actions/{param}/{param}/{param}",
         "status": "implemented"
       },
       {
@@ -3577,13 +3590,6 @@
         "status": "implemented"
       },
       {
-        "family": "evolution-experiment-jobs-events",
-        "key": "POST /bff/research-experiments",
-        "method": "POST",
-        "path": "/bff/research-experiments",
-        "status": "implemented"
-      },
-      {
         "family": "governance-runtime-risk-audit",
         "key": "POST /bff/runtimes",
         "method": "POST",
@@ -3802,7 +3808,7 @@
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-08-27",
+    "backend_snapshot_date": "2026-09-15",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-06-28",
     "generator": "scripts/bff_route_diff.py",
@@ -3825,16 +3831,16 @@
   },
   "summary": {
     "backend_routes": 701,
-    "failure_count": 529,
+    "failure_count": 530,
     "failures": {
-      "backend_missing_frontend": 523,
+      "backend_missing_frontend": 524,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 6
     },
     "frontend_routes": 187,
-    "mode_failure_count": 529,
+    "mode_failure_count": 530,
     "status": "fail",
     "warning_count": 0,
     "warnings": {
