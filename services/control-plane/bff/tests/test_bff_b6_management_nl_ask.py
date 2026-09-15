@@ -84,7 +84,6 @@ class _B6NlAskTestStore:
 def _fresh_client(td: str) -> TestClient:
     store = _B6NlAskTestStore()
     bff_main.read_store = store
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
@@ -356,7 +355,6 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
         store_path = os.path.join(td, "management-ai.json")
         try:
             bff_main.read_store = _B6NlAskTestStore()
-            bff_main._MGMT_NL_IDEMPOTENCY.clear()
             bff_main._MGMT_AI_AUDIT_EVENTS.clear()
             bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
                 storage_path=store_path,
@@ -525,7 +523,6 @@ def _nl_evidence_client() -> Iterator[TestClient]:
         )
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
         original_store = bff_main.read_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         try:
             bff_main.read_store = _B6NlAskTestStore()
             yield TestClient(bff_main.app)
