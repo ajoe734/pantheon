@@ -27,43 +27,20 @@ _DRILL_EVO_TMP = tempfile.mkdtemp(prefix="bff004_drill_evo_")
 os.environ.setdefault("EVOLUTION_DATA_DIR", _DRILL_EVO_TMP)
 os.environ.setdefault("INCIDENT_DATA_DIR", _DRILL_EVO_TMP)
 
-# ---- Path setup ----
-_BFF_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _BFF_DIR.parents[2]
-_CP_GOV = _BFF_DIR.parent / "governance"
-_EVO_DIR = _REPO_ROOT / "services" / "evolution"
-_POSTMORTEMS_DIR = _REPO_ROOT / "services" / "postmortems"
-_INCIDENTS_DIR = _REPO_ROOT / "services" / "incidents"
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-for _p in (_REPO_ROOT, _BFF_DIR, _CP_GOV):
-    _p_str = str(_p)
-    if _p_str not in sys.path:
-        sys.path.insert(0, _p_str)
-
-import main as bff_main  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-# ---- Incident domain — shared across incidents / postmortems / evolution ----
-from services.incident.incident import IncidentStore  # noqa: E402
-from services.incident.pg_store import build_incident_store  # noqa: E402
-from services.incidents.consumer import ThresholdTelemetryIncidentConsumer  # noqa: E402
-from services.postmortems.consumer import ResolvedIncidentPostmortemDraftConsumer  # noqa: E402
-
-# ---- Evolution service — must be loaded with its own dir first on sys.path ----
-# services/evolution/main.py uses a flat `from models import ...` (no try/except),
-# which conflicts with BFF's models.py.  Temporarily move the evolution dir to the
-# front of sys.path and clear the cached BFF models module so the loader picks up
-# services/evolution/models.py instead.
-_saved_bff_models = sys.modules.pop("models", None)
-if str(_EVO_DIR) not in sys.path:
-    sys.path.insert(0, str(_EVO_DIR))
-
-import services.evolution.main as evo_main  # noqa: E402
-
-# Restore BFF models in cache now that evolution is loaded
-sys.modules.pop("models", None)
-if _saved_bff_models is not None:
-    sys.modules["models"] = _saved_bff_models
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.management_read_models import loop_truth
+from services.control_plane.bff.personas.service import (
+    PersonaService,
+    create_persona_registry_write_owner,
+)
+from services.incident.incident import IncidentStore
+from services.incident.pg_store import build_incident_store
+from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
+from services.postmortems.consumer import ResolvedIncidentPostmortemDraftConsumer
+import services.evolution.main as evo_main
 
 # ---- Constants ----
 _BFF_HEADERS = {"Authorization": "Bearer bff004-drill:operator,reviewer,admin:mfa::tenant-dev"}
@@ -178,42 +155,31 @@ class TestDrill1SourceToHealth:
            → loop-health keeps the historical fixture visible without promoting it
     """
 
-    def test_source_health_connector_truth_projects_to_persona_panel(self, monkeypatch):
+    def test_source_health_connector_truth_projects_to_persona_panel(self):
         """
         Step 1a: SourceHealth ok record → BFF source-health overlay projects:
           - health_source = source_ingest  (not static metadata)
           - live_ingestion_enabled = True
           - provider_statuses.finmind = read_ok  (not read_unavailable)
-
-        Migrated by BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001: the
-        overlay is now solely owned by the app-scoped ``persona_service``
-        instance and its own TTL cache; drive it through its real
-        registry/health-snapshot read ports instead of patching a bare
-        module-level loader.
         """
-        read_store = bff_main.persona_service.get_read_store()
-        monkeypatch.setattr(
-            read_store,
-            "get_source_connector_registry",
-            lambda: {"connectors": [truth["connector"] for truth in _SOURCE_HEALTH_TRUTH.values()]},
+        class _ReadStore:
+            def get_source_connector_registry(self):
+                return {"connectors": [truth["connector"] for truth in _SOURCE_HEALTH_TRUTH.values()]}
+
+            def get_source_health_usage_snapshot(self):
+                return {
+                    "sources": [
+                        {"health": truth["health"], "usage_aggregate_30d": {}}
+                        for truth in _SOURCE_HEALTH_TRUTH.values()
+                    ]
+                }
+
+        persona_service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            ranking_write_owner=object(),
+            read_store=_ReadStore(),
+            command_store=object(),
         )
-        monkeypatch.setattr(
-            read_store,
-            "get_source_health_usage_snapshot",
-            lambda: {
-                "sources": [
-                    {"health": truth["health"], "usage_aggregate_30d": {}}
-                    for truth in _SOURCE_HEALTH_TRUTH.values()
-                ]
-            },
-        )
-        # Force a cache miss so this instance's TTL-cached truth (if any prior
-        # test/request already populated it) does not shadow the fixture above.
-        bff_main.persona_service._source_health_cache = {
-            "at": 0.0,
-            "by_connector": None,
-            "truth_by_connector": None,
-        }
 
         dss: Dict[str, Any] = {
             "state": "partial_readback",
@@ -230,7 +196,7 @@ class TestDrill1SourceToHealth:
             }
         ]
 
-        out_dss, out_sources, bindings = bff_main.persona_service.overlay_source_health_truth(
+        out_dss, out_sources, bindings = persona_service.overlay_source_health_truth(
             dss,
             sources,
             required_data_sources=required_sources,
@@ -270,12 +236,14 @@ class TestDrill1SourceToHealth:
             return True, list(_LOOP_HEALTH_STORE.values())
 
         monkeypatch.setattr(
-            bff_main.loop_truth,
+            loop_truth,
             "fetch_controller_store_health_records",
             _fetch_controller_records,
         )
 
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        app = FastAPI()
+        app.include_router(create_control_loops_router())
+        client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/bff/v5/loop-health/source_ingestion", headers=_BFF_HEADERS)
 
         assert response.status_code == 200, response.text

@@ -1,0 +1,88 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-L05-WORKSHOP-STRATEGYSPEC-001",
+  "base_ref": "dev@331c7052737665467ab4fddb4fe84e593963b1e8",
+  "depends_on": "",
+  "normative_plan": "PR #5822 commit c2d5ea036 section 5 blocker 2; SD \u00a75.2, SD \u00a75.3, AGORA-WORKSHOP-CORE-20260813",
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/agora/strategy_workshop/reconstruction.py",
+      "docs/deployment/evidence/LOOP-L05-WORKSHOP-STRATEGYSPEC-001/evidence.json"
+    ],
+    "semantic_strategy_spec_confirmation": "Decide StrategyMap block confirmation from typed executable StrategySpec semantics rather than keyword count or character length thresholds. Deleted naive heuristics (`len(matched) >= 2 or len(combined_text) > 100`). Keyword matches alone produce partial block status, never confirmed. When a valid StrategySpec is present or reconstructed from structured messages, all 12 StrategyMap blocks are confirmed with typed details, completeness grade reaches trading_room_ready, draft_proposal is populated with strategy_spec dictionary, and blockers list is empty. When no valid StrategySpec is present or reconstruction fails schema/dataclass validation, completeness grade stays insufficient with truthful validation error details and missing field blockers.",
+    "candidate_strategy_spec_extraction": "Added _extract_candidate_spec supporting direct strategy_spec argument, event payloads/metadata, JSON and markdown-fenced StrategySpec payloads in conversation messages, and structured definition extractions (Hypothesis, Universe, Signal, Entry, Exit, Sizing, Risk, Validation, Governance). Formed candidate specs are strictly validated against canonical StrategySpec JSON schema (validate_strategy_spec_payload) and dataclass semantics (validate_strategy_spec).",
+    "negative_control_preservation": "Preserved all existing negative test cases in test_reconstruction.py, test_reconstruction_worker.py, and test_agora_strategy_workshop.py without weakening or deleting any assertions."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/strategy_workshop/test_reconstruction.py",
+        "result": "3 passed, 4 warnings in 1.95s",
+        "exit_code": 0,
+        "collected": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/strategy_workshop/test_reconstruction_worker.py",
+        "result": "7 passed, 2 warnings in 2.43s",
+        "exit_code": 0,
+        "collected": 7,
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/strategy_workshop/",
+        "result": "14 passed, 2 skipped, 4 warnings in 5.59s",
+        "exit_code": 0,
+        "collected": 16,
+        "passed": 14,
+        "failed": 0,
+        "skipped": 2
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+        "result": "81 passed, 1 skipped, 4 warnings in 75.29s",
+        "exit_code": 0,
+        "collected": 82,
+        "passed": 81,
+        "failed": 0,
+        "skipped": 1
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/research/strategy_spec/test_models.py",
+        "result": "8 passed, 2 warnings in 1.66s",
+        "exit_code": 0,
+        "collected": 8,
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "command": "git diff --check",
+        "result": "clean, exit code 0",
+        "exit_code": 0,
+        "collected": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "acceptance_check": {
+    "workshop_reconstruction_typed_strategyspec_semantics": true,
+    "keyword_matching_and_char_counts_do_not_decide_confirmed": true,
+    "valid_strategyspec_reaches_confirmed_and_trading_room_ready": true,
+    "invalid_strategyspec_stays_insufficient_with_truthful_blockers": true,
+    "existing_negative_controls_preserved_without_weakening": true,
+    "focused_and_full_file_regressions_recorded": true,
+    "source_and_isolated_test_scope_only": true,
+    "no_hosted_deployment_and_no_live_capital_change": true
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}
