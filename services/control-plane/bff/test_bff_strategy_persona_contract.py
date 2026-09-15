@@ -25,7 +25,8 @@ from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
 
 from services.control_plane.bff.action_catalog import get_catalog_entry
-from services.control_plane.bff.command_adapters.router import create_action_command_router
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.models import CommandType, ErrorCode, utc_now
 from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
@@ -471,34 +472,18 @@ def _fresh_client(td: str) -> TestClient:
         list_strategy_summaries=lambda: (_READ_STORE_HOLDER.current.list_strategies() if _READ_STORE_HOLDER.current else []),
         strategy_write_owner=lambda: _READ_STORE_HOLDER.current,
     ))
-    def _submit_command_admission_for_test(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        payload = kwargs.get("payload", {})
-        cmd_type = payload.get("command", "")
-        cmd_id = f"cmd-{uuid.uuid4().hex[:12]}"
-        now = utc_now()
-        receipt = {
-            "receipt_id": cmd_id,
-            "command_id": cmd_id,
-            "command": cmd_type,
-            "status": "accepted",
-            "accepted_at": now,
-        }
-        return {
-            "status": "accepted",
-            "data": {
-                "command": cmd_type,
-                "command_id": cmd_id,
-                "status": "accepted",
-                "receipt": receipt,
-            },
-            "meta": {"idempotency": {"idempotencyKey": kwargs.get("idempotency_key")}},
-        }
-
-    app.include_router(create_action_command_router(
+    # Persona/strategy generic actions now flow exclusively through the
+    # canonical `POST /bff/v1/commands` route (the `/bff/actions/{type}/{id}/{action}`
+    # route has been retired), so mount the real command adapters router/service
+    # here instead of the retired adapter + a fake admission stub.
+    command_adapter_service = CommandAdapterService(
         command_store=cmd_store,
-        utc_now=utc_now,
-        submit_command_admission=_submit_command_admission_for_test,
-    ))
+        extract_identity=_extract_identity_for_test,
+        require_operator_role=personas_service._require_operator_role,
+        bff_error=personas_service._bff_error,
+        utc_now_fn=utc_now,
+    )
+    app.include_router(create_command_adapters_router(service=command_adapter_service))
     app.include_router(create_research_router(
         read_surface=_PROXY_READ_STORE,
         get_read_store=lambda: _READ_STORE_HOLDER.current,
@@ -630,6 +615,8 @@ def test_bff_strategies_subresources_return_envelope() -> None:
 
 
 def test_bff_strategies_actions_use_final_envelope_and_precondition() -> None:
+    """Strategy generic actions (formerly POST /bff/actions/strategy/{id}/{action},
+    now retired) flow through the sole canonical POST /bff/v1/commands route."""
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         create = client.post(
@@ -639,9 +626,21 @@ def test_bff_strategies_actions_use_final_envelope_and_precondition() -> None:
         )
         strategy_id = create.json()["data"]["id"]
 
+        command_envelope = {
+            "command": CommandType.STRATEGY_ACTION.value,
+            "target": {"type": "Strategy", "id": strategy_id},
+            "action": "edit",
+            "params": {
+                "action_id": "edit",
+                "entity_type": "strategy",
+                "entity_id": strategy_id,
+            },
+            "audit_context": {"reason": "operator review"},
+        }
+
         missing_key = client.post(
-            f"/bff/actions/strategy/{strategy_id}/edit",
-            json={},
+            "/bff/v1/commands",
+            json=command_envelope,
             headers=HEADERS,
         )
         assert missing_key.status_code == 400, missing_key.text
@@ -650,8 +649,8 @@ def test_bff_strategies_actions_use_final_envelope_and_precondition() -> None:
         assert err["details"]["precondition_failed"] == "idempotency_key"
 
         ok = client.post(
-            f"/bff/actions/strategy/{strategy_id}/edit",
-            json={"reason": "operator review"},
+            "/bff/v1/commands",
+            json=command_envelope,
             headers={**HEADERS, "Idempotency-Key": f"strategy-action-{strategy_id}"},
         )
         assert ok.status_code == 202, ok.text
@@ -1015,6 +1014,10 @@ def test_bff_personas_patch_persists_without_snapshot_fallback() -> None:
 
 
 def test_bff_personas_actions_route_through_command_envelope() -> None:
+    """Persona domain actions (run_eval/restrict_tools/suspend/retire, here
+    exercised via `retire`) flow generically through the command-adapter
+    entity-spec mechanism dispatched exclusively via POST /bff/v1/commands —
+    the retired POST /bff/actions/{type}/{id}/{action} route is gone."""
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         create = client.post(
@@ -1024,17 +1027,30 @@ def test_bff_personas_actions_route_through_command_envelope() -> None:
         )
         persona_id = create.json()["data"]["id"]
 
+        command_envelope = {
+            "command": CommandType.PERSONA_ACTION.value,
+            "target": {"type": "Persona", "id": persona_id},
+            "action": "retire",
+            "params": {
+                "action_id": "retire",
+                "entity_type": "persona",
+                "entity_id": persona_id,
+                "reason": "decommission",
+            },
+            "audit_context": {"reason": "decommission"},
+        }
+
         precondition = client.post(
-            f"/bff/actions/persona/{persona_id}/retire",
-            json={},
+            "/bff/v1/commands",
+            json=command_envelope,
             headers=HEADERS,
         )
         assert precondition.status_code == 400, precondition.text
         assert _error(precondition)["code"] == "VALIDATION_FAILED"
 
         ok = client.post(
-            f"/bff/actions/persona/{persona_id}/retire",
-            json={"reason": "decommission"},
+            "/bff/v1/commands",
+            json=command_envelope,
             headers={**HEADERS, "Idempotency-Key": f"persona-action-{persona_id}"},
         )
         assert ok.status_code == 202, ok.text

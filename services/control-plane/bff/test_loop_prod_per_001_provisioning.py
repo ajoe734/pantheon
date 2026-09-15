@@ -436,6 +436,7 @@ def test_persona_provisioning_completes_upon_readback_success() -> None:
         # Check store to verify the status is persisted (restart-safe)
         persisted = _state.read_store.get_persona(persona_id)
         assert persisted["lifecycle_state"] == "paper_running"
+        assert persisted["metadata"].get("provisioning_reconciliation_state") == "paper_running"
 
 
 def test_persona_provisioning_fails_on_downstream_failure() -> None:
@@ -473,6 +474,7 @@ def test_persona_provisioning_fails_on_downstream_failure() -> None:
         # Check store to verify failure state is persisted (restart-safe)
         persisted = _state.read_store.get_persona(persona_id)
         assert persisted["lifecycle_state"] == "provisioning_failed"
+        assert persisted["metadata"].get("provisioning_reconciliation_state") == "provisioning_failed"
 
 
 def test_persona_provisioning_fails_on_timeout() -> None:
@@ -511,6 +513,39 @@ def test_persona_provisioning_fails_on_timeout() -> None:
         )
         assert reconciled.status_code == 200, reconciled.text
         assert reconciled.json()["data"]["state"] == "failed"
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "provisioning_failed"
+        assert persisted["metadata"].get("provisioning_reconciliation_state") == "provisioning_failed"
+
+
+def test_persona_provisioning_reconcile_remains_provisioning_without_downstream_owners() -> None:
+    """Reproduce the recorded failure: repeated reconcile calls stay in provisioning
+    when downstream runtime binding and paper worker owners have not produced evidence.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/personas",
+            json={"name": "Trader Repeated Polling"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-repeated-poll"},
+        )
+        assert resp.status_code == 201, resp.text
+        persona_id = resp.json()["data"]["id"]
+
+        for attempt in range(5):
+            reconciled = client.post(
+                f"/bff/personas/{persona_id}/provisioning/reconcile",
+                headers=HEADERS,
+            )
+            assert reconciled.status_code == 200, reconciled.text
+            body = reconciled.json()
+            assert body["data"]["state"] == "provisioning"
+            assert body["meta"]["lifecycle_state"] == "provisioning"
+            assert body["meta"]["status"] == "ok"
+            assert body["meta"]["authoritative_readback"]["available"] is False
+
+            persisted = _state.read_store.get_persona(persona_id)
+            assert persisted["lifecycle_state"] == "provisioning"
 
 
 def test_persona_duplicate_create_converges() -> None:

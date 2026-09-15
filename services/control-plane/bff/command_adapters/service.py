@@ -30,7 +30,6 @@ try:
         CommandResultMeta,
         CommandStatus,
         CommandStatusResponse,
-        CommandSubmissionResponse,
         CommandType,
         ErrorCode,
         ObjectType,
@@ -51,7 +50,6 @@ except (ImportError, ValueError):
         CommandResultMeta,
         CommandStatus,
         CommandStatusResponse,
-        CommandSubmissionResponse,
         CommandType,
         ErrorCode,
         ObjectType,
@@ -64,7 +62,6 @@ except (ImportError, ValueError):
 from .base import ActionUnavailableError
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
-    _FOUNDATION_COMMAND_ROUTE,
     build_foundation_command_context,
     normalize_operator_command_payload,
     resolve_final_idempotency_key,
@@ -92,7 +89,6 @@ from .receipts import (
     command_runtime_auth_context,
     foundation_bff_error,
     foundation_idempotency_conflict_error,
-    project_command_submission_response,
     project_final_command_response,
 )
 from .registry import dispatch_domain_command
@@ -1208,14 +1204,6 @@ class CommandAdapterService:
                         self._process_command_task, str(duplicate["command_id"])
                     )
                 duplicate_status = CommandStatus.SUBMITTED
-            if route == "POST /api/v1/operator/commands":
-                return project_command_submission_response(
-                    command_id=duplicate["command_id"],
-                    command=cmd.command,
-                    accepted_at=duplicate.get("submitted_at") or self._utc_now(),
-                    status=duplicate_status,
-                    staleness_warning=None,
-                )
             return project_final_command_response(
                 command_id=duplicate["command_id"],
                 command=cmd.command,
@@ -1229,37 +1217,17 @@ class CommandAdapterService:
             )
 
         try:
-            if route == "POST /api/v1/operator/commands":
-                precondition_evidence = (
-                    require_final_command_preconditions(
-                        cmd=cmd,
-                        payload=payload,
-                        confirm_token=x_confirm_token,
-                        identity=identity,
-                        correlation_id=foundation_context["trace_context"].correlation_id,
-                        confirm_token_records_fn=self.confirm_token_records,
-                        confirm_token_lifecycle_fn=self.confirm_token_lifecycle_payload,
-                        read_store=self.read_store,
-                        command_store=store,
-                    )
-                    if cmd.command in {
-                        CommandType.APPROVED_APPLY,
-                        CommandType.EMERGENCY_CONTAINMENT,
-                    }
-                    else {}
-                )
-            else:
-                precondition_evidence = require_final_command_preconditions(
-                    cmd=cmd,
-                    payload=payload,
-                    confirm_token=x_confirm_token,
-                    identity=identity,
-                    correlation_id=foundation_context["trace_context"].correlation_id,
-                    confirm_token_records_fn=self.confirm_token_records,
-                    confirm_token_lifecycle_fn=self.confirm_token_lifecycle_payload,
-                    read_store=self.read_store,
-                    command_store=store,
-                )
+            precondition_evidence = require_final_command_preconditions(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+                confirm_token_records_fn=self.confirm_token_records,
+                confirm_token_lifecycle_fn=self.confirm_token_lifecycle_payload,
+                read_store=self.read_store,
+                command_store=store,
+            )
         except HTTPException as exc:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
@@ -1274,14 +1242,6 @@ class CommandAdapterService:
         staleness_warning = self.check_read_surface_state()
         if _truthy_header(payload.get("dryRun") or payload.get("dry_run")) or _truthy_header(os.getenv("BFF_REQUEST_DRY_RUN")):
             command_envelope = foundation_context["command_envelope"]
-            if route == "POST /api/v1/operator/commands":
-                return project_command_submission_response(
-                    command_id=command_envelope.command_id,
-                    command=cmd.command,
-                    accepted_at=self._utc_now(),
-                    status=CommandStatus.SUBMITTED,
-                    staleness_warning=staleness_warning,
-                )
             return project_final_command_response(
                 command_id=command_envelope.command_id,
                 command=cmd.command,
@@ -1359,17 +1319,6 @@ class CommandAdapterService:
                     confirm_token=x_confirm_token,
                     foundation_context=foundation_context,
                 )
-                if route == "POST /api/v1/operator/commands":
-                    return project_command_submission_response(
-                        command_id=duplicate_after_precheck["command_id"],
-                        command=cmd.command,
-                        accepted_at=duplicate_after_precheck.get("submitted_at") or self._utc_now(),
-                        status=CommandStatus(
-                            duplicate_after_precheck.get("status")
-                            or CommandStatus.SUBMITTED.value
-                        ),
-                        staleness_warning=None,
-                    )
                 return project_final_command_response(
                     command_id=duplicate_after_precheck["command_id"],
                     command=cmd.command,
@@ -1450,14 +1399,6 @@ class CommandAdapterService:
         if enqueue and self._process_command_task and background_tasks and hasattr(background_tasks, "add_task"):
             background_tasks.add_task(self._process_command_task, command_id)
 
-        if route == "POST /api/v1/operator/commands":
-            return project_command_submission_response(
-                command_id=command_id,
-                command=cmd.command,
-                accepted_at=submitted_at,
-                status=CommandStatus.SUBMITTED,
-                staleness_warning=staleness_warning,
-            )
         return project_final_command_response(
             command_id=command_id,
             command=cmd.command,
@@ -1468,33 +1409,6 @@ class CommandAdapterService:
             if include_durable_meta
             else None,
             deprecation=response_deprecation,
-        )
-
-    def submit_command(
-        self,
-        background_tasks: Any,
-        payload: Dict[str, Any],
-        authorization: Optional[str] = None,
-        x_mfa_token: Optional[str] = None,
-        x_trace_id: Optional[str] = None,
-        x_correlation_id: Optional[str] = None,
-        x_request_id: Optional[str] = None,
-        x_confirm_token: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
-    ) -> Any:
-        return self._submit_command_admission(
-            background_tasks=background_tasks,
-            payload=payload,
-            authorization=authorization,
-            x_mfa_token=x_mfa_token,
-            x_trace_id=x_trace_id,
-            x_correlation_id=x_correlation_id,
-            x_request_id=x_request_id,
-            x_confirm_token=x_confirm_token,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            route="POST /api/v1/operator/commands",
         )
 
     def submit_final_command(

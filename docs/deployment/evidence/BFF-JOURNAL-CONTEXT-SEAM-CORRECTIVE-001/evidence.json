@@ -1,0 +1,144 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "96d7e794c3fd72331dd6b00f2ae8fe60d2838cf5",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity"
+  },
+  "source_ref": {
+    "decision_doc": "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md",
+    "decision_task": "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001",
+    "precedent_evidence": "docs/deployment/evidence/BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001/evidence.json"
+  },
+  "delivery_nature": {
+    "documentation_only": false,
+    "statement": "Implements the qualified ordered overlap task specified by the B05 journal context-resolver seam decision: extracts the monolithic Agora interaction context resolver out of main.py into an injectable pure module, deletes the duplicate private-record ACL and the interaction-router forward-wrapper ACL that duplicated it, and decouples the governance parity test from main.py globals."
+  },
+  "changed_files": [
+    "services/control-plane/bff/agora/interaction/context_resolver.py",
+    "services/control-plane/bff/agora/interaction/router.py",
+    "services/control-plane/bff/agora/interaction/test_worker.py",
+    "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+    "services/control-plane/bff/tests/test_journal_context_resolver_owner.py",
+    "services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+    "docs/deployment/evidence/BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001/evidence.json"
+  ],
+  "document_proof": {
+    "services/control-plane/bff/agora/interaction/context_resolver.py": {
+      "sha256": "ec90e8e94c5a70522c1525a7335340bc5b087a267c8292894f9540cca2c93ad1",
+      "bytes": 15579
+    },
+    "services/control-plane/bff/agora/interaction/router.py": {
+      "sha256": "b8f0f299c94a77d692cc49c9d176d4aed6ad3bcccef15620a9ee67281c6280f9",
+      "bytes": 63661
+    },
+    "services/control-plane/bff/agora/interaction/test_worker.py": {
+      "sha256": "af4c85975d4f49b73c1e2094dbfd51b8840c2d6a7423eac0ae1b4411a79ac090",
+      "bytes": 36509
+    },
+    "services/control-plane/bff/governance/test_decision_journal_write_owner.py": {
+      "sha256": "cf11b94da950e4cb8f632e1e9ac8223ff64af6c860400db75151e2390200fb1b",
+      "bytes": 84997
+    },
+    "services/control-plane/bff/main.py": {
+      "sha256": "b4601cbe6de33dd98d084ba1d0f4dcb2fd680153a8c14db82bbd8b53a11ab54e",
+      "bytes": 867626
+    },
+    "services/control-plane/bff/tests/test_agora_persona_interactions.py": {
+      "sha256": "dadb4683ca2ad460b10f7e468d8bf2852ebf9847e2f8b6720dfbd4fd6da53ecb",
+      "bytes": 28247
+    },
+    "services/control-plane/bff/tests/test_journal_context_resolver_owner.py": {
+      "sha256": "eea0bd4b0fbb152c5f3751893387b3e3b046a32c1440af0895510f0be80ed143",
+      "bytes": 16250
+    },
+    "services/control-plane/bff/tests/test_pint_013_durable_interactions.py": {
+      "sha256": "5deade5e9aaf3271f67bf3a8e624350c743a62253886a3ad3ffe7051a24afe7d",
+      "bytes": 35425
+    },
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py": {
+      "sha256": "fe87e9cdee0f8fda9ec56fe7cbabe5b10de5374ea5a3d8283e82b84a50cbbe44",
+      "bytes": 40805
+    }
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "seam_implementation": {
+    "module": "services/control-plane/bff/agora/interaction/context_resolver.py",
+    "callable": "resolve_agora_interaction_context_ref",
+    "conforms_to": "docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md § 4.1 interface contract, verbatim",
+    "additional_exports": [
+      "_private_record_owner",
+      "is_agora_private_record_visible",
+      "filter_agora_private_records"
+    ],
+    "composition_root_binding": {
+      "file": "services/control-plane/bff/main.py",
+      "wrapper": "_resolve_agora_interaction_context_ref",
+      "pattern": "Explicit top-level import of _trade_journal_allowed plus explicit read_store/extract_identity/require_read_role/bff_error/persona_directory_snapshot_fn/persona_record_tenant_id_fn/trade_journal_allowed_fn/utc_now binding; filter_private_records_fn intentionally omitted so the resolver's own filter_agora_private_records is the single ACL owner (no duplicate _agora_filter_private_records kept in main.py)."
+    },
+    "duplicate_acl_removed": [
+      "main.py: _agora_private_record_owner / _agora_private_record_visible / _agora_filter_private_records (deleted; superseded by context_resolver.py's filter_agora_private_records)",
+      "agora/interaction/router.py: legacy_canonical_ref forward-wrapper duplicating decision_event/journal_entry resolution when canonical_context_ref_resolver was falsy (deleted; missing/malformed resolver result now fails closed with 503 DEPENDENCY_UNAVAILABLE instead of re-deriving a second, less-scoped ACL)"
+    ],
+    "dead_import_cleanup": [
+      "main.py: removed now-unused urllib.parse.parse_qs/unquote/urlsplit and jsonschema.Draft7Validator imports (only referenced by the deleted inline resolver body)"
+    ]
+  },
+  "audience_matrix_parity": {
+    "decision_event": [
+      "focused_object.kind==decision_event and id==ref_id -> 503 decision_event_source_route_unavailable",
+      "not found -> {row: None, audience_verified: False}",
+      "strategy_id and (no version or version match) -> audience_verified True",
+      "strategy_id mismatch -> audience_verified False, row present"
+    ],
+    "journal_entry_trade_episode": [
+      "schema valid + persona referenced + persona tenant match + trade_journal_allowed + strategy/version match + canonical route -> audience_verified True",
+      "any of the 10 conditions false -> audience_verified False, row present"
+    ],
+    "journal_entry_legacy_decision_journal": [
+      "found in scope -> {row: entry, audience_verified: False} (never upgraded to True)",
+      "cross-tenant / cross-user-private -> filtered to None row",
+      "read_store missing -> {row: None, audience_verified: False}, no crash"
+    ],
+    "unavailable_kinds": [
+      "position / performance_window / human_inbox_item -> 503 {kind}_scope_unavailable",
+      "unknown kind -> 503 {kind}_store_unavailable"
+    ]
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Provisioned checkout-scoped .venv-pantheon importable from a foreign cwd with no PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_journal_context_resolver_owner.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/governance/test_decision_journal_write_owner.py services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/test_bff_dry_run_rbac_contract.py",
+      "exit_code": 1,
+      "result": "215 passed, 1 failed, 82 warnings, 9 subtests passed in 162.45s. The single failure (test_bff_test_architecture.py::test_every_entry_has_valid_layer_and_disposition) is a pre-existing baseline defect unrelated to this task: bff_test_architecture_inventory.json references tests/test_actions_to_commands_adapter.py, a file that does not exist in the worktree at base_sha; reproduced identically with this task's changes fully removed (see baseline_regression_check below)."
+    },
+    {
+      "command": "baseline_regression_check: git stash push -u; .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_console_data_agora_projection.py::test_projected_consultation_agora_surfaces_return_ok_counts; git stash pop",
+      "exit_code": 1,
+      "result": "Confirmed test_projected_consultation_agora_surfaces_return_ok_counts (unrelated to journal_entry context resolution; a monkeypatched bff_main.read_store console-data projection test) already fails at base_sha before any of this task's changes -- not a regression introduced here, and out of this task's declared write-set."
+    },
+    {
+      "command": "governance test decoupling check: grep -n 'main import\\|bff_main\\|control_plane.bff.main' services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+      "exit_code": 1,
+      "result": "Zero matches: test_decision_journal_write_owner.py::test_main_bff_journal_context_ref_resolution_parity now calls resolve_agora_interaction_context_ref directly with explicit read_store/extract_identity/require_read_role, per decision doc § 4.3, with zero imports of main and zero monkeypatching of a global read_store."
+    }
+  ],
+  "scope_boundary": [
+    "DecisionEvent, DecisionJournal, and trade-episode storage keep their existing owners; this task only relocates and de-duplicates the typed read composition, it does not change persistence.",
+    "audience_verified:false is never upgraded to true for the legacy DecisionJournal fallback path; this characterizes existing behavior and is not a policy change.",
+    "position/performance_window/human_inbox_item remain explicit dependency-unavailable sources; no new ownership contract is introduced for them.",
+    "Does not complete Management/Agora/12-loop or hosted deployment acceptance; source/isolated-test scope only, per the V2 execution plan admission constraints."
+  ]
+}

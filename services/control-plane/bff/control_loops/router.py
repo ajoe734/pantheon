@@ -59,7 +59,6 @@ _TWO_MAN_SIGNER_LIST_FIELDS = {
     "operatorIds",
 }
 _V5_TWO_MAN_EVIDENCE_PRODUCER = "bff.v5.intervention.two-man-sign"
-_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 
 
 def _default_extract_identity(authorization: Optional[str] = None) -> OperatorIdentity:
