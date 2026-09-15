@@ -9,17 +9,44 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
+from pathlib import Path
+from typing import Any, Optional
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.personas import (
+    PersonaService,
+    create_personas_router,
+)
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.service import (
+    _project_persona_fleet_health,
+    _persona_fleet_context_overlay,
+    _persona_fleet_context_defaults_by_market,
+    _project_persona_fleet_list_row,
+    _persona_fleet_mutation_projection,
+)
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_in_memory_read_surface_ports,
+    create_read_surface_ports,
+)
+from services.control_plane.bff.ports.persona_training import PersonaTrainingDomainPort
 
-import main as bff_main
-from typing import Any
-from pathlib import Path
-from ports import create_in_memory_read_surface_ports
+if not hasattr(personas_service, "_PERSONA_FLEET_CONTEXT_METADATA_KEYS"):
+    personas_service._PERSONA_FLEET_CONTEXT_METADATA_KEYS = (
+        "market_scope",
+        "asset_classes",
+        "data_source_status",
+        "data_sources",
+        "data_source_refs",
+        "research_status",
+        "research_refs",
+        "current_research_projects",
+    )
 
 # Local re-implementation of read_store._load_default_fixture_pack_datasets:
 # merges the same static, committed fixture-pack JSON files directly off
@@ -403,6 +430,62 @@ def _admit_b3_fixture_personas(data: dict[str, Any]) -> None:
         metadata["tenant_id"] = B3_ADMITTED_FIXTURE_TENANT_ID
 
 
+class _FakeOwner:
+    def put_ranking_snapshot(self, snapshot: Any) -> Any:
+        return snapshot
+    def record_action(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+    def create_persona(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+    def update_persona(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+
+class _FakeCommandStore:
+    def _get_all_commands(self) -> list[Any]:
+        return []
+    def record_action(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+    def get_all(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+def _create_app(store: Any) -> FastAPI:
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+
+    class _StoreProxy:
+        def __init__(self, target_getter: Any) -> None:
+            self._target_getter = target_getter
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._target_getter(), name)
+        def __setattr__(self, name: str, value: Any) -> None:
+            if name == "_target_getter":
+                super().__setattr__(name, value)
+            else:
+                setattr(self._target_getter(), name, value)
+
+    app = FastAPI()
+    app.state.store = store
+    proxy = _StoreProxy(lambda: app.state.store)
+
+    service = PersonaService(
+        read_store=proxy,
+        write_owner=_FakeOwner(),
+        ranking_write_owner=_FakeOwner(),
+        command_store=_FakeCommandStore(),
+    )
+    app.state.service = service
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": detail})
+
+    app.include_router(create_personas_router(service=service, get_read_store=lambda: app.state.store))
+    return app
+
+
 def _fresh_client(td: str) -> TestClient:
     snapshot_path = os.path.join(td, "read_surfaces.json")
     if os.path.exists(snapshot_path):
@@ -432,15 +515,13 @@ def _fresh_client(td: str) -> TestClient:
             data[k] = [*data[k], *v]
 
     _admit_b3_fixture_personas(data)
-    bff_main.read_store = _PersonaFleetTestStore(data)
-    bff_main._PERSONA_BFF_OVERLAY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    return TestClient(bff_main.app)
+    store = _PersonaFleetTestStore(data)
+    app = _create_app(store)
+    return TestClient(app)
 
 
 def test_persona_fleet_treats_deployed_lifecycle_as_operational() -> None:
-    health = bff_main._project_persona_fleet_health(
+    health = _project_persona_fleet_health(
         persona={"persona_id": "persona-deployed", "lifecycle_state": "deployed"},
         runtime_bindings=[{"runtime_id": "runtime-deployed", "status": "active"}],
         telemetry_summaries=[{"runtime_id": "runtime-deployed", "collected_at": "2026-06-03T08:00:00Z"}],
@@ -453,121 +534,113 @@ def test_persona_fleet_treats_deployed_lifecycle_as_operational() -> None:
 
 def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolution() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+        client = _fresh_client(td)
+        resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert len(json.dumps(body).encode("utf-8")) < 250_000
-            assert set(body) == {"data", "page_info", "meta"}
-            assert set(body["data"]) == {"items", "summary"}
-            assert "items" not in body
-            assert "summary" not in body
-            assert "persona_fleet" not in body["data"]
-            assert "persona_league" not in body["data"]
-            assert "capital_pools" not in body["data"]
-            assert "runtime_bindings" not in body["data"]
-            assert "human_inbox" not in body["data"]
-            assert body["data"]["summary"]["total_personas"] >= 1
-            assert body["meta"]["surfaces"]["persona_fleet"]["source"] in {
-                "bff_composed_slim_list",
-                "service_store",
-                "local_snapshot",
-            }
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(json.dumps(body).encode("utf-8")) < 250_000
+        assert set(body) == {"data", "page_info", "meta"}
+        assert set(body["data"]) == {"items", "summary"}
+        assert "items" not in body
+        assert "summary" not in body
+        assert "persona_fleet" not in body["data"]
+        assert "persona_league" not in body["data"]
+        assert "capital_pools" not in body["data"]
+        assert "runtime_bindings" not in body["data"]
+        assert "human_inbox" not in body["data"]
+        assert body["data"]["summary"]["total_personas"] >= 1
+        assert body["meta"]["surfaces"]["persona_fleet"]["source"] in {
+            "bff_composed_slim_list",
+            "service_store",
+            "local_snapshot",
+        }
 
-            alpha = next(item for item in body["data"]["items"] if item["id"] == "persona-alpha")
-            assert alpha["name"] == "Alpha Persona"
-            assert alpha["capital_pool_id"] is None
-            assert alpha["legacy_paper_capital_pool_id"] == "pool-main"
-            assert alpha["health"] in {"healthy", "degraded", "critical"}
-            assert alpha["governance_required"] is True
-            assert "data_source_summary" in alpha
-            assert "data_sources" in alpha
-            assert "research_summary" in alpha
-            assert "performance_summary" in alpha
-            assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(alpha)
-            assert len(json.dumps(alpha).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
+        alpha = next(item for item in body["data"]["items"] if item["id"] == "persona-alpha")
+        assert alpha["name"] == "Alpha Persona"
+        assert alpha["capital_pool_id"] is None
+        assert alpha["legacy_paper_capital_pool_id"] == "pool-main"
+        assert alpha["health"] in {"healthy", "degraded", "critical"}
+        assert alpha["governance_required"] is True
+        assert "data_source_summary" in alpha
+        assert "data_sources" in alpha
+        assert "research_summary" in alpha
+        assert "performance_summary" in alpha
+        assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(alpha)
+        assert len(json.dumps(alpha).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
 
-            tw = next(item for item in body["data"]["items"] if item["id"] == "persona-tw-equity")
-            assert tw["data_source_summary"]["provider_count"] == 5
-            assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
-            assert [source["provider_key"] for source in tw["data_sources"]] == [
-                "shioaji",
-                "twse",
-                "tpex",
-                "mops",
-                "finmind",
-            ]
-            assert tw["data_sources"][0] == {
-                "provider_key": "shioaji",
-                "provider": "Shioaji quote",
-                "market": "TW",
-                "source_class": "broker_execution",
-                "status": "read_ok",
-                "order_capable_provider": True,
-                "read_only": True,
-                "order_side_effects_allowed": False,
-                "capital_side_effects_allowed": False,
-            }
-            assert "evidence_ref" not in tw["data_sources"][0]
-            assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(tw)
-            assert tw["research_summary"]["current_project_count"] == 1
-            assert tw["research_summary"]["stage"] == "management_review_linked"
-            assert len(json.dumps(tw).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
-            assert body["data"]["summary"]["execution_boundary"] == {
-                "approved_artifacts_only": True,
-                "live_capital_side_effects": False,
-                "human_gate_required_for_capital_changes": True,
-            }
-            assert body["meta"]["related"]["human_inbox"]["href"] == "/bff/management/human-inbox"
-        finally:
-            bff_main.read_store = original
+        tw = next(item for item in body["data"]["items"] if item["id"] == "persona-tw-equity")
+        assert tw["data_source_summary"]["provider_count"] == 5
+        assert tw["data_source_summary"]["provider_status_counts"]["read_ok"] >= 1
+        assert [source["provider_key"] for source in tw["data_sources"]] == [
+            "shioaji",
+            "twse",
+            "tpex",
+            "mops",
+            "finmind",
+        ]
+        assert tw["data_sources"][0] == {
+            "provider_key": "shioaji",
+            "provider": "Shioaji quote",
+            "market": "TW",
+            "source_class": "broker_execution",
+            "status": "read_ok",
+            "order_capable_provider": True,
+            "read_only": True,
+            "order_side_effects_allowed": False,
+            "capital_side_effects_allowed": False,
+        }
+        assert "evidence_ref" not in tw["data_sources"][0]
+        assert not PERSONA_FLEET_FORBIDDEN_LIST_KEYS.intersection(tw)
+        assert tw["research_summary"]["current_project_count"] == 1
+        assert tw["research_summary"]["stage"] == "management_review_linked"
+        assert len(json.dumps(tw).encode("utf-8")) < PERSONA_FLEET_ROW_HARD_LIMIT_BYTES
+        assert body["data"]["summary"]["execution_boundary"] == {
+            "approved_artifacts_only": True,
+            "live_capital_side_effects": False,
+            "human_gate_required_for_capital_changes": True,
+        }
+        assert body["meta"]["related"]["human_inbox"]["href"] == "/bff/management/human-inbox"
 
 
 def test_persona_fleet_supports_health_filter_and_pagination() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            all_resp = client.get(
-                "/bff/management/persona-fleet?page_size=50",
-                headers=OPERATOR_HEADERS,
-            )
-            assert all_resp.status_code == 200, all_resp.text
-            existing_health = all_resp.json()["data"]["items"][0]["health"]
-            resp = client.get(
-                f"/bff/management/persona-fleet?health={existing_health}&page_size=1",
-                headers=OPERATOR_HEADERS,
-            )
+        client = _fresh_client(td)
+        all_resp = client.get(
+            "/bff/management/persona-fleet?page_size=50",
+            headers=OPERATOR_HEADERS,
+        )
+        assert all_resp.status_code == 200, all_resp.text
+        existing_health = all_resp.json()["data"]["items"][0]["health"]
+        resp = client.get(
+            f"/bff/management/persona-fleet?health={existing_health}&page_size=1",
+            headers=OPERATOR_HEADERS,
+        )
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["page_size"] == 1
-            assert len(body["data"]["items"]) == 1
-            assert body["data"]["items"][0]["health"] == existing_health
-            assert body["data"]["summary"]["total_personas"] >= 1
-            assert "page_info" not in body["data"]
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["page_size"] == 1
+        assert len(body["data"]["items"]) == 1
+        assert body["data"]["items"][0]["health"] == existing_health
+        assert body["data"]["summary"]["total_personas"] >= 1
+        assert "page_info" not in body["data"]
 
-            existing_stage = all_resp.json()["data"]["items"][0]["deployment_stage"]
-            stage_resp = client.get(
-                f"/bff/management/persona-fleet?deployment_stage={existing_stage}&page_size=50",
-                headers=OPERATOR_HEADERS,
-            )
-            assert stage_resp.status_code == 200, stage_resp.text
-            stage_items = stage_resp.json()["data"]["items"]
-            assert stage_items
-            assert {item["deployment_stage"] for item in stage_items} == {existing_stage}
-        finally:
-            bff_main.read_store = original
+        existing_stage = all_resp.json()["data"]["items"][0]["deployment_stage"]
+        stage_resp = client.get(
+            f"/bff/management/persona-fleet?deployment_stage={existing_stage}&page_size=50",
+            headers=OPERATOR_HEADERS,
+        )
+        assert stage_resp.status_code == 200, stage_resp.text
+        stage_items = stage_resp.json()["data"]["items"]
+        assert stage_items
+        assert {item["deployment_stage"] for item in stage_items} == {existing_stage}
 
 
 def test_persona_fleet_compact_sources_use_market_defaults_for_custom_crypto_rows() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
+        client = _fresh_client(td)
+        token = personas_service._current_persona_service.set(client.app.state.service)
         try:
-            _fresh_client(td)
             persona = {
                 "id": "persona-custom-crypto",
                 "persona_id": "persona-custom-crypto",
@@ -575,12 +648,12 @@ def test_persona_fleet_compact_sources_use_market_defaults_for_custom_crypto_row
                 "lifecycle_state": "paper_owner",
                 "metadata": {},
             }
-            context_metadata, context_persona = bff_main._persona_fleet_context_overlay(
+            context_metadata, context_persona = _persona_fleet_context_overlay(
                 persona,
                 {},
-                bff_main._persona_fleet_context_defaults_by_market(),
+                _persona_fleet_context_defaults_by_market(),
             )
-            row = bff_main._project_persona_fleet_list_row(
+            row = _project_persona_fleet_list_row(
                 persona=persona,
                 league_entry={},
                 binding={},
@@ -600,413 +673,378 @@ def test_persona_fleet_compact_sources_use_market_defaults_for_custom_crypto_row
                 "read_unavailable",
             ]
         finally:
-            bff_main.read_store = original
+            personas_service._current_persona_service.reset(token)
 
 
 def test_persona_fleet_requires_authentication() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/management/persona-fleet")
+        client = _fresh_client(td)
+        resp = client.get("/bff/management/persona-fleet")
 
-            assert resp.status_code == 401, resp.text
-            body = resp.json()
-            error = body.get("error") or (body.get("detail") or {}).get("error") or {}
-            assert error["code"] in {"AUTH_REQUIRED", "AUTH_REQUIRED"}
-        finally:
-            bff_main.read_store = original
+        assert resp.status_code == 401, resp.text
+        body = resp.json()
+        error = body.get("error") or (body.get("detail") or {}).get("error") or {}
+        assert error["code"] in {"AUTH_REQUIRED", "AUTH_REQUIRED"}
 
 
 def test_legacy_management_fleet_alias_is_not_registered() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/management/fleet", headers=OPERATOR_HEADERS)
+        client = _fresh_client(td)
+        resp = client.get("/bff/management/fleet", headers=OPERATOR_HEADERS)
 
-            assert resp.status_code == 404, resp.text
-        finally:
-            bff_main.read_store = original
+        assert resp.status_code == 404, resp.text
 
 
 def test_persona_fleet_mutation_evolution_contract() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            persona_id = "persona-20260528-04688755"
-            bff_main.read_store.create_persona(
-                persona_id=persona_id,
-                tenant_id="pantheon-dev",
-                name="Crypto-Alt-Hunter",
-                actor_id="pantheon-dev-browser",
-                created_at="2026-06-03T08:00:00Z",
-                lifecycle_state="active",
-                metadata={
-                    "deployment_stage": "paper",
-                    "capital_mode": "paper",
-                },
-            )
+        client = _fresh_client(td)
+        persona_id = "persona-20260528-04688755"
+        client.app.state.store.create_persona(
+            persona_id=persona_id,
+            tenant_id="pantheon-dev",
+            name="Crypto-Alt-Hunter",
+            actor_id="pantheon-dev-browser",
+            created_at="2026-06-03T08:00:00Z",
+            lifecycle_state="active",
+            metadata={
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+            },
+        )
 
-            decisions = []
-            decision_reads = 0
+        decisions = []
+        decision_reads = 0
 
-            def list_decisions(**_kwargs):
-                nonlocal decision_reads
-                decision_reads += 1
-                return decisions
+        def list_decisions(**_kwargs):
+            nonlocal decision_reads
+            decision_reads += 1
+            return decisions
 
-            bff_main.read_store.list_evolution_decisions = list_decisions
+        client.app.state.store.list_evolution_decisions = list_decisions
 
-            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            fallback = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
-            assert decision_reads == 1
-            assert fallback["last_mutation_kind"] == "fleet_summary"
-            assert fallback["mutation_entry_id"] is None
-            assert fallback["evolution_entry_id"] is None
-            assert fallback["mutation_confidence"] == "fallback"
-            assert fallback["last_mutation_at"] == "2026-06-03T08:00:00Z"
-            assert any("No formal mutation entry id declared" in diag for diag in fallback["mutation_diagnostics"])
-            assert fallback["evolution_href"] == (
-                f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
-            )
+        resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        fallback = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
+        assert decision_reads == 1
+        assert fallback["last_mutation_kind"] == "fleet_summary"
+        assert fallback["mutation_entry_id"] is None
+        assert fallback["evolution_entry_id"] is None
+        assert fallback["mutation_confidence"] == "fallback"
+        assert fallback["last_mutation_at"] == "2026-06-03T08:00:00Z"
+        assert any("No formal mutation entry id declared" in diag for diag in fallback["mutation_diagnostics"])
+        assert fallback["evolution_href"] == (
+            f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
+        )
 
-            decisions[:] = [
-                {
-                    "id": "evo-dec-focus",
-                    "decision_id": "evo-dec-focus",
-                    "target_id": persona_id,
-                    "action_type": "retrain",
-                    "risk_level": "medium",
-                    "status": "approved",
-                    "created_at": "2026-06-05T12:00:00Z",
-                    "updated_at": "2026-06-05T12:00:00Z",
-                }
-            ]
+        decisions[:] = [
+            {
+                "id": "evo-dec-focus",
+                "decision_id": "evo-dec-focus",
+                "target_id": persona_id,
+                "action_type": "retrain",
+                "risk_level": "medium",
+                "status": "approved",
+                "created_at": "2026-06-05T12:00:00Z",
+                "updated_at": "2026-06-05T12:00:00Z",
+            }
+        ]
 
-            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            formal = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
-            assert formal["last_mutation_kind"] == "formal_mutation"
-            assert formal["mutation_entry_id"] == "evo-dec-focus"
-            assert formal["evolution_entry_id"] == "evo-dec-focus"
-            assert formal["mutation_confidence"] == "formal"
-            assert formal["last_mutation_label"] == "2026-06-05"
-            assert formal["last_mutation_at"] == "2026-06-05T12:00:00Z"
-            assert formal["evolution_href"] == (
-                f"/management/evolution-journal?persona={persona_id}&mutation_review=evo-dec-focus"
-            )
+        resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        formal = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
+        assert formal["last_mutation_kind"] == "formal_mutation"
+        assert formal["mutation_entry_id"] == "evo-dec-focus"
+        assert formal["evolution_entry_id"] == "evo-dec-focus"
+        assert formal["mutation_confidence"] == "formal"
+        assert formal["last_mutation_label"] == "2026-06-05"
+        assert formal["last_mutation_at"] == "2026-06-05T12:00:00Z"
+        assert formal["evolution_href"] == (
+            f"/management/evolution-journal?persona={persona_id}&mutation_review=evo-dec-focus"
+        )
 
-            decisions[:] = [
-                {
-                    "id": "NaN",
-                    "decision_id": "NaN",
-                    "target_id": persona_id,
-                    "action_type": "retrain",
-                    "risk_level": "medium",
-                    "status": "approved",
-                    "created_at": "2026-06-06T12:00:00Z",
-                    "updated_at": "2026-06-06T12:00:00Z",
-                },
-                {
-                    "id": "2026-06-06",
-                    "decision_id": "2026-06-06",
-                    "target_id": persona_id,
-                    "action_type": "retrain",
-                    "risk_level": "medium",
-                    "status": "approved",
-                    "created_at": "2026-06-06T11:00:00Z",
-                    "updated_at": "2026-06-06T11:00:00Z",
-                }
-            ]
+        decisions[:] = [
+            {
+                "id": "NaN",
+                "decision_id": "NaN",
+                "target_id": persona_id,
+                "action_type": "retrain",
+                "risk_level": "medium",
+                "status": "approved",
+                "created_at": "2026-06-06T12:00:00Z",
+                "updated_at": "2026-06-06T12:00:00Z",
+            },
+            {
+                "id": "2026-06-06",
+                "decision_id": "2026-06-06",
+                "target_id": persona_id,
+                "action_type": "retrain",
+                "risk_level": "medium",
+                "status": "approved",
+                "created_at": "2026-06-06T11:00:00Z",
+                "updated_at": "2026-06-06T11:00:00Z",
+            }
+        ]
 
-            resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
-            invalid = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
-            assert invalid["last_mutation_kind"] == "fleet_summary"
-            assert invalid["mutation_entry_id"] is None
-            assert invalid["evolution_entry_id"] is None
-            assert "NaN" not in invalid["evolution_href"]
-            assert "2026-06-06" not in invalid["evolution_href"]
+        resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
+        invalid = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
+        assert invalid["last_mutation_kind"] == "fleet_summary"
+        assert invalid["mutation_entry_id"] is None
+        assert invalid["evolution_entry_id"] is None
+        assert "NaN" not in invalid["evolution_href"]
+        assert "2026-06-06" not in invalid["evolution_href"]
 
-            unavailable = bff_main._persona_fleet_mutation_projection(
-                persona_id=persona_id,
-                updated_at=None,
-                evolution_decisions=[],
-                artifact_ids=set(),
-                incident_ids=set(),
-            )
-            assert unavailable["last_mutation_kind"] == "unavailable"
-            assert unavailable["evolution_href"] is None
-
-        finally:
-            bff_main.read_store = original
+        unavailable = _persona_fleet_mutation_projection(
+            persona_id=persona_id,
+            updated_at=None,
+            evolution_decisions=[],
+            artifact_ids=set(),
+            incident_ids=set(),
+        )
+        assert unavailable["last_mutation_kind"] == "unavailable"
+        assert unavailable["evolution_href"] is None
 
 
 def test_paper_persona_fleet_rank_matches_quarterly_ranking_target() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            persona_id = "persona-20260528-04688755"
-            bff_main.read_store.create_persona(
-                persona_id=persona_id,
-                tenant_id="pantheon-dev",
-                name="Crypto-Alt-Hunter",
-                actor_id="pantheon-dev-browser",
-                created_at="2026-06-03T08:00:00Z",
-                lifecycle_state="active",
-                metadata={
-                    "deployment_stage": "paper",
-                    "capital_mode": "paper",
-                },
-            )
+        client = _fresh_client(td)
+        persona_id = "persona-20260528-04688755"
+        client.app.state.store.create_persona(
+            persona_id=persona_id,
+            tenant_id="pantheon-dev",
+            name="Crypto-Alt-Hunter",
+            actor_id="pantheon-dev-browser",
+            created_at="2026-06-03T08:00:00Z",
+            lifecycle_state="active",
+            metadata={
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+            },
+        )
 
-            fleet_resp = client.get(
-                "/bff/management/persona-fleet?page_size=100",
-                headers=OPERATOR_HEADERS,
-            )
-            ranking_resp = client.get(
-                "/bff/management/quarterly-ranking?page_size=200",
-                headers=OPERATOR_HEADERS,
-            )
-            assert fleet_resp.status_code == 200, fleet_resp.text
-            assert ranking_resp.status_code == 200, ranking_resp.text
+        fleet_resp = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=OPERATOR_HEADERS,
+        )
+        ranking_resp = client.get(
+            "/bff/management/quarterly-ranking?page_size=200",
+            headers=OPERATOR_HEADERS,
+        )
+        assert fleet_resp.status_code == 200, fleet_resp.text
+        assert ranking_resp.status_code == 200, ranking_resp.text
 
-            fleet_row = next(
-                item for item in fleet_resp.json()["data"]["items"]
-                if item["id"] == persona_id
-            )
-            ranking_row = next(
-                item for item in ranking_resp.json()["data"]["items"]
-                if item["persona_id"] == persona_id
-            )
-            assert fleet_row["capital_mode"] == "paper"
-            assert fleet_row["league_rank"] == ranking_row["rank"]
-            assert fleet_row["league_score"] == ranking_row["score"]
-            assert fleet_row["rank"]["basis"] == "quarterly_ranking"
-            assert fleet_row["rank"]["period"] == "quarter"
-        finally:
-            bff_main.read_store = original
+        fleet_row = next(
+            item for item in fleet_resp.json()["data"]["items"]
+            if item["id"] == persona_id
+        )
+        ranking_row = next(
+            item for item in ranking_resp.json()["data"]["items"]
+            if item["persona_id"] == persona_id
+        )
+        assert fleet_row["capital_mode"] == "paper"
+        assert fleet_row["league_rank"] == ranking_row["rank"]
+        assert fleet_row["league_score"] == ranking_row["score"]
+        assert fleet_row["rank"]["basis"] == "quarterly_ranking"
+        assert fleet_row["rank"]["period"] == "quarter"
 
 
 def test_paper_rank_snapshot_is_captured_before_broader_fleet_reads() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            persona_id = "persona-20260528-04688755"
-            bff_main.read_store.create_persona(
-                persona_id=persona_id,
-                tenant_id="pantheon-dev",
-                name="Crypto-Alt-Hunter",
-                actor_id="pantheon-dev-browser",
-                created_at="2026-06-03T08:00:00Z",
-                lifecycle_state="active",
-                metadata={
-                    "deployment_stage": "paper",
-                    "capital_mode": "paper",
-                },
-            )
-            expected_resp = client.get(
-                "/bff/management/quarterly-ranking?page_size=200",
-                headers=OPERATOR_HEADERS,
-            )
-            assert expected_resp.status_code == 200, expected_resp.text
-            expected = next(
-                item for item in expected_resp.json()["data"]["items"]
-                if item["persona_id"] == persona_id
-            )
+        client = _fresh_client(td)
+        persona_id = "persona-20260528-04688755"
+        client.app.state.store.create_persona(
+            persona_id=persona_id,
+            tenant_id="pantheon-dev",
+            name="Crypto-Alt-Hunter",
+            actor_id="pantheon-dev-browser",
+            created_at="2026-06-03T08:00:00Z",
+            lifecycle_state="active",
+            metadata={
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+            },
+        )
+        expected_resp = client.get(
+            "/bff/management/quarterly-ranking?page_size=200",
+            headers=OPERATOR_HEADERS,
+        )
+        assert expected_resp.status_code == 200, expected_resp.text
+        expected = next(
+            item for item in expected_resp.json()["data"]["items"]
+            if item["persona_id"] == persona_id
+        )
 
-            list_personas = bff_main.read_store.list_personas
-            broader_fleet_read_seen = False
+        list_personas = client.app.state.store.list_personas
+        broader_fleet_read_seen = False
 
-            def order_sensitive_list_personas(*args, **kwargs):
-                nonlocal broader_fleet_read_seen
-                include_defaults = bool(kwargs.get("include_market_persona_defaults"))
-                if include_defaults:
-                    broader_fleet_read_seen = True
-                elif broader_fleet_read_seen:
-                    return []
-                return list_personas(*args, **kwargs)
+        def order_sensitive_list_personas(*args, **kwargs):
+            nonlocal broader_fleet_read_seen
+            include_defaults = bool(kwargs.get("include_market_persona_defaults"))
+            if include_defaults:
+                broader_fleet_read_seen = True
+            elif broader_fleet_read_seen:
+                return []
+            return list_personas(*args, **kwargs)
 
-            bff_main.read_store.list_personas = order_sensitive_list_personas
-            fleet_resp = client.get(
-                "/bff/management/persona-fleet?page_size=100",
-                headers=OPERATOR_HEADERS,
-            )
-            assert fleet_resp.status_code == 200, fleet_resp.text
-            fleet_row = next(
-                item for item in fleet_resp.json()["data"]["items"]
-                if item["id"] == persona_id
-            )
-            assert broader_fleet_read_seen is True
-            assert fleet_row["league_rank"] == expected["rank"]
-            assert fleet_row["league_score"] == expected["score"]
-            assert fleet_row["rank"]["basis"] == "quarterly_ranking"
-        finally:
-            bff_main.read_store = original
+        client.app.state.store.list_personas = order_sensitive_list_personas
+        fleet_resp = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=OPERATOR_HEADERS,
+        )
+        assert fleet_resp.status_code == 200, fleet_resp.text
+        fleet_row = next(
+            item for item in fleet_resp.json()["data"]["items"]
+            if item["id"] == persona_id
+        )
+        assert broader_fleet_read_seen is True
+        assert fleet_row["league_rank"] == expected["rank"]
+        assert fleet_row["league_score"] == expected["score"]
+        assert fleet_row["rank"]["basis"] == "quarterly_ranking"
 
 
 def test_sd_agc_03_persona_list_fleet_detail_admitted_identity_symmetry() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            list_resp = client.get("/bff/personas?page_size=100", headers=OPERATOR_HEADERS)
-            fleet_resp = client.get("/bff/management/persona-fleet?page_size=100", headers=OPERATOR_HEADERS)
+        client = _fresh_client(td)
+        list_resp = client.get("/bff/personas?page_size=100", headers=OPERATOR_HEADERS)
+        fleet_resp = client.get("/bff/management/persona-fleet?page_size=100", headers=OPERATOR_HEADERS)
 
-            assert list_resp.status_code == 200, list_resp.text
-            assert fleet_resp.status_code == 200, fleet_resp.text
+        assert list_resp.status_code == 200, list_resp.text
+        assert fleet_resp.status_code == 200, fleet_resp.text
 
-            list_items = list_resp.json()["data"]
-            fleet_items = fleet_resp.json()["data"]["items"]
+        list_items = list_resp.json()["data"]
+        fleet_items = fleet_resp.json()["data"]["items"]
 
-            list_ids = [item["id"] for item in list_items]
-            fleet_ids = [item["id"] for item in fleet_items]
+        list_ids = [item["id"] for item in list_items]
+        fleet_ids = [item["id"] for item in fleet_items]
 
-            # Invariant 1: Persona list and fleet share identical admitted identity set
-            assert set(list_ids) == set(fleet_ids)
-            assert len(list_ids) == len(fleet_ids)
-            assert len(list_ids) >= 1
+        # Invariant 1: Persona list and fleet share identical admitted identity set
+        assert set(list_ids) == set(fleet_ids)
+        assert len(list_ids) == len(fleet_ids)
+        assert len(list_ids) >= 1
 
-            # Invariant 2: Page info and summary totals are consistent
-            list_page_info = list_resp.json()["page_info"]
-            fleet_summary = fleet_resp.json()["data"]["summary"]
-            assert list_page_info["canonical_total"] == len(list_ids)
-            assert fleet_summary["canonical_total"] == len(fleet_ids)
+        # Invariant 2: Page info and summary totals are consistent
+        list_page_info = list_resp.json()["page_info"]
+        fleet_summary = fleet_resp.json()["data"]["summary"]
+        assert list_page_info["canonical_total"] == len(list_ids)
+        assert fleet_summary["canonical_total"] == len(fleet_ids)
 
-            # Invariant 3: Every fleet detail link resolves with 200 and the same ID
-            for item in fleet_items:
-                persona_id = item["id"]
-                detail_resp = client.get(f"/bff/personas/{persona_id}", headers=OPERATOR_HEADERS)
-                assert detail_resp.status_code == 200, f"Detail lookup for {persona_id} failed: {detail_resp.text}"
-                detail_data = detail_resp.json()["data"]
-                assert detail_data["id"] == persona_id
-                assert detail_data["name"]
-        finally:
-            bff_main.read_store = original
+        # Invariant 3: Every fleet detail link resolves with 200 and the same ID
+        for item in fleet_items:
+            persona_id = item["id"]
+            detail_resp = client.get(f"/bff/personas/{persona_id}", headers=OPERATOR_HEADERS)
+            assert detail_resp.status_code == 200, f"Detail lookup for {persona_id} failed: {detail_resp.text}"
+            detail_data = detail_resp.json()["data"]
+            assert detail_data["id"] == persona_id
+            assert detail_data["name"]
 
 
 def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            # Store without fallback - only dev-probe is admitted
-            store = _PersonaFleetTestStore(
-                {
-                    "personas": [
-                        {
-                            "id": "persona-dev-probe",
-                            "persona_id": "persona-dev-probe",
-                            "name": "dev-probe",
-                            "lifecycle_state": "paper",
-                            "status": "healthy",
-                            "created_at": "2026-06-03T08:27:44Z",
-                            "updated_at": "2026-06-03T08:27:44Z",
-                            "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
-                            "canonicalWriteAuthority": "persona_registry_service",
-                            "persistenceMode": "bff_local_dev_store",
-                        },
-                        {
-                            "id": "persona-other-tenant",
-                            "persona_id": "persona-other-tenant",
-                            "name": "other-tenant-persona",
-                            "lifecycle_state": "paper",
-                            "status": "healthy",
-                            "created_at": "2026-06-03T08:27:44Z",
-                            "updated_at": "2026-06-03T08:27:44Z",
-                            "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
-                            "canonicalWriteAuthority": "persona_registry_service",
-                            "persistenceMode": "bff_local_dev_store",
-                        },
-                    ]
-                }
-            )
-            bff_main.read_store = store
-            bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-            bff_main.read_store._data = {
-                "persona-dev-probe": {
-                    "id": "persona-dev-probe",
-                    "persona_id": "persona-dev-probe",
-                    "name": "dev-probe",
-                    "lifecycle_state": "paper",
-                    "status": "healthy",
-                    "created_at": "2026-06-03T08:27:44Z",
-                    "updated_at": "2026-06-03T08:27:44Z",
-                    "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
-                    "canonicalWriteAuthority": "persona_registry_service",
-                    "persistenceMode": "bff_local_dev_store",
-                },
-                "persona-other-tenant": {
-                    "id": "persona-other-tenant",
-                    "persona_id": "persona-other-tenant",
-                    "name": "other-tenant-persona",
-                    "lifecycle_state": "paper",
-                    "status": "healthy",
-                    "created_at": "2026-06-03T08:27:44Z",
-                    "updated_at": "2026-06-03T08:27:44Z",
-                    "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
-                    "canonicalWriteAuthority": "persona_registry_service",
-                    "persistenceMode": "bff_local_dev_store",
-                },
+        # Store without fallback - only dev-probe is admitted
+        store = _PersonaFleetTestStore(
+            {
+                "personas": [
+                    {
+                        "id": "persona-dev-probe",
+                        "persona_id": "persona-dev-probe",
+                        "name": "dev-probe",
+                        "lifecycle_state": "paper",
+                        "status": "healthy",
+                        "created_at": "2026-06-03T08:27:44Z",
+                        "updated_at": "2026-06-03T08:27:44Z",
+                        "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
+                        "canonicalWriteAuthority": "persona_registry_service",
+                        "persistenceMode": "bff_local_dev_store",
+                    },
+                    {
+                        "id": "persona-other-tenant",
+                        "persona_id": "persona-other-tenant",
+                        "name": "other-tenant-persona",
+                        "lifecycle_state": "paper",
+                        "status": "healthy",
+                        "created_at": "2026-06-03T08:27:44Z",
+                        "updated_at": "2026-06-03T08:27:44Z",
+                        "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
+                        "canonicalWriteAuthority": "persona_registry_service",
+                        "persistenceMode": "bff_local_dev_store",
+                    },
+                ]
             }
+        )
+        store._data = {
+            "persona-dev-probe": {
+                "id": "persona-dev-probe",
+                "persona_id": "persona-dev-probe",
+                "name": "dev-probe",
+                "lifecycle_state": "paper",
+                "status": "healthy",
+                "created_at": "2026-06-03T08:27:44Z",
+                "updated_at": "2026-06-03T08:27:44Z",
+                "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
+                "canonicalWriteAuthority": "persona_registry_service",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "persona-other-tenant": {
+                "id": "persona-other-tenant",
+                "persona_id": "persona-other-tenant",
+                "name": "other-tenant-persona",
+                "lifecycle_state": "paper",
+                "status": "healthy",
+                "created_at": "2026-06-03T08:27:44Z",
+                "updated_at": "2026-06-03T08:27:44Z",
+                "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
+                "canonicalWriteAuthority": "persona_registry_service",
+                "persistenceMode": "bff_local_dev_store",
+            },
+        }
 
-            client = TestClient(bff_main.app)
+        app = _create_app(store)
+        client = TestClient(app)
 
-            # 1. Admitted persona resolves
-            admitted_resp = client.get("/bff/personas/persona-dev-probe", headers=OPERATOR_HEADERS)
-            assert admitted_resp.status_code == 200, admitted_resp.text
-            assert admitted_resp.json()["data"]["id"] == "persona-dev-probe"
+        # 1. Admitted persona resolves
+        admitted_resp = client.get("/bff/personas/persona-dev-probe", headers=OPERATOR_HEADERS)
+        assert admitted_resp.status_code == 200, admitted_resp.text
+        assert admitted_resp.json()["data"]["id"] == "persona-dev-probe"
 
-            # 2. Foreign-tenant persona returns 404
-            foreign_resp = client.get("/bff/personas/persona-other-tenant", headers=OPERATOR_HEADERS)
-            assert foreign_resp.status_code == 404, foreign_resp.text
-            assert foreign_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+        # 2. Foreign-tenant persona returns 404
+        foreign_resp = client.get("/bff/personas/persona-other-tenant", headers=OPERATOR_HEADERS)
+        assert foreign_resp.status_code == 404, foreign_resp.text
+        assert foreign_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
-            # 3. Unadmitted catalog default returns 404 (not ghost navigable)
-            catalog_default_resp = client.get("/bff/personas/persona-crypto", headers=OPERATOR_HEADERS)
-            assert catalog_default_resp.status_code == 404, catalog_default_resp.text
-            assert catalog_default_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+        # 3. Unadmitted catalog default returns 404 (not ghost navigable)
+        catalog_default_resp = client.get("/bff/personas/persona-crypto", headers=OPERATOR_HEADERS)
+        assert catalog_default_resp.status_code == 404, catalog_default_resp.text
+        assert catalog_default_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
-            # 4. Unknown random identity returns 404
-            unknown_resp = client.get("/bff/personas/persona-nonexistent-999", headers=OPERATOR_HEADERS)
-            assert unknown_resp.status_code == 404, unknown_resp.text
-            assert unknown_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+        # 4. Unknown random identity returns 404
+        unknown_resp = client.get("/bff/personas/persona-nonexistent-999", headers=OPERATOR_HEADERS)
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert unknown_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
-            # 5. List and Fleet contain only persona-dev-probe
-            fleet_resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
-            assert fleet_resp.status_code == 200
-            fleet_items = fleet_resp.json()["data"]["items"]
-            assert len(fleet_items) == 1
-            assert fleet_items[0]["id"] == "persona-dev-probe"
-            assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
-        finally:
-            bff_main.read_store = original
+        # 5. List and Fleet contain only persona-dev-probe
+        fleet_resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+        assert fleet_resp.status_code == 200
+        fleet_items = fleet_resp.json()["data"]["items"]
+        assert len(fleet_items) == 1
+        assert fleet_items[0]["id"] == "persona-dev-probe"
+        assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
 
 
 def test_persona_fleet_returns_200_for_operator_and_viewer_with_read_surface_ports() -> None:
     """Acceptance criterion 4: GET management persona-fleet returns 200 for authenticated operator and viewer cases used by the hosted journey."""
-    from ports.read_surface_ports import create_read_surface_ports
-
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            backing_store = bff_main.read_store
-            bff_main.read_store = create_read_surface_ports(persona_registry_store=backing_store)
-            assert isinstance(bff_main.read_store, bff_main.ReadSurfacePorts)
+        client = _fresh_client(td)
+        backing_store = client.app.state.store
+        ports = create_read_surface_ports(persona_registry_store=backing_store)
+        assert isinstance(ports, ReadSurfacePorts)
 
-            op_resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
-            assert op_resp.status_code == 200, op_resp.text
-            assert "items" in op_resp.json()["data"]
+        app = _create_app(ports)
+        port_client = TestClient(app)
 
-            viewer_headers = {"Authorization": "Bearer viewer-b3:viewer"}
-            viewer_resp = client.get("/bff/management/persona-fleet", headers=viewer_headers)
-            assert viewer_resp.status_code == 200, viewer_resp.text
-            assert "items" in viewer_resp.json()["data"]
-        finally:
-            bff_main.read_store = original
+        op_resp = port_client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+        assert op_resp.status_code == 200, op_resp.text
+        assert "items" in op_resp.json()["data"]
+
+        viewer_headers = {"Authorization": "Bearer viewer-b3:viewer"}
+        viewer_resp = port_client.get("/bff/management/persona-fleet", headers=viewer_headers)
+        assert viewer_resp.status_code == 200, viewer_resp.text
+        assert "items" in viewer_resp.json()["data"]

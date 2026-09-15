@@ -16,6 +16,24 @@ on:
       - scripts/*dev_paper_principal*.py
       - scripts/test_governance_runtime_image.py
       - scripts/test_dev_deployment_tenant.py
+      - scripts/dev_release_artifacts.py
+      - scripts/test_dev_release_artifacts.py
+      - scripts/dev_release_artifact_driver.py
+      - scripts/test_dev_release_artifact_driver.py
+      - scripts/capture_dev_artifact_baseline.py
+      - scripts/test_capture_dev_artifact_baseline.py
+      - scripts/dev_candidate_receipt.py
+      - scripts/test_dev_candidate_receipt.py
+      - scripts/dev_remote_guarded_exec.py
+      - scripts/dev_remote_watchdog.py
+      - scripts/test_dev_remote_guarded_exec.py
+      - scripts/fetch_dev_artifact_evidence.py
+      - scripts/test_fetch_dev_artifact_evidence.py
+      - scripts/dev_artifact_compensation_evidence.py
+      - scripts/compensate_cross_repo_release.sh
+      - scripts/test_dev_artifact_compensation_evidence.py
+      - scripts/test_deploy_nonprod_artifact_restore.py
+      - scripts/test_nonprod_dev_artifact_workflow.py
       - scripts/run_dev_paper_baseline_with_diagnostics.sh
       - scripts/test_dev_paper_release_stimulus.py
       - docker-compose.yml
@@ -76,6 +94,15 @@ jobs:
       - name: Verify real owners, paper scope, renewal and durable receipt reload
         run: |
           python3 -m pytest -q \
+            scripts/test_dev_release_artifacts.py \
+            scripts/test_dev_release_artifact_driver.py \
+            scripts/test_capture_dev_artifact_baseline.py \
+            scripts/test_dev_candidate_receipt.py \
+            scripts/test_dev_remote_guarded_exec.py \
+            scripts/test_fetch_dev_artifact_evidence.py \
+            scripts/test_dev_artifact_compensation_evidence.py \
+            scripts/test_deploy_nonprod_artifact_restore.py \
+            scripts/test_nonprod_dev_artifact_workflow.py \
             scripts/test_dev_deployment_tenant.py \
             scripts/test_dev_paper_release_stimulus.py \
             scripts/test_bootstrap_dev_paper_baseline.py \

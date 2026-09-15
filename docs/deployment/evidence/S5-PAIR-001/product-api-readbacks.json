@@ -1,0 +1,4136 @@
+{
+  "scope": "actual authenticated API readbacks, not browser journey or complete business handoff",
+  "version": {
+    "at": "2026-09-13T10:28:07.747237+00:00",
+    "path": "/bff/version",
+    "status": 200,
+    "body": {
+      "service": "operator-bff",
+      "version": "0.2.0",
+      "source_commit_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "commit": "ae41705b4637110e665d2eed735afbd8307e28e6",
+      "source_commit_known": true,
+      "image_digest": "sha256:a9ceabe68af47623dbfeae554b01d64a5663be7fe0d6d4089f0d952c14dc0467",
+      "build_time": "2026-09-13T10:06:38Z",
+      "environment": "dev",
+      "config_posture": {
+        "auth_stub": false,
+        "auth_mode": "strict",
+        "dev_login_enabled": true,
+        "mfa_required": false,
+        "assistant_kernel_enabled": true,
+        "trade_journey_reader_backend": "postgres",
+        "trade_journey_projection_schema": "trade_journey_projection"
+      }
+    },
+    "cors_origin": "https://app.dev.mvl-cap.tw",
+    "cors_credentials": "true"
+  },
+  "reads": [
+    {
+      "at": "2026-09-13T10:28:07.761372+00:00",
+      "path": "/bff/me",
+      "status": 200,
+      "body": {
+        "data": {
+          "operator_id": "pantheon-dev-operator-a",
+          "operatorId": "pantheon-dev-operator-a",
+          "user": {
+            "id": "pantheon-dev-operator-a",
+            "operator_id": "pantheon-dev-operator-a",
+            "display_name": "pantheon-dev-operator-a",
+            "roles": [
+              "operator"
+            ],
+            "capabilities": [
+              "runtime.read",
+              "risk.incident.read",
+              "risk.alert.read",
+              "artifact.read"
+            ],
+            "mfa_verified": false
+          },
+          "current_user": {
+            "id": "pantheon-dev-operator-a",
+            "operator_id": "pantheon-dev-operator-a",
+            "display_name": "pantheon-dev-operator-a",
+            "roles": [
+              "operator"
+            ],
+            "capabilities": [
+              "runtime.read",
+              "risk.incident.read",
+              "risk.alert.read",
+              "artifact.read"
+            ],
+            "mfa_verified": false
+          },
+          "currentUser": {
+            "id": "pantheon-dev-operator-a",
+            "operator_id": "pantheon-dev-operator-a",
+            "display_name": "pantheon-dev-operator-a",
+            "roles": [
+              "operator"
+            ],
+            "capabilities": [
+              "runtime.read",
+              "risk.incident.read",
+              "risk.alert.read",
+              "artifact.read"
+            ],
+            "mfa_verified": false
+          },
+          "tenant": {
+            "id": "tenant-dev",
+            "requested_id": null,
+            "default_id": "tenant-dev",
+            "allowed_ids": [
+              "tenant-dev",
+              "pantheon-dev",
+              "pantheon-local"
+            ],
+            "scope": "tenant",
+            "source": "default"
+          },
+          "tenant_id": "tenant-dev",
+          "tenantId": "tenant-dev",
+          "allowed_tenants": [
+            "tenant-dev",
+            "pantheon-dev",
+            "pantheon-local"
+          ],
+          "allowedTenants": [
+            "tenant-dev",
+            "pantheon-dev",
+            "pantheon-local"
+          ],
+          "locale": {
+            "resolved": "en-US",
+            "requested": null,
+            "accept_language": null,
+            "default": "en-US",
+            "timezone": "UTC",
+            "source": "default"
+          },
+          "environment": {
+            "name": "dev",
+            "deployment_stage": "dev",
+            "region": "",
+            "timezone": "UTC",
+            "auth_mode": "strict",
+            "strict_auth": true
+          },
+          "feature_flags": {
+            "executePlansBff": true,
+            "sessionAuthMe": true
+          },
+          "featureFlags": {
+            "executePlansBff": true,
+            "sessionAuthMe": true
+          },
+          "session": {
+            "id": "dev-login-06d8caf302ba4ef2b02f7474d9b93c2f",
+            "authenticated": true,
+            "auth_mode": "jwt",
+            "session_kind": "bearer",
+            "fresh": true,
+            "freshness_seconds_remaining": 1799,
+            "issued_at": "2026-09-13T10:28:07Z",
+            "expires_at": "2026-09-13T10:58:07Z",
+            "mfa_verified": false,
+            "checked_at": "2026-09-13T10:28:07Z",
+            "state": "active"
+          },
+          "session_kind": "bearer",
+          "sessionKind": "bearer",
+          "roles": [
+            "operator"
+          ],
+          "capabilities": [
+            "runtime.read",
+            "risk.incident.read",
+            "risk.alert.read",
+            "artifact.read"
+          ]
+        },
+        "meta": {
+          "route": "GET /bff/me",
+          "contract": "BFF-LUV-GAP-009",
+          "correlationId": "ea55696a-a87f-48fd-845e-fc4a5e878ed5",
+          "snapshot_at": "2026-09-13T10:28:07Z"
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:07.845655+00:00",
+      "path": "/bff/management/cockpit",
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "management-cockpit",
+          "snapshot_at": "2026-09-13T10:28:07Z",
+          "operator_home": {
+            "cards": [
+              {
+                "card_id": "alerts",
+                "label": "Alerts",
+                "status": "ok",
+                "summary": "No active incidents.",
+                "details": {
+                  "total_incidents": 0,
+                  "open_incidents": 0
+                },
+                "target_refs": [
+                  {
+                    "surface_id": "OC-02",
+                    "label": "Open alerts rail",
+                    "href": "/bff/alerts"
+                  }
+                ]
+              },
+              {
+                "card_id": "incidents",
+                "label": "Incidents",
+                "status": "ok",
+                "summary": "No active incidents.",
+                "details": {
+                  "total_incidents": 0,
+                  "open_incidents": 0
+                },
+                "target_refs": [
+                  {
+                    "surface_id": "OC-02",
+                    "label": "Incidents",
+                    "href": "/bff/alerts"
+                  }
+                ]
+              },
+              {
+                "card_id": "governance",
+                "label": "Governance",
+                "status": "ok",
+                "summary": "Governance queues clear.",
+                "details": {
+                  "total_items": 0,
+                  "pending_items": 0
+                },
+                "target_refs": [
+                  {
+                    "surface_id": "OC-01",
+                    "label": "Approval Queue",
+                    "href": "/api/v1/operator/governance/approval-queue"
+                  }
+                ]
+              },
+              {
+                "card_id": "runtime",
+                "label": "Runtime",
+                "status": "ok",
+                "summary": "No active runtime bindings.",
+                "details": {
+                  "runtime": {
+                    "total_runtimes": 0,
+                    "active_runtimes": 0
+                  },
+                  "telemetry": {
+                    "telemetry_count": 0
+                  }
+                },
+                "target_refs": [
+                  {
+                    "surface_id": "OC-04",
+                    "label": "Runtime State",
+                    "href": "/api/v1/operator/runtime-state"
+                  }
+                ]
+              },
+              {
+                "card_id": "health",
+                "label": "Health",
+                "status": "ok",
+                "summary": "All health groups are responding normally.",
+                "details": {
+                  "headline": "Control plane healthy",
+                  "group_counts": {
+                    "ok": 5,
+                    "degraded": 0,
+                    "unavailable": 0
+                  },
+                  "safe_mode_state": {
+                    "status": "off",
+                    "kill_switch_status": "armed",
+                    "active": false,
+                    "last_confirmed_at": "2026-09-13T10:28:07Z",
+                    "last_triggered_at": null,
+                    "secondary_path_available": true
+                  }
+                },
+                "target_refs": [
+                  {
+                    "surface_id": "OC-03",
+                    "label": "Health Status",
+                    "href": "/api/v1/operator/health-status"
+                  }
+                ]
+              }
+            ],
+            "meta": {
+              "snapshot_at": "2026-09-13T10:28:07Z",
+              "surfaces": {
+                "operator_home": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "health_status": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "runtime": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "telemetry": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "incident": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "governance": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "kill_switch": {
+                  "status": "ok",
+                  "source": "store"
+                }
+              }
+            }
+          },
+          "runtime_health": {
+            "overall_status": "ok",
+            "headline": "Control plane healthy",
+            "message": "All health groups are responding normally.",
+            "group_counts": {
+              "ok": 5,
+              "degraded": 0,
+              "unavailable": 0
+            },
+            "safe_mode_state": {
+              "status": "off",
+              "kill_switch_status": "armed",
+              "active": false,
+              "last_confirmed_at": "2026-09-13T10:28:07Z",
+              "last_triggered_at": null,
+              "secondary_path_available": true
+            },
+            "secondary_control_path": {
+              "mode": "hidden",
+              "reason": null,
+              "targets": []
+            },
+            "groups": [
+              {
+                "group_id": "runtime",
+                "label": "Strategy Runtime Bindings",
+                "status": "ok",
+                "summary": "No active runtime bindings.",
+                "details": {
+                  "total_runtimes": 0,
+                  "active_runtimes": 0
+                },
+                "target_refs": [
+                  {
+                    "label": "Runtime State",
+                    "href": "/api/v1/operator/runtime-state"
+                  }
+                ]
+              },
+              {
+                "group_id": "telemetry",
+                "label": "Paper Execution Telemetry",
+                "status": "ok",
+                "summary": "No active telemetry feeds.",
+                "details": {
+                  "telemetry_count": 0
+                },
+                "target_refs": [
+                  {
+                    "label": "Telemetry",
+                    "href": "/bff/management/paper-telemetry"
+                  }
+                ]
+              },
+              {
+                "group_id": "incident",
+                "label": "Active Incident Alerts",
+                "status": "ok",
+                "summary": "No active incidents.",
+                "details": {
+                  "total_incidents": 0,
+                  "open_incidents": 0
+                },
+                "target_refs": [
+                  {
+                    "label": "Incidents",
+                    "href": "/bff/alerts"
+                  }
+                ]
+              },
+              {
+                "group_id": "governance",
+                "label": "Governance & Approvals",
+                "status": "ok",
+                "summary": "Governance queues clear.",
+                "details": {
+                  "total_items": 0,
+                  "pending_items": 0
+                },
+                "target_refs": [
+                  {
+                    "label": "Approval Queue",
+                    "href": "/api/v1/operator/governance/approval-queue"
+                  }
+                ]
+              },
+              {
+                "group_id": "kill_switch",
+                "label": "Kill Switch & Safe Mode",
+                "status": "ok",
+                "summary": "Kill switch armed, Safe mode off.",
+                "details": {
+                  "active": false,
+                  "active_freeze_orders": [],
+                  "last_checked_at": "",
+                  "safe_mode_status": "off",
+                  "status": "armed",
+                  "last_triggered_at": null,
+                  "last_confirmed_at": "",
+                  "active_commands": [],
+                  "secondary_path_available": true
+                },
+                "target_refs": [
+                  {
+                    "label": "Kill Switch",
+                    "href": "/api/v1/operator/kill-switch"
+                  }
+                ]
+              }
+            ],
+            "meta": {
+              "snapshot_at": "2026-09-13T10:28:07Z",
+              "surfaces": {
+                "health_status": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "runtime": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "telemetry": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "incident": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "governance": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "kill_switch": {
+                  "status": "ok",
+                  "source": "store"
+                }
+              }
+            }
+          },
+          "alerts": {
+            "items": [],
+            "summary": {
+              "total_active": 0,
+              "highest_severity": "normal",
+              "by_severity": {},
+              "by_category": {}
+            },
+            "meta": {
+              "snapshot_at": "2026-09-13T10:28:07Z",
+              "version": "v1",
+              "acknowledgement_supported": true,
+              "surfaces": {
+                "alerts": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "incident_feed": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "review_queue": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "approval_queue": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "kill_switch": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "runtime_roster": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "telemetry_summary": {
+                  "status": "ok",
+                  "source": "store"
+                }
+              }
+            }
+          },
+          "human_inbox": {
+            "data": {
+              "id": "management-human-inbox",
+              "items": [],
+              "summary": {
+                "total": 0,
+                "total_items": 0,
+                "governance_review_count": 0,
+                "approval_count": 0,
+                "intervention_count": 0,
+                "sentinel_finding_count": 0,
+                "priority_counts": {
+                  "critical": 0,
+                  "high": 0,
+                  "medium": 0,
+                  "low": 0
+                }
+              }
+            },
+            "page_info": {
+              "next_page_token": null,
+              "total": 0,
+              "page_size": 20
+            },
+            "meta": {
+              "snapshot_at": "2026-09-13T10:28:07Z",
+              "version": "v1",
+              "surfaces": {
+                "approval_queue": {
+                  "status": "unavailable",
+                  "source": "read_store",
+                  "snapshot_at": "2026-09-13T10:28:07Z",
+                  "message": "Approval queue has no readable source records."
+                },
+                "governance_review_queue": {
+                  "status": "unavailable",
+                  "source": "read_store",
+                  "snapshot_at": "2026-09-13T10:28:07Z",
+                  "message": "Governance review queue has no readable source records."
+                },
+                "v5_interventions": {
+                  "status": "unavailable",
+                  "source": "read_store",
+                  "snapshot_at": "2026-09-13T10:28:07Z",
+                  "message": "V5 interventions have no readable source records."
+                },
+                "sentinel_findings": {
+                  "status": "unavailable",
+                  "source": "missing",
+                  "snapshot_at": "2026-09-13T10:28:07Z",
+                  "message": "Sentinel findings have no readable source records."
+                },
+                "persona_readiness": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "human_inbox": {
+                  "status": "degraded",
+                  "source": "bff_composed",
+                  "message": "One or more contributing surfaces for human_inbox are degraded.",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                }
+              }
+            }
+          },
+          "trading_pulse": {
+            "id": "management-trading-pulse",
+            "summary": {
+              "runtime_count": 0,
+              "telemetry_coverage_count": 0,
+              "by_status": {},
+              "by_stage": {},
+              "total_pnl": null,
+              "worst_drawdown": null,
+              "average_fill_rate": null,
+              "worst_slippage_bps": null,
+              "total_trades": 0,
+              "baseline_comparison_count": 0,
+              "baseline_breached_count": 0,
+              "baseline_watch_count": 0,
+              "by_baseline_status": {},
+              "row_health_degraded_count": 0,
+              "row_health_status_counts": {},
+              "monitoring_coverage_count": 0,
+              "missing_telemetry_runtime_ids": [],
+              "missing_monitoring_runtime_ids": [],
+              "missing_baseline_runtime_ids": [],
+              "metric_coverage": {
+                "pnl": {
+                  "available_count": 0,
+                  "missing_count": 0,
+                  "missing_runtime_ids": []
+                },
+                "drawdown": {
+                  "available_count": 0,
+                  "missing_count": 0,
+                  "missing_runtime_ids": []
+                },
+                "sharpe_ratio": {
+                  "available_count": 0,
+                  "missing_count": 0,
+                  "missing_runtime_ids": []
+                },
+                "fill_rate": {
+                  "available_count": 0,
+                  "missing_count": 0,
+                  "missing_runtime_ids": []
+                },
+                "avg_slippage_bps": {
+                  "available_count": 0,
+                  "missing_count": 0,
+                  "missing_runtime_ids": []
+                },
+                "total_trades": {
+                  "available_count": 0,
+                  "missing_count": 0,
+                  "missing_runtime_ids": []
+                }
+              },
+              "coverage": {
+                "runtime_count": 0,
+                "paper_runtime_count": 0,
+                "telemetry_coverage_count": 0,
+                "monitoring_coverage_count": 0,
+                "baseline_comparison_count": 0,
+                "missing_telemetry_runtime_ids": [],
+                "missing_monitoring_runtime_ids": [],
+                "missing_baseline_runtime_ids": [],
+                "row_health_status_counts": {},
+                "row_health_degraded_count": 0,
+                "degraded_runtime_ids": [],
+                "metric_coverage": {
+                  "pnl": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  },
+                  "drawdown": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  },
+                  "sharpe_ratio": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  },
+                  "fill_rate": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  },
+                  "avg_slippage_bps": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  },
+                  "total_trades": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  }
+                }
+              }
+            },
+            "cards": [
+              {
+                "card_id": "runtime-status",
+                "label": "Runtime Status",
+                "value": 0,
+                "details": {
+                  "by_status": {},
+                  "by_stage": {},
+                  "row_health_status_counts": {}
+                }
+              },
+              {
+                "card_id": "row-health",
+                "label": "Row Health",
+                "value": 0,
+                "details": {
+                  "row_health_status_counts": {},
+                  "degraded_runtime_ids": []
+                }
+              },
+              {
+                "card_id": "pnl",
+                "label": "P&L",
+                "value": null,
+                "details": {
+                  "telemetry_coverage_count": 0,
+                  "metric_coverage": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  }
+                }
+              },
+              {
+                "card_id": "drawdown",
+                "label": "Worst Drawdown",
+                "value": null,
+                "details": {
+                  "source": "telemetry_summaries",
+                  "metric_coverage": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  }
+                }
+              },
+              {
+                "card_id": "execution-quality",
+                "label": "Execution Quality",
+                "value": null,
+                "details": {
+                  "worst_slippage_bps": null,
+                  "metric_coverage": {
+                    "available_count": 0,
+                    "missing_count": 0,
+                    "missing_runtime_ids": []
+                  }
+                }
+              },
+              {
+                "card_id": "baseline-comparison",
+                "label": "Baseline Comparison",
+                "value": 0,
+                "details": {
+                  "baseline_comparison_count": 0,
+                  "by_baseline_status": {},
+                  "missing_baseline_runtime_ids": []
+                }
+              }
+            ],
+            "rankings": [],
+            "runtime_rows": [],
+            "baseline_comparisons": []
+          },
+          "anomalies": {
+            "items": [],
+            "summary": {
+              "total": 0
+            },
+            "meta": {
+              "snapshot_at": "2026-09-13T10:28:07Z",
+              "version": "v1",
+              "surfaces": {
+                "management_anomalies": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "anomalies": {
+                  "status": "ok",
+                  "source": "bff_composed",
+                  "snapshot_at": "2026-09-13T10:28:07Z"
+                },
+                "sentinel_findings": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "runtime_roster": {
+                  "status": "ok",
+                  "source": "store"
+                },
+                "telemetry_summary": {
+                  "status": "ok",
+                  "source": "store"
+                }
+              }
+            }
+          },
+          "links": {
+            "self": "/bff/management/cockpit",
+            "operator_home": "/api/v1/operator/home",
+            "runtime_health": "/api/v1/operator/health-status",
+            "alerts": "/bff/alerts",
+            "human_inbox": "/bff/management/human-inbox",
+            "trading_pulse": "/bff/management/trading-pulse"
+          }
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:07Z",
+          "surfaces": {
+            "management_cockpit": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "One or more contributing surfaces for management_cockpit are degraded.",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "operator_home": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "runtime_health": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "alerts": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "human_inbox": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "One or more contributing surfaces for human_inbox are degraded.",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "trading_pulse": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "management_trading_pulse": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "anomalies": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            },
+            "management_anomalies": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:07Z"
+            }
+          }
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:08.522966+00:00",
+      "path": "/bff/management/persona-fleet",
+      "status": 200,
+      "body": {
+        "data": {
+          "items": [
+            {
+              "id": "persona-21cdbed183c80cf371df",
+              "persona_id": "persona-21cdbed183c80cf371df",
+              "last_mutation_label": "2026-09-11",
+              "lastMutationLabel": "2026-09-11",
+              "last_mutation_at": "2026-09-11T12:28:24.228033Z",
+              "lastMutationAt": "2026-09-11T12:28:24.228033Z",
+              "last_mutation_kind": "fleet_summary",
+              "lastMutationKind": "fleet_summary",
+              "mutation_entry_id": null,
+              "mutationEntryId": null,
+              "evolution_entry_id": null,
+              "evolutionEntryId": null,
+              "evolution_href": "/management/evolution-journal?persona=persona-21cdbed183c80cf371df&source=fleet_summary",
+              "evolutionHref": "/management/evolution-journal?persona=persona-21cdbed183c80cf371df&source=fleet_summary",
+              "mutation_confidence": "fallback",
+              "mutationConfidence": "fallback",
+              "mutation_diagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "mutationDiagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "name": "Pantheon Dev Paper Release 34596927306 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "mode": "paper",
+              "status": "degraded",
+              "health": "degraded",
+              "score": 75.0,
+              "ooda": "Observe",
+              "autonomy": "supervised",
+              "perf_delta": null,
+              "perfDelta": null,
+              "has_trading_telemetry": false,
+              "hasTradingTelemetry": false,
+              "is_market_persona_default": false,
+              "isMarketPersonaDefault": false,
+              "seed_row": false,
+              "seedRow": false,
+              "human_needed": false,
+              "last_mutation": "2026-09-11",
+              "state": "paper_running",
+              "current_work": null,
+              "routed_strategies": 0,
+              "open_findings": 0,
+              "market_scope": [],
+              "asset_classes": [],
+              "capital_mode": "paper",
+              "stage": "paper",
+              "capital_scope": "paper_ledger",
+              "capital_scope_id": "paper-ledger-21fa44966461eb254ffc",
+              "capital_sleeve_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "isolated",
+              "capital_binding": {
+                "persona_id": "persona-21cdbed183c80cf371df",
+                "stage": "paper",
+                "scope": "paper_ledger",
+                "scope_id": "paper-ledger-21fa44966461eb254ffc",
+                "paper_ledger_id": "paper-ledger-21fa44966461eb254ffc",
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "isolated"
+              },
+              "paper_ledger_id": "paper-ledger-21fa44966461eb254ffc",
+              "paperLedgerId": "paper-ledger-21fa44966461eb254ffc",
+              "paper_ledger": {
+                "id": "paper-ledger-21fa44966461eb254ffc",
+                "mode": "paper",
+                "persona_id": "persona-21cdbed183c80cf371df",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "paperLedger": {
+                "id": "paper-ledger-21fa44966461eb254ffc",
+                "mode": "paper",
+                "persona_id": "persona-21cdbed183c80cf371df",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "legacy_paper_capital_pool_id": "pool-persona-paper-21fa44966461eb254ffc",
+              "legacyPaperCapitalPoolId": "pool-persona-paper-21fa44966461eb254ffc",
+              "capital_pool_id": null,
+              "capitalPoolId": null,
+              "capital_pool": null,
+              "capitalPool": null,
+              "runtime_id": null,
+              "runtime_binding_id": null,
+              "runtime_binding": {
+                "id": null,
+                "runtime_id": null,
+                "state": null,
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+                "health": "degraded"
+              },
+              "deployment_stage": "paper",
+              "ooda_stage": null,
+              "recommendation": "",
+              "governance_required": true,
+              "review_id": null,
+              "review_type": null,
+              "promotion_review_id": null,
+              "inbox_id": null,
+              "review_status": "none",
+              "review": {
+                "id": null,
+                "type": null,
+                "status": "none",
+                "inbox_id": null,
+                "route": null,
+                "requires_human_gate": false
+              },
+              "league_rank": 4,
+              "league_score": 49.375,
+              "rank": {
+                "league_rank": 4,
+                "league_score": 49.375,
+                "basis": "quarterly_ranking",
+                "period": "quarter",
+                "quarter": "2026-Q3"
+              },
+              "runtime_health": {
+                "status": "degraded",
+                "severity": "medium",
+                "score": 85,
+                "reasons": [
+                  "persona_lifecycle_not_active",
+                  "no_runtime_binding"
+                ],
+                "runtime_statuses": [],
+                "latest_telemetry_at": null,
+                "active_incident_count": 0
+              },
+              "data_source_summary": {
+                "state": "paper_readback_pending",
+                "provider_count": 0,
+                "provider_status_counts": {},
+                "degraded_provider_count": 0,
+                "required_source_count": 0,
+                "configured_source_count": 0,
+                "live_ingestion_enabled": false,
+                "source_health_source": "static_metadata"
+              },
+              "data_sources": [],
+              "research_summary": {
+                "stage": null,
+                "framework": null,
+                "framework_count": 0,
+                "experiment_id": null,
+                "artifact_id": null,
+                "registry_admission_status": null,
+                "can_deploy": false,
+                "current_project_count": 0,
+                "evidence_ref_count": 0
+              },
+              "performance_summary": {
+                "pnl": null,
+                "sharpe": null,
+                "max_drawdown": null,
+                "violation_count": 0,
+                "total_trades": null,
+                "source": "unavailable",
+                "telemetry_runtime_count": 0,
+                "latest_telemetry_at": null
+              },
+              "risk_flag_count": 0,
+              "active_incident_count": 0,
+              "updated_at": "2026-09-11T12:28:24.228033Z",
+              "links": {
+                "detail": "/personas/persona-21cdbed183c80cf371df",
+                "runtime": null,
+                "source_health": "/bff/v5/execution/persona-health?persona_id=persona-21cdbed183c80cf371df"
+              },
+              "drill_down": {
+                "kind": "persona",
+                "href": "/personas/persona-21cdbed183c80cf371df",
+                "runtime_id": null,
+                "persona_id": "persona-21cdbed183c80cf371df"
+              },
+              "leagueRank": 4,
+              "leagueScore": 49.375
+            },
+            {
+              "id": "persona-4900b20b038a885dec38",
+              "persona_id": "persona-4900b20b038a885dec38",
+              "last_mutation_label": "2026-09-13",
+              "lastMutationLabel": "2026-09-13",
+              "last_mutation_at": "2026-09-13T06:00:47.367390Z",
+              "lastMutationAt": "2026-09-13T06:00:47.367390Z",
+              "last_mutation_kind": "fleet_summary",
+              "lastMutationKind": "fleet_summary",
+              "mutation_entry_id": null,
+              "mutationEntryId": null,
+              "evolution_entry_id": null,
+              "evolutionEntryId": null,
+              "evolution_href": "/management/evolution-journal?persona=persona-4900b20b038a885dec38&source=fleet_summary",
+              "evolutionHref": "/management/evolution-journal?persona=persona-4900b20b038a885dec38&source=fleet_summary",
+              "mutation_confidence": "fallback",
+              "mutationConfidence": "fallback",
+              "mutation_diagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "mutationDiagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "name": "Pantheon Dev Paper Release 34740973730 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "mode": "paper",
+              "status": "degraded",
+              "health": "degraded",
+              "score": 75.0,
+              "ooda": "Observe",
+              "autonomy": "supervised",
+              "perf_delta": null,
+              "perfDelta": null,
+              "has_trading_telemetry": false,
+              "hasTradingTelemetry": false,
+              "is_market_persona_default": false,
+              "isMarketPersonaDefault": false,
+              "seed_row": false,
+              "seedRow": false,
+              "human_needed": false,
+              "last_mutation": "2026-09-13",
+              "state": "paper_running",
+              "current_work": null,
+              "routed_strategies": 0,
+              "open_findings": 0,
+              "market_scope": [],
+              "asset_classes": [],
+              "capital_mode": "paper",
+              "stage": "paper",
+              "capital_scope": "paper_ledger",
+              "capital_scope_id": "paper-ledger-0a51b3cff3b9e2996a18",
+              "capital_sleeve_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "isolated",
+              "capital_binding": {
+                "persona_id": "persona-4900b20b038a885dec38",
+                "stage": "paper",
+                "scope": "paper_ledger",
+                "scope_id": "paper-ledger-0a51b3cff3b9e2996a18",
+                "paper_ledger_id": "paper-ledger-0a51b3cff3b9e2996a18",
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "isolated"
+              },
+              "paper_ledger_id": "paper-ledger-0a51b3cff3b9e2996a18",
+              "paperLedgerId": "paper-ledger-0a51b3cff3b9e2996a18",
+              "paper_ledger": {
+                "id": "paper-ledger-0a51b3cff3b9e2996a18",
+                "mode": "paper",
+                "persona_id": "persona-4900b20b038a885dec38",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "paperLedger": {
+                "id": "paper-ledger-0a51b3cff3b9e2996a18",
+                "mode": "paper",
+                "persona_id": "persona-4900b20b038a885dec38",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "legacy_paper_capital_pool_id": "pool-persona-paper-0a51b3cff3b9e2996a18",
+              "legacyPaperCapitalPoolId": "pool-persona-paper-0a51b3cff3b9e2996a18",
+              "capital_pool_id": null,
+              "capitalPoolId": null,
+              "capital_pool": null,
+              "capitalPool": null,
+              "runtime_id": "rt-1bc4efea",
+              "runtime_binding_id": "rb-e3eafebeda57401b8ecdac6481e09fe7",
+              "runtime_binding": {
+                "id": "rb-e3eafebeda57401b8ecdac6481e09fe7",
+                "runtime_id": "rt-1bc4efea",
+                "state": null,
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+                "health": "degraded"
+              },
+              "deployment_stage": "paper",
+              "ooda_stage": null,
+              "recommendation": "",
+              "governance_required": true,
+              "review_id": null,
+              "review_type": null,
+              "promotion_review_id": null,
+              "inbox_id": null,
+              "review_status": "none",
+              "review": {
+                "id": null,
+                "type": null,
+                "status": "none",
+                "inbox_id": null,
+                "route": null,
+                "requires_human_gate": false
+              },
+              "league_rank": 3,
+              "league_score": 49.375,
+              "rank": {
+                "league_rank": 3,
+                "league_score": 49.375,
+                "basis": "quarterly_ranking",
+                "period": "quarter",
+                "quarter": "2026-Q3"
+              },
+              "runtime_health": {
+                "status": "degraded",
+                "severity": "medium",
+                "score": 100,
+                "reasons": [
+                  "no_runtime_binding"
+                ],
+                "runtime_statuses": [],
+                "latest_telemetry_at": null,
+                "active_incident_count": 0
+              },
+              "data_source_summary": {
+                "state": "paper_readback_pending",
+                "provider_count": 0,
+                "provider_status_counts": {},
+                "degraded_provider_count": 0,
+                "required_source_count": 0,
+                "configured_source_count": 0,
+                "live_ingestion_enabled": false,
+                "source_health_source": "static_metadata"
+              },
+              "data_sources": [],
+              "research_summary": {
+                "stage": null,
+                "framework": null,
+                "framework_count": 0,
+                "experiment_id": null,
+                "artifact_id": null,
+                "registry_admission_status": null,
+                "can_deploy": false,
+                "current_project_count": 0,
+                "evidence_ref_count": 0
+              },
+              "performance_summary": {
+                "pnl": null,
+                "sharpe": null,
+                "max_drawdown": null,
+                "violation_count": 0,
+                "total_trades": null,
+                "source": "unavailable",
+                "telemetry_runtime_count": 0,
+                "latest_telemetry_at": null
+              },
+              "risk_flag_count": 0,
+              "active_incident_count": 0,
+              "updated_at": "2026-09-13T06:00:47.367390Z",
+              "links": {
+                "detail": "/personas/persona-4900b20b038a885dec38",
+                "runtime": "/management/runtimes/rt-1bc4efea",
+                "source_health": "/bff/v5/execution/persona-health?persona_id=persona-4900b20b038a885dec38"
+              },
+              "drill_down": {
+                "kind": "runtime",
+                "href": "/management/runtimes/rt-1bc4efea",
+                "runtime_id": "rt-1bc4efea",
+                "persona_id": "persona-4900b20b038a885dec38"
+              },
+              "leagueRank": 3,
+              "leagueScore": 49.375
+            },
+            {
+              "id": "persona-9bc44570c2eeef68f259",
+              "persona_id": "persona-9bc44570c2eeef68f259",
+              "last_mutation_label": "2026-09-13",
+              "lastMutationLabel": "2026-09-13",
+              "last_mutation_at": "2026-09-13T04:09:28.319743Z",
+              "lastMutationAt": "2026-09-13T04:09:28.319743Z",
+              "last_mutation_kind": "fleet_summary",
+              "lastMutationKind": "fleet_summary",
+              "mutation_entry_id": null,
+              "mutationEntryId": null,
+              "evolution_entry_id": null,
+              "evolutionEntryId": null,
+              "evolution_href": "/management/evolution-journal?persona=persona-9bc44570c2eeef68f259&source=fleet_summary",
+              "evolutionHref": "/management/evolution-journal?persona=persona-9bc44570c2eeef68f259&source=fleet_summary",
+              "mutation_confidence": "fallback",
+              "mutationConfidence": "fallback",
+              "mutation_diagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "mutationDiagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "name": "Pantheon Dev Paper Release 34736489137 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "mode": "paper",
+              "status": "degraded",
+              "health": "degraded",
+              "score": 75.0,
+              "ooda": "Observe",
+              "autonomy": "supervised",
+              "perf_delta": null,
+              "perfDelta": null,
+              "has_trading_telemetry": false,
+              "hasTradingTelemetry": false,
+              "is_market_persona_default": false,
+              "isMarketPersonaDefault": false,
+              "seed_row": false,
+              "seedRow": false,
+              "human_needed": false,
+              "last_mutation": "2026-09-13",
+              "state": "paper_running",
+              "current_work": null,
+              "routed_strategies": 0,
+              "open_findings": 0,
+              "market_scope": [],
+              "asset_classes": [],
+              "capital_mode": "paper",
+              "stage": "paper",
+              "capital_scope": "paper_ledger",
+              "capital_scope_id": "paper-ledger-bc86257c89ad87349097",
+              "capital_sleeve_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "isolated",
+              "capital_binding": {
+                "persona_id": "persona-9bc44570c2eeef68f259",
+                "stage": "paper",
+                "scope": "paper_ledger",
+                "scope_id": "paper-ledger-bc86257c89ad87349097",
+                "paper_ledger_id": "paper-ledger-bc86257c89ad87349097",
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "isolated"
+              },
+              "paper_ledger_id": "paper-ledger-bc86257c89ad87349097",
+              "paperLedgerId": "paper-ledger-bc86257c89ad87349097",
+              "paper_ledger": {
+                "id": "paper-ledger-bc86257c89ad87349097",
+                "mode": "paper",
+                "persona_id": "persona-9bc44570c2eeef68f259",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "paperLedger": {
+                "id": "paper-ledger-bc86257c89ad87349097",
+                "mode": "paper",
+                "persona_id": "persona-9bc44570c2eeef68f259",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "legacy_paper_capital_pool_id": "pool-persona-paper-bc86257c89ad87349097",
+              "legacyPaperCapitalPoolId": "pool-persona-paper-bc86257c89ad87349097",
+              "capital_pool_id": null,
+              "capitalPoolId": null,
+              "capital_pool": null,
+              "capitalPool": null,
+              "runtime_id": "rt-9ef4589c",
+              "runtime_binding_id": "rb-8b36da8734534f298923e6fbb5f3eea7",
+              "runtime_binding": {
+                "id": "rb-8b36da8734534f298923e6fbb5f3eea7",
+                "runtime_id": "rt-9ef4589c",
+                "state": null,
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+                "health": "degraded"
+              },
+              "deployment_stage": "paper",
+              "ooda_stage": null,
+              "recommendation": "",
+              "governance_required": true,
+              "review_id": null,
+              "review_type": null,
+              "promotion_review_id": null,
+              "inbox_id": null,
+              "review_status": "none",
+              "review": {
+                "id": null,
+                "type": null,
+                "status": "none",
+                "inbox_id": null,
+                "route": null,
+                "requires_human_gate": false
+              },
+              "league_rank": 2,
+              "league_score": 49.375,
+              "rank": {
+                "league_rank": 2,
+                "league_score": 49.375,
+                "basis": "quarterly_ranking",
+                "period": "quarter",
+                "quarter": "2026-Q3"
+              },
+              "runtime_health": {
+                "status": "degraded",
+                "severity": "medium",
+                "score": 100,
+                "reasons": [
+                  "no_runtime_binding"
+                ],
+                "runtime_statuses": [],
+                "latest_telemetry_at": null,
+                "active_incident_count": 0
+              },
+              "data_source_summary": {
+                "state": "paper_readback_pending",
+                "provider_count": 0,
+                "provider_status_counts": {},
+                "degraded_provider_count": 0,
+                "required_source_count": 0,
+                "configured_source_count": 0,
+                "live_ingestion_enabled": false,
+                "source_health_source": "static_metadata"
+              },
+              "data_sources": [],
+              "research_summary": {
+                "stage": null,
+                "framework": null,
+                "framework_count": 0,
+                "experiment_id": null,
+                "artifact_id": null,
+                "registry_admission_status": null,
+                "can_deploy": false,
+                "current_project_count": 0,
+                "evidence_ref_count": 0
+              },
+              "performance_summary": {
+                "pnl": null,
+                "sharpe": null,
+                "max_drawdown": null,
+                "violation_count": 0,
+                "total_trades": null,
+                "source": "unavailable",
+                "telemetry_runtime_count": 0,
+                "latest_telemetry_at": null
+              },
+              "risk_flag_count": 0,
+              "active_incident_count": 0,
+              "updated_at": "2026-09-13T04:09:28.319743Z",
+              "links": {
+                "detail": "/personas/persona-9bc44570c2eeef68f259",
+                "runtime": "/management/runtimes/rt-9ef4589c",
+                "source_health": "/bff/v5/execution/persona-health?persona_id=persona-9bc44570c2eeef68f259"
+              },
+              "drill_down": {
+                "kind": "runtime",
+                "href": "/management/runtimes/rt-9ef4589c",
+                "runtime_id": "rt-9ef4589c",
+                "persona_id": "persona-9bc44570c2eeef68f259"
+              },
+              "leagueRank": 2,
+              "leagueScore": 49.375
+            },
+            {
+              "id": "persona-d57f6d76254c20418a9e",
+              "persona_id": "persona-d57f6d76254c20418a9e",
+              "last_mutation_label": "2026-09-09",
+              "lastMutationLabel": "2026-09-09",
+              "last_mutation_at": "2026-09-09T01:10:38.527911Z",
+              "lastMutationAt": "2026-09-09T01:10:38.527911Z",
+              "last_mutation_kind": "fleet_summary",
+              "lastMutationKind": "fleet_summary",
+              "mutation_entry_id": null,
+              "mutationEntryId": null,
+              "evolution_entry_id": null,
+              "evolutionEntryId": null,
+              "evolution_href": "/management/evolution-journal?persona=persona-d57f6d76254c20418a9e&source=fleet_summary",
+              "evolutionHref": "/management/evolution-journal?persona=persona-d57f6d76254c20418a9e&source=fleet_summary",
+              "mutation_confidence": "fallback",
+              "mutationConfidence": "fallback",
+              "mutation_diagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "mutationDiagnostics": [
+                "No formal mutation entry id declared for this persona row."
+              ],
+              "name": "Pantheon Dev Paper Baseline 3",
+              "owner": "pantheon-dev-operator-a",
+              "mode": "paper",
+              "status": "degraded",
+              "health": "degraded",
+              "score": 75.0,
+              "ooda": "Observe",
+              "autonomy": "supervised",
+              "perf_delta": null,
+              "perfDelta": null,
+              "has_trading_telemetry": false,
+              "hasTradingTelemetry": false,
+              "is_market_persona_default": false,
+              "isMarketPersonaDefault": false,
+              "seed_row": false,
+              "seedRow": false,
+              "human_needed": false,
+              "last_mutation": "2026-09-09",
+              "state": "paper_running",
+              "current_work": null,
+              "routed_strategies": 0,
+              "open_findings": 0,
+              "market_scope": [],
+              "asset_classes": [],
+              "capital_mode": "paper",
+              "stage": "paper",
+              "capital_scope": "paper_ledger",
+              "capital_scope_id": "paper-ledger-4d67c6a4c01a5b9cadc1",
+              "capital_sleeve_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "isolated",
+              "capital_binding": {
+                "persona_id": "persona-d57f6d76254c20418a9e",
+                "stage": "paper",
+                "scope": "paper_ledger",
+                "scope_id": "paper-ledger-4d67c6a4c01a5b9cadc1",
+                "paper_ledger_id": "paper-ledger-4d67c6a4c01a5b9cadc1",
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "isolated"
+              },
+              "paper_ledger_id": "paper-ledger-4d67c6a4c01a5b9cadc1",
+              "paperLedgerId": "paper-ledger-4d67c6a4c01a5b9cadc1",
+              "paper_ledger": {
+                "id": "paper-ledger-4d67c6a4c01a5b9cadc1",
+                "mode": "paper",
+                "persona_id": "persona-d57f6d76254c20418a9e",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "paperLedger": {
+                "id": "paper-ledger-4d67c6a4c01a5b9cadc1",
+                "mode": "paper",
+                "persona_id": "persona-d57f6d76254c20418a9e",
+                "is_isolated": true,
+                "isolated": true
+              },
+              "legacy_paper_capital_pool_id": "pool-persona-paper-4d67c6a4c01a5b9cadc1",
+              "legacyPaperCapitalPoolId": "pool-persona-paper-4d67c6a4c01a5b9cadc1",
+              "capital_pool_id": null,
+              "capitalPoolId": null,
+              "capital_pool": null,
+              "capitalPool": null,
+              "runtime_id": null,
+              "runtime_binding_id": null,
+              "runtime_binding": {
+                "id": null,
+                "runtime_id": null,
+                "state": null,
+                "deployment_stage": "paper",
+                "capital_mode": "paper",
+                "health": "degraded"
+              },
+              "deployment_stage": "paper",
+              "ooda_stage": null,
+              "recommendation": "",
+              "governance_required": true,
+              "review_id": null,
+              "review_type": null,
+              "promotion_review_id": null,
+              "inbox_id": null,
+              "review_status": "none",
+              "review": {
+                "id": null,
+                "type": null,
+                "status": "none",
+                "inbox_id": null,
+                "route": null,
+                "requires_human_gate": false
+              },
+              "league_rank": 1,
+              "league_score": 49.375,
+              "rank": {
+                "league_rank": 1,
+                "league_score": 49.375,
+                "basis": "quarterly_ranking",
+                "period": "quarter",
+                "quarter": "2026-Q3"
+              },
+              "runtime_health": {
+                "status": "degraded",
+                "severity": "medium",
+                "score": 85,
+                "reasons": [
+                  "persona_lifecycle_not_active",
+                  "no_runtime_binding"
+                ],
+                "runtime_statuses": [],
+                "latest_telemetry_at": null,
+                "active_incident_count": 0
+              },
+              "data_source_summary": {
+                "state": "paper_readback_pending",
+                "provider_count": 0,
+                "provider_status_counts": {},
+                "degraded_provider_count": 0,
+                "required_source_count": 0,
+                "configured_source_count": 0,
+                "live_ingestion_enabled": false,
+                "source_health_source": "static_metadata"
+              },
+              "data_sources": [],
+              "research_summary": {
+                "stage": null,
+                "framework": null,
+                "framework_count": 0,
+                "experiment_id": null,
+                "artifact_id": null,
+                "registry_admission_status": null,
+                "can_deploy": false,
+                "current_project_count": 0,
+                "evidence_ref_count": 0
+              },
+              "performance_summary": {
+                "pnl": null,
+                "sharpe": null,
+                "max_drawdown": null,
+                "violation_count": 0,
+                "total_trades": null,
+                "source": "unavailable",
+                "telemetry_runtime_count": 0,
+                "latest_telemetry_at": null
+              },
+              "risk_flag_count": 0,
+              "active_incident_count": 0,
+              "updated_at": "2026-09-09T01:10:38.527911Z",
+              "links": {
+                "detail": "/personas/persona-d57f6d76254c20418a9e",
+                "runtime": null,
+                "source_health": "/bff/v5/execution/persona-health?persona_id=persona-d57f6d76254c20418a9e"
+              },
+              "drill_down": {
+                "kind": "persona",
+                "href": "/personas/persona-d57f6d76254c20418a9e",
+                "runtime_id": null,
+                "persona_id": "persona-d57f6d76254c20418a9e"
+              },
+              "leagueRank": 1,
+              "leagueScore": 49.375
+            }
+          ],
+          "summary": {
+            "available_personas": 4,
+            "total_personas": 4,
+            "canonical_total": 4,
+            "filtered_total": 4,
+            "catalog_default_total": 0,
+            "returned_personas": 4,
+            "critical_personas": 0,
+            "degraded_personas": 4,
+            "healthy_personas": 0,
+            "human_needed_personas": 0,
+            "governance_required_personas": 4,
+            "by_deployment_stage": {
+              "paper": 4
+            },
+            "by_capital_mode": {
+              "paper": 4
+            },
+            "by_lifecycle_state": {
+              "paper_running": 4
+            },
+            "by_market_scope": {},
+            "by_data_source_state": {
+              "paper_readback_pending": 4
+            },
+            "by_research_stage": {
+              "unknown": 4
+            },
+            "capital_summary": {
+              "pool_count": 0,
+              "total_nav": 0,
+              "gross_exposure": 0,
+              "net_exposure": 0
+            },
+            "human_inbox_summary": {
+              "pending_count": 0
+            },
+            "execution_boundary": {
+              "approved_artifacts_only": true,
+              "live_capital_side_effects": false,
+              "human_gate_required_for_capital_changes": true
+            }
+          }
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 4,
+          "canonical_total": 4,
+          "filtered_total": 4,
+          "catalog_default_total": 0,
+          "page_size": 20
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:07Z",
+          "surfaces": {
+            "persona_fleet": {
+              "status": "ok",
+              "source": "bff_composed_slim_list",
+              "note": "Composed from governed market-persona read-model defaults."
+            },
+            "personas": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "persona_league": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:07Z"
+              }
+            },
+            "capital_pools": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "runtime_bindings": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "ooda_control_room_status": {
+              "status": "ok",
+              "source": "typed_store"
+            }
+          },
+          "related": {
+            "persona_league": {
+              "href": "/bff/management/persona-league"
+            },
+            "capital_pools": {
+              "href": "/bff/management/capital-pools"
+            },
+            "runtime_bindings": {
+              "href": "/bff/management/runtime-bindings"
+            },
+            "human_inbox": {
+              "href": "/bff/management/human-inbox"
+            },
+            "ooda_status": {
+              "href": "/bff/v5/control-room"
+            }
+          }
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:08.528817+00:00",
+      "path": "/bff/management/trading-pulse/rankings",
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "management-trading-pulse-rankings",
+          "items": [
+            {
+              "block_id": "pnl-leaders",
+              "label": "P&L Leaders",
+              "metric": "pnl",
+              "sort_order": "desc",
+              "items": [],
+              "eligible_item_count": 0,
+              "missing_metric_count": 0,
+              "missing_metric_runtime_ids": []
+            },
+            {
+              "block_id": "drawdown-control",
+              "label": "Drawdown Control",
+              "metric": "drawdown",
+              "sort_order": "asc",
+              "items": [],
+              "eligible_item_count": 0,
+              "missing_metric_count": 0,
+              "missing_metric_runtime_ids": []
+            },
+            {
+              "block_id": "execution-quality",
+              "label": "Execution Quality",
+              "metric": "fill_rate",
+              "sort_order": "desc",
+              "items": [],
+              "eligible_item_count": 0,
+              "missing_metric_count": 0,
+              "missing_metric_runtime_ids": [],
+              "secondary_metric": "avg_slippage_bps"
+            },
+            {
+              "block_id": "sharpe-leaders",
+              "label": "Sharpe Leaders",
+              "metric": "sharpe_ratio",
+              "sort_order": "desc",
+              "items": [],
+              "eligible_item_count": 0,
+              "missing_metric_count": 0,
+              "missing_metric_runtime_ids": []
+            }
+          ],
+          "summary": {
+            "runtime_count": 0,
+            "ranking_block_count": 4,
+            "ranked_item_count": 0,
+            "eligible_item_count": 0,
+            "missing_metric_item_count": 0,
+            "criteria": [
+              "pnl",
+              "drawdown",
+              "fill_rate",
+              "sharpe_ratio"
+            ],
+            "limit": 20,
+            "top_runtime_id": null
+          }
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 4,
+          "page_size": 4
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:08Z",
+          "version": "v1",
+          "surfaces": {
+            "management_trading_pulse": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
+              "snapshot_at": "2026-09-13T10:28:08Z"
+            },
+            "runtime_roster": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "telemetry_summary": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:08Z"
+              }
+            },
+            "paper_runtime_monitoring": {
+              "status": "ok",
+              "source": "not_applicable",
+              "message": "No paper runtimes require paper runtime monitoring."
+            },
+            "paper_live_drift": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "baseline_comparison": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:08Z"
+            },
+            "runtime_row_health": {
+              "status": "ok",
+              "source": "bff_composed",
+              "snapshot_at": "2026-09-13T10:28:08Z"
+            },
+            "management_trading_pulse_rankings": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "Trading pulse rankings are degraded because runtime or telemetry coverage is degraded.",
+              "snapshot_at": "2026-09-13T10:28:08Z"
+            }
+          },
+          "composition_sources": [
+            "GET /bff/management/trading-pulse",
+            "GET /bff/runtimes",
+            "telemetry_summaries",
+            "paper_runtime_monitoring_sessions",
+            "paper_live_drift_reports"
+          ]
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:09.040630+00:00",
+      "path": "/bff/management/persona-league",
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "management-persona-league",
+          "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6",
+          "items": [
+            {
+              "id": "persona-d57f6d76254c20418a9e",
+              "persona_id": "persona-d57f6d76254c20418a9e",
+              "name": "Pantheon Dev Paper Baseline 3",
+              "owner": "pantheon-dev-operator-a",
+              "updated_at": "2026-09-09T01:10:38.527911Z",
+              "state": "failed",
+              "risk": "low",
+              "archetype": "momentum",
+              "routed_strategy_count": 0,
+              "success_rate": 0.0,
+              "mandate": "Paper-only lifecycle verification in dev",
+              "strategy_family": "dev_paper_baseline",
+              "route_policy_summary": {
+                "version": null,
+                "rule_count": 0,
+                "consult_rule_count": 0,
+                "blocking_rule_count": 0,
+                "has_policy": false
+              },
+              "capability_summary": {
+                "snapshot_id": null,
+                "generated_at": null,
+                "skill_count": 0,
+                "tool_count": 0,
+                "workflow_count": 0,
+                "restriction_count": 0,
+                "source_ref_count": 0,
+                "has_snapshot": false
+              },
+              "binding_summary": {
+                "total": 0,
+                "active": 0,
+                "binding_ids": [],
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "capital_pool_ids": [],
+                "capital_pools": [],
+                "deployment_scopes": [],
+                "status_counts": {}
+              },
+              "session_summary": {
+                "total": 0,
+                "active": 0,
+                "last_heartbeat_at": null,
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "pool_scopes": [],
+                "status_counts": {}
+              },
+              "evaluation_summary": {
+                "total": 0,
+                "completed": 0,
+                "latest_at": null,
+                "outcome_count": 0,
+                "status_counts": {}
+              },
+              "memory_summary": {
+                "total": 0,
+                "latest_at": null,
+                "status_counts": {}
+              },
+              "health_summary": {
+                "health": "degraded",
+                "lifecycle_state": "provisioning_failed",
+                "active_session_count": 0,
+                "has_capability_snapshot": false
+              },
+              "allowed_action_summary": {
+                "count": 3,
+                "enabled_count": 3,
+                "enabled_actions": [
+                  "canActivate",
+                  "canDelete",
+                  "canEdit"
+                ]
+              },
+              "links": {
+                "detail": "/bff/personas/persona-d57f6d76254c20418a9e",
+                "route_policy": "/bff/personas/persona-d57f6d76254c20418a9e/route-policy",
+                "capabilities": "/bff/personas/persona-d57f6d76254c20418a9e/capabilities",
+                "evaluations": "/bff/personas/persona-d57f6d76254c20418a9e/evaluations",
+                "memory": "/bff/personas/persona-d57f6d76254c20418a9e/memory",
+                "activity": "/bff/personas/persona-d57f6d76254c20418a9e/activity"
+              },
+              "strategy_ids": [],
+              "binding_ids": [],
+              "capital_pool_ids": [],
+              "runtime_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "capital_pool_id": null,
+              "pool_id": null,
+              "sleeve_id": null,
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "capital_binding": {
+                "persona_id": "persona-d57f6d76254c20418a9e",
+                "stage": "not_running",
+                "scope": "unbound",
+                "scope_id": null,
+                "paper_ledger_id": null,
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "missing"
+              },
+              "current_weight_source": "unavailable",
+              "eligible": false,
+              "exclusion_reason": "Inactive lifecycle state: failed; Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive lifecycle state: failed",
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "inactive_lifecycle",
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "source_confidence": "unavailable",
+              "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6"
+            },
+            {
+              "id": "persona-21cdbed183c80cf371df",
+              "persona_id": "persona-21cdbed183c80cf371df",
+              "name": "Pantheon Dev Paper Release 34596927306 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "updated_at": "2026-09-11T12:28:24.228033Z",
+              "state": "provisioning",
+              "risk": "low",
+              "archetype": "momentum",
+              "routed_strategy_count": 0,
+              "success_rate": 0.0,
+              "mandate": "Paper-only lifecycle verification in dev",
+              "strategy_family": "dev_paper_baseline",
+              "route_policy_summary": {
+                "version": null,
+                "rule_count": 0,
+                "consult_rule_count": 0,
+                "blocking_rule_count": 0,
+                "has_policy": false
+              },
+              "capability_summary": {
+                "snapshot_id": null,
+                "generated_at": null,
+                "skill_count": 0,
+                "tool_count": 0,
+                "workflow_count": 0,
+                "restriction_count": 0,
+                "source_ref_count": 0,
+                "has_snapshot": false
+              },
+              "binding_summary": {
+                "total": 0,
+                "active": 0,
+                "binding_ids": [],
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "capital_pool_ids": [],
+                "capital_pools": [],
+                "deployment_scopes": [],
+                "status_counts": {}
+              },
+              "session_summary": {
+                "total": 0,
+                "active": 0,
+                "last_heartbeat_at": null,
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "pool_scopes": [],
+                "status_counts": {}
+              },
+              "evaluation_summary": {
+                "total": 0,
+                "completed": 0,
+                "latest_at": null,
+                "outcome_count": 0,
+                "status_counts": {}
+              },
+              "memory_summary": {
+                "total": 0,
+                "latest_at": null,
+                "status_counts": {}
+              },
+              "health_summary": {
+                "health": "degraded",
+                "lifecycle_state": "provisioning",
+                "active_session_count": 0,
+                "has_capability_snapshot": false
+              },
+              "allowed_action_summary": {
+                "count": 3,
+                "enabled_count": 3,
+                "enabled_actions": [
+                  "canActivate",
+                  "canDelete",
+                  "canEdit"
+                ]
+              },
+              "links": {
+                "detail": "/bff/personas/persona-21cdbed183c80cf371df",
+                "route_policy": "/bff/personas/persona-21cdbed183c80cf371df/route-policy",
+                "capabilities": "/bff/personas/persona-21cdbed183c80cf371df/capabilities",
+                "evaluations": "/bff/personas/persona-21cdbed183c80cf371df/evaluations",
+                "memory": "/bff/personas/persona-21cdbed183c80cf371df/memory",
+                "activity": "/bff/personas/persona-21cdbed183c80cf371df/activity"
+              },
+              "strategy_ids": [],
+              "binding_ids": [],
+              "capital_pool_ids": [],
+              "runtime_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "capital_pool_id": null,
+              "pool_id": null,
+              "sleeve_id": null,
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "capital_binding": {
+                "persona_id": "persona-21cdbed183c80cf371df",
+                "stage": "not_running",
+                "scope": "unbound",
+                "scope_id": null,
+                "paper_ledger_id": null,
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "missing"
+              },
+              "current_weight_source": "unavailable",
+              "eligible": false,
+              "exclusion_reason": "Inactive lifecycle state: provisioning; Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive lifecycle state: provisioning",
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "inactive_lifecycle",
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "source_confidence": "unavailable",
+              "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6"
+            },
+            {
+              "id": "persona-9bc44570c2eeef68f259",
+              "persona_id": "persona-9bc44570c2eeef68f259",
+              "name": "Pantheon Dev Paper Release 34736489137 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "updated_at": "2026-09-13T04:09:28.319743Z",
+              "state": "paper_running",
+              "risk": "low",
+              "archetype": "momentum",
+              "routed_strategy_count": 0,
+              "success_rate": 0.0,
+              "mandate": "Paper-only lifecycle verification in dev",
+              "strategy_family": "dev_paper_baseline",
+              "route_policy_summary": {
+                "version": null,
+                "rule_count": 0,
+                "consult_rule_count": 0,
+                "blocking_rule_count": 0,
+                "has_policy": false
+              },
+              "capability_summary": {
+                "snapshot_id": null,
+                "generated_at": null,
+                "skill_count": 0,
+                "tool_count": 0,
+                "workflow_count": 0,
+                "restriction_count": 0,
+                "source_ref_count": 0,
+                "has_snapshot": false
+              },
+              "binding_summary": {
+                "total": 0,
+                "active": 0,
+                "binding_ids": [],
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "capital_pool_ids": [],
+                "capital_pools": [],
+                "deployment_scopes": [],
+                "status_counts": {}
+              },
+              "session_summary": {
+                "total": 0,
+                "active": 0,
+                "last_heartbeat_at": null,
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "pool_scopes": [],
+                "status_counts": {}
+              },
+              "evaluation_summary": {
+                "total": 0,
+                "completed": 0,
+                "latest_at": null,
+                "outcome_count": 0,
+                "status_counts": {}
+              },
+              "memory_summary": {
+                "total": 0,
+                "latest_at": null,
+                "status_counts": {}
+              },
+              "health_summary": {
+                "health": "degraded",
+                "lifecycle_state": "paper_running",
+                "active_session_count": 0,
+                "has_capability_snapshot": false
+              },
+              "allowed_action_summary": {
+                "count": 0,
+                "enabled_count": 0,
+                "enabled_actions": []
+              },
+              "links": {
+                "detail": "/bff/personas/persona-9bc44570c2eeef68f259",
+                "route_policy": "/bff/personas/persona-9bc44570c2eeef68f259/route-policy",
+                "capabilities": "/bff/personas/persona-9bc44570c2eeef68f259/capabilities",
+                "evaluations": "/bff/personas/persona-9bc44570c2eeef68f259/evaluations",
+                "memory": "/bff/personas/persona-9bc44570c2eeef68f259/memory",
+                "activity": "/bff/personas/persona-9bc44570c2eeef68f259/activity"
+              },
+              "strategy_ids": [],
+              "binding_ids": [],
+              "capital_pool_ids": [],
+              "runtime_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "capital_pool_id": null,
+              "pool_id": null,
+              "sleeve_id": null,
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "capital_binding": {
+                "persona_id": "persona-9bc44570c2eeef68f259",
+                "stage": "not_running",
+                "scope": "unbound",
+                "scope_id": null,
+                "paper_ledger_id": null,
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "missing"
+              },
+              "current_weight_source": "unavailable",
+              "eligible": false,
+              "exclusion_reason": "Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "source_confidence": "unavailable",
+              "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6"
+            },
+            {
+              "id": "persona-4900b20b038a885dec38",
+              "persona_id": "persona-4900b20b038a885dec38",
+              "name": "Pantheon Dev Paper Release 34740973730 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "updated_at": "2026-09-13T06:00:47.367390Z",
+              "state": "paper_running",
+              "risk": "low",
+              "archetype": "momentum",
+              "routed_strategy_count": 0,
+              "success_rate": 0.0,
+              "mandate": "Paper-only lifecycle verification in dev",
+              "strategy_family": "dev_paper_baseline",
+              "route_policy_summary": {
+                "version": null,
+                "rule_count": 0,
+                "consult_rule_count": 0,
+                "blocking_rule_count": 0,
+                "has_policy": false
+              },
+              "capability_summary": {
+                "snapshot_id": null,
+                "generated_at": null,
+                "skill_count": 0,
+                "tool_count": 0,
+                "workflow_count": 0,
+                "restriction_count": 0,
+                "source_ref_count": 0,
+                "has_snapshot": false
+              },
+              "binding_summary": {
+                "total": 0,
+                "active": 0,
+                "binding_ids": [],
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "capital_pool_ids": [],
+                "capital_pools": [],
+                "deployment_scopes": [],
+                "status_counts": {}
+              },
+              "session_summary": {
+                "total": 0,
+                "active": 0,
+                "last_heartbeat_at": null,
+                "runtime_ids": [],
+                "runtime_binding_ids": [],
+                "pool_scopes": [],
+                "status_counts": {}
+              },
+              "evaluation_summary": {
+                "total": 0,
+                "completed": 0,
+                "latest_at": null,
+                "outcome_count": 0,
+                "status_counts": {}
+              },
+              "memory_summary": {
+                "total": 0,
+                "latest_at": null,
+                "status_counts": {}
+              },
+              "health_summary": {
+                "health": "degraded",
+                "lifecycle_state": "paper_running",
+                "active_session_count": 0,
+                "has_capability_snapshot": false
+              },
+              "allowed_action_summary": {
+                "count": 0,
+                "enabled_count": 0,
+                "enabled_actions": []
+              },
+              "links": {
+                "detail": "/bff/personas/persona-4900b20b038a885dec38",
+                "route_policy": "/bff/personas/persona-4900b20b038a885dec38/route-policy",
+                "capabilities": "/bff/personas/persona-4900b20b038a885dec38/capabilities",
+                "evaluations": "/bff/personas/persona-4900b20b038a885dec38/evaluations",
+                "memory": "/bff/personas/persona-4900b20b038a885dec38/memory",
+                "activity": "/bff/personas/persona-4900b20b038a885dec38/activity"
+              },
+              "strategy_ids": [],
+              "binding_ids": [],
+              "capital_pool_ids": [],
+              "runtime_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "capital_pool_id": null,
+              "pool_id": null,
+              "sleeve_id": null,
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "capital_binding": {
+                "persona_id": "persona-4900b20b038a885dec38",
+                "stage": "not_running",
+                "scope": "unbound",
+                "scope_id": null,
+                "paper_ledger_id": null,
+                "capital_pool_id": null,
+                "capital_sleeve_id": null,
+                "current_weight": null,
+                "target_weight": null,
+                "state": "missing"
+              },
+              "current_weight_source": "unavailable",
+              "eligible": false,
+              "exclusion_reason": "Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "source_confidence": "unavailable",
+              "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6"
+            }
+          ],
+          "summary": {
+            "persona_count": 4,
+            "returned_count": 4,
+            "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6"
+          }
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 4
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:08Z",
+          "ranking_snapshot_id": "ranking-rolling-short-cycle-0f91316b8328a3705e695db6",
+          "total": 4,
+          "surfaces": {
+            "persona_league": {
+              "status": "ok",
+              "source": "bff_composed"
+            },
+            "personas": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "route_policies": {
+              "status": "ok",
+              "source": "bff_composed"
+            },
+            "capability_snapshots": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:08Z"
+              }
+            },
+            "persona_bindings": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:08Z"
+              }
+            },
+            "persona_sessions": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:08Z"
+              }
+            },
+            "teaching_sessions": {
+              "status": "ok",
+              "source": "typed_store"
+            },
+            "persona_memory": {
+              "status": "ok",
+              "source": "bff_composed"
+            },
+            "persona_health": {
+              "status": "ok",
+              "source": "typed_store"
+            }
+          },
+          "composition_sources": [
+            "GET /bff/personas",
+            "GET /bff/personas/{id}/route-policy",
+            "GET /bff/personas/{id}/capabilities",
+            "GET /bff/personas/{id}/activity",
+            "GET /bff/personas/{id}/evaluations",
+            "GET /bff/personas/{id}/memory",
+            "GET /bff/v5/execution/persona-health"
+          ]
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:09.532849+00:00",
+      "path": "/bff/management/quarterly-ranking",
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "pm12-quarterly-ranking-2026-q3",
+          "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2",
+          "quarter": "2026-Q3",
+          "quarter_window": {
+            "quarter": "2026-Q3",
+            "year": 2026,
+            "quarter_number": 3,
+            "label": "2026 Q3",
+            "start_at": "2026-07-01T00:00:00Z",
+            "end_exclusive_at": "2026-10-01T00:00:00Z",
+            "timezone": "UTC"
+          },
+          "formula": {
+            "id": "pm12-quarterly-ranking-formula",
+            "formula_id": "pm12-quarterly-ranking-formula",
+            "version": "pm12-default-v1",
+            "formula_version": "pm12-default-v1",
+            "weights": {
+              "pnl": 0.35,
+              "risk": 0.25,
+              "execution": 0.25,
+              "activity": 0.15
+            },
+            "score_field": "overall_score",
+            "components": [
+              {
+                "key": "pnl",
+                "label": "PnL",
+                "weight": 0.35
+              },
+              {
+                "key": "risk",
+                "label": "Risk",
+                "weight": 0.25
+              },
+              {
+                "key": "execution",
+                "label": "Execution",
+                "weight": 0.25
+              },
+              {
+                "key": "activity",
+                "label": "Activity",
+                "weight": 0.15
+              }
+            ],
+            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+            "policy": "read_only_governance_advisory",
+            "governance_evidence_refs": [
+              "pm12-quarterly-ranking-formula-v1-governance"
+            ],
+            "version_history": [
+              {
+                "id": "pm12-quarterly-ranking-formula-pm12-default-v1",
+                "version": "pm12-default-v1",
+                "formula_version": "pm12-default-v1",
+                "effective_at": "2026-05-23T00:00:00Z",
+                "change_type": "baseline",
+                "governance_evidence_refs": [
+                  "pm12-quarterly-ranking-formula-v1-governance"
+                ],
+                "description": "Baseline formula accepted for PM-12 quarterly ranking reads."
+              }
+            ],
+            "change_control": {
+              "version_policy": "formula_version_changes_require_governance_evidence",
+              "requires_governance_evidence": true,
+              "governance_evidence_refs": [
+                "pm12-quarterly-ranking-formula-v1-governance"
+              ],
+              "authority": "read_only_governance_advisory"
+            }
+          },
+          "items": [
+            {
+              "id": "persona-d57f6d76254c20418a9e",
+              "persona_id": "persona-d57f6d76254c20418a9e",
+              "name": "Pantheon Dev Paper Baseline 3",
+              "owner": "pantheon-dev-operator-a",
+              "state": "failed",
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_pool_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "telemetry_resolution": "missing",
+              "current_weight_source": "unavailable",
+              "binding_ids": [],
+              "strategy_ids": [],
+              "runtime_ids": [],
+              "capital_pool_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "risk": "low",
+              "archetype": "momentum",
+              "tier": "tier-4",
+              "tier_id": "tier-4",
+              "tier_label": "Incubation",
+              "overall_score": 49.375,
+              "metrics": {
+                "runtime_ids": [],
+                "runtime_count": 0,
+                "telemetry_coverage_count": 0,
+                "pnl": null,
+                "drawdown": null,
+                "fill_rate": null,
+                "avg_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "telemetry_evidence_refs": [],
+                "telemetry_resolution": "missing"
+              },
+              "components": {
+                "overall_score": 49.375,
+                "pnl_score": 50.0,
+                "risk_score": 77.5,
+                "execution_score": 50.0,
+                "activity_score": 0.0
+              },
+              "links": {
+                "detail": "/bff/personas/persona-d57f6d76254c20418a9e",
+                "route_policy": "/bff/personas/persona-d57f6d76254c20418a9e/route-policy",
+                "capabilities": "/bff/personas/persona-d57f6d76254c20418a9e/capabilities",
+                "evaluations": "/bff/personas/persona-d57f6d76254c20418a9e/evaluations",
+                "memory": "/bff/personas/persona-d57f6d76254c20418a9e/memory",
+                "activity": "/bff/personas/persona-d57f6d76254c20418a9e/activity"
+              },
+              "eligible": false,
+              "exclusion_reason": "Inactive lifecycle state: failed; Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive lifecycle state: failed",
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "inactive_lifecycle",
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "evidence_ref_ids": [],
+              "source_confidence": "unavailable",
+              "rank": 1,
+              "score": 49.375,
+              "score_field": "overall_score",
+              "quarter": "2026-Q3",
+              "quarter_window": {
+                "quarter": "2026-Q3",
+                "year": 2026,
+                "quarter_number": 3,
+                "label": "2026 Q3",
+                "start_at": "2026-07-01T00:00:00Z",
+                "end_exclusive_at": "2026-10-01T00:00:00Z",
+                "timezone": "UTC"
+              },
+              "formula_version": "pm12-default-v1",
+              "basis": "latest_available_persona_league_metrics_with_quarter_window",
+              "period": "quarter",
+              "criteria": "overall",
+              "governance_state": "recommendation",
+              "allocation_policy_input": {
+                "schema_version": "persona-allocation-policy-input/v1",
+                "adapter_version": "pm12-quarterly-overall-tier-v1",
+                "policy_version": "persona-real-allocation-v1",
+                "source_formula_version": "pm12-default-v1",
+                "rank_score_source": "overall_score",
+                "rank_score": 49.375,
+                "source_tier": "tier-4",
+                "allocation_tier": "watch"
+              },
+              "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2"
+            },
+            {
+              "id": "persona-9bc44570c2eeef68f259",
+              "persona_id": "persona-9bc44570c2eeef68f259",
+              "name": "Pantheon Dev Paper Release 34736489137 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "state": "paper_running",
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_pool_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "telemetry_resolution": "missing",
+              "current_weight_source": "unavailable",
+              "binding_ids": [],
+              "strategy_ids": [],
+              "runtime_ids": [],
+              "capital_pool_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "risk": "low",
+              "archetype": "momentum",
+              "tier": "tier-4",
+              "tier_id": "tier-4",
+              "tier_label": "Incubation",
+              "overall_score": 49.375,
+              "metrics": {
+                "runtime_ids": [],
+                "runtime_count": 0,
+                "telemetry_coverage_count": 0,
+                "pnl": null,
+                "drawdown": null,
+                "fill_rate": null,
+                "avg_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "telemetry_evidence_refs": [],
+                "telemetry_resolution": "missing"
+              },
+              "components": {
+                "overall_score": 49.375,
+                "pnl_score": 50.0,
+                "risk_score": 77.5,
+                "execution_score": 50.0,
+                "activity_score": 0.0
+              },
+              "links": {
+                "detail": "/bff/personas/persona-9bc44570c2eeef68f259",
+                "route_policy": "/bff/personas/persona-9bc44570c2eeef68f259/route-policy",
+                "capabilities": "/bff/personas/persona-9bc44570c2eeef68f259/capabilities",
+                "evaluations": "/bff/personas/persona-9bc44570c2eeef68f259/evaluations",
+                "memory": "/bff/personas/persona-9bc44570c2eeef68f259/memory",
+                "activity": "/bff/personas/persona-9bc44570c2eeef68f259/activity"
+              },
+              "eligible": false,
+              "exclusion_reason": "Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "evidence_ref_ids": [],
+              "source_confidence": "unavailable",
+              "rank": 2,
+              "score": 49.375,
+              "score_field": "overall_score",
+              "quarter": "2026-Q3",
+              "quarter_window": {
+                "quarter": "2026-Q3",
+                "year": 2026,
+                "quarter_number": 3,
+                "label": "2026 Q3",
+                "start_at": "2026-07-01T00:00:00Z",
+                "end_exclusive_at": "2026-10-01T00:00:00Z",
+                "timezone": "UTC"
+              },
+              "formula_version": "pm12-default-v1",
+              "basis": "latest_available_persona_league_metrics_with_quarter_window",
+              "period": "quarter",
+              "criteria": "overall",
+              "governance_state": "recommendation",
+              "allocation_policy_input": {
+                "schema_version": "persona-allocation-policy-input/v1",
+                "adapter_version": "pm12-quarterly-overall-tier-v1",
+                "policy_version": "persona-real-allocation-v1",
+                "source_formula_version": "pm12-default-v1",
+                "rank_score_source": "overall_score",
+                "rank_score": 49.375,
+                "source_tier": "tier-4",
+                "allocation_tier": "watch"
+              },
+              "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2"
+            },
+            {
+              "id": "persona-4900b20b038a885dec38",
+              "persona_id": "persona-4900b20b038a885dec38",
+              "name": "Pantheon Dev Paper Release 34740973730 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "state": "paper_running",
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_pool_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "telemetry_resolution": "missing",
+              "current_weight_source": "unavailable",
+              "binding_ids": [],
+              "strategy_ids": [],
+              "runtime_ids": [],
+              "capital_pool_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "risk": "low",
+              "archetype": "momentum",
+              "tier": "tier-4",
+              "tier_id": "tier-4",
+              "tier_label": "Incubation",
+              "overall_score": 49.375,
+              "metrics": {
+                "runtime_ids": [],
+                "runtime_count": 0,
+                "telemetry_coverage_count": 0,
+                "pnl": null,
+                "drawdown": null,
+                "fill_rate": null,
+                "avg_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "telemetry_evidence_refs": [],
+                "telemetry_resolution": "missing"
+              },
+              "components": {
+                "overall_score": 49.375,
+                "pnl_score": 50.0,
+                "risk_score": 77.5,
+                "execution_score": 50.0,
+                "activity_score": 0.0
+              },
+              "links": {
+                "detail": "/bff/personas/persona-4900b20b038a885dec38",
+                "route_policy": "/bff/personas/persona-4900b20b038a885dec38/route-policy",
+                "capabilities": "/bff/personas/persona-4900b20b038a885dec38/capabilities",
+                "evaluations": "/bff/personas/persona-4900b20b038a885dec38/evaluations",
+                "memory": "/bff/personas/persona-4900b20b038a885dec38/memory",
+                "activity": "/bff/personas/persona-4900b20b038a885dec38/activity"
+              },
+              "eligible": false,
+              "exclusion_reason": "Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "evidence_ref_ids": [],
+              "source_confidence": "unavailable",
+              "rank": 3,
+              "score": 49.375,
+              "score_field": "overall_score",
+              "quarter": "2026-Q3",
+              "quarter_window": {
+                "quarter": "2026-Q3",
+                "year": 2026,
+                "quarter_number": 3,
+                "label": "2026 Q3",
+                "start_at": "2026-07-01T00:00:00Z",
+                "end_exclusive_at": "2026-10-01T00:00:00Z",
+                "timezone": "UTC"
+              },
+              "formula_version": "pm12-default-v1",
+              "basis": "latest_available_persona_league_metrics_with_quarter_window",
+              "period": "quarter",
+              "criteria": "overall",
+              "governance_state": "recommendation",
+              "allocation_policy_input": {
+                "schema_version": "persona-allocation-policy-input/v1",
+                "adapter_version": "pm12-quarterly-overall-tier-v1",
+                "policy_version": "persona-real-allocation-v1",
+                "source_formula_version": "pm12-default-v1",
+                "rank_score_source": "overall_score",
+                "rank_score": 49.375,
+                "source_tier": "tier-4",
+                "allocation_tier": "watch"
+              },
+              "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2"
+            },
+            {
+              "id": "persona-21cdbed183c80cf371df",
+              "persona_id": "persona-21cdbed183c80cf371df",
+              "name": "Pantheon Dev Paper Release 34596927306 Attempt 1",
+              "owner": "pantheon-dev-operator-a",
+              "state": "provisioning",
+              "stage": "not_running",
+              "deployment_stage": "none",
+              "capital_mode": "none",
+              "capital_scope": "unbound",
+              "capital_scope_id": null,
+              "capital_pool_id": null,
+              "capital_sleeve_id": null,
+              "paper_ledger_id": null,
+              "current_weight": null,
+              "target_weight": null,
+              "binding_state": "missing",
+              "binding_resolution": "binding_mismatch",
+              "runtime_resolution": "identity_mismatch",
+              "session_resolution": "missing_runtime",
+              "session_id": null,
+              "session_authority": null,
+              "telemetry_resolution": "missing",
+              "current_weight_source": "unavailable",
+              "binding_ids": [],
+              "strategy_ids": [],
+              "runtime_ids": [],
+              "capital_pool_ids": [],
+              "sleeve_ids": [],
+              "artifact_ids": [],
+              "broker_ids": [],
+              "risk": "low",
+              "archetype": "momentum",
+              "tier": "tier-4",
+              "tier_id": "tier-4",
+              "tier_label": "Incubation",
+              "overall_score": 49.375,
+              "metrics": {
+                "runtime_ids": [],
+                "runtime_count": 0,
+                "telemetry_coverage_count": 0,
+                "pnl": null,
+                "drawdown": null,
+                "fill_rate": null,
+                "avg_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "telemetry_evidence_refs": [],
+                "telemetry_resolution": "missing"
+              },
+              "components": {
+                "overall_score": 49.375,
+                "pnl_score": 50.0,
+                "risk_score": 77.5,
+                "execution_score": 50.0,
+                "activity_score": 0.0
+              },
+              "links": {
+                "detail": "/bff/personas/persona-21cdbed183c80cf371df",
+                "route_policy": "/bff/personas/persona-21cdbed183c80cf371df/route-policy",
+                "capabilities": "/bff/personas/persona-21cdbed183c80cf371df/capabilities",
+                "evaluations": "/bff/personas/persona-21cdbed183c80cf371df/evaluations",
+                "memory": "/bff/personas/persona-21cdbed183c80cf371df/memory",
+                "activity": "/bff/personas/persona-21cdbed183c80cf371df/activity"
+              },
+              "eligible": false,
+              "exclusion_reason": "Inactive lifecycle state: provisioning; Inactive governed stage: not_running; RuntimeBinding identity is not authoritative; No active session is joined to the RuntimeBinding; No telemetry coverage; Binding/runtime identity prevents an authoritative allocation join",
+              "exclusion_reasons": [
+                "Inactive lifecycle state: provisioning",
+                "Inactive governed stage: not_running",
+                "RuntimeBinding identity is not authoritative",
+                "No active session is joined to the RuntimeBinding",
+                "No telemetry coverage",
+                "Binding/runtime identity prevents an authoritative allocation join"
+              ],
+              "exclusion_codes": [
+                "inactive_lifecycle",
+                "stage_not_running",
+                "runtime_identity_mismatch",
+                "missing_active_session",
+                "missing_telemetry",
+                "binding_mismatch"
+              ],
+              "evidence_coverage": 0.0,
+              "evidence_refs": [],
+              "evidence_ref_ids": [],
+              "source_confidence": "unavailable",
+              "rank": 4,
+              "score": 49.375,
+              "score_field": "overall_score",
+              "quarter": "2026-Q3",
+              "quarter_window": {
+                "quarter": "2026-Q3",
+                "year": 2026,
+                "quarter_number": 3,
+                "label": "2026 Q3",
+                "start_at": "2026-07-01T00:00:00Z",
+                "end_exclusive_at": "2026-10-01T00:00:00Z",
+                "timezone": "UTC"
+              },
+              "formula_version": "pm12-default-v1",
+              "basis": "latest_available_persona_league_metrics_with_quarter_window",
+              "period": "quarter",
+              "criteria": "overall",
+              "governance_state": "recommendation",
+              "allocation_policy_input": {
+                "schema_version": "persona-allocation-policy-input/v1",
+                "adapter_version": "pm12-quarterly-overall-tier-v1",
+                "policy_version": "persona-real-allocation-v1",
+                "source_formula_version": "pm12-default-v1",
+                "rank_score_source": "overall_score",
+                "rank_score": 49.375,
+                "source_tier": "tier-4",
+                "allocation_tier": "watch"
+              },
+              "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2"
+            }
+          ],
+          "evidence_refs": [],
+          "summary": {
+            "quarter": "2026-Q3",
+            "formula_version": "pm12-default-v1",
+            "persona_count": 4,
+            "ranking_universe_count": 4,
+            "ranked_count": 4,
+            "returned_count": 4,
+            "top_persona_id": "persona-d57f6d76254c20418a9e",
+            "evidence_ref_count": 0,
+            "redacted_evidence_count": 0,
+            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+            "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2"
+          }
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 4,
+          "page_size": 20
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:09Z",
+          "ranking_snapshot_id": "ranking-quarterly-2026-q3-e16f6ab3d7f2ca0ce20a27f2",
+          "surfaces": {
+            "quarterly_ranking": {
+              "status": "degraded",
+              "source": "bff_composed",
+              "message": "Quarterly ranking is degraded because one or more source surfaces are degraded.",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "bff_composed",
+              "coverage": 1.0,
+              "missing_bindings": false
+            },
+            "formula": {
+              "status": "ok",
+              "source": "bff_composed",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "bff_composed",
+              "coverage": 1.0,
+              "missing_bindings": false
+            },
+            "evidence_refs": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:09Z"
+              },
+              "message": "Evidence reference read surface is unavailable.",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "unverifiable",
+              "coverage": 0.0,
+              "missing_bindings": true
+            },
+            "knowledge_evidence": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:09Z"
+              },
+              "message": "Evidence reference read surface is unavailable.",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "unverifiable",
+              "coverage": 0.0,
+              "missing_bindings": true
+            },
+            "personas": {
+              "status": "ok",
+              "source": "typed_store",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "typed_store",
+              "coverage": 1.0,
+              "missing_bindings": false
+            },
+            "route_policies": {
+              "status": "ok",
+              "source": "bff_composed",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "bff_composed",
+              "coverage": 1.0,
+              "missing_bindings": false
+            },
+            "capability_snapshots": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:09Z"
+              },
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "unverifiable",
+              "coverage": 0.0,
+              "missing_bindings": true
+            },
+            "persona_bindings": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:09Z"
+              },
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "unverifiable",
+              "coverage": 0.0,
+              "missing_bindings": true
+            },
+            "runtime_bindings": {
+              "status": "ok",
+              "source": "typed_store",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "typed_store",
+              "coverage": 1.0,
+              "missing_bindings": false
+            },
+            "telemetry_summaries": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:09Z"
+              },
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "unverifiable",
+              "coverage": 0.0,
+              "missing_bindings": true
+            },
+            "persona_sessions": {
+              "status": "unavailable",
+              "source": "missing",
+              "staleness": {
+                "served_from": "unverifiable",
+                "last_known_at": "2026-09-13T10:28:09Z"
+              },
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "unverifiable",
+              "coverage": 0.0,
+              "missing_bindings": true
+            },
+            "teaching_sessions": {
+              "status": "ok",
+              "source": "typed_store",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "typed_store",
+              "coverage": 1.0,
+              "missing_bindings": false
+            },
+            "persona_memory": {
+              "status": "ok",
+              "source": "bff_composed",
+              "observed_time": "2026-09-13T10:28:09Z",
+              "freshness": "bff_composed",
+              "coverage": 1.0,
+              "missing_bindings": false
+            }
+          },
+          "composition_sources": [
+            "GET /bff/management/persona-league",
+            "GET /bff/management/persona-league/rankings",
+            "GET /bff/management/persona-league/tiers",
+            "GET /api/v1/knowledge/evidence"
+          ],
+          "policy": "read_only_governance_advisory",
+          "redacted_evidence_count": 0
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:09.562780+00:00",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba",
+      "status": 200,
+      "body": {
+        "data": {
+          "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+          "tenant_id": "tenant-dev",
+          "user_id": "pantheon-dev-operator-a",
+          "servant_persona_id": null,
+          "openclaw_session_id": null,
+          "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+          "active_strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+          "selected_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+          "active_workshop_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+          "final_strategy_spec_registry_id": null,
+          "final_workshop_version_id": null,
+          "status": "open",
+          "lock_version": 1,
+          "created_at": "2026-09-13 05:22:31+00",
+          "updated_at": "2026-09-13 05:22:31+00",
+          "concluded_at": null
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:09Z",
+          "capability": "agora.workshop.v1",
+          "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a",
+          "etag": "W/\"workshop:2afec261-fe60-43af-bacb-136c60a8f9ba:v1\""
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:09.736296+00:00",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/versions",
+      "status": 200,
+      "body": {
+        "data": {
+          "versions": [
+            {
+              "version": {
+                "workshop_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+                "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+                "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+                "strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+                "parent_workshop_version_id": null,
+                "source_event_id": null,
+                "sequence_no": 1,
+                "document_sha256": "8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+                "created_by": "pantheon-dev-operator-a",
+                "created_at": "2026-09-13 05:22:31+00"
+              },
+              "strategy_spec": {
+                "entry": {
+                  "registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+                  "artifact_type": "strategy_spec",
+                  "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+                  "version": "1.0.0",
+                  "artifact_state": "approved",
+                  "lineage": {
+                    "parent_registry_ids": null,
+                    "source_run_ids": [
+                      "seed-4929af0f1a189542"
+                    ],
+                    "source_dataset_refs": [
+                      "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+                    ],
+                    "source_strategy_spec_id": null
+                  },
+                  "storage_ref": {
+                    "backend": "inline",
+                    "path": "$.entry.metadata.strategy_spec"
+                  },
+                  "checksum": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+                  "producer_run_id": "seed-4929af0f1a189542",
+                  "evaluation_summary": {
+                    "confidence": 0.7,
+                    "candidate_gate": "schema_and_lineage_review",
+                    "source_seed_id": "seed-4929af0f1a189542",
+                    "evidence_bundle_id": "evbundle-distill-c4a34c2036cb"
+                  },
+                  "approval_decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+                  "approval_evidence": {
+                    "version": 3,
+                    "actor_id": "pantheon-dev-approver",
+                    "decision": "approved",
+                    "event_id": "7725b8d6-b98b-498b-a8e9-79e997921fdf",
+                    "metadata": null,
+                    "rationale": "Reviewed the exact fresh Source/distillation lineage and research-only schema. Input is explicitly simulated, not real market evidence. This permits Alpha research evaluation only, not paper/live execution or capital allocation.",
+                    "target_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+                    "tenant_id": "tenant-dev",
+                    "actor_role": "governance_reviewer",
+                    "conditions": [],
+                    "created_at": "2026-09-13T05:21:37Z",
+                    "decided_at": "2026-09-13T05:21:38Z",
+                    "expires_at": "2026-09-13T11:21:37Z",
+                    "persona_id": null,
+                    "revoked_at": null,
+                    "risk_level": "low",
+                    "session_id": null,
+                    "decision_id": "apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+                    "proposal_id": null,
+                    "recorded_at": "2026-09-13T05:21:38Z",
+                    "target_type": "registry_entry",
+                    "proof_digest": null,
+                    "evidence_refs": [
+                      {
+                        "ref_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                        "ref_type": "source_record"
+                      },
+                      {
+                        "ref_id": "distill-c4a34c2036cb1393c7e5ca8f",
+                        "ref_type": "distillation_job"
+                      }
+                    ],
+                    "owner_user_id": "pantheon-dev-approver",
+                    "superseded_by": null,
+                    "decision_state": "decided",
+                    "target_version": "1.0.0",
+                    "capital_pool_id": null,
+                    "authority_status": "authoritative",
+                    "candidate_digest": "sha256:8e1d674d912ef577d4f70dd1605742506654de31dee891802def47dbed6fdcc3",
+                    "proposal_revision": null,
+                    "authorization_scope": null,
+                    "controller_record_ref": "governance-controller://approval-apv-4359fdcc43e34da84da2afc978d8323ade7a3f9d4b5c172936af0cddf31ce682",
+                    "proposal_content_digest": null,
+                    "validation_result_digest": null
+                  },
+                  "approver": "pantheon-dev-approver",
+                  "approved_at": "2026-09-13T05:21:38Z",
+                  "rollback_target": null,
+                  "deployment_summary": null,
+                  "metadata": {
+                    "tenant_id": "tenant-dev",
+                    "distillation": {
+                      "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                      "source_digest": "sha256:e70a534d1d3b5173bd6066a9631ef902ef11d252bdf72366cde97e96a8404f3c",
+                      "schema_version": "source_to_draft.v1",
+                      "distillation_job_id": "distill-c4a34c2036cb1393c7e5ca8f",
+                      "source_event_version": "source_record.normalized.v1"
+                    },
+                    "research_only": true,
+                    "strategy_spec": {
+                      "title": "SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+                      "metadata": {
+                        "task_id": "STRAT-003",
+                        "confidence": 0.7,
+                        "risk_notes": [
+                          "simulation",
+                          "is_real=false",
+                          "paper_only",
+                          "not_market_evidence"
+                        ],
+                        "label_hints": [
+                          "return_1d"
+                        ],
+                        "access_scope": [
+                          "research"
+                        ],
+                        "backend_hint": "vectorbt",
+                        "feature_hints": [
+                          "momentum"
+                        ],
+                        "required_data": [
+                          "OHLCV"
+                        ],
+                        "research_only": true,
+                        "source_seed_id": "seed-4929af0f1a189542",
+                        "execution_route": "none",
+                        "entitlement_tags": [],
+                        "conversion_service": "StrategySpecConversionService",
+                        "conversion_version": "1.0",
+                        "evidence_bundle_id": "evbundle-distill-c4a34c2036cb",
+                        "source_license_scope": "internal",
+                        "registry_write_performed": false
+                      },
+                      "objective": "Evaluate SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e using vectorbt under governed research gates before any paper, canary, or live promotion.",
+                      "governance": {
+                        "policy_id": "research-strategy-spec-conversion-v1",
+                        "risk_profile": "research_only",
+                        "approval_required": true
+                      },
+                      "hypothesis": "Explicitly simulated SPY two-point momentum for paper-only acceptance; QQQ is a simulated research comparison.",
+                      "provenance": {
+                        "created_at": "2026-09-13T04:05:23Z",
+                        "created_by": "Codex",
+                        "source_kind": "workflow",
+                        "source_refs": [
+                          "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor"
+                        ]
+                      },
+                      "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+                      "market_scope": {
+                        "venues": [
+                          "US"
+                        ],
+                        "symbols": [
+                          "RESEARCH_UNIVERSE"
+                        ],
+                        "frequency": "1d",
+                        "asset_classes": [
+                          "equity"
+                        ]
+                      },
+                      "spec_version": "1.0",
+                      "evidence_refs": [
+                        {
+                          "ref_id": "evbundle-distill-c4a34c2036cb",
+                          "ref_type": "evidence_bundle",
+                          "association": "source_evidence"
+                        },
+                        {
+                          "ref_id": "evi-distill-c4a34c2036cb",
+                          "summary": "SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+                          "ref_type": "evidence_item",
+                          "source_id": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                          "association": "supporting_evidence",
+                          "citation_ref": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor#normalized@e70a534d1d3b",
+                          "evidence_item_id": "evi-distill-c4a34c2036cb"
+                        }
+                      ],
+                      "evaluation_plan": {
+                        "metrics": [
+                          "sharpe_ratio",
+                          "max_drawdown"
+                        ],
+                        "live_gate": "Requires paper evidence, risk owner approval, and explicit live approval.",
+                        "paper_gate": "Requires approved StrategySpec artifact and paper deployment approval.",
+                        "candidate_gate": "StrategySpec schema, source-seed lineage, and evidence/code refs review pass."
+                      },
+                      "lifecycle_state": "draft",
+                      "data_dependencies": [
+                        {
+                          "ref": "src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor",
+                          "kind": "source_record"
+                        },
+                        {
+                          "ref": "dataset:ohlcv",
+                          "kind": "dataset"
+                        }
+                      ],
+                      "execution_profile": {
+                        "quantity_type": "PERCENT_PORTFOLIO",
+                        "rebalance_cadence": "1 day",
+                        "execution_mode_hint": "research",
+                        "signal_schema_version": "research-signal-v1"
+                      }
+                    },
+                    "source_seed_id": "seed-4929af0f1a189542",
+                    "execution_route": "none",
+                    "conversion_service": "StrategySpecConversionService",
+                    "conversion_version": "1.0",
+                    "evidence_bundle_id": "evbundle-distill-c4a34c2036cb",
+                    "registry_payload_built": true,
+                    "registry_write_performed": false
+                  },
+                  "created_at": "2026-09-13T04:05:23Z",
+                  "updated_at": "2026-09-13T05:21:38Z",
+                  "last_actor": {
+                    "roles": [
+                      "operator"
+                    ],
+                    "tenant": "tenant-dev",
+                    "actor_id": "pantheon-dev-operator-a",
+                    "token_kind": "jwt"
+                  },
+                  "owner_tenant": "tenant-dev"
+                },
+                "deployment_stage": "none"
+              }
+            }
+          ],
+          "selected_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+          "active_strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b"
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:09Z",
+          "capability": "agora.workshop.v1",
+          "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a",
+          "request_id": null,
+          "canonical_authority": "strategy_registry",
+          "etag": "W/\"workshop:2afec261-fe60-43af-bacb-136c60a8f9ba:v1\"",
+          "no_direct_action": {
+            "deployment_triggered": false,
+            "order_submitted": false,
+            "live_capital_changed": false
+          }
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:09.912328+00:00",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/cards",
+      "status": 200,
+      "body": {
+        "data": [
+          {
+            "spec_version": "1.0",
+            "card_id": "card_event_6287a125-8d7d-4baa-8c5b-63638e40d199",
+            "card_type": "user_strategy_description",
+            "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+            "sequence_no": 1,
+            "source_event_ids": [
+              "6287a125-8d7d-4baa-8c5b-63638e40d199"
+            ],
+            "status": "informational",
+            "title": "Strategy description captured",
+            "summary": "Private workshop message",
+            "payload": {
+              "owner_visible_content": "Private workshop message",
+              "message_event_id": "6287a125-8d7d-4baa-8c5b-63638e40d199",
+              "created_at": "2026-09-13 05:22:31+00"
+            },
+            "created_at": "2026-09-13 05:22:31+00"
+          },
+          {
+            "spec_version": "1.0",
+            "card_id": "card_reconstruction_aff04349ac11afebf604",
+            "card_type": "strategy_reconstruction",
+            "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+            "sequence_no": 2,
+            "status": "completed",
+            "title": "Strategy reconstruction: insufficient",
+            "payload": {
+              "job_status": "completed",
+              "reconstruction": {
+                "created_at": "2026-09-13T05:22:32Z",
+                "inferences": [],
+                "assumptions": [
+                  "Assuming default daily asset trading scope if unspecified."
+                ],
+                "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+                "completeness": {
+                  "grade": "insufficient",
+                  "blockers": [
+                    "Missing core strategy hypothesis",
+                    "Target asset universe is undefined",
+                    "Entry trigger rules are undefined"
+                  ],
+                  "confirmed_fields": [],
+                  "unconfirmed_fields": [
+                    "hypothesis",
+                    "universe",
+                    "data_requirements",
+                    "signal_definition",
+                    "entry_rules",
+                    "exit_rules",
+                    "position_sizing",
+                    "risk_controls",
+                    "cost_liquidity_capacity",
+                    "validation_plan",
+                    "regime_invalidation",
+                    "governance_constraints"
+                  ]
+                },
+                "strategy_map": {
+                  "universe": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "exit_rules": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "hypothesis": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "entry_rules": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "risk_controls": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "position_sizing": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "validation_plan": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "data_requirements": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "signal_definition": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "regime_invalidation": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "governance_constraints": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  },
+                  "cost_liquidity_capacity": {
+                    "status": "missing",
+                    "details": {},
+                    "summary": null
+                  }
+                },
+                "evidence_refs": [
+                  {
+                    "ref_id": "seq-1",
+                    "summary": "Messages up to sequence 1",
+                    "ref_type": "conversation_sequence",
+                    "data_cutoff": "2026-09-13T05:22:32Z"
+                  }
+                ],
+                "contradictions": [],
+                "draft_proposal": null,
+                "explicit_facts": [
+                  "Received 1 user message(s) up to sequence 1."
+                ],
+                "provider_lineage": {
+                  "engine": "pantheon_reconstruction_v1",
+                  "provider": "rule_based_analysis"
+                },
+                "reconstruction_id": "recon-52946dbd93684fae",
+                "next_best_question": {
+                  "text": "What is the core economic or quantitative hypothesis behind your trading idea?",
+                  "why_now": "A strategy requires a clear hypothesis before defining signals and rules.",
+                  "resolves": [
+                    "hypothesis.summary"
+                  ],
+                  "question_id": "nbq-hyp-1"
+                },
+                "based_on_sequence_no": 1
+              },
+              "registry_draft_ref": null,
+              "based_on_sequence_no": 1
+            },
+            "created_at": "2026-09-13 05:22:32+00",
+            "summary": "What is the core economic or quantitative hypothesis behind your trading idea?",
+            "evidence_refs": [
+              {
+                "ref_id": "seq-1",
+                "summary": "Messages up to sequence 1",
+                "ref_type": "conversation_sequence",
+                "data_cutoff": "2026-09-13T05:22:32Z"
+              }
+            ],
+            "updated_at": "2026-09-13 05:22:32.213702+00"
+          },
+          {
+            "spec_version": "1.0",
+            "card_id": "card_readiness_ready_2afec261-fe60-43af-bacb-136c60a8f9ba_1",
+            "card_type": "readiness_gate",
+            "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+            "sequence_no": 2,
+            "workshop_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+            "strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+            "status": "action_required",
+            "title": "Strategy readiness gates",
+            "summary": "Highest ready gate: none",
+            "payload": {
+              "gates": [
+                {
+                  "gate": "preliminary_research",
+                  "state": "conditional",
+                  "requirements": [
+                    {
+                      "requirement_id": "state_map_present",
+                      "title": "Strategy completeness state map is present",
+                      "hardness": "soft",
+                      "state": "missing"
+                    },
+                    {
+                      "requirement_id": "workshop_evidence_present",
+                      "title": "Workshop event evidence exists in scoped store",
+                      "hardness": "hard",
+                      "state": "satisfied"
+                    },
+                    {
+                      "requirement_id": "research_blockers_clear",
+                      "title": "No research gate hard blockers",
+                      "hardness": "hard",
+                      "state": "satisfied"
+                    }
+                  ],
+                  "evaluated_at": "2026-09-13T10:28:09Z"
+                },
+                {
+                  "gate": "full_validation",
+                  "state": "not_assessed",
+                  "requirements": [
+                    {
+                      "requirement_id": "preliminary_research_ready",
+                      "title": "Preliminary research gate is ready",
+                      "hardness": "hard",
+                      "state": "partial"
+                    },
+                    {
+                      "requirement_id": "validation_blockers_clear",
+                      "title": "No validation gate hard blockers",
+                      "hardness": "hard",
+                      "state": "satisfied"
+                    }
+                  ],
+                  "blocking_requirement_ids": [
+                    "preliminary_research_ready"
+                  ],
+                  "evaluated_at": "2026-09-13T10:28:09Z"
+                },
+                {
+                  "gate": "trading_room",
+                  "state": "not_assessed",
+                  "requirements": [
+                    {
+                      "requirement_id": "strategy_registry_ref_present",
+                      "title": "Strategy Registry reference exists in scoped workshop session",
+                      "hardness": "hard",
+                      "state": "satisfied"
+                    },
+                    {
+                      "requirement_id": "full_validation_ready",
+                      "title": "Full validation gate is ready",
+                      "hardness": "hard",
+                      "state": "partial"
+                    },
+                    {
+                      "requirement_id": "trading_room_blockers_clear",
+                      "title": "No Trading Room hard blockers",
+                      "hardness": "hard",
+                      "state": "satisfied"
+                    }
+                  ],
+                  "blocking_requirement_ids": [
+                    "full_validation_ready"
+                  ],
+                  "evaluated_at": "2026-09-13T10:28:09Z"
+                }
+              ],
+              "hard_blockers": [
+                "Preliminary research gate is ready",
+                "Full validation gate is ready"
+              ],
+              "staleness_reasons": [
+                "strategy_completeness_snapshot_missing"
+              ],
+              "assessed_at": "2026-09-13T10:28:09Z"
+            },
+            "evidence_refs": [
+              {
+                "ref_type": "evidence_item",
+                "ref_id": "pcnt_01M2CKF4SDTPBN3Z9AWDG77VMT",
+                "summary": "Private workshop message",
+                "data_cutoff": "2026-09-13 05:22:31+00"
+              }
+            ],
+            "allowed_actions": {
+              "reassess_readiness": true
+            },
+            "created_at": "2026-09-13T10:28:09Z"
+          }
+        ],
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:09Z",
+          "capability": "agora.workshop.v1",
+          "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a",
+          "total": 3
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:10.022089+00:00",
+      "path": "/bff/agora/workshops/2afec261-fe60-43af-bacb-136c60a8f9ba/readiness",
+      "status": 200,
+      "body": {
+        "data": {
+          "spec_version": "1.0",
+          "assessment_id": "ready_2afec261-fe60-43af-bacb-136c60a8f9ba_1",
+          "workshop_id": "2afec261-fe60-43af-bacb-136c60a8f9ba",
+          "strategy_id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+          "workshop_version_id": "wsv-legacy-2a1fe4d2b0e8dceb580f2f5f",
+          "strategy_spec_registry_id": "reg-strategy-spec-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-e70a534d1d3b",
+          "assessment_version": 1,
+          "gates": [
+            {
+              "gate": "preliminary_research",
+              "state": "conditional",
+              "requirements": [
+                {
+                  "requirement_id": "state_map_present",
+                  "title": "Strategy completeness state map is present",
+                  "hardness": "soft",
+                  "state": "missing"
+                },
+                {
+                  "requirement_id": "workshop_evidence_present",
+                  "title": "Workshop event evidence exists in scoped store",
+                  "hardness": "hard",
+                  "state": "satisfied"
+                },
+                {
+                  "requirement_id": "research_blockers_clear",
+                  "title": "No research gate hard blockers",
+                  "hardness": "hard",
+                  "state": "satisfied"
+                }
+              ],
+              "evaluated_at": "2026-09-13T10:28:10Z"
+            },
+            {
+              "gate": "full_validation",
+              "state": "not_assessed",
+              "requirements": [
+                {
+                  "requirement_id": "preliminary_research_ready",
+                  "title": "Preliminary research gate is ready",
+                  "hardness": "hard",
+                  "state": "partial"
+                },
+                {
+                  "requirement_id": "validation_blockers_clear",
+                  "title": "No validation gate hard blockers",
+                  "hardness": "hard",
+                  "state": "satisfied"
+                }
+              ],
+              "blocking_requirement_ids": [
+                "preliminary_research_ready"
+              ],
+              "evaluated_at": "2026-09-13T10:28:10Z"
+            },
+            {
+              "gate": "trading_room",
+              "state": "not_assessed",
+              "requirements": [
+                {
+                  "requirement_id": "strategy_registry_ref_present",
+                  "title": "Strategy Registry reference exists in scoped workshop session",
+                  "hardness": "hard",
+                  "state": "satisfied"
+                },
+                {
+                  "requirement_id": "full_validation_ready",
+                  "title": "Full validation gate is ready",
+                  "hardness": "hard",
+                  "state": "partial"
+                },
+                {
+                  "requirement_id": "trading_room_blockers_clear",
+                  "title": "No Trading Room hard blockers",
+                  "hardness": "hard",
+                  "state": "satisfied"
+                }
+              ],
+              "blocking_requirement_ids": [
+                "full_validation_ready"
+              ],
+              "evaluated_at": "2026-09-13T10:28:10Z"
+            }
+          ],
+          "staleness_reasons": [
+            "strategy_completeness_snapshot_missing"
+          ],
+          "assessed_at": "2026-09-13T10:28:10Z",
+          "evidence_refs": [
+            {
+              "ref_type": "evidence_item",
+              "ref_id": "pcnt_01M2CKF4SDTPBN3Z9AWDG77VMT",
+              "summary": "Private workshop message",
+              "data_cutoff": "2026-09-13 05:22:31+00"
+            }
+          ]
+        },
+        "meta": {
+          "snapshot_at": "2026-09-13T10:28:10Z",
+          "capability": "agora.workshop.v1",
+          "audience": "tenant:tenant-dev:user:pantheon-dev-operator-a"
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    },
+    {
+      "at": "2026-09-13T10:28:10.141197+00:00",
+      "path": "/bff/agora/trading-room/performance-attribution/by-strategy",
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "agora-trading-room-performance-attribution-by-strategy",
+          "period": "latest",
+          "dimensions": [
+            "strategy"
+          ],
+          "items": [
+            {
+              "id": "agora-perf-strat-7774c0ec-eadf-455c-bf13-609bf68a55da",
+              "dimension": "strategy",
+              "dimension_key": "7774c0ec-eadf-455c-bf13-609bf68a55da",
+              "label": "7774c0ec-eadf-455c-bf13-609bf68a55da",
+              "period": "latest",
+              "rank": 1,
+              "metrics": {
+                "runtime_count": 0,
+                "telemetry_runtime_count": 0,
+                "holding_count": 0,
+                "total_pnl": null,
+                "unrealized_pnl": null,
+                "realized_pnl": null,
+                "total_notional": null,
+                "total_market_value": null,
+                "total_exposure": null,
+                "worst_drawdown": null,
+                "average_fill_rate": null,
+                "average_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "pnl_contribution_pct": null,
+                "notional_weight": null,
+                "data_confidence": "unavailable"
+              },
+              "total_pnl": null,
+              "pnl_contribution_pct": null,
+              "notional_weight": null,
+              "runtime_count": 0,
+              "holding_count": 0,
+              "data_confidence": "unavailable",
+              "source_status": "unavailable",
+              "source_refs": {
+                "strategy_ids": [
+                  "7774c0ec-eadf-455c-bf13-609bf68a55da"
+                ],
+                "runtime_ids": [],
+                "capital_pool_ids": [],
+                "persona_ids": []
+              },
+              "links": {
+                "strategy": "/agora/strategies/7774c0ec-eadf-455c-bf13-609bf68a55da",
+                "performance": "/bff/agora/trading-room/strategies/7774c0ec-eadf-455c-bf13-609bf68a55da/performance"
+              }
+            },
+            {
+              "id": "agora-perf-strat-dd150e4a-f77b-4345-944e-08f935412cca",
+              "dimension": "strategy",
+              "dimension_key": "dd150e4a-f77b-4345-944e-08f935412cca",
+              "label": "dd150e4a-f77b-4345-944e-08f935412cca",
+              "period": "latest",
+              "rank": 2,
+              "metrics": {
+                "runtime_count": 0,
+                "telemetry_runtime_count": 0,
+                "holding_count": 0,
+                "total_pnl": null,
+                "unrealized_pnl": null,
+                "realized_pnl": null,
+                "total_notional": null,
+                "total_market_value": null,
+                "total_exposure": null,
+                "worst_drawdown": null,
+                "average_fill_rate": null,
+                "average_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "pnl_contribution_pct": null,
+                "notional_weight": null,
+                "data_confidence": "unavailable"
+              },
+              "total_pnl": null,
+              "pnl_contribution_pct": null,
+              "notional_weight": null,
+              "runtime_count": 0,
+              "holding_count": 0,
+              "data_confidence": "unavailable",
+              "source_status": "unavailable",
+              "source_refs": {
+                "strategy_ids": [
+                  "dd150e4a-f77b-4345-944e-08f935412cca"
+                ],
+                "runtime_ids": [],
+                "capital_pool_ids": [],
+                "persona_ids": []
+              },
+              "links": {
+                "strategy": "/agora/strategies/dd150e4a-f77b-4345-944e-08f935412cca",
+                "performance": "/bff/agora/trading-room/strategies/dd150e4a-f77b-4345-944e-08f935412cca/performance"
+              }
+            },
+            {
+              "id": "agora-perf-strat-strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+              "dimension": "strategy",
+              "dimension_key": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+              "label": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+              "period": "latest",
+              "rank": 3,
+              "metrics": {
+                "runtime_count": 0,
+                "telemetry_runtime_count": 0,
+                "holding_count": 0,
+                "total_pnl": null,
+                "unrealized_pnl": null,
+                "realized_pnl": null,
+                "total_notional": null,
+                "total_market_value": null,
+                "total_exposure": null,
+                "worst_drawdown": null,
+                "average_fill_rate": null,
+                "average_slippage_bps": null,
+                "total_trades": 0,
+                "latest_telemetry_at": null,
+                "pnl_contribution_pct": null,
+                "notional_weight": null,
+                "data_confidence": "unavailable"
+              },
+              "total_pnl": null,
+              "pnl_contribution_pct": null,
+              "notional_weight": null,
+              "runtime_count": 0,
+              "holding_count": 0,
+              "data_confidence": "unavailable",
+              "source_status": "unavailable",
+              "source_refs": {
+                "strategy_ids": [
+                  "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c"
+                ],
+                "runtime_ids": [],
+                "capital_pool_ids": [],
+                "persona_ids": []
+              },
+              "links": {
+                "strategy": "/agora/strategies/strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c",
+                "performance": "/bff/agora/trading-room/strategies/strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c/performance"
+              }
+            }
+          ],
+          "summary": {
+            "period": "latest",
+            "dimensions": [
+              "strategy"
+            ],
+            "supported_dimensions": [
+              "strategy"
+            ],
+            "row_count": 3,
+            "returned_row_count": 3,
+            "runtime_count": 0,
+            "telemetry_runtime_count": 0,
+            "holding_count": 0,
+            "total_pnl": null,
+            "total_notional": null,
+            "total_exposure": null,
+            "worst_drawdown": null,
+            "average_fill_rate": null,
+            "average_slippage_bps": null,
+            "total_trades": 0,
+            "latest_telemetry_at": null,
+            "basis": "owner_scoped_strategy_attribution"
+          },
+          "page_info": {
+            "next_page_token": null,
+            "total": 3,
+            "page_size": 50
+          }
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 3,
+          "page_size": 50
+        },
+        "meta": {
+          "scope": {
+            "tenant_id": "tenant-dev",
+            "owner_user_id": "pantheon-dev-operator-a",
+            "environment": "paper"
+          },
+          "period": "latest",
+          "snapshot_at": "2026-09-13T10:28:10Z",
+          "availability": "available",
+          "unavailable_sources": [
+            "telemetry"
+          ],
+          "composition_sources": [
+            "strategy_directory",
+            "telemetry",
+            "trade_journeys"
+          ],
+          "surfaces": {
+            "strategy_directory": {
+              "status": "available",
+              "as_of": "2026-09-13T10:28:10Z",
+              "source_ids": [
+                "7774c0ec-eadf-455c-bf13-609bf68a55da",
+                "dd150e4a-f77b-4345-944e-08f935412cca",
+                "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c"
+              ],
+              "reason": null
+            },
+            "telemetry": {
+              "status": "unavailable",
+              "as_of": null,
+              "source_ids": [],
+              "reason": "no_current_rows"
+            },
+            "trade_journeys": {
+              "status": "available",
+              "as_of": "2026-09-13T10:28:10Z",
+              "source_ids": [],
+              "reason": null
+            }
+          },
+          "policy": "read_only_performance_attribution",
+          "no_order_route_proof": "agora_performance_read_only"
+        }
+      },
+      "cors_origin": "https://app.dev.mvl-cap.tw",
+      "cors_credentials": "true"
+    }
+  ],
+  "all_http_200": true
+}

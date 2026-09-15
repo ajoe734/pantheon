@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional
 
@@ -110,6 +111,14 @@ def build_admission_context(
         require_read_role(identity)
         if write:
             require_write_role(identity)
+            from services.control_plane.bff.auth.policy import dev_login_forbidden_environment
+
+            # Ordinary dev commands follow the existing disabled-MFA posture.
+            # Staging/production retain their existing command requirement.
+            mfa_required = mfa_required and (
+                dev_login_forbidden_environment()
+                or os.getenv("PANTHEON_BFF_MFA_REQUIRED", "true").strip().lower() != "false"
+            )
             if mfa_required and not bool(getattr(identity, "mfa_verified", False)):
                 # The explicit header is accepted only for the dev auth stub.
                 # Strict JWT/OIDC paths must set mfa_verified in the shared

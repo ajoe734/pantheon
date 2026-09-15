@@ -18,17 +18,17 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from assistant.control_mode import ControlModeStore
-from assistant.models import AssistantMode
-from management_nl_command_idempotency import (
+from services.control_plane.bff.assistant.control_mode import ControlModeStore
+from services.control_plane.bff.assistant.models import AssistantMode
+from services.control_plane.bff.management_nl_command_idempotency import (
     ManagementNlCommandIdempotencyStore,
     ManagementNlCommandPayloadConflict,
     ManagementNlCommandRecoveryRequired,
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
-from models import OperatorIdentity
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from rebalance_authority_test_support import create_market_persona_projection_test_double
 
 
@@ -1869,6 +1869,103 @@ def test_management_nl_stream_records_done_only_openclaw_answer(tmp_path, monkey
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+@pytest.mark.parametrize("wire_format", ["structured_done", "json_done", "json_deltas"])
+def test_management_nl_stream_preserves_filtered_actions_after_durable_reload(
+    tmp_path, monkeypatch, wire_format
+) -> None:
+    answer = "Review this paper-only proposal; it requires your confirmation."
+    raw_actions = [
+        {
+            "id": "paper-pause", "kind": "runBffAction", "label": "Pause paper runtime",
+            "requiresConfirmation": False,
+            "params": {
+                "actionId": "PausePaperRuntime", "entityType": "Runtime", "entityId": "rt-stream-test",
+                "payload": {"runtime_id": "rt-stream-test", "reason": "operator_requested_pause"},
+            },
+        },
+        {"id": "disallowed", "kind": "openDrawer", "params": {"drawer": "runtime"}},
+        {"id": "invalid", "kind": "runBffAction", "params": {"endpoint": "https://example.invalid"}},
+        {"id": "missing-runtime", "kind": "runBffAction", "params": {"entityType": "Runtime", "actionId": "PausePaperRuntime"}},
+    ]
+    structured = {"answer": answer, "actions": raw_actions}
+    encoded = json.dumps(structured)
+    if wire_format == "structured_done":
+        events = [{"type": "delta", "text": "Partial answer"}, {"type": "done", "text": answer, "actions": raw_actions}]
+    elif wire_format == "json_done":
+        events = [{"type": "done", "text": encoded}]
+    else:
+        midpoint = len(encoded) // 2
+        events = [{"type": "delta", "text": encoded[:midpoint]}, {"type": "delta", "text": encoded[midpoint:]},
+                  {"type": "done", "text": encoded}]
+    fake = FakeProviderClient(stream_events=events)
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+    client = _seeded_client(tmp_path, monkeypatch)
+    store_path = str(tmp_path / "stream-conversation.json")
+    def fresh_store():
+        return bff_main.ManagementAiConversationStore(
+            storage_path=store_path,
+            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        )
+    monkeypatch.setattr(bff_main, "_MGMT_AI_CONVERSATION_STORE", fresh_store())
+    response = client.post(
+        "/bff/management/nl/ask/stream",
+        json={"question": "Explain this paper runtime proposal", "sessionId": "stream-actions",
+              "ui": {"availableUiActions": [{"kind": "runBffAction"}]}},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    frames = [json.loads(line[6:]) for line in response.text.splitlines()
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    done = [event for event in frames if event.get("type") == "done"]
+    assert len(done) == 1  # Never expose an unfiltered upstream terminal event.
+    assert done[0]["text"] == answer
+    actions = done[0]["ui_actions"]
+    assert [action["id"] for action in actions] == ["paper-pause"]
+    assert actions[0]["requiresConfirmation"] is True
+    assert actions[0]["params"] == raw_actions[0]["params"]
+    assert done[0]["provider_status"]["used"] is True
+
+    monkeypatch.setattr(bff_main, "_MGMT_AI_CONVERSATION_STORE", fresh_store())
+    readback = client.get("/bff/management/ai/conversations/stream-actions", headers=OPERATOR_HEADERS)
+    assert readback.status_code == 200, readback.text
+    turns = [turn for turn in readback.json()["data"]["turns"] if turn["role"] == "assistant"]
+    assert len(turns) == 1
+    assert turns[0]["text"] == answer
+    assert turns[0]["ui_actions"] == actions
+
+
+@pytest.mark.parametrize("failure", [False, True, "incomplete"])
+def test_management_nl_stream_does_not_offer_unallowed_or_failed_actions(tmp_path, monkeypatch, failure) -> None:
+    events = [{"type": "done", "text": "Provider proposal", "actions": [
+        {"id": "proposal", "kind": "runBffAction", "params": {"endpoint": "/api/v1/operator/commands"}},
+    ]}]
+    if failure == "incomplete":
+        events = [{"type": "delta", "text": json.dumps({"answer": "Incomplete proposal", "actions": events[0]["actions"]})}]
+    elif failure:
+        events.append({"type": "error", "message": "Provider stream failed", "error_code": "UPSTREAM_FAILED"})
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: FakeProviderClient(stream_events=events))
+    client = _seeded_client(tmp_path, monkeypatch)
+    response = client.post(
+        "/bff/management/nl/ask/stream",
+        json={"question": "Explain this proposal", "sessionId": "stream-no-action",
+              "ui": {"availableUiActions": [{"kind": "runBffAction"}] if failure else []}},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    frames = [json.loads(line[6:]) for line in response.text.splitlines()
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    done = [event for event in frames if event.get("type") == "done"]
+    if failure:
+        assert done == []
+        assert not [turn for turn in bff_main._management_ai_conversation_store().list_turns("stream-no-action")
+                    if turn["role"] == "assistant"]
+    else:
+        assert len(done) == 1
+        assert done[0]["ui_actions"] == []
 
 
 def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:

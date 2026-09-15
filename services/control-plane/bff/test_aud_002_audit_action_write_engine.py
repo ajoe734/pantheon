@@ -56,9 +56,20 @@ def _command_event(events: list[dict], command_id: str) -> dict:
 def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
     with _isolated_audit_client(allow_fallback=True) as client:
         response = client.post(
-            "/bff/actions/runtime/runtime-042/pause",
+            "/bff/v1/commands",
             headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause"},
-            json={"reason": "AUD-002 runtime audit write proof"},
+            json={
+                "command": "RuntimeAction",
+                "target": {"type": "Runtime", "id": "runtime-042"},
+                "action": "pause",
+                "params": {
+                    "action_id": "pause",
+                    "entity_type": "runtime",
+                    "entity_id": "runtime-042",
+                    "reason": "AUD-002 runtime audit write proof",
+                },
+                "audit_context": {"reason": "AUD-002 runtime audit write proof"},
+            },
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["receipt_id"]

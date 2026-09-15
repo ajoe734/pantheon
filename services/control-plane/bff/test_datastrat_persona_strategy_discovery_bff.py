@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeed
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
@@ -37,6 +37,7 @@ def _persona_record(
         "owner": actor_id,
         "archetype": archetype,
         "risk_level": risk_level,
+        "tenant_id": "pantheon-dev",
     })
     return {
         "id": persona_id,
@@ -48,6 +49,7 @@ def _persona_record(
         "status": lifecycle_state,
         "created_by": actor_id,
         "required_data_sources": [],
+        "tenant_id": "pantheon-dev",
         "metadata": clean_metadata,
     }
 
@@ -182,12 +184,25 @@ class _TestReadSurfacePorts:
         return getattr(self._ports, name)
 
 
+class _FakeOwner:
+    pass
+
+
+class _FakeCommandStore:
+    def get_all(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    def record(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
 @contextmanager
 def _discovery_client():
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     tracked_env = {
         "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
     }
-    original_store = bff_main.read_store
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         seed_store_path = root / "strategy_seeds.jsonl"
@@ -219,14 +234,27 @@ def _discovery_client():
                 ),
             },
         )
-        bff_main.read_store = _TestReadSurfacePorts(ports)
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        client = TestClient(bff_main.app)
+        read_store = _TestReadSurfacePorts(ports)
+        service = PersonaService(
+            read_store=read_store,
+            write_owner=_FakeOwner(),
+            ranking_write_owner=_FakeOwner(),
+            command_store=_FakeCommandStore(),
+        )
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+            detail = exc.detail
+            if isinstance(detail, dict) and "error" in detail:
+                return JSONResponse(status_code=exc.status_code, content=detail)
+            return JSONResponse(status_code=exc.status_code, content={"error": detail})
+
+        app.include_router(create_personas_router(service=service))
+        client = TestClient(app)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

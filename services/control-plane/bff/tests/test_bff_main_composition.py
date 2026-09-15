@@ -183,8 +183,6 @@ def test_zero_unreferenced_dead_functions_in_main_py() -> None:
         "_extract_identity",
         "_extract_identity_jwt",
         "_extract_identity_stub",
-        "_build_persona_health_items",
-        "_trading_performance_delta",
     }
 
     dead_funcs = [

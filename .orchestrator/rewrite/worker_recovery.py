@@ -263,8 +263,25 @@ def validate_lost_lease_receipt(receipt: Mapping[str, Any]) -> bool:
         return False
     if receipt.get("schema_version") != LOST_LEASE_RECEIPT_SCHEMA_VERSION:
         return False
-    if receipt.get("type") != "worker_lost_lease":
+    if receipt.get("type") not in {"worker_lost_lease", "worker_promotion_drained"}:
         return False
+    if receipt.get("reason_kind") == "promotion_drained" and receipt.get("type") != "worker_promotion_drained":
+        return False
+    if receipt.get("type") == "worker_promotion_drained":
+        import runtime_state
+        drain = receipt.get("promotion_drain")
+        if (receipt.get("reason_kind") != "promotion_drained" or not isinstance(drain, Mapping)
+                or drain.get("digest") != runtime_state.promotion_receipt_digest(drain)
+                or drain.get("status") != "drained"
+                or drain.get("worker", {}).get("run_id") != receipt.get("worker_run_id")
+                or drain.get("worker", {}).get("task_generation") != receipt.get("task_generation")):
+            return False
+        worker = drain["worker"]
+        evidence_state = {"promotion": {"epoch": drain.get("epoch"),
+            "incumbent": drain.get("incumbent"), "candidate": drain.get("candidate"),
+            "receipts": {str(worker.get("run_id") or ""): drain}}}
+        if runtime_state.valid_promotion_drain(evidence_state, worker) is None:
+            return False
     if str(receipt.get("status") or "") not in {
         "pending",
         "held",
@@ -380,6 +397,8 @@ def _worker_recovery_activity_event(
     event_identity: str | None = None,
 ) -> dict[str, Any]:
     receipt_id = str(receipt.get("receipt_id") or "").strip()
+    if receipt.get("type") == "worker_promotion_drained":
+        event_type = event_type.replace("worker_lost_lease", "worker_promotion_continuation")
     identity_suffix = f"-{event_identity}" if event_identity else ""
     return {
         "event_id": f"supervisor-{event_type}-{receipt_id}{identity_suffix}",

@@ -1223,24 +1223,23 @@ class IntegrationsService:
             "catalog_entry": action_id,
         }
 
-        if self._submit_command:
-            result = self._submit_command(
-                command_id=command_id,
-                command_type=ctype_val,
-                target={"type": etype_val, "id": entity_id},
-                submitted_at=submitted_at,
-                params={"action_id": action_id, **payload},
-                audit_context=audit_record,
+        if not self._submit_command:
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Command admission handler is not configured",
+                "Cannot submit integrations action without a configured command admission handler",
+                precondition_failed="command_submission_unconfigured",
             )
-        else:
-            result = {
-                "command_id": command_id,
-                "type": ctype_val,
-                "target": {"type": etype_val, "id": entity_id},
-                "submitted_at": submitted_at,
-                "status": "SUBMITTED",
-                "result": {"action_id": action_id, "status": "accepted"},
-            }
+
+        result = self._submit_command(
+            command_id=command_id,
+            command_type=ctype_val,
+            target={"type": etype_val, "id": entity_id},
+            submitted_at=submitted_at,
+            params={"action_id": action_id, **payload},
+            audit_context=audit_record,
+        )
 
         payload_dump = result if isinstance(result, dict) else getattr(result, "model_dump", lambda **kw: {"data": result})()
         idempotency_store[resolved_key] = {"request_hash": request_hash, "result": payload_dump}

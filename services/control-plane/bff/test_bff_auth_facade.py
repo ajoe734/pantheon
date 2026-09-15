@@ -20,17 +20,32 @@ import tempfile
 from unittest.mock import patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-import main as bff_main
-from main import _extract_identity, _extract_identity_jwt, _extract_identity_stub
-from models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.auth.policy import (
+    extract_identity as _extract_identity,
+    extract_identity_jwt as _extract_identity_jwt,
+    extract_identity_stub as _extract_identity_stub,
+)
+from services.control_plane.bff.core.app_factory import create_settings_router
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.settings_store import SettingsStore
 from services.runtime_auth_inbound import encode_jwt_hs256
+
+
+def _make_settings_app(settings_store: SettingsStore) -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+    router = create_settings_router(
+        settings_store=settings_store,
+        extract_identity=auth_policy.extract_identity,
+        require_admin_mfa=auth_policy.require_admin_mfa,
+    )
+    app.include_router(router)
+    return app
 
 _SECRET = "test-bff-secret-1234"
 _ISSUER = "pantheon-bff-test"
@@ -404,8 +419,8 @@ class TestExtractIdentityDispatch:
             {"PANTHEON_BFF_AUTH_STUB": "true", "PANTHEON_BFF_AUTH_MODE": bad_mode},
             clear=False,
         ):
-            assert bff_main._bff_auth_mode() == "strict"
-            assert bff_main._bff_auth_stub_enabled() is False
+            assert auth_policy.bff_auth_mode() == "strict"
+            assert auth_policy.bff_auth_stub_enabled() is False
             with pytest.raises(HTTPException) as exc_info:
                 _extract_identity("Bearer op-admin:admin:mfa")
         assert exc_info.value.status_code == 401
@@ -423,12 +438,9 @@ class TestSettingsAuthIntegration:
         env = {"PANTHEON_BFF_AUTH_STUB": "true"}
         with patch.dict(os.environ, env, clear=False):
             with tempfile.TemporaryDirectory() as td:
-                original = bff_main.settings_store
-                from settings_store import SettingsStore
-                bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
-                c = TestClient(bff_main.app)
+                store = SettingsStore(os.path.join(td, "settings.json"))
+                c = TestClient(_make_settings_app(store))
                 yield c
-                bff_main.settings_store = original
 
     @pytest.fixture
     def client_jwt(self):
@@ -442,12 +454,9 @@ class TestSettingsAuthIntegration:
         }
         with patch.dict(os.environ, env, clear=False):
             with tempfile.TemporaryDirectory() as td:
-                original = bff_main.settings_store
-                from settings_store import SettingsStore
-                bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
-                c = TestClient(bff_main.app)
+                store = SettingsStore(os.path.join(td, "settings.json"))
+                c = TestClient(_make_settings_app(store))
                 yield c
-                bff_main.settings_store = original
 
     # ---- stub mode ----
 
@@ -880,19 +889,13 @@ class TestExtractIdentityJwks:
         with patch(_JWKS_FETCH_TARGET, return_value=_TEST_JWKS):
             with patch.dict(os.environ, env, clear=False):
                 with tempfile.TemporaryDirectory() as td:
-                    original = bff_main.settings_store
-                    from settings_store import SettingsStore
-
-                    bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
-                    try:
-                        client = TestClient(bff_main.app)
-                        resp = client.post(
-                            "/api/v1/settings",
-                            headers={"Authorization": f"Bearer {token}"},
-                            json={"settings": {"general": {"theme": "dark"}}},
-                        )
-                    finally:
-                        bff_main.settings_store = original
+                    store = SettingsStore(os.path.join(td, "settings.json"))
+                    client = TestClient(_make_settings_app(store))
+                    resp = client.post(
+                        "/api/v1/settings",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={"settings": {"general": {"theme": "dark"}}},
+                    )
 
         assert resp.status_code == 403
         assert _response_error(resp)["details"]["precondition_failed"] == "role_check"

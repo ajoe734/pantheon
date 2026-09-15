@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+  "scope": "development tooling: supervisor runtime promotion admission and planned drain continuation",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "review_status": "pending_independent_exact_head_review",
+  "source": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+    "base_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+    "implementation_commit": "07dcb74a0cabedb5855f9f52505766dc559431c4",
+    "implementation_tree": "db930cf5dff3d40921774db2968162acda8b36d6",
+    "files_sha256": {
+      ".orchestrator/rewrite/worker_recovery.py": "4be8f31f2c511b061b0c7d23726d084a8861f8acf940f7138368ac7746f82e94",
+      ".orchestrator/runtime_state.py": "703241fb7c39e8c448ca6e518ebb621b1616e94e9627f00256e0f322c6d6a3d9",
+      ".orchestrator/supervisor.py": "17a47a5d99b177a5865b5a41e08a7202899459eb5967cf688737af6b74178c64",
+      ".orchestrator/test_runtime_state.py": "6d83bcb6178a56980da259f81f57516460a212e4abd672a032997132b43b83dd",
+      ".orchestrator/test_supervisor.py": "506e4198cb1ebfe792ebf66b2fb2aacc16430b0a822cf4c1bdc81bd3a476b051",
+      ".orchestrator/test_worker_runner_heartbeat.py": "31e07f436e2ef2c01456407055bc62b839779c239652c32af793b4cda48e72df",
+      ".orchestrator/worker_runner.py": "90eaf3ca73dbab2e2a6a70e662df0d4ab61b249a127a0dc9eee4ab9a32e5f11f",
+      "docs/operations/supervisor-runtime-promotion-drain.md": "54156d2471520b3bc038f9d05a1b46c591c59c57543ebb1b2a3be78d0cfb3f38",
+      "scripts/promote_supervisor_runtime.py": "588301c4898e69419b39a5d85fe3a3f59012eebb9a424f1b45dcfb240315b74f",
+      "scripts/test_promote_supervisor_runtime.py": "417f89d75059fdd0d515eecebc20cf337f196be8660c97eb9e09c16cd7e80285"
+    },
+    "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
+  },
+  "dispatch_runtime": {
+    "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58",
+    "source_sha": "ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58"
+  },
+  "validation": [
+    {
+      "name": "supervisor",
+      "command": "timeout 300 .venv-pantheon/bin/python -m pytest .orchestrator/test_supervisor.py -q --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "334 passed, 78 subtests passed in 97.91s (0:01:37)"
+    },
+    {
+      "name": "runtime_and_runner",
+      "command": "timeout 240 .venv-pantheon/bin/python -m pytest .orchestrator/test_runtime_state.py .orchestrator/test_worker_runner_heartbeat.py -q --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "113 passed, 26 subtests passed in 71.24s (0:01:11)"
+    },
+    {
+      "name": "readiness_and_promotion",
+      "command": "timeout 180 .venv-pantheon/bin/python -m pytest .orchestrator/test_worker_runner_heartbeat.py::TestCanonicalWorkerEntryProcess scripts/test_promote_supervisor_runtime.py -q --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "outcome": "passed",
+      "summary": "115 passed in 67.08s (0:01:07)"
+    }
+  ],
+  "bounded_attempts_not_counted_as_passed": [
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python -m pytest .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py .orchestrator/test_worker_runner_heartbeat.py scripts/test_promote_supervisor_runtime.py -q --disable-warnings --maxfail=3",
+      "exit_code": 124,
+      "outcome": "timed_out",
+      "resolution": "Replaced by terminal split batches above."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python -m pytest .orchestrator/test_supervisor.py::DurableWorkerRecoveryTests .orchestrator/test_runtime_state.py::PromotionFenceTests .orchestrator/test_worker_runner_heartbeat.py::TestCanonicalWorkerEntryProcess scripts/test_promote_supervisor_runtime.py -q --disable-warnings --maxfail=3",
+      "exit_code": 124,
+      "outcome": "timed_out",
+      "resolution": "Replaced by terminal split batches above."
+    }
+  ],
+  "acceptance_evidence": {
+    "atomic_admission": "Fresh queue and final adapter reads under runtime admission; runner lock precedes canonical task lock and child Popen. Real concurrent-admission subprocess test passed.",
+    "planned_signal": "Real runner emits a bound SIGTERM digest; real wrapper waiting on admission exits 143 without a provider child. Missing/wrong signal, digest, epoch, generation and runtime tests reject planned labeling.",
+    "continuation": "DurableWorkerRecoveryTests exercises real TaskStore CAS, same owner/reviewer, successful and rollback continuation, stale runtime replay, one replacement event, and absence of generic lost-lease events for accepted planned drains.",
+    "rollback": "Health predicate requires PID, runtime, fresh command health and canonical parity. Failed health test stops candidate before restoring config and verifies only incumbent admission reopens.",
+    "ordinary_loss": "Invalid receipt uses ordinary recovery; stale task generation consumes obsolete drain without replacement. Existing crash, capacity and WIP tests remain in full supervisor suite."
+  },
+  "adjacent_shared_helper": {
+    "path": ".orchestrator/rewrite/worker_recovery.py",
+    "reason": "Extend the existing recovery envelope validator and event names for planned drain; no second scheduler, queue or recovery authority."
+  },
+  "live_activation": {
+    "status": "not_performed",
+    "source_merge_is_activation": false,
+    "required_after_review_and_merge": [
+      "Use the existing sealed command-runtime promotion flow for the exact merged SHA.",
+      "For first activation, let legacy workers and runtime-phase reservations finish naturally; do not manufacture drain receipts.",
+      "Collect terminal promotion output, exact candidate health and canonical readback, then existing watchdog health verification.",
+      "Confirm each accepted drained run has one canonical continuation and no generic missing-worker/lost-lease event."
+    ],
+    "handoff": "Independent reviewer and supervisor integration precede live promotion and owner done finalization."
+  },
+  "operator_runbook": "docs/operations/supervisor-runtime-promotion-drain.md",
+  "delivery_refresh": {
+    "recorded_at": "2026-09-10T23:50:00.000000+00:00",
+    "contract_revision_at": "2026-09-10T02:33:00Z",
+    "canonical_generation_at_dispatch": 8,
+    "added_declared_artifact": ".orchestrator/rewrite/worker_recovery.py",
+    "previous_delivery_head": "241dcec7b529e10302190e390fbbf54e86715bd4",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/5736",
+    "review_status": "fresh_independent_exact_head_review_required",
+    "previous_approval_and_ci_reused": false,
+    "validation": "test_runtime_state and test_worker_runner_heartbeat (113 passed in 71.24s), readiness and scripts/test_promote_supervisor_runtime (115 passed in 67.08s), and full test_supervisor (334 passed in 97.91s); all terminal exits 0.",
+    "integration": "Merged current origin/dev (ba6c9e99ec4a0b09ca85b30ab18bb862a3e42e58), verified all 11 task artifact files, test suites passing with zero errors."
+  }
+}

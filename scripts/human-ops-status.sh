@@ -10,7 +10,8 @@ export PANTHEON_LOCAL_HUMAN_OPS=1
 # supervisor, not a second root selected by shell variables.  Keep the live
 # config path overrideable for isolated tests, but derive the expected binding
 # once and let ai-status reject any supplied root/journal that disagrees.
-LIVE_CONFIG="${PANTHEON_LIVE_SUPERVISOR_CONFIG:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+DEPLOY_ROOT="${PANTHEON_DEPLOY_ROOT:-$HOME/pantheon-ci-deploy}"
+LIVE_CONFIG="${PANTHEON_LIVE_SUPERVISOR_CONFIG:-$DEPLOY_ROOT/runtime/live-supervisor-mainroot-config.json}"
 if [[ -f "$LIVE_CONFIG" && -d "$SCRIPT_DIR/../.orchestrator" ]]; then
   mapfile -t canonical_binding < <(
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SCRIPT_DIR/../.orchestrator" \

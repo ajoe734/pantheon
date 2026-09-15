@@ -8,12 +8,29 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib import error as urllib_error
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import main as bff_main
-import trade_journal
+from services.control_plane.bff import trade_journal
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_operator_role,
+    _require_read_role,
+)
 
 HEADERS = {"Authorization": "Bearer ptj-operator:operator"}
+
+
+def _make_app() -> FastAPI:
+    app = FastAPI()
+    app.include_router(
+        trade_journal.create_trade_journal_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            require_operator_role=_require_operator_role,
+        )
+    )
+    return app
 
 
 def _client(td: str) -> TestClient:
@@ -31,7 +48,7 @@ def _client(td: str) -> TestClient:
         {"lesson_id": "l2", "persona_id": "p1", "status": "pending_review"},
     ]
     lessons_path = Path(td) / "lessons.json"; lessons_path.write_text(json.dumps(lessons)); os.environ["PANTHEON_BFF_TRADE_LESSONS_STORE"] = str(lessons_path)
-    return TestClient(bff_main.app)
+    return TestClient(_make_app())
 
 
 class _Response:
@@ -86,7 +103,6 @@ def test_auth_rbac_cross_persona_and_masking(monkeypatch) -> None:
         assert client.get("/bff/personas/p1/trade-journal").status_code == 401
         viewer = client.get("/bff/personas/p1/trade-journal/e1", headers={"Authorization": "Bearer view:viewer"})
         assert viewer.json()["data"]["account_id"] == "***"
-        original = bff_main._extract_identity
         monkeypatch.setattr(trade_journal, "_allowed", lambda identity, persona_id: persona_id == "p1")
         assert client.get("/bff/personas/p2/trade-journal", headers=HEADERS).status_code == 403
         assert client.post("/bff/personas/p1/trade-journal/e1/reflection:retry", headers={"Authorization": "Bearer view:viewer", "Idempotency-Key": "x"}, json={"reason": "retry"}).status_code == 403
@@ -185,8 +201,8 @@ def test_concurrent_same_key_is_atomically_owned_downstream(monkeypatch) -> None
 
 def test_downstream_unavailable_is_explicit() -> None:
     with tempfile.TemporaryDirectory() as td:
-        _client(td)
+        client = _client(td)
         os.environ["PANTHEON_BFF_TRADE_EPISODES_STORE"] = str(Path(td) / "missing.json")
-        response = TestClient(bff_main.app).get("/bff/personas/p1/trade-journal", headers=HEADERS)
+        response = client.get("/bff/personas/p1/trade-journal", headers=HEADERS)
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"

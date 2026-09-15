@@ -321,7 +321,11 @@ def test_projected_research_console_surfaces_return_ok_counts(monkeypatch) -> No
         assert analyses.status_code == 200, analyses.text
         analyses_body = analyses.json()
         assert analyses_body["page_info"]["total"] > 0
-        assert analyses_body["meta"]["surfaces"]["research_analyses"]["status"] == "ok"
+        analysis_surface = (
+            analyses_body["meta"]["surfaces"].get("analysis_results")
+            or analyses_body["meta"]["surfaces"].get("research_analyses")
+        )
+        assert analysis_surface is not None and analysis_surface["status"] == "ok"
         assert analyses_body["items"][0]["analysis_id"] == "analysis-rrun-console-001"
 
         tasks = client.get("/bff/research/tasks", headers=HEADERS)
