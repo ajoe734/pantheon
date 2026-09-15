@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -162,6 +162,8 @@ from .management_nl_command_idempotency import (
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
+from .assistant.management_contracts import ManagementNlUseCaseDeps
+from .assistant.management_service import ManagementNlUseCase
 from .openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from .source_search_ops_client import (
     SearchIndexCommandClient,
@@ -1205,22 +1207,6 @@ _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
 _MANAGEMENT_READINESS_BASE_ROUTE = "/management/readiness"
 _GOVERNANCE_REVIEW_QUEUE_ROUTE = "/governance-review-queue"
 _GOVERNANCE_APPROVAL_QUEUE_ROUTE = "/governance-approval-queue"
-_MUTATION_APPROVAL_ROLES = {
-    "low": {"reviewer", "approver", "admin"},
-    "medium": {"operator", "approver", "admin"},
-    "high": {"approver", "admin"},
-}
-_MUTATION_REJECTION_ROLES = {
-    "low": {"reviewer", "approver", "admin"},
-    "medium": {"reviewer", "operator", "approver", "admin"},
-    "high": {"approver", "admin"},
-}
-_MUTATION_REVIEW_ROLES = {
-    "low": {"reviewer", "approver", "admin"},
-    "medium": {"reviewer", "approver", "admin"},
-    "high": {"approver", "admin"},
-}
-_MUTATION_EXECUTION_ROLES = {"operator", "admin"}
 def _env_token(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
 def _value_contains_live_broker_signal(value: Any) -> bool:
@@ -3270,286 +3256,30 @@ def _validate_execute_evolution_action(params: Dict[str, Any], identity: Operato
             precondition_failed="role_check",
             suggestion="Escalate to a user with admin or approver role",
         )
-def _mutation_review_surface_state(
-    decision: Dict[str, Any],
-    approval_decision: Optional[Dict[str, Any]],
-    linked_incident: Optional[Dict[str, Any]],
-    linked_postmortem: Optional[Dict[str, Any]],
-) -> str:
-    required_sources_available = True
-    decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
-    approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
-    linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
-    linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
+def _mutation_review_governance_service() -> "GovernanceService":
+    # Single owner of the mutation-review actor/state/evidence policy: both
+    # the direct POST action validators below and the nested GET projection
+    # (governance router + management evolution journal) call through this
+    # same GovernanceService method so they cannot drift out of sync.
+    from .governance.service import GovernanceService
 
-    if read_store.dataset_source("evolution_decisions") == "missing":
-        required_sources_available = False
-    if decision_state in {"reviewed", "approved", "executed", "rejected", "superseded"}:
-        if not approval_decision_id or approval_decision is None:
-            required_sources_available = False
-    if linked_incident_id and linked_incident is None:
-        required_sources_available = False
-    if linked_postmortem_id and linked_postmortem is None:
-        required_sources_available = False
-
-    read_surface_state = _read_surface_state()
-    if read_surface_state == "unavailable" or not required_sources_available:
-        return "unavailable"
-    if read_surface_state in {"degraded", "stale"}:
-        return "stale"
-
-    dataset_names = ["evolution_decisions"]
-    if approval_decision_id:
-        dataset_names.append("approval_decisions")
-    if linked_incident_id:
-        dataset_names.append("incidents")
-    if linked_postmortem_id:
-        dataset_names.append("postmortems")
-    if any(read_store.dataset_source(dataset) == "local_snapshot" for dataset in dataset_names):
-        return "stale"
-    return "fresh"
-def _mutation_review_roles_for(
-    risk_level: str,
-    *,
-    action: str,
-) -> set[str]:
-    normalized_risk = str(risk_level or "").lower()
-    if action == "approve":
-        return _MUTATION_APPROVAL_ROLES.get(normalized_risk, {"admin"})
-    if action == "review":
-        return _MUTATION_REVIEW_ROLES.get(normalized_risk, {"admin"})
-    return _MUTATION_REJECTION_ROLES.get(normalized_risk, {"admin"})
-def _mutation_review_allowed_actions(
-    decision: Dict[str, Any],
-    identity: OperatorIdentity,
-    surface_state: str,
-) -> Dict[str, bool]:
-    if surface_state == "unavailable":
-        return {
-            "canReviewMutation": False,
-            "canApproveMutation": False,
-            "canRejectMutation": False,
-            "canExecuteMutation": False,
-        }
-
-    decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
-    risk_level = str(decision.get("risk_level") or "").lower()
-    identity_roles = set(identity.roles)
-
-    can_review = (
-        decision_state == "proposed"
-        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="review")))
+    return GovernanceService(
+        read_store,
+        utc_now=utc_now,
+        dataset_surface_status=_dataset_surface_status,
+        redact_evidence_refs=redact_evidence_refs,
+        capabilities_for_identity=_capabilities_for_identity,
+        read_surface_state=_read_surface_state,
     )
-    can_approve = (
-        decision_state == "reviewed"
-        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="approve")))
-    )
-    can_reject = (
-        decision_state in {"proposed", "reviewed"}
-        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="reject")))
-    )
-    can_execute = (
-        decision_state == "approved"
-        and bool(identity_roles.intersection(_MUTATION_EXECUTION_ROLES))
-    )
-    return {
-        "canReviewMutation": can_review,
-        "canApproveMutation": can_approve,
-        "canRejectMutation": can_reject,
-        "canExecuteMutation": can_execute,
-    }
-def _mutation_threshold_triggers(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
-    risk_assessment = decision.get("risk_assessment") or {}
-    explicit = risk_assessment.get("threshold_triggers")
-    if isinstance(explicit, list):
-        return explicit
-
-    triggers: List[Dict[str, Any]] = []
-    for snapshot in decision.get("threshold_snapshots") or []:
-        if not isinstance(snapshot, dict):
-            continue
-        triggers.append(
-            {
-                "trigger_type": snapshot.get("signal_type"),
-                "metric": snapshot.get("metric_name"),
-                "observed_value": str(snapshot.get("observed_value")),
-                "threshold_value": str(snapshot.get("threshold_value")),
-                "threshold_source": snapshot.get("policy_source"),
-            }
-        )
-    return triggers
-def _mutation_required_approvals(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
-    explicit = decision.get("required_approvals")
-    if isinstance(explicit, list):
-        return explicit
-
-    risk_level = str(decision.get("risk_level") or "").lower()
-    if risk_level == "low":
-        required_roles = ["reviewer_on_duty"]
-    elif risk_level == "medium":
-        required_roles = ["reviewer", "risk_owner"]
-    elif risk_level == "high":
-        required_roles = ["governance_committee"]
-    else:
-        required_roles = []
-
-    approvals: List[Dict[str, Any]] = []
-    review_chain = decision.get("review_chain") or []
-    for role in required_roles:
-        matched_step = next(
-            (
-                step for step in review_chain
-                if isinstance(step, dict)
-                and str(step.get("actor_role") or "").lower() == role
-                and str(step.get("step_type") or step.get("action") or "").lower() in {"reviewed", "approved"}
-            ),
-            None,
-        )
-        approvals.append(
-            {
-                "role": role,
-                "approved_by": matched_step.get("actor_id") if matched_step else None,
-                "approved_at": matched_step.get("timestamp") if matched_step else None,
-                "status": "approved" if matched_step else "pending",
-            }
-        )
-    return approvals
 def _mutation_review_projection(
-    decision: Dict[str, Any],
+    decision_id: str,
     *,
-    approval_decision: Optional[Dict[str, Any]],
-    linked_incident: Optional[Dict[str, Any]],
-    linked_postmortem: Optional[Dict[str, Any]],
     identity: OperatorIdentity,
     snapshot_at: str,
-) -> Dict[str, Any]:
-    surface_state = _mutation_review_surface_state(
-        decision,
-        approval_decision,
-        linked_incident,
-        linked_postmortem,
+) -> Optional[Dict[str, Any]]:
+    return _mutation_review_governance_service().mutation_review_projection(
+        decision_id, identity=identity, snapshot_at=snapshot_at
     )
-    allowed_actions = _mutation_review_allowed_actions(decision, identity, surface_state)
-    proposed_changes = dict(decision.get("proposed_changes") or {})
-    risk_assessment = dict(decision.get("risk_assessment") or {})
-    evidence_refs = list(decision.get("evidence_refs") or [])
-
-    if linked_incident and not any(ref.get("ref_id") == linked_incident.get("incident_id") for ref in evidence_refs if isinstance(ref, dict)):
-        evidence_refs.append(
-            {
-                "ref_type": "incident",
-                "ref_id": linked_incident.get("incident_id"),
-                "summary": linked_incident.get("evidence_summary") or linked_incident.get("title"),
-            }
-        )
-    postmortem_id = (
-        linked_postmortem.get("postmortem_id")
-        or linked_postmortem.get("report_id")
-        or linked_postmortem.get("id")
-        if linked_postmortem
-        else None
-    )
-    if linked_postmortem and not any(ref.get("ref_id") == postmortem_id for ref in evidence_refs if isinstance(ref, dict)):
-        evidence_refs.append(
-            {
-                "ref_type": "postmortem",
-                "ref_id": postmortem_id,
-                "summary": linked_postmortem.get("summary") or linked_postmortem.get("title"),
-            }
-        )
-
-    if "summary" not in proposed_changes:
-        proposed_changes["summary"] = decision.get("rationale") or decision.get("notes") or ""
-    proposed_changes.setdefault("target_stage", decision.get("target_stage"))
-    proposed_changes.setdefault("downstream_plane", (decision.get("execution_result") or {}).get("plane"))
-    proposed_changes.setdefault("change_details", [])
-
-    # Apply evidence redaction based on derived capabilities for this identity.
-    try:
-        capabilities = _capabilities_for_identity(identity)
-    except Exception:
-        capabilities = None
-    evidence_refs, redacted_count = redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
-
-    risk_assessment.setdefault(
-        "risk_summary",
-        decision.get("notes") or decision.get("rationale") or "",
-    )
-    risk_assessment.setdefault("severity", None)
-    risk_assessment["threshold_triggers"] = _mutation_threshold_triggers(decision)
-
-    review_chain = [
-        {
-            "action": step.get("action") or step.get("step_type"),
-            "actor_role": step.get("actor_role"),
-            "actor_id": step.get("actor_id"),
-            "acted_at": step.get("acted_at") or step.get("timestamp"),
-            "note": step.get("note"),
-        }
-        for step in (decision.get("review_chain") or [])
-        if isinstance(step, dict)
-    ]
-
-    rollback_followthrough = decision.get("rollback_followthrough")
-    if rollback_followthrough is None:
-        linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
-        rollbacks = read_store.get_rollbacks_by_incident(linked_incident_id) if linked_incident_id else []
-        if rollbacks:
-            first_rollback = rollbacks[0]
-            rollback_followthrough = {
-                "rollback_request_ref": first_rollback.get("rollback_id") or first_rollback.get("id"),
-                "rollback_action_type": first_rollback.get("action_type"),
-                "followthrough_note": first_rollback.get("reason"),
-            }
-
-    meta = {**_snapshot_meta(snapshot_at), "surfaces": {"mutation_review": surface_state}}
-    # Attach supporting_counts including redaction telemetry
-    meta.setdefault("supporting_counts", {})
-    meta["supporting_counts"]["redacted_evidence_count"] = redacted_count
-
-    return {
-        "decision_id": decision.get("decision_id") or decision.get("id"),
-        "target_type": decision.get("target_type"),
-        "target_id": decision.get("target_id") or decision.get("artifact_id"),
-        "target_version": decision.get("target_version"),
-        "action_type": decision.get("action_type"),
-        "decision_state": decision.get("decision_state") or decision.get("status"),
-        "risk_level": decision.get("risk_level"),
-        "created_at": decision.get("created_at"),
-        "approval_decision_id": decision.get("approval_decision_id"),
-        "proposed_changes": proposed_changes,
-        "risk_assessment": risk_assessment,
-        "required_approvals": _mutation_required_approvals(decision),
-        "review_chain": review_chain,
-        "linked_incident_id": decision.get("linked_incident_id"),
-        "linked_postmortem_id": decision.get("linked_postmortem_id"),
-        "evidence_refs": evidence_refs,
-        "rollback_followthrough": rollback_followthrough,
-        "allowedActions": allowed_actions,
-        "meta": meta,
-    }
-def _mutation_review_inputs(
-    decision_id: str,
-) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    decision = read_store.get_evolution_decision_by_id(decision_id)
-    if decision is None:
-        return None, None, None, None
-
-    approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
-    approval_decision = (
-        read_store.get_approval_decision(approval_decision_id)
-        if approval_decision_id
-        else None
-    )
-    linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
-    linked_incident = read_store.get_incident(linked_incident_id) if linked_incident_id else None
-    linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
-    linked_postmortem = (
-        read_store.get_postmortem(linked_postmortem_id)
-        if linked_postmortem_id
-        else None
-    )
-    return decision, approval_decision, linked_incident, linked_postmortem
 def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     from .governance.service import GovernanceService
 
@@ -3621,22 +3351,14 @@ def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentit
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -3663,22 +3385,14 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -3705,22 +3419,14 @@ def _validate_review_mutation(params: Dict[str, Any], identity: OperatorIdentity
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -3747,22 +3453,14 @@ def _validate_execute_mutation(params: Dict[str, Any], identity: OperatorIdentit
             f"Missing fields: {sorted(missing)}",
         )
     decision_id = str(params.get("decision_id") or "").strip()
-    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
-    if decision is None:
+    projection = _mutation_review_projection(decision_id, identity=identity, snapshot_at=utc_now())
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
-    projection = _mutation_review_projection(
-        decision,
-        approval_decision=approval_decision,
-        linked_incident=linked_incident,
-        linked_postmortem=linked_postmortem,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
@@ -11551,7 +11249,6 @@ def _human_inbox_payload(
         page_token=page_token,
         page_size=page_size,
     )
-_MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
 _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
 _MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
@@ -13145,8 +12842,6 @@ def _mgmt_nl_handle_control_command(
     focus: str,
     ui_snapshot: Dict[str, Any],
     resolved_key: str,
-    idempotency_storage_key: str,
-    request_hash: str,
     session_id: str,
     message_id: str,
     trace_id: str,
@@ -13412,7 +13107,6 @@ def _mgmt_nl_handle_control_command(
         conversation_href=conversation_href,
         control_command=command_kind,
     )
-    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 def _mgmt_nl_normalize_question_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
@@ -13494,41 +13188,6 @@ def _mgmt_nl_idempotency_storage_key(
         ]
     )
     return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
-def _mgmt_nl_idempotency_check(
-    storage_key: str,
-    request_hash: str,
-    *,
-    display_key: str,
-) -> Optional[Dict[str, Any]]:
-    existing = _management_ai_conversation_store().get_idempotency(storage_key)
-    if existing is None:
-        existing = _MGMT_NL_IDEMPOTENCY.get(storage_key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {display_key!r} is bound to a different management NL request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    return existing.get("result")
-def _mgmt_nl_idempotency_put(
-    storage_key: str,
-    *,
-    request_hash: str,
-    result: Dict[str, Any],
-) -> None:
-    _management_ai_conversation_store().put_idempotency(
-        storage_key,
-        request_hash=request_hash,
-        result=result,
-    )
-    _MGMT_NL_IDEMPOTENCY[storage_key] = {"request_hash": request_hash, "result": result}
-def _mgmt_nl_command_idempotency_required() -> bool:
-    return _bool_from_env("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED")
 def _mgmt_nl_command_recovery_seconds() -> float:
     raw = os.getenv(
         "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
@@ -13553,17 +13212,23 @@ def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
         )
         _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
     return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+# BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: ask and ask/stream are one durable
+# use case with two transports. They share this single canonical scope
+# route name (not the literal per-transport HTTP path) so a client can
+# switch between the JSON and SSE transports with the same Idempotency-Key
+# and still get exactly-once command admission/replay.
+_MGMT_NL_COMMAND_ROUTE = "POST /bff/management/nl/ask"
 def _mgmt_nl_command_scope(
     *,
     actor_id: str,
     tenant_id: str,
     resolved_key: str,
 ) -> ManagementNlCommandScope:
-    return ManagementNlCommandScope(
+    return ManagementNlUseCase.scope(
         actor_id=actor_id,
         tenant_id=tenant_id,
-        route="POST /bff/management/nl/ask",
-        idempotency_key=resolved_key,
+        route=_MGMT_NL_COMMAND_ROUTE,
+        resolved_key=resolved_key,
     )
 def _mgmt_nl_result_is_terminal(result: Optional[Mapping[str, Any]]) -> bool:
     if not isinstance(result, Mapping):
@@ -13632,112 +13297,59 @@ def _mgmt_nl_command_poll_seconds() -> float:
         return min(max(float(raw), 0.005), 1.0)
     except (TypeError, ValueError):
         return 0.05
+def _mgmt_nl_raise_command_wait_timeout() -> NoReturn:
+    raise _bff_error(
+        409,
+        ErrorCode.IDEMPOTENCY_CONFLICT,
+        "Management NL command is still in progress",
+        "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
+        precondition_failed="idempotency_in_progress",
+        suggestion="Retry the same payload and key after the current provider turn completes",
+    )
+def _mgmt_nl_use_case_admission_error(exc: Exception, display_key: str) -> NoReturn:
+    _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+    raise AssertionError("unreachable")  # pragma: no cover - _raise always raises
+# BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the sole owner of Management NL
+# durable command admission/replay/completion decision logic. Both
+# bff_management_nl_ask and bff_management_nl_ask_stream call this single
+# instance -- see services/control-plane/bff/assistant/management_service.py.
+_MANAGEMENT_NL_USE_CASE = ManagementNlUseCase(
+    ManagementNlUseCaseDeps(
+        command_store=_mgmt_nl_command_idempotency_store,
+        wait_seconds=_mgmt_nl_command_wait_seconds,
+        poll_seconds=_mgmt_nl_command_poll_seconds,
+        raise_admission_error=_mgmt_nl_use_case_admission_error,
+        raise_wait_timeout=_mgmt_nl_raise_command_wait_timeout,
+    )
+)
 async def _mgmt_nl_command_admit(
     *,
     scope: ManagementNlCommandScope,
     request_hash: str,
-    legacy_result: Optional[Dict[str, Any]],
     display_key: str,
 ) -> tuple[Optional[ManagementNlCommandReservation], Optional[Dict[str, Any]]]:
-    if not _mgmt_nl_command_idempotency_required():
-        return None, legacy_result
-
-    store = _mgmt_nl_command_idempotency_store()
-    try:
-        admission = await asyncio.to_thread(
-            store.admit,
-            scope,
-            request_hash=request_hash,
-            legacy_result=legacy_result,
-            legacy_terminal=_mgmt_nl_result_is_terminal(legacy_result),
-        )
-    except (
-        ManagementNlCommandPayloadConflict,
-        ManagementNlCommandRecoveryRequired,
-        ManagementNlCommandStorageError,
-    ) as exc:
-        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
-
-    if admission.state == "owner":
-        return admission.reservation, None
-    if admission.state == "complete":
-        return None, admission.result
-    if admission.state != "wait":
-        _mgmt_nl_raise_command_idempotency_error(
-            ManagementNlCommandStorageError(
-                f"Unsupported Management NL command admission state: {admission.state}"
-            ),
-            display_key=display_key,
-        )
-
-    deadline = asyncio.get_running_loop().time() + _mgmt_nl_command_wait_seconds()
-    while True:
-        if asyncio.get_running_loop().time() >= deadline:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Management NL command is still in progress",
-                "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
-                precondition_failed="idempotency_in_progress",
-                suggestion="Retry the same payload and key after the current provider turn completes",
-            )
-        await asyncio.sleep(_mgmt_nl_command_poll_seconds())
-        try:
-            admission = await asyncio.to_thread(
-                store.observe,
-                scope,
-                request_hash=request_hash,
-            )
-        except (
-            ManagementNlCommandPayloadConflict,
-            ManagementNlCommandRecoveryRequired,
-            ManagementNlCommandStorageError,
-        ) as exc:
-            _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
-        if admission.state == "complete":
-            return None, admission.result
-        if admission.state != "wait":
-            _mgmt_nl_raise_command_idempotency_error(
-                ManagementNlCommandStorageError(
-                    f"Unsupported Management NL command observation state: {admission.state}"
-                ),
-                display_key=display_key,
-            )
+    return await _MANAGEMENT_NL_USE_CASE.admit(
+        scope=scope,
+        request_hash=request_hash,
+        display_key=display_key,
+    )
 async def _mgmt_nl_command_complete(
     reservation: Optional[ManagementNlCommandReservation],
     result: Dict[str, Any],
     *,
     display_key: str,
 ) -> None:
-    if reservation is None:
-        return
-    try:
-        await asyncio.to_thread(
-            _mgmt_nl_command_idempotency_store().complete,
-            reservation,
-            result,
-        )
-    except (
-        ManagementNlCommandPayloadConflict,
-        ManagementNlCommandRecoveryRequired,
-        ManagementNlCommandStorageError,
-    ) as exc:
-        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+    await _MANAGEMENT_NL_USE_CASE.complete(reservation, result, display_key=display_key)
 async def _mgmt_nl_command_mark_uncertain(
     reservation: Optional[ManagementNlCommandReservation],
     *,
     reason: str,
 ) -> None:
-    if reservation is None:
-        return
-    try:
-        await asyncio.to_thread(
-            _mgmt_nl_command_idempotency_store().mark_uncertain,
-            reservation,
-            reason=reason,
-        )
-    except Exception:
-        log.exception("Failed to mark Management NL command reservation uncertain")
+    await _MANAGEMENT_NL_USE_CASE.mark_uncertain(
+        reservation,
+        reason=reason,
+        on_failure=lambda: log.exception("Failed to mark Management NL command reservation uncertain"),
+    )
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     statuses = [v.get("status", "unavailable") for v in surfaces.values() if isinstance(v, dict)]
     if not statuses:
@@ -15330,6 +14942,55 @@ def _mgmt_nl_json_response_payload(response: JSONResponse) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+def _mgmt_nl_cached_result_sse_frames(
+    cached: Optional[Dict[str, Any]],
+    *,
+    session_id: str,
+    trace_id: str,
+    message_id: str,
+) -> Iterator[str]:
+    """Render a durably-stored terminal Management NL result as the same
+    meta/delta/done/[DONE] SSE frame shape a fresh provider turn would
+    produce, for both control-command and provider-answer replays.
+
+    BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the SSE transport must not call
+    the provider a second time for an exact-duplicate idempotency key -- a
+    durable terminal result (found via ``_mgmt_nl_command_admit``) is
+    replayed from here instead.
+    """
+    cached_data = cached.get("data") if isinstance(cached, dict) else {}
+    cached_data = cached_data if isinstance(cached_data, dict) else {}
+    answer = str(cached_data.get("answer") or "")
+    provider_status = cached_data.get("provider_status") or cached_data.get("providerStatus") or {}
+    ui_actions = cached_data.get("ui_actions") or cached_data.get("uiActions") or []
+    command_kind = cached_data.get("control_command") or cached_data.get("controlCommand")
+    audit_log = cached_data.get("audit_log") or cached_data.get("auditLog")
+    conversation = cached_data.get("conversation")
+    yield _mgmt_nl_sse_frame(
+        {
+            "type": "meta",
+            "session_id": cached_data.get("session_id") or session_id,
+            "trace_id": cached_data.get("trace_id") or trace_id,
+            "message_id": cached_data.get("message_id") or message_id,
+            "control_command": command_kind,
+            "replayed": True,
+        }
+    )
+    if answer:
+        yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
+    done_frame: Dict[str, Any] = {
+        "type": "done",
+        "text": answer,
+        "provider_status": provider_status,
+        "ui_actions": ui_actions,
+        "control_command": command_kind,
+        "replayed": True,
+    }
+    if command_kind:
+        done_frame["audit_log"] = audit_log
+        done_frame["conversation"] = conversation
+    yield _mgmt_nl_sse_frame(done_frame)
+    yield _mgmt_nl_sse_frame("[DONE]")
 def _mgmt_nl_finalize_result(
     base_result: Dict[str, Any],
     *,
@@ -15365,8 +15026,6 @@ async def _mgmt_nl_finalize_provider_turn(
     trace_id: str,
     focus: str,
     resolved_key: str,
-    idempotency_storage_key: Optional[str] = None,
-    request_hash: str,
     audit_log_href: str,
     conversation_href: str,
     base_result: Dict[str, Any],
@@ -15433,11 +15092,6 @@ async def _mgmt_nl_finalize_provider_turn(
             provider_status=provider_status,
             actions=actions,
         )
-        _mgmt_nl_idempotency_put(
-            idempotency_storage_key or resolved_key,
-            request_hash=request_hash,
-            result=final_result,
-        )
         await _mgmt_nl_command_complete(
             command_reservation,
             final_result,
@@ -15460,6 +15114,39 @@ async def bff_management_nl_ask(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    """Thin fail-closed wrapper: mark a held reservation uncertain exactly
+    once if anything raises after admission granted ownership but before a
+    terminal result was committed, so the key becomes retryable again only
+    after the durable store's recovery window elapses instead of being
+    silently dropped in a dangling ``in_progress`` state forever."""
+    try:
+        return await _bff_management_nl_ask_impl(
+            payload=payload,
+            authorization=authorization,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            x_dry_run=x_dry_run,
+        )
+    except Exception:
+        reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+        if reservation is not None:
+            await _mgmt_nl_command_mark_uncertain(
+                reservation,
+                reason="request_failed_before_terminal_commit",
+            )
+        raise
+async def _bff_management_nl_ask_impl(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
 ):
     """BFF-B6-001/BFF-B6-003: POST /bff/management/nl/ask — Management NL query endpoint."""
     identity = _extract_identity(authorization)
@@ -15514,18 +15201,8 @@ async def bff_management_nl_ask(
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
-        resolved_key,
-        actor_id=identity.operator_id,
-        tenant_id=caller_tenant_id,
-    )
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    legacy_cached = _mgmt_nl_idempotency_check(
-        idempotency_storage_key,
-        request_hash,
-        display_key=resolved_key,
-    )
-    if legacy_cached is None and _request_dry_run_requested():
+    if _request_dry_run_requested(x_dry_run):
         return _dry_run_success_response(
             {
                 "status": "accepted",
@@ -15556,7 +15233,6 @@ async def bff_management_nl_ask(
     command_reservation, cached = await _mgmt_nl_command_admit(
         scope=command_scope,
         request_hash=request_hash,
-        legacy_result=legacy_cached,
         display_key=resolved_key,
     )
     _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
@@ -15589,8 +15265,6 @@ async def bff_management_nl_ask(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
-            idempotency_storage_key=idempotency_storage_key,
-            request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
             trace_id=trace_id,
@@ -15925,7 +15599,6 @@ async def bff_management_nl_ask(
         audit_log_href=audit_log_href,
         conversation_href=conversation_href,
     )
-    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     if not provider_pending:
         await _mgmt_nl_command_complete(
             command_reservation,
@@ -15947,15 +15620,13 @@ async def bff_management_nl_ask(
             trace_id=trace_id,
             focus=focus,
             resolved_key=resolved_key,
-            idempotency_storage_key=idempotency_storage_key,
-            request_hash=request_hash,
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
             base_result=result,
             command_reservation=command_reservation,
         )
     return JSONResponse(status_code=202, content=result)
-def bff_management_nl_ask_stream(
+async def bff_management_nl_ask_stream(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -15963,7 +15634,50 @@ def bff_management_nl_ask_stream(
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
-    """SSE-streaming variant of /bff/management/nl/ask."""
+    """Thin fail-closed wrapper mirroring ``bff_management_nl_ask``: mark a
+    held reservation uncertain exactly once if anything raises, while
+    building the response, after admission granted ownership but before a
+    terminal result was committed. (Failures once the SSE body itself is
+    streaming are handled inline inside the generator.)"""
+    try:
+        return await _bff_management_nl_ask_stream_impl(
+            payload=payload,
+            authorization=authorization,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+    except Exception:
+        reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+        if reservation is not None:
+            await _mgmt_nl_command_mark_uncertain(
+                reservation,
+                reason="request_failed_before_terminal_commit",
+            )
+        raise
+async def _bff_management_nl_ask_stream_impl(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """SSE-streaming variant of /bff/management/nl/ask.
+
+    BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: this transport now shares the
+    exact same durable command admission/replay decision logic as
+    ``bff_management_nl_ask`` (via ``_mgmt_nl_command_admit`` /
+    ``_MANAGEMENT_NL_USE_CASE``) -- same ordering (identity/role ->
+    question validation -> control-command parse -> high-risk refusal ->
+    tenant resolution -> admission -> session/context/provider), same
+    canonical command scope, same fail-closed 503 on storage loss, and the
+    same "exactly one provider effect per idempotency key" guarantee. A
+    concurrent/duplicate request against the same key does not invoke the
+    provider a second time -- it durably replays the terminal answer as SSE
+    frames instead.
+    """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -15995,14 +15709,44 @@ def bff_management_nl_ask_stream(
     message_id = f"mnl-{uuid.uuid4().hex[:12]}"
     ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
 
-    if control_command is not None:
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
-            resolved_key,
-            actor_id=identity.operator_id,
-            tenant_id=caller_tenant_id,
+    # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: admission happens once, for both
+    # the control-command and provider-answer paths, before either does any
+    # work -- exactly mirroring bff_management_nl_ask's ordering.
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
+    command_scope = _mgmt_nl_command_scope(
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        resolved_key=resolved_key,
+    )
+    command_reservation, cached = await _mgmt_nl_command_admit(
+        scope=command_scope,
+        request_hash=request_hash,
+        display_key=resolved_key,
+    )
+    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
+    if cached is not None:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.replayed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "actor_id": identity.operator_id,
+                "focus": focus,
+                "route": "POST /bff/management/nl/ask/stream",
+                "idempotency_key": resolved_key,
+            }
         )
-        request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
+        return StreamingResponse(
+            _mgmt_nl_cached_result_sse_frames(
+                cached, session_id=session_id, trace_id=trace_id, message_id=message_id
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    if control_command is not None:
         control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
             payload=payload,
@@ -16011,49 +15755,22 @@ def bff_management_nl_ask_stream(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
-            idempotency_storage_key=idempotency_storage_key,
-            request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
             trace_id=trace_id,
             now=now,
         )
-        control_payload = _mgmt_nl_json_response_payload(control_response)
-        control_data = control_payload.get("data") if isinstance(control_payload.get("data"), dict) else {}
-        answer = str((control_data or {}).get("answer") or "")
-        provider_status = (control_data or {}).get("providerStatus") or (control_data or {}).get("provider_status") or {}
-        audit_log = (control_data or {}).get("auditLog") or (control_data or {}).get("audit_log") or None
-        conversation = (control_data or {}).get("conversation") or None
-        ui_actions = (control_data or {}).get("uiActions") or (control_data or {}).get("ui_actions") or []
-        command_kind = (control_data or {}).get("controlCommand") or (control_data or {}).get("control_command")
-
-        def control_event_stream() -> Iterator[str]:
-            yield _mgmt_nl_sse_frame(
-                {
-                    "type": "meta",
-                    "session_id": (control_data or {}).get("session_id") or session_id,
-                    "trace_id": (control_data or {}).get("trace_id") or trace_id,
-                    "message_id": (control_data or {}).get("message_id") or message_id,
-                    "control_command": command_kind,
-                }
-            )
-            if answer:
-                yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
-            yield _mgmt_nl_sse_frame(
-                {
-                    "type": "done",
-                    "text": answer,
-                    "provider_status": provider_status,
-                    "audit_log": audit_log,
-                    "conversation": conversation,
-                    "ui_actions": ui_actions,
-                    "control_command": command_kind,
-                }
-            )
-            yield _mgmt_nl_sse_frame("[DONE]")
+        control_result = json.loads(control_response.body)
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            control_result,
+            display_key=resolved_key,
+        )
 
         return StreamingResponse(
-            control_event_stream(),
+            _mgmt_nl_cached_result_sse_frames(
+                control_result, session_id=session_id, trace_id=trace_id, message_id=message_id
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
@@ -16063,7 +15780,9 @@ def bff_management_nl_ask_stream(
         session_id=session_id,
         client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
     )
-    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
+    context_bundle = await asyncio.to_thread(
+        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+    )
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     confidence = _mgmt_nl_surface_confidence(surfaces)
@@ -16094,7 +15813,9 @@ def bff_management_nl_ask_stream(
         turn_id=message_id, session_id=session_id, role="user", text=question, created_at=now, trace_id=trace_id
     )
 
-    def event_stream() -> Iterator[str]:
+    _MGMT_NL_STREAM_EXHAUSTED = object()
+
+    async def event_stream() -> AsyncGenerator[str, None]:
         provider_run_id = trace_id
         provider_started = time.monotonic()
         _management_ai_record_event(
@@ -16124,7 +15845,15 @@ def bff_management_nl_ask_stream(
         had_error = False
         failure_event: Optional[Dict[str, Any]] = None
         try:
-            for evt in OpenClawOpsClient().stream_assistant_provider(
+            # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: this generator is now
+            # async (so it can await the shared command-completion calls
+            # exactly once below), but OpenClawOpsClient.stream_assistant_provider
+            # is a synchronous, blocking generator. Drive it one item at a
+            # time in a worker thread via asyncio.to_thread(next, ...) so the
+            # event loop stays free between deltas instead of being blocked
+            # for the whole provider turn, while preserving the exact
+            # per-event streaming behaviour below.
+            provider_iter = OpenClawOpsClient().stream_assistant_provider(
                 mode=provider_mode,
                 prompt=prompt,
                 context_pack=context_pack,
@@ -16132,7 +15861,11 @@ def bff_management_nl_ask_stream(
                 trace_id=trace_id,
                 session_user=session_id,
                 read_timeout_seconds=_mgmt_nl_stream_read_timeout_seconds(),
-            ):
+            )
+            while True:
+                evt = await asyncio.to_thread(next, provider_iter, _MGMT_NL_STREAM_EXHAUSTED)
+                if evt is _MGMT_NL_STREAM_EXHAUSTED:
+                    break
                 if evt.get("type") == "delta":
                     chunks.append(str(evt.get("text") or ""))
                 elif evt.get("type") == "done":
@@ -16257,8 +15990,48 @@ def bff_management_nl_ask_stream(
                 "type": "done", "text": answer,
                 "provider_status": provider_status, "ui_actions": actions,
             })
-        elif failure_event is not None:
-            _management_ai_record_event(failure_event)
+            # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: complete the durable
+            # reservation exactly once, from the one code path that actually
+            # observed the terminal provider outcome, so a reconnect/retry
+            # with the same Idempotency-Key durably replays this answer
+            # instead of invoking the provider again.
+            stream_result = {
+                "status": "accepted",
+                "data": {
+                    "status": "completed",
+                    "lifecycle_status": "completed",
+                    "answer": answer,
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "trace_id": trace_id,
+                    "provider_status": provider_status,
+                    "ui_actions": actions,
+                    "actions": actions,
+                },
+                "meta": {
+                    "status": "completed",
+                    "lifecycle_status": "completed",
+                    "provider_status": provider_status,
+                    "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+                },
+            }
+            await _mgmt_nl_command_complete(
+                command_reservation,
+                stream_result,
+                display_key=resolved_key,
+            )
+        else:
+            if failure_event is not None:
+                _management_ai_record_event(failure_event)
+            # A non-terminal/failed provider turn must not be cached as a
+            # false-positive "completed" result and must not be silently
+            # retried on the same key either -- mark the reservation
+            # uncertain so it becomes retryable again only after the store's
+            # recovery window elapses.
+            await _mgmt_nl_command_mark_uncertain(
+                command_reservation,
+                reason=(failure_event or {}).get("error_code") or "stream_provider_incomplete",
+            )
         yield _mgmt_nl_sse_frame("[DONE]")
 
     return StreamingResponse(
@@ -19395,510 +19168,43 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             "meta": {"snapshot_at": snapshot_at, "surfaces": {"strategy_health": strategy_surface}},
         }
     return None
-def _assistant_focus_entity(
-    request: Any,
-) -> tuple[Optional[str], Optional[str]]:
-    focus = getattr(request, "focus", None)
-    if focus is not None:
-        entity_type = str(getattr(focus, "entity_type", "") or "").strip()
-        entity_id = str(getattr(focus, "entity_id", "") or "").strip()
-        if entity_type and entity_id:
-            return entity_type, entity_id
-
-    selected = getattr(request, "selected_entity", None)
-    if selected is None:
-        frontend = getattr(request, "frontend", None)
-        selected = getattr(frontend, "selected_entity", None) if frontend is not None else None
-    if isinstance(selected, dict):
-        entity_type = str(
-            selected.get("entity_type")
-            or selected.get("entityType")
-            or selected.get("type")
-            or ""
-        ).strip()
-        entity_id = str(
-            selected.get("entity_id")
-            or selected.get("entityId")
-            or selected.get("id")
-            or ""
-        ).strip()
-        if entity_type and entity_id:
-            return entity_type, entity_id
-    return None, None
-def _assistant_source_access_meta(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
-    roles = list(getattr(identity, "roles", []) or [])
-    tenant: Dict[str, Any] = {
-        "id": None,
-        "allowed_ids": [],
-        "scope": "unknown",
-    }
-    if identity is not None:
-        try:
-            tenant = _bff_me_tenant_payload(identity, requested_tenant=None)
-        except HTTPException:
-            tenant = {
-                "id": None,
-                "allowed_ids": [],
-                "scope": "denied",
-            }
-    return {
-        "rbac": {
-            "enforced": True,
-            "required_roles": sorted(_READ_ROLES),
-            "actor_roles": roles,
-        },
-        "tenant": {
-            "enforced": True,
-            "tenant_id": tenant.get("id"),
-            "allowed_tenants": list(tenant.get("allowed_ids") or []),
-            "scope": tenant.get("scope") or "unknown",
-        },
-    }
-def _assistant_attach_access_meta(
-    payload: Any,
-    *,
-    source_id: str,
-    identity: Optional[OperatorIdentity],
-    snapshot_at: str,
-) -> Dict[str, Any]:
-    result = dict(payload) if isinstance(payload, dict) else {"data": payload}
-    meta = dict(result.get("meta") if isinstance(result.get("meta"), dict) else {})
-    meta.setdefault("snapshot_at", snapshot_at)
-    meta.setdefault("surfaces", {source_id: {"status": "ok", "source": "bff_read"}})
-    meta["access"] = _assistant_source_access_meta(identity)
-    result["meta"] = meta
-    return result
-def _assistant_tenant_scope(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
-    return _assistant_source_access_meta(identity).get("tenant", {})
-def _assistant_filter_tenant_records(
-    records: List[Dict[str, Any]],
-    identity: Optional[OperatorIdentity],
-) -> List[Dict[str, Any]]:
-    tenant = _assistant_tenant_scope(identity)
-    if tenant.get("scope") == "global":
-        return [record for record in records if isinstance(record, dict)]
-    return _mgmt_nl_filter_tenant_records(
-        [record for record in records if isinstance(record, dict)],
-        str(tenant.get("tenant_id") or ""),
-    )
-def _assistant_filter_payload_tenant(payload: Any, identity: Optional[OperatorIdentity]) -> Any:
-    if not isinstance(payload, dict):
-        return payload
-    result = dict(payload)
-    for key in ("items", "alerts", "events", "data"):
-        value = result.get(key)
-        if isinstance(value, list):
-            result[key] = _assistant_filter_tenant_records(value, identity)
-    return result
-def _assistant_unavailable_source(
-    source_id: str,
-    *,
-    href: str,
-    snapshot_at: str,
-    dataset: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source="missing")
-    return AssistantCollectedSource(
-        source_id=source_id,
-        href=href,
-        payload=_assistant_attach_access_meta(
-            {
-                "data": None,
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {source_id: surface},
-                },
-            },
-            source_id=source_id,
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "unavailable"),
-    )
-def _assistant_collect_jobs_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    entity_type, entity_id = _assistant_focus_entity(request)
-    selected_job = None
-    href = "/bff/jobs"
-    if entity_type and entity_type.lower() in {"job", "jobs"} and entity_id:
-        raw_job = _get_bff_job(entity_id)
-        if isinstance(raw_job, dict):
-            selected_job = next(iter(_assistant_filter_tenant_records([raw_job], identity)), None)
-        href = f"/bff/jobs/{entity_id}"
-
-    jobs = _assistant_filter_tenant_records(_list_bff_jobs(), identity)
-    surface = _dataset_surface_status(
-        "jobs",
-        snapshot_at=snapshot_at,
-        has_data=bool(jobs) or bool(selected_job) or None,
-    )
-    payload: Dict[str, Any] = {
-        "items": jobs[:20],
-        "selected": selected_job,
-        "page_info": {"next_page_token": None, "total": len(jobs)},
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {"jobs": surface},
-        },
-    }
-    if entity_id and selected_job is None:
-        payload["selected_missing"] = {
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "reason": "job_not_found_or_not_visible",
-        }
-    return AssistantCollectedSource(
-        source_id="jobs",
-        href=href,
-        payload=_assistant_attach_access_meta(
-            payload,
-            source_id="jobs",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-def _assistant_collect_job_logs_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    entity_type, entity_id = _assistant_focus_entity(request)
-    if not entity_id or (entity_type and entity_type.lower() not in {"job", "jobs"}):
-        return None
-    job = _get_bff_job(entity_id)
-    if isinstance(job, dict):
-        job = next(iter(_assistant_filter_tenant_records([job], identity)), None)
-    if job is None:
-        return _assistant_unavailable_source(
-            "job_logs",
-            href=f"/bff/jobs/{entity_id}/logs",
-            snapshot_at=snapshot_at,
-            dataset="jobs",
-            identity=identity,
-        )
-    logs = list(job.get("logs") or [])
-    surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at, has_data=True)
-    return AssistantCollectedSource(
-        source_id="job_logs",
-        href=f"/bff/jobs/{entity_id}/logs",
-        payload=_assistant_attach_access_meta(
-            {
-                "job_id": entity_id,
-                "logs": logs[:50],
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {"job_logs": surface},
-                },
-            },
-            source_id="job_logs",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-def _assistant_collect_audit_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    entity_type, entity_id = _assistant_focus_entity(request)
-    href = "/bff/audit"
-    if entity_type and entity_id:
-        events = [
-            event
-            for event in _list_governance_audit_events(target_type=entity_type)
-            if str(event.get("target_id") or event.get("entity_id") or "") == entity_id
-        ]
-        href = f"/bff/audit/entities/{entity_type}/{entity_id}"
-    else:
-        events = _list_governance_audit_events()
-    events = _assistant_filter_tenant_records(events, identity)
-    surface = _dataset_surface_status(
-        "governance_audit_events",
-        snapshot_at=snapshot_at,
-        has_data=bool(events) or None,
-    )
-    return AssistantCollectedSource(
-        source_id="audit",
-        href=href,
-        payload=_assistant_attach_access_meta(
-            {
-                "items": events[:50],
-                "page_info": {"next_page_token": None, "total": len(events)},
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {"audit": surface},
-                },
-            },
-            source_id="audit",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-def _assistant_collect_recent_sse_source(
-    _request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    events = _assistant_filter_tenant_records(read_store.list_events_bff(page_size=25), identity)
-    surface = _dataset_surface_status(
-        "governance_audit_events",
-        snapshot_at=snapshot_at,
-        has_data=bool(events) or None,
-    )
-    return AssistantCollectedSource(
-        source_id="recent_sse",
-        href="/bff/events",
-        payload=_assistant_attach_access_meta(
-            {
-                "items": events[:25],
-                "page_info": {"next_page_token": None},
-                "meta": {
-                    "snapshot_at": snapshot_at,
-                    "surfaces": {"recent_sse": surface},
-                },
-            },
-            source_id="recent_sse",
-            identity=identity,
-            snapshot_at=snapshot_at,
-        ),
-        status=str(surface.get("status") or "ok"),
-    )
-_ASSISTANT_DOCS_RAG_ALLOWLIST = (
-    (
-        "existing_architecture_plan",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md",
-        "Pantheon Management Assistant existing architecture integration plan",
-    ),
-    (
-        "existing_architecture_tasks",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md",
-        "Existing architecture assistant integration execution tasks",
-    ),
-    (
-        "ai_collaboration_guide",
-        "AI_COLLABORATION_GUIDE.md",
-        "Pantheon AI collaboration and repository workflow guide",
-    ),
+from .assistant.source_collectors import (
+    AssistantSourceCollectorDeps,
+    collect_assistant_context_source,
 )
-def _assistant_repo_root() -> Path:
-    return Path(_REPO_ROOT)
-def _assistant_doc_query_terms(request: Any) -> List[str]:
-    values: List[str] = []
-    for value in (
-        getattr(request, "question", None),
-        getattr(request, "route", None),
-    ):
-        if value:
-            values.extend(str(value).lower().split())
-    frontend = getattr(request, "frontend", None)
-    if frontend is not None and getattr(frontend, "route", None):
-        values.extend(str(frontend.route).lower().split("/"))
-    return [value.strip(".,:;()[]{}").lower() for value in values if len(value.strip(".,:;()[]{}")) > 3]
-def _assistant_doc_snippet(text: str, terms: List[str], *, limit: int = 900) -> str:
-    compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
-    lower = compact.lower()
-    start = 0
-    for term in terms:
-        found = lower.find(term)
-        if found >= 0:
-            start = max(0, found - 160)
-            break
-    return compact[start:start + limit]
-def _assistant_collect_docs_rag_source(
-    request: Any,
-    snapshot_at: str,
-    identity: Optional[OperatorIdentity] = None,
-) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    root = _assistant_repo_root()
-    terms = _assistant_doc_query_terms(request)
-    items: List[Dict[str, Any]] = []
-    citations: List[Dict[str, Any]] = []
-    source_refs: List[Dict[str, Any]] = []
-
-    for slug, relative_path, title in _ASSISTANT_DOCS_RAG_ALLOWLIST:
-        path = root / relative_path
-        if not path.exists() or not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        ref_id = f"doc:{slug}"
-        snippet = _assistant_doc_snippet(text, terms)
-        citation = {
-            "ref_id": ref_id,
-            "title": title,
-            "path": relative_path,
-        }
-        items.append({
-            "ref_id": ref_id,
-            "title": title,
-            "path": relative_path,
-            "snippet": snippet,
-        })
-        citations.append(citation)
-        source_refs.append({
-            "source_id": ref_id,
-            "href": relative_path,
-            "snapshot_at": snapshot_at,
-            "status": "ok",
-            "staleness": {
-                "status": "fresh",
-                "served_from": "repo_doc_allowlist",
-                "last_known_at": snapshot_at,
-            },
-            "source_kind": "docs",
-        })
-
-    status = "ok" if items else "unavailable"
-    surface = {
-        "status": status,
-        "source": "repo_doc_allowlist",
-    }
-    source_refs.insert(0, {
-        "source_id": "docs_rag",
-        "href": "docs://assistant/context",
-        "snapshot_at": snapshot_at,
-        "status": status,
-        "staleness": {
-            "status": "fresh" if items else "unavailable",
-            "served_from": "repo_doc_allowlist",
-            "last_known_at": snapshot_at,
-        },
-        "source_kind": "docs",
-    })
-    return AssistantCollectedSource(
-        source_id="docs_rag",
-        href="docs://assistant/context",
-        payload={
-            "items": items,
-            "citations": citations,
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"docs_rag": surface},
-                "access": {
-                    **_assistant_source_access_meta(identity),
-                    "corpus": "repo_doc_allowlist",
-                },
-            },
-        },
-        status=status,
-        source_kind="docs",
-        source_refs=source_refs,
-    )
 def _assistant_collect_source(
     source_id: str,
     request: Any,
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from .assistant.context_composer import AssistantCollectedSource
-
-    if source_id == "control_room":
-        payload = _sem_final_generic_list_for_path("/bff/v5/control-room")
-        if payload is None:
-            return _assistant_unavailable_source(
-                source_id,
-                href="/bff/v5/control-room",
-                snapshot_at=snapshot_at,
-                dataset="incidents",
-                identity=identity,
-            )
-        payload = _assistant_filter_payload_tenant(payload, identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/v5/control-room",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "jobs":
-        return _assistant_collect_jobs_source(request, snapshot_at, identity)
-    if source_id == "alerts":
-        payload = _assistant_filter_payload_tenant(_build_operator_alerts_payload(snapshot_at), identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/alerts",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "audit":
-        return _assistant_collect_audit_source(request, snapshot_at, identity)
-    if source_id == "recent_sse":
-        return _assistant_collect_recent_sse_source(request, snapshot_at, identity)
-    if source_id == "persona_health":
-        payload = _sem_final_generic_list_for_path("/bff/v5/execution/persona-health")
-        if payload is None:
-            return _assistant_unavailable_source(
-                source_id,
-                href="/bff/v5/execution/persona-health",
-                snapshot_at=snapshot_at,
-                dataset="personas",
-                identity=identity,
-            )
-        payload = _assistant_filter_payload_tenant(payload, identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/v5/execution/persona-health",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "strategy_health":
-        payload = _sem_final_generic_list_for_path("/bff/v5/execution/strategy-health")
-        if payload is None:
-            return _assistant_unavailable_source(
-                source_id,
-                href="/bff/v5/execution/strategy-health",
-                snapshot_at=snapshot_at,
-                dataset="strategy_specs",
-                identity=identity,
-            )
-        payload = _assistant_filter_payload_tenant(payload, identity)
-        return AssistantCollectedSource(
-            source_id=source_id,
-            href="/bff/v5/execution/strategy-health",
-            payload=_assistant_attach_access_meta(
-                payload,
-                source_id=source_id,
-                identity=identity,
-                snapshot_at=snapshot_at,
-            ),
-        )
-    if source_id == "job_logs":
-        return _assistant_collect_job_logs_source(request, snapshot_at, identity)
-    if source_id == "docs_rag":
-        return _assistant_collect_docs_rag_source(request, snapshot_at, identity)
-    return None
+    """Composition-root binding for the single owner of assistant context
+    source collection (BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001).
+    Closes over the real runtime collaborators and delegates to
+    ``collect_assistant_context_source`` -- no second copy of any collector
+    logic may live here.  Mirrors the ``_resolve_agora_interaction_context_ref``
+    composition-root binding introduced by
+    BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001.
+    """
+    return collect_assistant_context_source(
+        source_id,
+        request,
+        snapshot_at,
+        identity,
+        deps=AssistantSourceCollectorDeps(
+            read_store=read_store,
+            list_governance_audit_events=_list_governance_audit_events,
+            filter_tenant_records_fn=_mgmt_nl_filter_tenant_records,
+            dataset_surface_status=_dataset_surface_status,
+            generic_path_collector=_sem_final_generic_list_for_path,
+            persona_service=persona_service,
+            build_operator_alerts_payload=_build_operator_alerts_payload,
+            get_job=_get_bff_job,
+            list_jobs=_list_bff_jobs,
+            tenant_payload_fn=_bff_me_tenant_payload,
+            read_roles=_READ_ROLES,
+        ),
+    )
 def _assistant_build_context_pack(session_id: str, request: Any, identity: OperatorIdentity) -> Any:
     from .assistant.context_composer import compose_context_pack
 
@@ -20204,6 +19510,7 @@ app.include_router(
         read_surface_meta=_read_surface_meta,
         raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
         meta_staleness=_meta_staleness,
+        mutation_review_projection=_mutation_review_projection,
         submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
             ObjectType.EVOLUTION_PROGRAM,
             entity_id,
@@ -20597,6 +19904,7 @@ app.include_router(
         meta_staleness=_meta_staleness,
         redact_evidence_refs=redact_evidence_refs,
         capabilities_for_identity=_capabilities_for_identity,
+        read_surface_state=_read_surface_state,
         submit_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
             entity_type, entity_id, action_id, resolved_key, identity, payload
         ),
