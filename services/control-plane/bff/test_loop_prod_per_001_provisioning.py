@@ -10,21 +10,42 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import utc_now
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
 from services.control_plane.bff.personas import service as _persona_service_module
-from persona_provisioning import MemoryPersonaProvisioningStore
-from ports import create_read_surface_ports
-from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.control_plane.bff.personas.router import create_personas_router
+from services.control_plane.bff.personas.service import PersonaService
+from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.test_persona_provisioning_coordinator import (
+    FakeOwnerTransport,
+    _schedule_receipt,
+)
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {
     "Authorization": OPERATOR_TOKEN,
     "Idempotency-Key": "test-provisioning-idempotency",
 }
+
+
+class _State:
+    read_store: Any = None
+    persona_service: Any = None
+
+
+_state = _State()
 
 
 def _provisioning_read_surface_double():
@@ -57,7 +78,7 @@ def _provisioning_read_surface_double():
         metadata: dict[str, Any] | None = None,
         required_data_sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        timestamp = created_at or bff_main.utc_now()
+        timestamp = created_at or utc_now()
         clean_metadata = clone(metadata or {})
         clean_metadata.update(
             {"owner": actor_id, "archetype": archetype, "risk_level": risk_level}
@@ -113,7 +134,7 @@ def _provisioning_read_surface_double():
         if risk_level is not None:
             clean_metadata["risk_level"] = risk_level
         record["metadata"] = clean_metadata
-        record["updated_at"] = updated_at or bff_main.utc_now()
+        record["updated_at"] = updated_at or utc_now()
         personas[persona_id] = record
         return clone(record)
 
@@ -156,12 +177,14 @@ def _provisioning_read_surface_double():
 
 @pytest.fixture(autouse=True)
 def mock_external_services(monkeypatch):
+    monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
     transport = FakeOwnerTransport()
-    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
-    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
-    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    _state.transport = transport
+    monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(_persona_service_module, "_PersonaOwnerHttpTransport", lambda *args, **kwargs: transport)
+    monkeypatch.setattr(_persona_service_module, "_register_persona_cron_required", _schedule_receipt)
     monkeypatch.setattr(
-        bff_main,
+        _persona_service_module,
         "_remove_persona_cron_required",
         lambda persona_id: {
             "persona_id": persona_id,
@@ -170,19 +193,19 @@ def mock_external_services(monkeypatch):
         },
     )
     # Mock create_capital_binding
-    monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
+    monkeypatch.setattr(_persona_service_module, "create_capital_binding", lambda payload: {"status": "created"}, raising=False)
     from services.persona.runtime_profile import build_persona_runtime_profile
-    monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
+    monkeypatch.setattr(_persona_service_module, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
     
     # Mock _post_json to do nothing and return empty dict
-    monkeypatch.setattr(bff_main, "_post_json", lambda *args, **kwargs: {})
+    monkeypatch.setattr(_persona_service_module, "_post_json", lambda *args, **kwargs: {}, raising=False)
     
     # Mock _get_json to raise urllib.error.HTTPError for 404 (not found) by default
     import urllib.error
     from io import BytesIO
     fp = BytesIO(b"")
     mock_404 = urllib.error.HTTPError("url", 404, "Not Found", {}, fp)
-    monkeypatch.setattr(bff_main, "_get_json", lambda *args, **kwargs: (_ for _ in ()).throw(mock_404))
+    monkeypatch.setattr(_persona_service_module, "_get_json", lambda *args, **kwargs: (_ for _ in ()).throw(mock_404), raising=False)
     
     # Mock _runtime_manager_client
     class MockRuntimeManagerClient:
@@ -193,7 +216,7 @@ def mock_external_services(monkeypatch):
                 or request.get("runtime_binding_id")
                 or "test-binding"
             )
-            bff_main.read_store.create_runtime_binding(
+            _state.read_store.create_runtime_binding(
                 runtime_id=request.get("runtime_id", "test-runtime"),
                 name=request.get("metadata", {}).get("name", "test"),
                 persona_id=request.get("metadata", {}).get("persona_id", "test"),
@@ -201,17 +224,17 @@ def mock_external_services(monkeypatch):
                 deployment_plan_id=request.get("plan_id", "test-plan"),
                 runtime_kind="paper",
                 actor_id="test",
-                created_at=bff_main.utc_now(),
+                created_at=utc_now(),
                 params=request.get("metadata", {}),
                 state=request.get("state") or "running",
             )
-            return bff_main.read_store.get_runtime_binding(binding_id)
+            return _state.read_store.get_runtime_binding(binding_id)
             
         def get(self, binding_id):
-            return bff_main.read_store.get_runtime_binding(binding_id)
+            return _state.read_store.get_runtime_binding(binding_id)
             
         def list_all(self):
-            return list((bff_main.read_store._ensure_local_overlay_records("runtime_bindings") or {}).values())
+            return list((_state.read_store._ensure_local_overlay_records("runtime_bindings") or {}).values())
 
         def list_by_plan(self, plan_id):
             return [
@@ -221,24 +244,45 @@ def mock_external_services(monkeypatch):
             ]
             
     mock_client = MockRuntimeManagerClient()
-    monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: mock_client)
+    monkeypatch.setattr(_persona_service_module, "_runtime_manager_client", lambda: mock_client, raising=False)
 
 
 def _fresh_client(td: str) -> TestClient:
     read_surface_double = _provisioning_read_surface_double()
-    bff_main.read_store = read_surface_double
-    # The fixture double is the single canonical Persona write owner for this
-    # test process: no fallback writer, no process-local overlay. The live
-    # request path resolves the write owner from `main.persona_service`
-    # (bound into request context per-call), not from the module-global
-    # fallback, so both must point at the same double.
+    _state.read_store = read_surface_double
     _persona_service_module.persona_write_owner = read_surface_double
-    bff_main.persona_service._write_owner = read_surface_double
-    bff_main.persona_service._read_store = read_surface_double
-    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._COMMAND_AUTH_CONTEXT.clear()
-    return TestClient(bff_main.app)
+    cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+
+    persona_svc = PersonaService(
+        write_owner=read_surface_double,
+        read_store=read_surface_double,
+        ranking_write_owner=object(),
+        command_store=cmd_store,
+    )
+    persona_svc._write_owner = read_surface_double
+    persona_svc._read_store = read_surface_double
+    _state.persona_service = persona_svc
+
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: HTTPException) -> JSONResponse:
+        if isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    app.include_router(
+        create_personas_router(
+            service=persona_svc,
+            extract_identity_fn=lambda auth, **kw: extract_identity_stub(auth),
+            require_operator_role_fn=require_operator_role,
+            require_read_role_fn=require_read_role,
+            bff_error_fn=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    return TestClient(app)
 
 
 def _install_authoritative_readback(
@@ -251,7 +295,7 @@ def _install_authoritative_readback(
 ) -> tuple[str, str]:
     runtime_binding_id = f"rb-{persona_id[-12:]}"
     runtime_id = f"runtime-{persona_id[-12:]}"
-    persona = bff_main.read_store.get_persona(persona_id)
+    persona = _state.read_store.get_persona(persona_id)
     assert persona is not None
     metadata = persona["metadata"]
     capital_pool_id = metadata["internal_paper_capital_pool_id"]
@@ -275,7 +319,10 @@ def _install_authoritative_readback(
         "runtime_id": runtime_id,
         "runtime_binding": authoritative_binding,
     }
-    bff_main._get_json = lambda *_args, **_kwargs: projection
+    _persona_service_module._get_json = lambda *_args, **_kwargs: projection
+    if getattr(_state, "transport", None) is not None:
+        from urllib.parse import quote
+        _state.transport.objects[("deployment", f"/api/deployment/plans/{quote(plan_id, safe='')}/projection")] = projection
 
     class ExactRuntimeManagerClient:
         def get(self, binding_id):
@@ -287,8 +334,8 @@ def _install_authoritative_readback(
         def list_by_plan(self, requested_plan_id):
             return [authoritative_binding] if requested_plan_id == plan_id else []
 
-    bff_main._runtime_manager_client = lambda: ExactRuntimeManagerClient()
-    bff_main.read_store.list_authoritative_paper_runtime_monitoring_sessions = lambda: [
+    _persona_service_module._runtime_manager_client = lambda: ExactRuntimeManagerClient()
+    _state.read_store.list_authoritative_paper_runtime_monitoring_sessions = lambda: [
         {
             "session_id": f"session-{persona_id}",
             "runtime_id": runtime_id,
@@ -296,10 +343,10 @@ def _install_authoritative_readback(
             "capital_pool_id": capital_pool_id,
             "status": "running",
             "active": True,
-            "last_heartbeat_at": bff_main.utc_now(),
+            "last_heartbeat_at": utc_now(),
         }
     ]
-    bff_main._register_persona_cron_required = lambda *_args, **_kwargs: {
+    _persona_service_module._register_persona_cron_required = lambda *_args, **_kwargs: {
         "authoritative_readback": {
             "persona_id": persona_id,
             "workflow_id": "pantheon.persona.first-evaluation",
@@ -316,7 +363,7 @@ def _install_authoritative_readback(
             ),
             "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
             "session_target": persona_id,
-            "observed_at": bff_main.utc_now(),
+            "observed_at": utc_now(),
         }
     }
     return runtime_binding_id, runtime_id
@@ -324,242 +371,223 @@ def _install_authoritative_readback(
 
 def test_persona_creation_initial_state_is_provisioning() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            # Create a persona
-            resp = client.post(
-                "/bff/personas",
-                json={"name": "Trader A", "traits": {"risk_appetite": "low"}},
-                headers={**HEADERS, "Idempotency-Key": "create-trader-a"},
-            )
-            assert resp.status_code == 201, resp.text
-            data = resp.json()["data"]
-            assert data["name"] == "Trader A"
-            assert data["state"] == "provisioning"  # Should initially be provisioning
+        client = _fresh_client(td)
+        # Create a persona
+        resp = client.post(
+            "/bff/personas",
+            json={"name": "Trader A", "traits": {"risk_appetite": "low"}},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-a"},
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+        assert data["name"] == "Trader A"
+        assert data["state"] == "provisioning"  # Should initially be provisioning
 
-            # Get the persona detail
-            persona_id = data["id"]
-            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
-            assert get_resp.status_code == 200, get_resp.text
-            assert get_resp.json()["data"]["state"] == "provisioning"
-        finally:
-            bff_main.read_store = original
+        # Get the persona detail
+        persona_id = data["id"]
+        get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["state"] == "provisioning"
 
 
 def test_persona_provisioning_completes_upon_readback_success() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            # Create a persona
-            resp = client.post(
-                "/bff/personas",
-                json={"name": "Trader B"},
-                headers={**HEADERS, "Idempotency-Key": "create-trader-b"},
-            )
-            assert resp.status_code == 201, resp.text
-            data = resp.json()["data"]
-            persona_id = data["id"]
-            assert "runtimeBindingId" not in data
-            assert "runtimeId" not in data
-            runtime_binding_id, runtime_id = _install_authoritative_readback(
-                persona_id=persona_id,
-                plan_id=data["deploymentPlanId"],
-                saga_id=resp.json()["meta"]["deployment_saga_id"],
-                persona_capital_binding_id=resp.json()["meta"][
-                    "persona_capital_binding_id"
-                ],
-            )
+        client = _fresh_client(td)
+        # Create a persona
+        resp = client.post(
+            "/bff/personas",
+            json={"name": "Trader B"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-b"},
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+        persona_id = data["id"]
+        assert "runtimeBindingId" not in data
+        assert "runtimeId" not in data
+        runtime_binding_id, runtime_id = _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=resp.json()["meta"]["deployment_saga_id"],
+            persona_capital_binding_id=resp.json()["meta"][
+                "persona_capital_binding_id"
+            ],
+        )
 
-            # GET is intentionally pure and cannot advance lifecycle.
-            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
-            assert get_resp.status_code == 200, get_resp.text
-            assert get_resp.json()["data"]["state"] == "provisioning"
+        # GET is intentionally pure and cannot advance lifecycle.
+        get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["state"] == "provisioning"
 
-            reconciled = client.post(
-                f"/bff/personas/{persona_id}/provisioning/reconcile",
-                headers=HEADERS,
-            )
-            assert reconciled.status_code == 200, reconciled.text
-            reconciled_body = reconciled.json()
-            assert reconciled_body["data"]["state"] == "paper_running"
-            authoritative = reconciled_body["meta"]["authoritative_readback"]
-            assert authoritative["available"] is True
-            schedule = authoritative["first_evaluation_schedule"]
-            assert schedule["workflow_id"] == "pantheon.persona.first-evaluation"
-            assert schedule["registered"] is True
-            assert schedule["runtime_id"] == runtime_id
-            assert schedule["runtime_binding_id"] == runtime_binding_id
+        reconciled = client.post(
+            f"/bff/personas/{persona_id}/provisioning/reconcile",
+            headers=HEADERS,
+        )
+        assert reconciled.status_code == 200, reconciled.text
+        reconciled_body = reconciled.json()
+        assert reconciled_body["data"]["state"] == "paper_running"
+        authoritative = reconciled_body["meta"]["authoritative_readback"]
+        assert authoritative["available"] is True
+        schedule = authoritative["first_evaluation_schedule"]
+        assert schedule["workflow_id"] == "pantheon.persona.first-evaluation"
+        assert schedule["registered"] is True
+        assert schedule["runtime_id"] == runtime_id
+        assert schedule["runtime_binding_id"] == runtime_binding_id
 
-            # Check store to verify the status is persisted (restart-safe)
-            persisted = bff_main.read_store.get_persona(persona_id)
-            assert persisted["lifecycle_state"] == "paper_running"
-        finally:
-            bff_main.read_store = original
+        # Check store to verify the status is persisted (restart-safe)
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "paper_running"
 
 
 def test_persona_provisioning_fails_on_downstream_failure() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/personas",
-                json={"name": "Trader C"},
-                headers={**HEADERS, "Idempotency-Key": "create-trader-c"},
-            )
-            assert resp.status_code == 201, resp.text
-            data = resp.json()["data"]
-            persona_id = data["id"]
-            _install_authoritative_readback(
-                persona_id=persona_id,
-                plan_id=data["deploymentPlanId"],
-                saga_id=resp.json()["meta"]["deployment_saga_id"],
-                persona_capital_binding_id=resp.json()["meta"][
-                    "persona_capital_binding_id"
-                ],
-                binding_state="failed",
-            )
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/personas",
+            json={"name": "Trader C"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-c"},
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+        persona_id = data["id"]
+        _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=resp.json()["meta"]["deployment_saga_id"],
+            persona_capital_binding_id=resp.json()["meta"][
+                "persona_capital_binding_id"
+            ],
+            binding_state="failed",
+        )
 
-            # GET stays pure; the explicit controller pass publishes failure.
-            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
-            assert get_resp.status_code == 200, get_resp.text
-            assert get_resp.json()["data"]["state"] == "provisioning"
-            reconciled = client.post(
-                f"/bff/personas/{persona_id}/provisioning/reconcile",
-                headers=HEADERS,
-            )
-            assert reconciled.status_code == 200, reconciled.text
-            assert reconciled.json()["data"]["state"] == "failed"
+        # GET stays pure; the explicit controller pass publishes failure.
+        get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["state"] == "provisioning"
+        reconciled = client.post(
+            f"/bff/personas/{persona_id}/provisioning/reconcile",
+            headers=HEADERS,
+        )
+        assert reconciled.status_code == 200, reconciled.text
+        assert reconciled.json()["data"]["state"] == "failed"
 
-            # Check store to verify failure state is persisted (restart-safe)
-            persisted = bff_main.read_store.get_persona(persona_id)
-            assert persisted["lifecycle_state"] == "provisioning_failed"
-        finally:
-            bff_main.read_store = original
+        # Check store to verify failure state is persisted (restart-safe)
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "provisioning_failed"
 
 
 def test_persona_provisioning_fails_on_timeout() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.post(
-                "/bff/personas",
-                json={"name": "Trader D"},
-                headers={**HEADERS, "Idempotency-Key": "create-trader-d"},
-            )
-            data = resp.json()["data"]
-            persona_id = data["id"]
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/personas",
+            json={"name": "Trader D"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-d"},
+        )
+        data = resp.json()["data"]
+        persona_id = data["id"]
 
-            # Timeout starts at the durable post-schedule readback checkpoint,
-            # not at the Persona's original creation timestamp.
-            persona = bff_main.read_store.get_persona(persona_id)
-            assert persona is not None
-            bff_main.read_store.update_persona(
-                persona_id,
-                metadata={"provisioning_readback_started_at": "2026-07-15T00:00:00Z"},
-            )
+        # Timeout starts at the durable post-schedule readback checkpoint,
+        # not at the Persona's original creation timestamp.
+        persona = _state.read_store.get_persona(persona_id)
+        assert persona is not None
+        _state.read_store.update_persona(
+            persona_id,
+            metadata={"provisioning_readback_started_at": "2026-07-15T00:00:00Z"},
+        )
+        store = _persona_service_module._PERSONA_PROVISIONING_STORE
+        tenant_id = persona["metadata"].get("tenant_id", "pantheon-dev")
+        idempotency_key = persona["metadata"].get("provisioning_idempotency_key", "create-trader-d")
+        backend_rec = store._backend.records.get((tenant_id, idempotency_key))
+        if backend_rec:
+            backend_rec.references["provisioning_readback_started_at"] = "2026-07-15T00:00:00Z"
 
-            # GET stays pure; the explicit controller pass applies timeout.
-            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
-            assert get_resp.status_code == 200, get_resp.text
-            assert get_resp.json()["data"]["state"] == "provisioning"
-            reconciled = client.post(
-                f"/bff/personas/{persona_id}/provisioning/reconcile",
-                headers=HEADERS,
-            )
-            assert reconciled.status_code == 200, reconciled.text
-            assert reconciled.json()["data"]["state"] == "failed"
-        finally:
-            bff_main.read_store = original
+        # GET stays pure; the explicit controller pass applies timeout.
+        get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["state"] == "provisioning"
+        reconciled = client.post(
+            f"/bff/personas/{persona_id}/provisioning/reconcile",
+            headers=HEADERS,
+        )
+        assert reconciled.status_code == 200, reconciled.text
+        assert reconciled.json()["data"]["state"] == "failed"
 
 
 def test_persona_duplicate_create_converges() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            
-            # Create first time
-            resp1 = client.post(
-                "/bff/personas",
-                json={"name": "Trader Unique"},
-                headers={**HEADERS, "Idempotency-Key": "create-trader-unique-1"},
-            )
-            assert resp1.status_code == 201, resp1.text
-            data1 = resp1.json()["data"]
-            persona_id_1 = data1["id"]
+        client = _fresh_client(td)
+        
+        # Create first time
+        resp1 = client.post(
+            "/bff/personas",
+            json={"name": "Trader Unique"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-unique-1"},
+        )
+        assert resp1.status_code == 201, resp1.text
+        data1 = resp1.json()["data"]
+        persona_id_1 = data1["id"]
 
-            # Create second time with a different idempotency key but same name
-            resp2 = client.post(
-                "/bff/personas",
-                json={"name": "Trader Unique"},
-                headers={**HEADERS, "Idempotency-Key": "create-trader-unique-2"},
-            )
-            assert resp2.status_code == 201, resp2.text
-            data2 = resp2.json()["data"]
-            persona_id_2 = data2["id"]
+        # Create second time with a different idempotency key but same name
+        resp2 = client.post(
+            "/bff/personas",
+            json={"name": "Trader Unique"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-unique-2"},
+        )
+        assert resp2.status_code == 201, resp2.text
+        data2 = resp2.json()["data"]
+        persona_id_2 = data2["id"]
 
-            # They converge to one dynamic Persona and one deterministic owner
-            # identity set; RuntimeBinding remains absent until Deployment owns it.
-            assert persona_id_1 == persona_id_2
-            assert "runtimeBindingId" not in data1
-            assert "runtimeBindingId" not in data2
-            assert resp1.json()["meta"]["persona_capital_binding_id"] == resp2.json()[
-                "meta"
-            ]["persona_capital_binding_id"]
-            assert resp1.json()["meta"]["deployment_saga_id"] == resp2.json()["meta"][
-                "deployment_saga_id"
-            ]
-        finally:
-            bff_main.read_store = original
+        # They converge to one dynamic Persona and one deterministic owner
+        # identity set; RuntimeBinding remains absent until Deployment owns it.
+        assert persona_id_1 == persona_id_2
+        assert "runtimeBindingId" not in data1
+        assert "runtimeBindingId" not in data2
+        assert resp1.json()["meta"]["persona_capital_binding_id"] == resp2.json()[
+            "meta"
+        ]["persona_capital_binding_id"]
+        assert resp1.json()["meta"]["deployment_saga_id"] == resp2.json()["meta"][
+            "deployment_saga_id"
+        ]
 
 
 def test_persona_duplicate_create_rejects_registry_only_success_projection() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            
-            # 1. Create the persona
-            resp1 = client.post(
-                "/bff/personas",
-                json={"name": "Trader Safety"},
-                headers={**HEADERS, "Idempotency-Key": "create-safety-1"},
-            )
-            assert resp1.status_code == 201, resp1.text
-            data1 = resp1.json()["data"]
-            persona_id = data1["id"]
-            before = bff_main.read_store.get_persona(persona_id)
-            assert before is not None
-            original_created_at = before["created_at"]
-            original_readback_started_at = before["metadata"][
-                "provisioning_readback_started_at"
-            ]
+        client = _fresh_client(td)
+        
+        # 1. Create the persona
+        resp1 = client.post(
+            "/bff/personas",
+            json={"name": "Trader Safety"},
+            headers={**HEADERS, "Idempotency-Key": "create-safety-1"},
+        )
+        assert resp1.status_code == 201, resp1.text
+        data1 = resp1.json()["data"]
+        persona_id = data1["id"]
+        before = _state.read_store.get_persona(persona_id)
+        assert before is not None
+        original_created_at = before["created_at"]
+        original_readback_started_at = before["metadata"][
+            "provisioning_readback_started_at"
+        ]
 
-            # 2. Forge only the Persona registry projection.  The durable
-            # provisioning ledger is still non-terminal, so this cannot be
-            # accepted as paper-running authority.
-            bff_main.read_store.update_persona(persona_id, lifecycle_state="paper_running")
+        # 2. Forge only the Persona registry projection.  The durable
+        # provisioning ledger is still non-terminal, so this cannot be
+        # accepted as paper-running authority.
+        _state.read_store.update_persona(persona_id, lifecycle_state="paper_running")
 
-            # 3. Request creation again with same name but new idempotency key
-            resp2 = client.post(
-                "/bff/personas",
-                json={"name": "Trader Safety"},
-                headers={**HEADERS, "Idempotency-Key": "create-safety-2"},
-            )
-            assert resp2.status_code == 201, resp2.text
-            
-            # 4. Duplicate materialization converges to durable ledger truth.
-            persisted_persona = bff_main.read_store.get_persona(persona_id)
-            assert persisted_persona is not None
-            assert persisted_persona["lifecycle_state"] == "provisioning"
-            assert persisted_persona["created_at"] == original_created_at
-            assert persisted_persona["metadata"][
-                "provisioning_readback_started_at"
-            ] == original_readback_started_at
-            
-        finally:
-            bff_main.read_store = original
+        # 3. Request creation again with same name but new idempotency key
+        resp2 = client.post(
+            "/bff/personas",
+            json={"name": "Trader Safety"},
+            headers={**HEADERS, "Idempotency-Key": "create-safety-2"},
+        )
+        assert resp2.status_code == 201, resp2.text
+        
+        # 4. Duplicate materialization converges to durable ledger truth.
+        persisted_persona = _state.read_store.get_persona(persona_id)
+        assert persisted_persona is not None
+        assert persisted_persona["lifecycle_state"] == "provisioning"
+        assert persisted_persona["created_at"] == original_created_at
+        assert persisted_persona["metadata"][
+            "provisioning_readback_started_at"
+        ] == original_readback_started_at

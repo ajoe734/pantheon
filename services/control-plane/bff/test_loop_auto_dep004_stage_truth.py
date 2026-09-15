@@ -8,12 +8,25 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import create_read_surface_ports
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.deployment.adapters import DeploymentReadSurfaceAdapter
+from services.control_plane.bff.deployment.router import create_deployment_router
+from services.control_plane.bff.personas.service import (
+    _aggregate_group_surface,
+    _composed_surface_status,
+    _dataset_surface_status,
+    _snapshot_meta,
+    utc_now,
+)
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer dep004-operator:operator"}
@@ -42,7 +55,6 @@ def _isolated_dep004_bff(
     include_monitoring: bool,
     include_second_plan: bool = False,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
     with tempfile.TemporaryDirectory(prefix="dep004_bff_") as td:
         root = Path(td)
@@ -281,8 +293,6 @@ def _isolated_dep004_bff(
                 ],
             )
 
-        from ports import create_in_memory_read_surface_ports
-
         plan_list = list(deployment_plans.values())
         monitoring_session = (
             {
@@ -341,11 +351,42 @@ def _isolated_dep004_bff(
             "telemetry_summaries": "missing",
         }.get(dataset, "missing")
 
-        bff_main.read_store = store
+        router = create_deployment_router(
+            queries=DeploymentReadSurfaceAdapter(store),
+            commands=None,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            page_slice=lambda items, token, size: (items, None),
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=lambda dataset, **kw: _dataset_surface_status(dataset, read_store=store, **kw),
+            composed_surface_status=_composed_surface_status,
+            read_surface_meta=lambda *a, **kw: {},
+            raise_if_read_surface_unavailable=lambda *a, **kw: None,
+            aggregate_group_surface=_aggregate_group_surface,
+            split_csv_query=lambda val: val.split(",") if val else None,
+            meta_staleness=lambda: None,
+            stable_json_hash=lambda val: "hash",
+            resolve_final_idempotency_key=lambda r, h: r or h or "key",
+            reject_body_idempotency_key=lambda p: None,
+            request_dry_run_requested=lambda *a, **kw: False,
+            gov_bff_idempotency={},
+            publish_event=lambda *a, **kw: "event-id",
+            sse_buffers={},
+            sse_subscribers={},
+            gov_bff_action_command=lambda *a, **kw: {},
+            deprecated_bff_path_response=lambda *a, **kw: None,
+            sem_command_response=lambda *a, **kw: {},
+            stream_generic_events=lambda *a, **kw: iter(()),
+            surface_degradation_reason=lambda *a, **kw: None,
+        )
+        app = FastAPI()
+        app.include_router(router)
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.read_store = original_store
             for key, value in original_env.items():
                 if value is None:
                     os.environ.pop(key, None)

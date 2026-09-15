@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -117,9 +118,53 @@ class FakeAuthority:
     def __init__(self) -> None:
         self.tasks: dict[str, ExperimentTask] = {}
         self.runs: dict[str, ExperimentRun] = {}
+        self.teaching_sessions: dict[str, dict[str, Any]] = {}
         self.ensure_task_calls = 0
         self.ensure_run_calls = 0
+        self.create_teaching_session_calls = 0
+        self.get_teaching_session_calls = 0
         self.fail_run_write = False
+        self.fail_teaching_write = False
+        self.fail_teaching_readback = False
+
+    def create_teaching_session(
+        self,
+        payload: dict[str, Any],
+        *,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        self.create_teaching_session_calls += 1
+        if self.fail_teaching_write:
+            raise RuntimeError("teaching service write failure")
+        session_id = f"trn-{len(self.teaching_sessions) + 1:04d}"
+        session = {
+            "session_id": session_id,
+            "id": session_id,
+            "persona_id": payload.get("persona_id", "persona-test"),
+            "tenant_id": tenant_id,
+            "objective": payload.get("objective", ""),
+            "mode": payload.get("mode", "evaluation"),
+            "status": "active",
+            "context_refs": list(payload.get("context_refs") or []),
+            "trace_id": payload.get("trace_id", f"trace-{session_id}"),
+            "actor_id": payload.get("actor_id", "test-actor"),
+        }
+        self.teaching_sessions[session_id] = session
+        return dict(session)
+
+    def get_teaching_session(
+        self,
+        session_id: str,
+        *,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        self.get_teaching_session_calls += 1
+        if self.fail_teaching_readback:
+            raise RuntimeError(f"teaching service readback failed for {session_id}")
+        session = self.teaching_sessions.get(session_id)
+        if not session:
+            raise RuntimeError(f"teaching session not found: {session_id}")
+        return dict(session)
 
     def ensure_task(
         self,
@@ -286,19 +331,44 @@ def test_approved_spec_creates_authoritative_task_and_completed_run(tmp_path) ->
     assert run.metadata["production_activation"] == "disabled"
     authority_task_id = f"rtask:{task.task_id}"
     authority_run_id = f"rrun:{run.run_id}"
+    session_id = "trn-0001"
+    trigger_id = str(
+        payload.get("admission_id")
+        or payload.get("trigger_id")
+        or payload.get("approval_decision_id")
+        or payload["strategy_spec_id"]
+    )
     assert result["created_run_ids"] == [authority_run_id]
     assert result["created_authority_task_ids"] == [authority_task_id]
     assert result["created_authority_run_ids"] == [authority_run_id]
     assert result["created_experiment_task_ids"] == [task.task_id]
     assert result["created_experiment_run_ids"] == [run.run_id]
+    assert result["created_teaching_session_ids"] == [session_id]
+    assert result["next_consumer_receipt_ids"] == [session_id]
     assert result["authority_receipts"] == [
         {
             "authority_task_id": authority_task_id,
             "authority_run_id": authority_run_id,
             "experiment_task_id": task.task_id,
             "experiment_run_id": run.run_id,
+            "next_consumer_receipt_id": session_id,
+            "teaching_session_id": session_id,
+            "trigger_id": trigger_id,
+            "terminal_output_id": run.run_id,
+            "owner_worker_identity": "alpha-revalidation-worker",
         }
     ]
+    loop_record = worker.get_loop_record(
+        payload["tenant_id"], payload["strategy_spec_id"]
+    )
+    assert loop_record is not None
+    assert loop_record["loop_id"] == "alpha_replication"
+    assert loop_record["loop_index"] == 3
+    assert loop_record["trigger_id"] == trigger_id
+    assert loop_record["terminal_output_id"] == run.run_id
+    assert loop_record["next_consumer_receipt_id"] == session_id
+    assert loop_record["owner_worker_identity"] == "alpha-revalidation-worker"
+    assert loop_record["durable_reload_readback"]["session_id"] == session_id
     assert worker.list_runs(
         tenant_id=payload["tenant_id"],
         strategy_spec_id=payload["strategy_spec_id"],
@@ -591,3 +661,286 @@ def test_alpha_revalidation_fetch_strategy_spec_missing_blank_and_file_error(tmp
         worker._fetch_strategy_spec_entry("spec-1")
     assert "Configured service credential unavailable" in str(exc_info.value)
     assert "secret-reval-token" not in str(exc_info.value)
+
+
+def test_gate_rejection_does_not_invoke_persona_teaching(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    result = _run_with_registry(
+        worker,
+        _registry_entry(payload),
+        gate_passed=False,
+    )
+
+    assert len(result["errors"]) == 1
+    assert "replication rejected" in result["errors"][0]["error"]
+    assert authority.create_teaching_session_calls == 0
+    assert authority.get_teaching_session_calls == 0
+    assert result["created_teaching_session_ids"] == []
+    assert result["next_consumer_receipt_ids"] == []
+    assert result["authority_receipts"] == []
+    assert result["loop_records"] == []
+    assert worker.get_loop_record(payload["tenant_id"], payload["strategy_spec_id"]) is None
+
+
+def test_teaching_call_failure_surfaces_real_error_and_no_fabricated_receipt(tmp_path) -> None:
+    authority = FakeAuthority()
+    authority.fail_teaching_write = True
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    result = _run_with_registry(worker, _registry_entry(payload))
+
+    assert len(result["errors"]) == 1
+    assert "teaching service write failure" in result["errors"][0]["error"]
+    assert authority.create_teaching_session_calls == 1
+    assert result["created_teaching_session_ids"] == []
+    assert result["next_consumer_receipt_ids"] == []
+    assert result["authority_receipts"] == []
+    assert result["loop_records"] == []
+    assert worker.get_loop_record(payload["tenant_id"], payload["strategy_spec_id"]) is None
+
+    # Queue must be marked failed and NOT revalidated
+    queued = queue.list_all()[0]
+    assert queued["last_revalidation_status"] == "failed"
+    assert queued.get("revalidated_at") is None
+
+
+def test_teaching_readback_failure_surfaces_real_error(tmp_path) -> None:
+    authority = FakeAuthority()
+    authority.fail_teaching_readback = True
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    result = _run_with_registry(worker, _registry_entry(payload))
+
+    assert len(result["errors"]) == 1
+    assert "teaching service readback failed" in result["errors"][0]["error"]
+    assert authority.create_teaching_session_calls == 1
+    assert authority.get_teaching_session_calls == 1
+    assert result["created_teaching_session_ids"] == []
+    assert result["next_consumer_receipt_ids"] == []
+    assert result["authority_receipts"] == []
+    assert result["loop_records"] == []
+    assert worker.get_loop_record(payload["tenant_id"], payload["strategy_spec_id"]) is None
+
+    queued = queue.list_all()[0]
+    assert queued["last_revalidation_status"] == "failed"
+    assert queued.get("revalidated_at") is None
+
+
+def test_durable_loop_record_persisted_and_reloaded_across_worker_restart(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    result = _run_with_registry(worker, _registry_entry(payload))
+    assert result["errors"] == []
+
+    # 1. Verify all 5 canonical loop fields in loop record
+    loop_rec = worker.get_loop_record(payload["tenant_id"], payload["strategy_spec_id"])
+    assert loop_rec is not None
+    trigger_id = str(
+        payload.get("admission_id")
+        or payload.get("trigger_id")
+        or payload.get("approval_decision_id")
+        or payload["strategy_spec_id"]
+    )
+    assert loop_rec["trigger_id"] == trigger_id
+    assert loop_rec["terminal_output_id"] == result["created_experiment_run_ids"][0]
+    assert loop_rec["next_consumer_receipt_id"] == "trn-0001"
+    assert loop_rec["owner_worker_identity"] == "alpha-revalidation-worker"
+    assert loop_rec["durable_reload_readback"]["session_id"] == "trn-0001"
+
+    # 2. Simulate worker process restart with fresh instance on same data_dir
+    restarted_queue = AlphaReplicationQueue(tmp_path)
+    restarted_worker = AlphaRevalidationWorker(
+        restarted_queue,
+        tmp_path,
+        dispatch_mode="authoritative",
+        authority=authority,
+        registry_url="http://registry.test",
+    )
+
+    reloaded = restarted_worker.get_loop_record(payload["tenant_id"], payload["strategy_spec_id"])
+    assert reloaded == loop_rec
+    assert reloaded["trigger_id"] == loop_rec["trigger_id"]
+    assert reloaded["terminal_output_id"] == loop_rec["terminal_output_id"]
+    assert reloaded["next_consumer_receipt_id"] == loop_rec["next_consumer_receipt_id"]
+    assert reloaded["owner_worker_identity"] == loop_rec["owner_worker_identity"]
+    assert reloaded["durable_reload_readback"] == loop_rec["durable_reload_readback"]
+
+    all_records = restarted_worker.list_loop_records(payload["tenant_id"])
+    assert len(all_records) == 1
+    assert all_records[0]["next_consumer_receipt_id"] == "trn-0001"
+
+
+def test_real_http_teaching_invocation_and_headers(tmp_path, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+    from services.research.experiment_orchestrator.authority import ResearchAuthorityHttpClient
+
+    # Use a ResearchAuthorityHttpClient stub so worker defaults to real HTTP transport
+    research_auth = ResearchAuthorityHttpClient("http://research-orchestrator.test:8101")
+    queue = AlphaReplicationQueue(tmp_path)
+    worker = AlphaRevalidationWorker(
+        queue,
+        tmp_path,
+        dispatch_mode="authoritative",
+        authority=research_auth,
+        registry_url="http://registry.test:8087",
+        training_session_url="http://training-svc.test:8099",
+    )
+
+    payload = _queue_payload()
+    entry = _registry_entry(payload)
+
+    # Prepare token file
+    token_file = tmp_path / "training_token"
+    token_file.write_text("bearer-teaching-secret\n", encoding="utf-8")
+    token_file.chmod(0o600)
+    monkeypatch.setenv("ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", str(token_file))
+
+    captured_http: list[tuple[str, str, dict, Any]] = []
+
+    def fake_urlopen(req, timeout=10):
+        url = req.full_url
+        method = req.get_method()
+        headers = {k: v for k, v in req.headers.items()}
+        data = req.data
+        body = json.loads(data.decode("utf-8")) if data else None
+        captured_http.append((method, url, headers, body))
+
+        resp = MagicMock()
+        if method == "POST" and "/api/training/sessions" in url:
+            resp.status = 201
+            resp.read.return_value = json.dumps({
+                "session_id": "trn-http-0042",
+                "id": "trn-http-0042",
+                "persona_id": body["persona_id"],
+                "status": "active",
+                "objective": body["objective"],
+                "context_refs": body["context_refs"],
+            }).encode("utf-8")
+        elif method == "GET" and "/api/training/sessions/trn-http-0042" in url:
+            resp.status = 200
+            resp.read.return_value = json.dumps({
+                "session_id": "trn-http-0042",
+                "persona_id": "persona-test",
+                "status": "active",
+                "context_refs": [{"type": "experiment_run", "id": "rrun-1"}],
+            }).encode("utf-8")
+        else:
+            resp.status = 404
+            resp.read.return_value = b'{"error": "not found"}'
+        resp.getcode.return_value = resp.status
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # Mock _fetch_strategy_spec_entry and gate evaluation
+    monkeypatch.setattr(worker, "_fetch_strategy_spec_entry", lambda spec_id: entry)
+    monkeypatch.setattr(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        lambda self, task: FakeGateResponse(passed=True, summary="gate passed"),
+    )
+
+    monkeypatch.setattr(
+        research_auth,
+        "ensure_task",
+        lambda task, **kwargs: AuthoritativeTaskReceipt(
+            authority_task_id="rtask:auth-001", task=task, record={}
+        ),
+    )
+    monkeypatch.setattr(
+        research_auth,
+        "ensure_run",
+        lambda authority_task_id, run, **kwargs: AuthoritativeRunReceipt(
+            authority_run_id="rrun:auth-001", run=run, record={}
+        ),
+    )
+
+    queue.enqueue(payload)
+    result = worker.run_once(tenant_id=payload["tenant_id"])
+
+    assert result["errors"] == []
+    assert result["created_teaching_session_ids"] == ["trn-http-0042"]
+    assert result["next_consumer_receipt_ids"] == ["trn-http-0042"]
+
+    # Verify captured POST request to /api/training/sessions
+    post_method, post_url, post_headers, post_body = captured_http[0]
+    assert post_method == "POST"
+    assert post_url == "http://training-svc.test:8099/api/training/sessions"
+    assert post_headers["X-tenant-id"] == payload["tenant_id"]
+    assert post_headers["X-pantheon-service"] == "training-session-preview-worker"
+    assert post_headers["Authorization"] == "Bearer bearer-teaching-secret"
+    exp_run_id = result["created_experiment_run_ids"][0]
+    assert post_body["context_refs"] == [
+        {
+            "type": "experiment_run",
+            "id": "rrun:auth-001",
+            "domain_run_id": exp_run_id,
+            "strategy_spec_id": payload["strategy_spec_id"],
+        }
+    ]
+
+    # Verify captured GET request to /api/training/sessions/trn-http-0042
+    get_method, get_url, get_headers, _ = captured_http[1]
+    assert get_method == "GET"
+    assert get_url == "http://training-svc.test:8099/api/training/sessions/trn-http-0042"
+    assert get_headers["X-tenant-id"] == payload["tenant_id"]
+    assert get_headers["Authorization"] == "Bearer bearer-teaching-secret"
+
+
+def test_alpha_revalidation_teaching_token_file_rotation(tmp_path, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+
+    token_file = tmp_path / "teaching_token_rotate"
+    token_file.write_text("token-teaching-1\n", encoding="utf-8")
+    token_file.chmod(0o600)
+
+    monkeypatch.setenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", str(token_file)
+    )
+    monkeypatch.setenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN", "stale-teaching-env-token"
+    )
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=10):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.status = 201
+        resp.getcode.return_value = 201
+        resp.read.return_value = b'{"session_id": "trn-rot-1"}'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. Initial POST request with token-teaching-1
+    worker._post_teaching_session(
+        {"persona_id": "p-1"}, tenant_id="tenant-rot"
+    )
+    req1 = captured_requests[-1]
+    assert req1.get_method() == "POST"
+    assert req1.get_header("Authorization") == "Bearer token-teaching-1"
+
+    # 2. Rotate token in file: next call immediately sees rotated token
+    token_file.write_text("token-teaching-2\n", encoding="utf-8")
+
+    worker._post_teaching_session(
+        {"persona_id": "p-1"}, tenant_id="tenant-rot"
+    )
+    req2 = captured_requests[-1]
+    assert req2.get_header("Authorization") == "Bearer token-teaching-2"

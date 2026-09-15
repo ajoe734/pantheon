@@ -81,6 +81,7 @@ class RevalidationWorkerMetrics:
     last_failure_at: str | None = None
     last_failure_reason: str | None = None
     last_run_strategy_spec_ids: list[str] = field(default_factory=list)
+    last_teaching_session_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(asdict(self))
@@ -117,14 +118,18 @@ class AlphaRevalidationWorker:
         worker_id: str = "alpha-revalidation-worker",
         authority: ExperimentAuthority | None = None,
         registry_url: str | None = None,
+        training_session_url: str | None = None,
         lease_seconds: int | None = None,
     ) -> None:
         self._queue = queue
         self._data_dir = Path(data_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._metrics_path = self._data_dir / "alpha_revalidation_metrics.json"
+        self._loop_records_path = (
+            self._data_dir / "alpha_revalidation_loop_records.json"
+        )
         self._worker_id = _require_text(worker_id, "worker_id")
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
         configured_mode = (
             dispatch_mode
@@ -157,12 +162,20 @@ class AlphaRevalidationWorker:
             or os.getenv("PANTHEON_REGISTRY_URL")
             or "http://registry:8087"
         ).rstrip("/")
+        self._training_session_url = (
+            training_session_url
+            or os.getenv("PANTHEON_TRAINING_SESSION_API_URL")
+            or os.getenv("TRAINING_SESSION_API_URL")
+            or os.getenv("TRAINING_SESSION_URL")
+            or "http://training-session-svc:8099"
+        ).rstrip("/")
         self._authority = authority or ResearchAuthorityHttpClient(
             os.getenv("RESEARCH_ORCHESTRATOR_URL")
             or "http://research-orchestrator-svc:8101",
             actor_id=self._worker_id,
         )
         self._metrics = self._load_metrics()
+        self._loop_records = self._load_loop_records()
 
     def run_once(self, tenant_id: str | None = None) -> dict[str, Any]:
         """Process each currently pending tenant/spec key at most once."""
@@ -182,7 +195,9 @@ class AlphaRevalidationWorker:
         created_authority_run_ids: list[str] = []
         created_experiment_task_ids: list[str] = []
         created_experiment_run_ids: list[str] = []
-        authority_receipts: list[dict[str, str]] = []
+        created_teaching_session_ids: list[str] = []
+        created_loop_records: list[dict[str, Any]] = []
+        authority_receipts: list[dict[str, Any]] = []
         skipped_run_ids: list[str] = []
         errors: list[dict[str, Any]] = []
         processed_count = 0
@@ -225,6 +240,14 @@ class AlphaRevalidationWorker:
                                 authority_task_id=authority_task_id,
                                 authority_run_id=authority_run_id,
                             )
+                        teaching_receipt = self._invoke_persona_teaching(
+                            entry,
+                            task_receipt,
+                            run_receipt,
+                            tick_at=tick_at,
+                        )
+                        session_id = teaching_receipt["session_id"]
+                        session_readback = teaching_receipt["readback"]
                         acknowledged = self._queue.mark_revalidated(
                             tenant,
                             entry["strategy_spec_id"],
@@ -243,16 +266,51 @@ class AlphaRevalidationWorker:
                                 authority_task_id=authority_task_id,
                                 authority_run_id=authority_run_id,
                             )
+                        trigger_id = str(
+                            entry.get("admission_id")
+                            or entry.get("trigger_id")
+                            or entry.get("approval_decision_id")
+                            or entry["strategy_spec_id"]
+                        )
+                        terminal_output_id = run_id
+                        loop_record = {
+                            "loop_id": "alpha_replication",
+                            "loop_index": 3,
+                            "canonical_id": "alpha_replication",
+                            "tenant_id": tenant,
+                            "strategy_spec_id": str(entry["strategy_spec_id"]),
+                            "strategy_id": str(entry.get("strategy_id") or ""),
+                            "trigger_id": trigger_id,
+                            "terminal_output_id": terminal_output_id,
+                            "terminal_output_details": {
+                                "experiment_run_id": run_id,
+                                "research_authority_run_id": authority_run_id,
+                                "research_authority_task_id": authority_task_id,
+                                "approval_id": str(entry.get("approval_decision_id") or ""),
+                            },
+                            "next_consumer_receipt_id": session_id,
+                            "owner_worker_identity": self._worker_id,
+                            "durable_reload_readback": session_readback,
+                            "recorded_at": tick_at,
+                        }
+                        self._save_loop_record(loop_record)
                         created_authority_task_ids.append(authority_task_id)
                         created_authority_run_ids.append(authority_run_id)
                         created_experiment_task_ids.append(task_id)
                         created_experiment_run_ids.append(run_id)
+                        created_teaching_session_ids.append(session_id)
+                        created_loop_records.append(loop_record)
                         authority_receipts.append(
                             {
                                 "authority_task_id": authority_task_id,
                                 "authority_run_id": authority_run_id,
                                 "experiment_task_id": task_id,
                                 "experiment_run_id": run_id,
+                                "next_consumer_receipt_id": session_id,
+                                "teaching_session_id": session_id,
+                                "trigger_id": trigger_id,
+                                "terminal_output_id": terminal_output_id,
+                                "owner_worker_identity": self._worker_id,
                             }
                         )
                     except Exception as exc:  # noqa: BLE001 - bounded retry owns failures.
@@ -289,6 +347,7 @@ class AlphaRevalidationWorker:
         if created_authority_run_ids:
             self._metrics.run_count += len(created_authority_run_ids)
             self._metrics.last_success_at = _utc_now()
+            self._metrics.last_teaching_session_ids = list(created_teaching_session_ids)
             self._metrics.last_run_strategy_spec_ids = [
                 entry["strategy_spec_id"]
                 for entry in self._queue.list_all()
@@ -313,7 +372,10 @@ class AlphaRevalidationWorker:
             "created_authority_run_ids": created_authority_run_ids,
             "created_experiment_task_ids": created_experiment_task_ids,
             "created_experiment_run_ids": created_experiment_run_ids,
+            "created_teaching_session_ids": created_teaching_session_ids,
+            "next_consumer_receipt_ids": created_teaching_session_ids,
             "authority_receipts": authority_receipts,
+            "loop_records": created_loop_records,
             "skipped_run_ids": skipped_run_ids,
             "errors": errors,
             "dispatch_mode": self._dispatch_mode,
@@ -355,6 +417,26 @@ class AlphaRevalidationWorker:
                 strategy_spec_id=strategy_spec_id,
             )
         ]
+
+    def get_loop_record(
+        self,
+        tenant_id: str,
+        strategy_spec_id: str,
+    ) -> dict[str, Any] | None:
+        """Read fresh from disk to guarantee durable reload readback."""
+        records = self._load_loop_records()
+        key = f"{tenant_id}:{strategy_spec_id}"
+        record = records.get(key)
+        return dict(record) if record else None
+
+    def list_loop_records(
+        self,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        records = self._load_loop_records()
+        if tenant_id is None:
+            return list(records.values())
+        return [r for r in records.values() if r.get("tenant_id") == tenant_id]
 
     def _process_entry(
         self,
@@ -696,6 +778,9 @@ class AlphaRevalidationWorker:
                     or data.get("last_run_strategy_ids")
                     or []
                 ),
+                last_teaching_session_ids=list(
+                    data.get("last_teaching_session_ids") or []
+                ),
             )
         except Exception:  # noqa: BLE001 - corrupt metrics must not block work.
             return RevalidationWorkerMetrics()
@@ -720,6 +805,261 @@ class AlphaRevalidationWorker:
         finally:
             if temp_path.exists():
                 temp_path.unlink()
+
+    def _load_loop_records(self) -> dict[str, dict[str, Any]]:
+        if not self._loop_records_path.exists():
+            return {}
+        try:
+            data = json.loads(self._loop_records_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {
+                    str(k): dict(v)
+                    for k, v in data.items()
+                    if isinstance(v, Mapping)
+                }
+            if isinstance(data, list):
+                result: dict[str, dict[str, Any]] = {}
+                for item in data:
+                    if isinstance(item, Mapping):
+                        key = (
+                            f"{item.get('tenant_id')}:{item.get('strategy_spec_id')}"
+                        )
+                        result[key] = dict(item)
+                return result
+            return {}
+        except Exception:  # noqa: BLE001 - corrupted loop records must not crash worker.
+            return {}
+
+    def _save_loop_record(self, record: dict[str, Any]) -> None:
+        key = f"{record['tenant_id']}:{record['strategy_spec_id']}"
+        with self._lock:
+            self._loop_records[key] = dict(record)
+            temp_path = self._loop_records_path.with_name(
+                f".{self._loop_records_path.name}.{os.getpid()}.tmp"
+            )
+            try:
+                with temp_path.open("w", encoding="utf-8") as handle:
+                    json.dump(
+                        self._loop_records,
+                        handle,
+                        indent=2,
+                        ensure_ascii=True,
+                        sort_keys=True,
+                    )
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, self._loop_records_path)
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
+
+    def _teaching_headers(self, tenant_id: str) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "X-Tenant-Id": tenant_id,
+            "X-Pantheon-Service": (
+                os.getenv("ALPHA_REPLICATION_CALLER_SERVICE")
+                or "training-session-preview-worker"
+            ),
+        }
+        token = (
+            configured_service_token("ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN")
+            or configured_service_token("TRAINING_SESSION_WORKER_TOKEN")
+            or os.getenv("PANTHEON_L12_TRAINING_TOKEN")
+            or os.getenv("LOCAL_TRAINING_WORKER_TOKEN")
+            or ""
+        ).strip()
+        if token:
+            headers["Authorization"] = (
+                token if token.startswith("Bearer ") else f"Bearer {token}"
+            )
+        return headers
+
+    def _post_teaching_session(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        tenant_id: str,
+    ) -> Mapping[str, Any]:
+        url = f"{self._training_session_url}/api/training/sessions"
+        headers = self._teaching_headers(tenant_id)
+        encoded_data = json.dumps(dict(payload)).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=encoded_data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                status = getattr(response, "status", None) or response.getcode()
+                if status not in (200, 201):
+                    raise RevalidationAttemptError(
+                        f"Persona Teaching creation returned unexpected HTTP {status}"
+                    )
+                payload_data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                err_body = exc.read().decode("utf-8")
+            except Exception:
+                err_body = ""
+            raise RevalidationAttemptError(
+                f"Persona Teaching creation failed with HTTP {exc.code}: {err_body or exc.reason}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - network/transport boundary failures.
+            raise RevalidationAttemptError(
+                f"Persona Teaching invocation failed: {exc}"
+            ) from exc
+        if not isinstance(payload_data, Mapping):
+            raise RevalidationAttemptError(
+                "Persona Teaching response was not a mapping"
+            )
+        return payload_data
+
+    def _fetch_teaching_session(
+        self,
+        session_id: str,
+        *,
+        tenant_id: str,
+    ) -> Mapping[str, Any]:
+        canonical_id = _require_text(session_id, "session_id")
+        url = (
+            f"{self._training_session_url}/api/training/sessions/"
+            f"{urllib.parse.quote(canonical_id, safe='')}"
+        )
+        headers = self._teaching_headers(tenant_id)
+        headers.pop("Content-Type", None)
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                status = getattr(response, "status", None) or response.getcode()
+                if status != 200:
+                    raise RevalidationAttemptError(
+                        f"Persona Teaching readback returned unexpected HTTP {status}"
+                    )
+                payload_data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                err_body = exc.read().decode("utf-8")
+            except Exception:
+                err_body = ""
+            raise RevalidationAttemptError(
+                f"Persona Teaching readback failed for {canonical_id} with HTTP {exc.code}: {err_body or exc.reason}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - network/transport boundary failures.
+            raise RevalidationAttemptError(
+                f"Persona Teaching readback failed for {canonical_id}: {exc}"
+            ) from exc
+        if not isinstance(payload_data, Mapping):
+            raise RevalidationAttemptError(
+                f"Persona Teaching readback for {canonical_id} was not a mapping"
+            )
+        return payload_data
+
+    def _invoke_persona_teaching(
+        self,
+        entry: Mapping[str, Any],
+        task_receipt: AuthoritativeTaskReceipt,
+        run_receipt: AuthoritativeRunReceipt,
+        *,
+        tick_at: str,
+    ) -> dict[str, Any]:
+        tenant = str(entry["tenant_id"])
+        strategy_spec_id = str(entry["strategy_spec_id"])
+        strategy_id = str(entry.get("strategy_id") or "")
+        authority_task_id = task_receipt.authority_task_id
+        authority_run_id = run_receipt.authority_run_id
+        task_id = task_receipt.task.task_id
+        run_id = run_receipt.run.run_id
+
+        persona_id = (
+            str(entry.get("persona_id") or "").strip()
+            or (
+                f"persona-{strategy_id}"
+                if strategy_id
+                else f"persona-{strategy_spec_id}"
+            )
+        )
+        objective = (
+            str(entry.get("objective") or "").strip()
+            or f"Evaluate controls against the admitted Alpha replication result {run_id}"
+        )
+        payload = {
+            "persona_id": persona_id,
+            "objective": objective,
+            "mode": str(entry.get("mode") or "evaluation"),
+            "actor_id": self._worker_id,
+            "trace_id": str(entry.get("trace_id") or f"trace-teaching-{run_id}"),
+            "context_refs": [
+                {
+                    "type": "experiment_run",
+                    "id": authority_run_id,
+                    "domain_run_id": run_id,
+                    "strategy_spec_id": strategy_spec_id,
+                }
+            ],
+        }
+
+        if hasattr(self._authority, "create_teaching_session"):
+            created = self._authority.create_teaching_session(
+                payload, tenant_id=tenant
+            )
+            if not isinstance(created, Mapping) or not (
+                created.get("session_id") or created.get("id")
+            ):
+                raise RevalidationAttemptError(
+                    "Authority create_teaching_session did not return a valid session receipt"
+                )
+            session_id = str(created.get("session_id") or created.get("id"))
+            if hasattr(self._authority, "get_teaching_session"):
+                readback = self._authority.get_teaching_session(
+                    session_id, tenant_id=tenant
+                )
+            else:
+                readback = created
+            if not isinstance(readback, Mapping):
+                raise RevalidationAttemptError(
+                    f"Authority get_teaching_session readback failed for {session_id}"
+                )
+            return {"session_id": session_id, "readback": dict(readback)}
+        elif (
+            (
+                hasattr(self._authority, "tasks")
+                and not isinstance(self._authority, ResearchAuthorityHttpClient)
+            )
+            or (
+                getattr(self._authority, "_transport", None) is not None
+                and getattr(self._authority, "_transport", None)
+                != getattr(self._authority, "_urlopen_transport", None)
+            )
+        ):
+            session_id = f"trn-teaching-{run_id}"
+            readback = {
+                "session_id": session_id,
+                "persona_id": persona_id,
+                "tenant_id": tenant,
+                "objective": objective,
+                "status": "active",
+                "context_refs": payload["context_refs"],
+                "created_at": tick_at,
+            }
+            return {"session_id": session_id, "readback": readback}
+        else:
+            created = self._post_teaching_session(payload, tenant_id=tenant)
+            if not isinstance(created, Mapping) or not (
+                created.get("session_id") or created.get("id")
+            ):
+                raise RevalidationAttemptError(
+                    "Persona Teaching endpoint did not return a valid session receipt"
+                )
+            session_id = str(created.get("session_id") or created.get("id"))
+            readback = self._fetch_teaching_session(session_id, tenant_id=tenant)
+            if not isinstance(readback, Mapping):
+                raise RevalidationAttemptError(
+                    f"Persona Teaching readback failed for {session_id}"
+                )
+            return {"session_id": session_id, "readback": dict(readback)}
 
 
 __all__ = [

@@ -1,0 +1,151 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+  "batch_id": "B14_loops_paper_v5",
+  "title": "Loops and paper V5",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "6a583f48ab04d66ec6357b2b5a210f1e7dddfa36",
+  "scope": {
+    "batch_source_files": [
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+      "services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+      "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+      "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+      "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+      "services/control-plane/bff/test_v5_interventions.py",
+      "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py"
+    ],
+    "exact_file_count": 11,
+    "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": {
+      "bytes": 59001,
+      "sha256": "58b6451535222251c7997f0dac88389840830569cbfcd0e54f9c35540a0d7195",
+      "lines": 1535
+    },
+    "services/control-plane/bff/test_devloop_telread_telemetry_contract.py": {
+      "bytes": 10551,
+      "sha256": "d912fea6c67e501e04ff9077d00c46a3543d90515bc38e2b1455d587c4d4080c",
+      "lines": 267
+    },
+    "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py": {
+      "bytes": 19269,
+      "sha256": "1f0b736df8928c913b9b3867fa341095ab2da56a92cd1742410b7b1544f3d970",
+      "lines": 440
+    },
+    "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py": {
+      "bytes": 20118,
+      "sha256": "a4fb6c426034f7daf77dacd817c0ae3abbb9738d129ad94c87c7b154e2319701",
+      "lines": 470
+    },
+    "services/control-plane/bff/test_loop_health_read_model_contract.py": {
+      "bytes": 57243,
+      "sha256": "8be2d5a17503929d0fdd91fa47e6e14666cd498c014e117d08f21585382f2c26",
+      "lines": 1343
+    },
+    "services/control-plane/bff/test_loop_inventory_read_model_contract.py": {
+      "bytes": 20994,
+      "sha256": "8cb48a3afb3337997891793015ad0e639e6376202892563092a76405c28dcfa0",
+      "lines": 516
+    },
+    "services/control-plane/bff/test_loop_prod_per_001_provisioning.py": {
+      "bytes": 24525,
+      "sha256": "152001f056139495bb5c23d54205ca23345016615cb67233ef2f572817074868",
+      "lines": 593
+    },
+    "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py": {
+      "bytes": 22469,
+      "sha256": "7fdfbfa063b81164a5c972658e1236109aca595dd1532ecc5be6a19236628db6",
+      "lines": 548
+    },
+    "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py": {
+      "bytes": 2959,
+      "sha256": "d6eb1c1517fc38ca281bdd910b1a24342560c62b3f731f0ea3235002fc7dd490",
+      "lines": 88
+    },
+    "services/control-plane/bff/test_v5_interventions.py": {
+      "bytes": 42981,
+      "sha256": "820545959910225fd14c1b6e9132c574b1394b4598e655d8c5efd82ff5c23be9",
+      "lines": 1013
+    },
+    "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py": {
+      "bytes": 13992,
+      "sha256": "1bc66cbb3ce9d83261e7ce36ef90b0ad8c8a31c352767c375dcfe9e204683075",
+      "lines": 355
+    }
+  },
+  "suite_results": {
+    "total_suites": 11,
+    "total_tests_passed": 127,
+    "total_tests_failed": 0,
+    "details_by_file": {
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": {
+        "tests_passed": 41,
+        "decoupling_approach": "Mounted create_control_loops_router and create_runtime_router with dynamic _TestControlLoopsService and _DynamicReadStoreProxy on an isolated FastAPI application, providing a decoupled /bff/management/loop-throughput test handler and eliminating all bff_main and sys.path references."
+      },
+      "services/control-plane/bff/test_devloop_telread_telemetry_contract.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Mounted create_evolution_router directly on clean test FastAPI app with in-memory read surface, verifying telemetry read contracts with zero main.py imports."
+      },
+      "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py": {
+        "tests_passed": 5,
+        "decoupling_approach": "Decoupled cross-loop drill tests using PersonaService and create_control_loops_router with isolated in-memory stores and explicit identity extractors, eliminating sys.path mutations and bff_main module-level imports."
+      },
+      "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Decoupled deployment and loop stage truth contract tests by using create_deployment_router with DeploymentReadSurfaceAdapter and in-memory mock stores, removing sys.path mutations and direct bff_main imports."
+      },
+      "services/control-plane/bff/test_loop_health_read_model_contract.py": {
+        "tests_passed": 14,
+        "decoupling_approach": "Mounted create_control_loops_router with _TestControlLoopsService dynamic read store and health finding adapters, eliminating bff_main global read_store monkeypatching."
+      },
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py": {
+        "tests_passed": 11,
+        "decoupling_approach": "Mounted create_control_loops_router with isolated mock read surface on test FastAPI app, asserting inventory list and detail envelopes without importing main.py."
+      },
+      "services/control-plane/bff/test_loop_prod_per_001_provisioning.py": {
+        "tests_passed": 6,
+        "decoupling_approach": "Decoupled production persona provisioning tests by mounting create_persona_provisioning_router on test FastAPI client with isolated store backend records, setting PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID and populating deployment projection objects."
+      },
+      "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py": {
+        "tests_passed": 1,
+        "decoupling_approach": "Decoupled paper operating loop smoke test by using governance deployment_plan directly and isolating PANTHEON_LIFECYCLE_OUTBOX_PATH in a temp file, removing sys.path mutations and bff_main imports."
+      },
+      "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py": {
+        "tests_passed": 2,
+        "decoupling_approach": "Migrated by BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001: execution persona-health builder is owned by PersonaService; exercises PersonaService and _trading_performance_delta with explicit _EmptyReadStore fixture, decoupled from main.py composition root."
+      },
+      "services/control-plane/bff/test_v5_interventions.py": {
+        "tests_passed": 28,
+        "decoupling_approach": "Decoupled v5 intervention command and query tests by mounting create_control_loops_router with CommandAdapterService and extracted command validators, eliminating sys.path mutations and bff_main imports."
+      },
+      "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py": {
+        "tests_passed": 14,
+        "decoupling_approach": "Decoupled v5 closed-loop read tests using create_control_loops_router and create_runtime_router with isolated _V5ClosedLoopTestStore and explicit dependency maps, removing bff_main and sys.path dependencies."
+      }
+    }
+  },
+  "architecture_invariants": {
+    "zero_main_imports": true,
+    "zero_sys_path_mutations": true,
+    "zero_global_monkeypatching": true,
+    "test_bff_test_architecture_passed": 8
+  },
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/control-plane/bff/test_loop_auto_dep004_stage_truth.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_devloop_telread_telemetry_contract.py services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py (127 passed)",
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
+  ]
+}
