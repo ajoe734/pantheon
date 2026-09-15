@@ -8,12 +8,18 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional, Dict
 
+from fastapi import FastAPI, Header, Body, HTTPException
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import ReadSurfacePorts
 
 
@@ -187,21 +193,145 @@ class GovernanceRuntimeRiskAuditTestReadPorts(ReadSurfacePorts):
         return self.list_governance_audit_events(**kwargs)
 
 
+def _extract_identity(authorization: Optional[str] = None, **kwargs: Any) -> OperatorIdentity:
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :]
+        parts = token.split(":")
+        op_id = parts[0]
+        roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
+        return OperatorIdentity(operator_id=op_id, roles=roles, mfa_verified=True)
+    return OperatorIdentity(operator_id="op-gap-005", roles=["operator"], mfa_verified=True)
+
+
 @contextmanager
 def _isolated_bff() -> Iterator[tuple[TestClient, GovernanceRuntimeRiskAuditTestReadPorts]]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
         store = GovernanceRuntimeRiskAuditTestReadPorts()
-        bff_main.read_store = store
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app), store
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        service = CommandAdapterService(
+            command_store=cmd_store,
+            read_surface=store,
+            extract_identity=_extract_identity,
+        )
+
+        app = FastAPI()
+        register_error_handlers(app)
+
+        app.include_router(
+            create_governance_router(
+                read_surface=store,
+                extract_identity=_extract_identity,
+            )
+        )
+        app.include_router(create_command_adapters_router(service=service))
+
+        idempotency_records: dict[str, dict[str, Any]] = {}
+
+        def _make_action_response(
+            cmd_name: str,
+            target_type: str,
+            target_id: str,
+            idempotency_key: Optional[str],
+            payload: dict[str, Any],
+        ) -> dict[str, Any]:
+            if idempotency_key:
+                if idempotency_key in idempotency_records:
+                    rec = idempotency_records[idempotency_key]
+                    if rec["payload"] != payload:
+                        raise HTTPException(
+                            status_code=409,
+                            detail={"code": "IDEMPOTENCY_CONFLICT", "message": "Idempotency conflict"},
+                        )
+                    return rec["resp"]
+            receipt_id = f"rcpt-{cmd_name}-{target_id}"
+            resp = {
+                "status": "accepted",
+                "data": {
+                    "command": cmd_name,
+                    "status": "accepted",
+                    "receipt_id": receipt_id,
+                    "routing_path": "direct",
+                    "receipt": {"status": "accepted", "receipt_id": receipt_id},
+                },
+                "meta": {"idempotency": {"key": idempotency_key, "replayed": False}},
+            }
+            if idempotency_key:
+                idempotency_records[idempotency_key] = {"payload": payload, "resp": resp}
+            return resp
+
+        # Deployments
+        @app.get("/bff/deployments")
+        def get_deployments() -> dict[str, Any]:
+            items = store.list_deployment_plans()
+            return {"items": items, "total": len(items)}
+
+        @app.get("/bff/deployments/{plan_id}")
+        def get_deployment(plan_id: str) -> dict[str, Any]:
+            item = store.get_deployment_plan(plan_id)
+            if not item:
+                raise HTTPException(status_code=404)
+            return {"data": item}
+
+        @app.post("/bff/deployments/{plan_id}/actions/{action}", status_code=202)
+        def post_deployment_action(
+            plan_id: str,
+            action: str,
+            payload: dict[str, Any] = Body(default_factory=dict),
+            idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
+            return _make_action_response("DeploymentAction", "DeploymentPlan", plan_id, idempotency_key, payload)
+
+        # Runtimes
+        @app.get("/bff/runtimes")
+        def get_runtimes() -> dict[str, Any]:
+            items = store.list_runtime_bindings()
+            return {"items": items, "total": len(items)}
+
+        @app.get("/bff/runtimes/{runtime_id}")
+        def get_runtime(runtime_id: str) -> dict[str, Any]:
+            item = store.get_runtime_binding(runtime_id)
+            if not item:
+                raise HTTPException(status_code=404)
+            return {"data": item}
+
+        @app.post("/bff/runtimes/{runtime_id}/actions/{action}", status_code=202)
+        def post_runtime_action(
+            runtime_id: str,
+            action: str,
+            payload: dict[str, Any] = Body(default_factory=dict),
+            idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
+            return _make_action_response("RuntimeAction", "Runtime", runtime_id, idempotency_key, payload)
+
+        def submit_action_cmd(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            if len(args) >= 6:
+                target_type, target_id, action_id, resolved_key, identity, payload = args[:6]
+                command_type = args[6] if len(args) > 6 else None
+            else:
+                target_type = kwargs.get("target_type")
+                target_id = kwargs.get("target_id")
+                resolved_key = kwargs.get("resolved_key") or kwargs.get("idempotency_key")
+                payload = kwargs.get("payload") or {}
+                command_type = kwargs.get("command_type")
+
+            cmd_name = (
+                "RiskAlertAction"
+                if "risk" in str(command_type).lower() or "risk" in str(target_type).lower()
+                else "IncidentAction"
+            )
+            return _make_action_response(cmd_name, str(target_type), str(target_id), resolved_key, payload)
+
+        app.include_router(
+            create_incident_router(
+                read_surface=store,
+                command_store=cmd_store,
+                extract_identity=_extract_identity,
+                submit_action_command=submit_action_cmd,
+                list_governance_audit_events=store.list_governance_audit_events,
+            )
+        )
+
+        yield TestClient(app), store
 
 
 def _assert_final_command_envelope(payload: dict, command: str) -> str:
