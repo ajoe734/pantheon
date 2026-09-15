@@ -7,10 +7,9 @@ from typing import Any, Dict
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff import command_executor as bff_executor
+from services.control_plane.bff.models import CommandType
 
-import command_executor as bff_executor
-from models import CommandType
 
 
 GOVERNANCE_URL = "http://governance-approval-test:8082"
@@ -181,7 +180,7 @@ def test_bff_command_to_governance_to_journal_composition(configure_urls, monkey
     from fastapi.testclient import TestClient
     from services.governance import main as gov_main
     from services.governance.record_store import JsonGovernanceRecordStore
-    import main as bff_main
+    from services.control_plane.bff.evolution.service import evolution_journal_rollback_item
     import tempfile
     from pathlib import Path
 
@@ -232,7 +231,7 @@ def test_bff_command_to_governance_to_journal_composition(configure_urls, monkey
     assert canonical_record["source_command_id"] == "cmd-composition-1"
     assert canonical_record["runtime_id"] == "runtime-composition"
 
-    journal_item = bff_main._evolution_journal_rollback_item(canonical_record)
+    journal_item = evolution_journal_rollback_item(canonical_record)
     assert journal_item is not None
     assert journal_item["record"]["actor"] == "admin"
     assert journal_item["record"]["identity"] == "op-composition"
