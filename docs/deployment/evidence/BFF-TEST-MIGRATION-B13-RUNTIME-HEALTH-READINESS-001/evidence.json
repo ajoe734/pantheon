@@ -1,0 +1,141 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+  "batch_id": "B13_runtime_health_readiness",
+  "title": "Runtime health and readiness",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "d85a7117c10e25d34625ef9b0978c31f5be68bb7",
+  "scope": {
+    "batch_source_files": [
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py",
+      "services/control-plane/bff/test_bff_dry_run_rbac_contract.py",
+      "services/control-plane/bff/test_bff_runtimes_contract.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "services/control-plane/bff/test_pkt010_runtime_state_board_contract.py",
+      "services/control-plane/bff/test_pkt011_health_status_board_contract.py",
+      "services/control-plane/bff/test_runtime_state_trades.py",
+      "services/control-plane/bff/test_sent001_sentinel_findings_contract.py",
+      "services/control-plane/bff/test_sentinel_healthreason_rule_coverage.py",
+      "services/control-plane/bff/tests/test_bff_b3_readiness.py"
+    ],
+    "exact_file_count": 10,
+    "evidence_manifest": "docs/deployment/evidence/BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001/evidence.json",
+    "foundation_files_untouched": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ]
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/test_bff_downstream_health_monitor.py": {
+      "bytes": 27727,
+      "sha256": "ec553bfdf75774f020e4f829119cde33590e79bde5a9e879ade8f0fbda0ef359",
+      "lines": 716
+    },
+    "services/control-plane/bff/test_bff_dry_run_rbac_contract.py": {
+      "bytes": 42212,
+      "sha256": "f5acc8a8cd30932efeacdbbecb581d3996794e26c01cf1fb9bf9a73f3a60cef9",
+      "lines": 938
+    },
+    "services/control-plane/bff/test_bff_runtimes_contract.py": {
+      "bytes": 10126,
+      "sha256": "968880c5b73386f1b668a5e1ca13b6e0d4b638e7ea3011fadd0dbec8c5bff341",
+      "lines": 245
+    },
+    "services/control-plane/bff/test_lifecycle_projector_readiness.py": {
+      "bytes": 13361,
+      "sha256": "be14c04f2e789a628f4da43bf567c93a1646ff75f1cfdf65bb7d2347ed3bdb0f",
+      "lines": 361
+    },
+    "services/control-plane/bff/test_pkt010_runtime_state_board_contract.py": {
+      "bytes": 25716,
+      "sha256": "35a4ca01c7100689f2c155aae42fcb6f5330d883582361da8fcdae7abf2aca30",
+      "lines": 659
+    },
+    "services/control-plane/bff/test_pkt011_health_status_board_contract.py": {
+      "bytes": 23524,
+      "sha256": "65d4ec026a688b1e528638fe1ece9dbc92cff5a105245e37bf49cb01247a4a51",
+      "lines": 622
+    },
+    "services/control-plane/bff/test_runtime_state_trades.py": {
+      "bytes": 21209,
+      "sha256": "9ba3d3f779a8aa127f394632b92f992fec0eaa12d6dd93052ce86ff1f1c6adae",
+      "lines": 525
+    },
+    "services/control-plane/bff/test_sent001_sentinel_findings_contract.py": {
+      "bytes": 14044,
+      "sha256": "2988a733827988eb3fdf5b281c700977d137f8321548068daabd8b8a7645c771",
+      "lines": 336
+    },
+    "services/control-plane/bff/test_sentinel_healthreason_rule_coverage.py": {
+      "bytes": 16419,
+      "sha256": "bcb4432e2f6b226aaa02626796661f39eaf715ee9557a6a8b36d59d493603cfb",
+      "lines": 404
+    },
+    "services/control-plane/bff/tests/test_bff_b3_readiness.py": {
+      "bytes": 18637,
+      "sha256": "f90d691d62900f8407e93622c8244e03a8917f8ee94d9ea9b3c42c2a6d8f6aea",
+      "lines": 465
+    }
+  },
+  "suite_results": {
+    "total_suites": 10,
+    "total_tests_passed": 97,
+    "total_tests_failed": 0,
+    "details_by_file": {
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py": {
+        "tests_passed": 28,
+        "decoupling_approach": "Mounted create_control_loops_router and register_fastapi_health_routes on clean FastAPI instance, removing bff_main import and sys.path mutation."
+      },
+      "services/control-plane/bff/test_bff_dry_run_rbac_contract.py": {
+        "tests_passed": 4,
+        "decoupling_approach": "Mounted isolated FastAPI test app with domain routes and dry-run/RBAC logic using _extract_identity, _require_read_role, _require_operator_role, and CommandStore."
+      },
+      "services/control-plane/bff/test_bff_runtimes_contract.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Mounted create_runtime_router with isolated mock RuntimeService and custom HTTPException handler for detail envelope unpack."
+      },
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py": {
+        "tests_passed": 4,
+        "decoupling_approach": "Mounted register_fastapi_health_routes and health_payload on clean FastAPI instance without global bff_main.read_store patching."
+      },
+      "services/control-plane/bff/test_pkt010_runtime_state_board_contract.py": {
+        "tests_passed": 6,
+        "decoupling_approach": "Mounted create_runtime_router with isolated service and _project_operator_runtime_state_row reader mapping."
+      },
+      "services/control-plane/bff/test_pkt011_health_status_board_contract.py": {
+        "tests_passed": 3,
+        "decoupling_approach": "Direct canonical _build_operator_health_status_payload contract mounted on clean FastAPI test application."
+      },
+      "services/control-plane/bff/test_runtime_state_trades.py": {
+        "tests_passed": 7,
+        "decoupling_approach": "Direct import of management read models service projection helpers with isolated test context."
+      },
+      "services/control-plane/bff/test_sent001_sentinel_findings_contract.py": {
+        "tests_passed": 16,
+        "decoupling_approach": "Mounted create_control_loops_router with ControlLoopsService(read_store=store) on isolated test app."
+      },
+      "services/control-plane/bff/test_sentinel_healthreason_rule_coverage.py": {
+        "tests_passed": 22,
+        "decoupling_approach": "Self-contained rule engine projection with ControlLoopsService and _project_persona_fleet_health."
+      },
+      "services/control-plane/bff/tests/test_bff_b3_readiness.py": {
+        "tests_passed": 4,
+        "decoupling_approach": "Clean package-qualified route mounting of the 5 readiness endpoints with repo root path resolution."
+      }
+    }
+  },
+  "architecture_invariants": {
+    "zero_main_imports": true,
+    "zero_sys_path_mutations": true,
+    "zero_global_monkeypatching": true,
+    "test_bff_test_architecture_passed": 8
+  },
+  "verification_commands": [
+    ".venv/bin/pytest services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_dry_run_rbac_contract.py services/control-plane/bff/test_bff_runtimes_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_pkt011_health_status_board_contract.py services/control-plane/bff/test_runtime_state_trades.py services/control-plane/bff/test_sent001_sentinel_findings_contract.py services/control-plane/bff/test_sentinel_healthreason_rule_coverage.py services/control-plane/bff/tests/test_bff_b3_readiness.py (97 passed)",
+    ".venv/bin/pytest services/control-plane/bff/tests/test_bff_test_architecture.py (8 passed)"
+  ]
+}

@@ -18,6 +18,10 @@ from ..service import (
     _routed_strategies_for_persona,
 )
 from .common import PersonaRouteContext, make_context_dependency
+from ..reconciliation import (
+    PersonaProvisioningReconciliationMutationPort,
+    PersonaReconciliationMutationError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +44,12 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
     _raise_if_read_surface_unavailable = ctx.raise_if_read_surface_unavailable
     _reject_body_idempotency_key = ctx.reject_body_idempotency_key
     _resolve_final_idempotency_key = ctx.resolve_final_idempotency_key
+
+    mutation_port: Optional[PersonaProvisioningReconciliationMutationPort] = None
+    if ctx.write_owner is not None and hasattr(ctx.write_owner, "update_persona"):
+        mutation_port = PersonaProvisioningReconciliationMutationPort(
+            persona_mutation_port=ctx.write_owner,
+        )
 
     @router.post("/bff/personas/{persona_id}/provisioning/reconcile")
     async def bff_reconcile_persona_provisioning(
@@ -70,6 +80,14 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
             raw,
             diagnostics=diagnostics,
         )
+        if state in ("paper_running", "provisioning_failed") and mutation_port is not None:
+            metadata = raw.get("metadata") or {}
+            mutation_port.persist_terminal_transition(
+                persona_id,
+                lifecycle_state=state,
+                metadata=metadata,
+            )
+            raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = state
         dto = _project_persona_dto(
             raw,
             overlay=None,

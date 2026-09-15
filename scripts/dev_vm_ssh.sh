@@ -21,16 +21,17 @@ Usage:
   scripts/dev_vm_ssh.sh copy-from <remote-path> <local-path>
 
 Required environment for prepare:
+  DEV_DEPLOY_SSH_HOST
   DEV_DEPLOY_SSH_PRIVATE_KEY
   DEV_DEPLOY_SSH_KNOWN_HOSTS
 
 Required environment for exec/copy-from:
+  DEV_DEPLOY_SSH_HOST
+  DEV_DEPLOY_SSH_USER       Or an explicit REMOTE_USER
   DEV_DEPLOY_SSH_KEY_FILE
   DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE
 
 Optional environment:
-  DEV_DEPLOY_SSH_HOST       Default: 35.201.204.12
-  DEV_DEPLOY_SSH_USER       Default: REMOTE_USER or lupin
   DEV_DEPLOY_SSH_PORT       Default: 22
   DEV_DEPLOY_SSH_TIMEOUT    Default: 12
 EOF
@@ -66,13 +67,17 @@ command_name="${1:-}"
 [[ -n "$command_name" ]] || usage
 shift
 
-host="${DEV_DEPLOY_SSH_HOST:-35.201.204.12}"
-remote_user="${DEV_DEPLOY_SSH_USER:-${REMOTE_USER:-lupin}}"
+host="${DEV_DEPLOY_SSH_HOST:-}"
+remote_user="${DEV_DEPLOY_SSH_USER:-${REMOTE_USER:-}}"
 port="${DEV_DEPLOY_SSH_PORT:-22}"
 timeout_seconds="${DEV_DEPLOY_SSH_TIMEOUT:-12}"
 
+[[ -n "$host" ]] || error "DEV_DEPLOY_SSH_HOST is required; use the current dev repository variable"
 [[ "$host" =~ ^[A-Za-z0-9._:-]+$ ]] || error "DEV_DEPLOY_SSH_HOST contains unsupported characters"
-[[ "$remote_user" =~ ^[A-Za-z0-9._-]+$ ]] || error "DEV_DEPLOY_SSH_USER contains unsupported characters"
+if [[ "$command_name" == exec || "$command_name" == copy-from ]]; then
+  [[ -n "$remote_user" ]] || error "DEV_DEPLOY_SSH_USER or REMOTE_USER is required"
+  [[ "$remote_user" =~ ^[A-Za-z0-9._-]+$ ]] || error "DEV_DEPLOY_SSH_USER contains unsupported characters"
+fi
 [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] \
   || error "DEV_DEPLOY_SSH_PORT must be between 1 and 65535"
 [[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -ge 1 ]] \

@@ -32,11 +32,29 @@ def reconstruction_card_id(workshop_id: str) -> str:
     return "card_reconstruction_" + hashlib.sha256(workshop_id.encode("utf-8")).hexdigest()[:20]
 
 
-def _messages_from_events(events: List[Dict[str, Any]]) -> List[str]:
+def _messages_from_events(
+    events: List[Dict[str, Any]], *, private_content_store: Any,
+    tenant_id: str, user_id: str, workshop_id: str,
+) -> List[str]:
     messages: List[str] = []
     for event in events:
         if event.get("event_type") == "message":
-            msg = event.get("redacted_summary") or event.get("content") or ""
+            private_ref = event.get("private_content_ref")
+            if private_ref:
+                if private_content_store is None:
+                    # Store-only CLIs do not load the product privacy package.
+                    from services.control_plane.privacy.private_content_models import PrivateContentStoreUnavailable
+
+                    raise PrivateContentStoreUnavailable("Workshop message content is unavailable.")
+                msg = private_content_store.get_for_owner(
+                    private_content_ref=private_ref, tenant_id=tenant_id,
+                    owner_user_id=user_id, purpose="workshop_reconstruction",
+                    request_id=f"{workshop_id}:{event.get('event_id', event.get('sequence_no'))}",
+                ).decode("utf-8")
+            else:
+                # Legacy non-private events only. A private pointer must never
+                # fall back to the fixed redaction placeholder as user input.
+                msg = event.get("redacted_summary") or event.get("content") or ""
             if msg:
                 messages.append(str(msg))
     return messages
@@ -147,6 +165,7 @@ def run_reconstruction_worker(
     tenant_id: str,
     user_id: str,
     session: Optional[Dict[str, Any]] = None,
+    private_content_store: Any = None,
 ) -> Dict[str, Any]:
     """Admit-or-resume the one reconstruction job for this workshop's conversation.
 
@@ -170,6 +189,8 @@ def run_reconstruction_worker(
         existing is not None
         and existing.get("status") == "completed"
         and int(existing_payload.get("based_on_sequence_no", -1)) == sequence_no
+        and (not any(event.get("private_content_ref") for event in events)
+             or existing_payload.get("private_content_reader_version") == 1)
     ):
         # Replay: the conversation has not advanced since the last effective
         # result, so the durable card is returned unchanged.  No re-invoking
@@ -181,7 +202,10 @@ def run_reconstruction_worker(
             "card": existing,
         }
 
-    messages_content = _messages_from_events(events)
+    messages_content = _messages_from_events(
+        events, private_content_store=private_content_store,
+        tenant_id=tenant_id, user_id=user_id, workshop_id=workshop_id,
+    )
     store.record_workshop_card({
         "card_id": card_id,
         "card_type": RECONSTRUCTION_CARD_TYPE,
@@ -211,6 +235,7 @@ def run_reconstruction_worker(
     )
     result_dict = result.model_dump(mode="json")
     completed_payload = {
+        "private_content_reader_version": 1,
         "reconstruction": result_dict,
         "based_on_sequence_no": sequence_no,
         "registry_draft_ref": registry_draft_ref,

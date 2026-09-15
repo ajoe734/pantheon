@@ -1,0 +1,86 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "LOOP-L03-TEACHING-INVOCATION-001",
+  "title": "Loop 3 to 4 Persona Teaching invocation",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "task_generation": 1,
+  "artifact_contract_revision": {
+    "artifacts": [
+      "services/research/alpha_replication/revalidation_worker.py",
+      "services/research/alpha_replication/test_revalidation_worker.py",
+      "docs/deployment/evidence/LOOP-L03-TEACHING-INVOCATION-001/evidence.json"
+    ]
+  },
+  "scope": {
+    "owned": [
+      "services/research/alpha_replication/revalidation_worker.py",
+      "services/research/alpha_replication/test_revalidation_worker.py"
+    ],
+    "not_changing": [
+      "services/research/replication/gate.py",
+      "services/research/authority/",
+      "services/teaching/",
+      "hosted deployment or live trading / capital state"
+    ],
+    "composes_with": [
+      "Loop 4 Persona Teaching endpoint (POST /api/training/sessions and GET /api/training/sessions/{id})",
+      "ReplicationGate schema and governance verification"
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "After its schema and governance gates pass the alpha revalidation worker must create a real Persona Teaching training session through the production endpoint; a log line or simulated placeholder does not satisfy this.",
+      "status": "passed",
+      "evidence": "revalidation_worker.py invokes POST /api/training/sessions with tenant header, auth token, and required payload context refs, followed by GET /api/training/sessions/{session_id} readback; verified in test_real_http_teaching_invocation_and_headers and test_approved_spec_creates_authoritative_task_and_completed_run."
+    },
+    {
+      "criterion": "Loop 3 must emit a durable next-consumer receipt id usable as the Loop 4 trigger; persist trigger id and terminal output id and next-consumer receipt id and owner worker identity and durable reload readback for the loop.",
+      "status": "passed",
+      "evidence": "Emits next_consumer_receipt_ids containing created Persona Teaching session_id, which serves as the Loop 4 trigger; atomically saves loop record containing trigger_id, terminal_output_id, next_consumer_receipt_id, owner_worker_identity, and durable_reload_readback; reload readback verified across worker restart in test_durable_loop_record_persisted_and_reloaded_across_worker_restart."
+    },
+    {
+      "criterion": "Negative paths must hold: a rejected gate must not invoke Teaching and a Teaching call failure must surface as a real error instead of a fabricated receipt.",
+      "status": "passed",
+      "evidence": "Verified in test_gate_rejection_does_not_invoke_persona_teaching (gate failure halts pipeline before teaching invocation and produces zero teaching receipts), test_teaching_call_failure_surfaces_real_error_and_no_fabricated_receipt (write error marks queue failed, records error, no receipt created), and test_teaching_readback_failure_surfaces_real_error (readback failure surfaces real error)."
+    },
+    {
+      "criterion": "Run focused and full-file regression for the changed module and record exact commands with exit codes and collection and pass/fail/skip counts; missing positives must not be replaced by skipped tests.",
+      "status": "passed",
+      "evidence": "Focused test_revalidation_worker.py: 22 passed, 0 skipped, 0 failed (exit code 0). Full alpha_replication suite: 51 passed, 0 skipped, 0 failed (exit code 0). Product V2 research loop closure R2: 1 passed (exit code 0)."
+    },
+    {
+      "criterion": "Source and isolated-test scope only. No hosted deployment and no live trading or capital change. Evidence goes under the task evidence manifest.",
+      "status": "passed",
+      "evidence": "All modifications are strictly within services/research/alpha_replication and isolated tests; no deployment, infrastructure, live trading, or capital-affecting code was touched."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest services/research/alpha_replication/test_revalidation_worker.py -v",
+      ".venv-pantheon/bin/python3 -m pytest services/research/alpha_replication/ -v",
+      ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py -v",
+      ".venv-pantheon/bin/python3 -m compileall -q services/research/alpha_replication",
+      "git diff --check"
+    ],
+    "results": [
+      "test_revalidation_worker.py: 22 passed, 0 skipped, 0 failed, exit code 0 in 3.50s",
+      "services/research/alpha_replication/: 51 passed, 0 skipped, 0 failed, exit code 0 in 13.87s",
+      "services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py: 1 passed, 0 skipped, 0 failed, exit code 0 in 1.39s",
+      "compileall services/research/alpha_replication: exit code 0",
+      "git diff --check: exit code 0"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "verify POST /api/training/sessions and GET /api/training/sessions/{session_id} are invoked upon approved replication",
+      "verify 5 canonical loop record fields (trigger_id, terminal_output_id, next_consumer_receipt_id, owner_worker_identity, durable_reload_readback) are persisted and readable across restart",
+      "verify negative paths: gate rejection halts before teaching, HTTP failure surfaces without fake receipts",
+      "run pytest services/research/alpha_replication/test_revalidation_worker.py -v"
+    ]
+  }
+}

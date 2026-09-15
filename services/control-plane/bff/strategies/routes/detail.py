@@ -383,7 +383,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         if ctx.deprecated_bff_path_response:
             return ctx.deprecated_bff_path_response(
                 route="/bff/strategies/{strategy_id}/actions/{action_id}",
-                replacement="/bff/actions/strategy/{strategy_id}/{action_id}",
+                replacement="/bff/v1/commands",
             )
         return {"data": {"strategy_id": strategy_id, "action_id": action_id, "status": "deprecated"}}
 

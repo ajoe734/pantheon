@@ -32,6 +32,8 @@ services:
       - dev-paper-governance-tokens:/issued/governance
       - dev-paper-runtime-tokens:/issued/runtime-manager
       - dev-paper-bff-tokens:/issued/operator-bff
+      - dev-paper-distillation-tokens:/issued/strategy-distillation-worker
+      - dev-paper-alpha-replication-tokens:/issued/alpha-replication-worker
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -360,12 +362,15 @@ services:
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      DISTILLATION_REGISTRY_SERVICE_TOKEN: ${DISTILLATION_REGISTRY_SERVICE_TOKEN:-}
+      DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE: ${DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE:-}
       PANTHEON_LOOP_ID: strategy_distillation
       PANTHEON_CONTROLLER_NAME: strategy-distillation-controller
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       GIT_SHA: ${GIT_SHA:-local-dev}
     volumes:
+      - dev-paper-distillation-tokens:/run/pantheon-principals:ro
       - source-ingest-data:/data/source-ingest
     depends_on:
       source-ingest:
@@ -401,6 +406,8 @@ services:
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN: ${ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE:-}
       PANTHEON_LOOP_ID: alpha_replication
       PANTHEON_CONTROLLER_NAME: alpha-replication-controller
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
@@ -408,6 +415,7 @@ services:
       GIT_SHA: ${GIT_SHA:-local-dev}
       PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
     volumes:
+      - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
       - source-ingest-data:/data/source-ingest
     depends_on:
@@ -630,8 +638,8 @@ services:
       # PANTHEON_PERSISTENCE_POSTURE is staging or prod; a real deployment
       # supplies its own POLICY_LEARNING_SERVICE_TOKEN.
       POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
-      POLICY_LEARNING_SERVICE_TENANTS: ${POLICY_LEARNING_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
-      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_SERVICE_TENANTS: ${POLICY_LEARNING_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
       # Agora DatasetVersion authority (owned by L12-AGORA-001).  Unset means
       # "follow DATABASE_URL"; set these to read through a dedicated Agora
@@ -693,7 +701,7 @@ services:
       # This second credential is intentionally distinct: it can drain the
       # operator-BFF handoff store but cannot call policy-learning APIs.
       AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
-      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
     depends_on:
       policy-learning-svc:
@@ -1203,6 +1211,7 @@ services:
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_PRIVATE_CONTENT_DEV_KEK: ${AGORA_PRIVATE_CONTENT_DEV_KEK:-}
       AGORA_DATASET_STORE_BACKEND: ${AGORA_DATASET_STORE_BACKEND:-postgres}
       AGORA_DATASET_STORE_DSN: ${AGORA_DATASET_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
@@ -1210,7 +1219,7 @@ services:
       # internal service route, never through browser BFF JWT/user identity.
       AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
       AGORA_HANDOFF_ALLOWED_SERVICE_ACTOR: policy-learning-agora-handoff-drainer
-      AGORA_HANDOFF_SERVICE_TENANTS: ${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
+      AGORA_HANDOFF_SERVICE_TENANTS: ${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}}
       AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
       AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
@@ -1312,7 +1321,6 @@ services:
       # Management NL provider turns reserve their actor/tenant/route/key before
       # any conversation or provider side effect. Hosted retries must use this
       # durable, cross-process admission store rather than an in-memory mutex.
-      PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED:-true}
       PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/management-nl-command-idempotency.json}
       PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}
       PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-openclaw}
@@ -1364,12 +1372,6 @@ services:
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_ALLOWED_TENANTS: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_ALLOWED_TENANTS:-tenant-dev,pantheon-dev,pantheon-local}
       # The legacy/generic operator credential is intentionally the negative
       # no-MFA verifier identity. Dedicated governed actors may opt in to MFA.
-      PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}
-      PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-false}
-      PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED:-false}
-      PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED:-false}
-      PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED:-false}
-      PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED:-false}
       PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}
       PANTHEON_BFF_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_BFF_ROLE_MAP: ${PANTHEON_BFF_ROLE_MAP:-}
@@ -2843,6 +2845,8 @@ volumes:
   dev-paper-governance-tokens:
   dev-paper-runtime-tokens:
   dev-paper-bff-tokens:
+  dev-paper-distillation-tokens:
+  dev-paper-alpha-replication-tokens:
   broker-data:
   bff-data:
   capital-data:

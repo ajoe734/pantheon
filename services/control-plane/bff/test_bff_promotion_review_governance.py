@@ -629,7 +629,7 @@ def test_generic_quarterly_submit_paths_reject_unadmitted_or_tampered_tuple() ->
         )
         for route, idempotency_header in (
             ("/bff/v1/commands", "Idempotency-Key"),
-            ("/api/v1/operator/commands", "X-Idempotency-Key"),
+            ("/bff/v1/commands", "X-Idempotency-Key"),
         ):
             for field, forged_value in tamper_cases:
                 params = {
@@ -921,7 +921,13 @@ def test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one(monke
             "list_strategy_specs",
         ):
             monkeypatch.setattr(bff_main.read_store, method_name, forbidden_subread)
-        monkeypatch.setattr(bff_main, "_source_ingest_truth_by_connector", forbidden_subread)
+        # Migrated by BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001: the
+        # source-ingest truth loader is no longer a bare module function on
+        # main.py; it is owned by the shared persona_service instance and
+        # reads through these two read-port methods (same object as
+        # bff_main.read_store, since persona_service was constructed with it).
+        monkeypatch.setattr(bff_main.read_store, "get_source_connector_registry", forbidden_subread)
+        monkeypatch.setattr(bff_main.read_store, "get_source_health_usage_snapshot", forbidden_subread)
 
         response = client.get(
             "/bff/management/human-inbox",

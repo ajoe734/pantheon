@@ -1,11 +1,22 @@
+"""SRCLIVE overlay contract regression tests.
+
+Migrated by BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001 from B15's
+module-loader-patch style to the real ``PersonaService`` instance and an
+explicit read-port fixture: ``PersonaService`` is now the sole owner of the
+source-health overlay and its TTL cache (see
+``BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001``), so
+``personas.service._overlay_source_health_truth``/
+``_source_ingest_truth_by_connector`` are no longer independently patchable
+bare-function implementations.
+"""
 from __future__ import annotations
 
-import os
-import sys
+from typing import Any, Dict
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.personas.service import (
+    PersonaService,
+    create_persona_registry_write_owner,
+)
 
 
 def _frontend_data_source_tone(state: str) -> str:
@@ -33,7 +44,39 @@ def _truth(connector_id: str, *, status: str = "ok", rows: int = 1) -> dict:
     }
 
 
-def test_all_green_live_overlay_promotes_summary_badge_state(monkeypatch):
+class _FixtureReadStore:
+    """Explicit read-port fixture standing in for the real source-ingest ports.
+
+    Exercises the real loader (``PersonaService._source_ingest_truth_by_connector``)
+    through its registry/snapshot read ports, rather than patching the loader
+    or its cached result directly.
+    """
+
+    def __init__(self, truths: Dict[str, dict]) -> None:
+        self._truths = truths
+
+    def get_source_connector_registry(self) -> Dict[str, Any]:
+        return {"connectors": [truth["connector"] for truth in self._truths.values()]}
+
+    def get_source_health_usage_snapshot(self) -> Dict[str, Any]:
+        return {
+            "sources": [
+                {"health": truth["health"], "usage_aggregate_30d": {}}
+                for truth in self._truths.values()
+            ]
+        }
+
+
+def _service(truths: Dict[str, dict]) -> PersonaService:
+    return PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=object(),
+        read_store=_FixtureReadStore(truths),
+        command_store=object(),
+    )
+
+
+def test_all_green_live_overlay_promotes_summary_badge_state():
     dss = {
         "state": "partial_readback",
         "summary": (
@@ -55,17 +98,15 @@ def test_all_green_live_overlay_promotes_summary_badge_state(monkeypatch):
         {"provider_key": "mops", "status": "public_reference_unavailable"},
         {"provider_key": "finmind", "status": "read_unavailable"},
     ]
-    monkeypatch.setattr(
-        bff_main,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    service = _service(
+        {
             "tw-twse-tpex-official-market": _truth("tw-twse-tpex-official-market", rows=1000),
             "tw-mops-official-disclosures": _truth("tw-mops-official-disclosures", rows=8),
             "tw-finmind-datasets": _truth("tw-finmind-datasets", rows=120),
-        },
+        }
     )
 
-    out_dss, _, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, _, _ = service.overlay_source_health_truth(dss, sources)
 
     assert out_dss["provider_statuses"] == {
         "shioaji": "read_ok",
@@ -80,7 +121,7 @@ def test_all_green_live_overlay_promotes_summary_badge_state(monkeypatch):
     assert "default to unavailable" not in out_dss["summary"]
 
 
-def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
+def test_tw_official_sources_flip_only_from_source_ingest_health():
     dss = {
         "state": "partial_readback",
         "provider_statuses": {
@@ -94,16 +135,14 @@ def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
         {"provider_key": "tpex", "status": "read_unavailable"},
         {"provider_key": "mops", "status": "read_unavailable"},
     ]
-    monkeypatch.setattr(
-        bff_main,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    service = _service(
+        {
             "tw-twse-tpex-official-market": _truth("tw-twse-tpex-official-market", rows=1000),
             "tw-mops-official-disclosures": _truth("tw-mops-official-disclosures", rows=8),
-        },
+        }
     )
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = service.overlay_source_health_truth(dss, sources)
 
     assert out_dss["source_health_source"] == "source_ingest"
     assert out_dss["provider_statuses"]["twse"] == "read_ok"
@@ -116,7 +155,7 @@ def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
     }
 
 
-def test_missing_source_ingest_health_does_not_fake_green(monkeypatch):
+def test_missing_source_ingest_health_does_not_fake_green():
     dss = {
         "state": "partial_readback",
         "provider_statuses": {
@@ -133,9 +172,9 @@ def test_missing_source_ingest_health_does_not_fake_green(monkeypatch):
             "secret_ref": "env://POLYGON_API_KEY",
         },
     ]
-    monkeypatch.setattr(bff_main, "_source_ingest_truth_by_connector", lambda: {})
+    service = _service({})
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = service.overlay_source_health_truth(dss, sources)
 
     by_provider = {source["provider_key"]: source for source in out_sources}
     assert out_dss["source_health_source"] == "static_metadata"
@@ -145,7 +184,7 @@ def test_missing_source_ingest_health_does_not_fake_green(monkeypatch):
     assert by_provider["polygon"]["secret_ref"] == "env://POLYGON_API_KEY"
 
 
-def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavailable(monkeypatch):
+def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavailable():
     dss = {
         "state": "partial_readback",
         "provider_statuses": {
@@ -175,20 +214,18 @@ def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavaila
             "secret_ref": "env://ALPHA_VANTAGE_API_KEY",
         },
     ]
-    monkeypatch.setattr(
-        bff_main,
-        "_source_ingest_truth_by_connector",
-        lambda: {
+    service = _service(
+        {
             "us-stooq-daily-ohlcv": _truth("us-stooq-daily-ohlcv", rows=2),
             "us-sec-edgar-filings": _truth("us-sec-edgar-filings", rows=1),
             "us-finra-short-sale": _truth("us-finra-short-sale", rows=2),
             "us-fred-macro": _truth("us-fred-macro", rows=2),
             "us-polygon-daily-ohlcv": _truth("us-polygon-daily-ohlcv", status="degraded", rows=0),
             "us-alpha-vantage-daily-ohlcv": _truth("us-alpha-vantage-daily-ohlcv", status="degraded", rows=0),
-        },
+        }
     )
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = service.overlay_source_health_truth(dss, sources)
 
     assert out_dss["provider_statuses"]["stooq"] == "read_ok"
     assert out_dss["provider_statuses"]["sec_edgar"] == "read_ok"
@@ -202,16 +239,12 @@ def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavaila
     assert by_provider["alphavantage"]["secret_ref"] == "env://ALPHA_VANTAGE_API_KEY"
 
 
-def test_crypto_coingecko_flips_from_source_ingest_health(monkeypatch):
+def test_crypto_coingecko_flips_from_source_ingest_health():
     dss = {"state": "datasource_smoke_ok", "provider_statuses": {"coingecko": "read_unavailable"}}
     sources = [{"provider_key": "coingecko", "status": "read_unavailable"}]
-    monkeypatch.setattr(
-        bff_main,
-        "_source_ingest_truth_by_connector",
-        lambda: {"crypto-coingecko-spot": _truth("crypto-coingecko-spot", rows=100)},
-    )
+    service = _service({"crypto-coingecko-spot": _truth("crypto-coingecko-spot", rows=100)})
 
-    out_dss, out_sources, _ = bff_main._overlay_source_health_truth(dss, sources)
+    out_dss, out_sources, _ = service.overlay_source_health_truth(dss, sources)
 
     assert out_dss["source_health_source"] == "source_ingest"
     assert out_dss["provider_statuses"]["coingecko"] == "read_ok"

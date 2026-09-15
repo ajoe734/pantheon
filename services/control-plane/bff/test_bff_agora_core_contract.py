@@ -2,20 +2,62 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandType, ErrorCode
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+try:
+    from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
+except ImportError:
+    from services.control_plane.bff.agora.service import (
+        _AGORA_SIGNAL_WRITE_ROLES,
+        _AGORA_BULK_FEEDBACK_ROLES,
+    )
 
-import main as bff_main
-from command_queue import CommandStore
-from models import CommandType
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+
+def _require_agora_signal_write_role(identity: Any) -> None:
+    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora signal creation requires analyst-level role",
+            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst-level Agora write access",
+        )
+
+
+def _require_agora_bulk_feedback_role(identity: Any) -> None:
+    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora feedback access requires analyst role",
+            "Operator does not hold the required Agora feedback role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
+        )
+
+
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 OPERATOR_TOKEN = "Bearer op-agora:operator"
@@ -97,7 +139,17 @@ class AgoraCoreTestReadPorts(ReadSurfacePorts):
         return list(self._data.get("decision_journal_entries", {}).values())
 
     def create_decision_journal_entry(self, *, title: str, body: str, actor_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
-        entry = {"id": "dje-001", "title": title, "body": body, "author": actor_id or "op-agora", "canonicalWriteAuthority": "agora_journal_service"}
+        entry = {
+            "id": "dje-001",
+            "title": title,
+            "body": body,
+            "author": actor_id or "op-agora",
+            "canonicalWriteAuthority": "agora_journal_service",
+            "tenant_id": kwargs.get("tenant_id") or "pantheon-dev",
+            "tenantId": kwargs.get("tenant_id") or "pantheon-dev",
+            "user_id": kwargs.get("user_id") or actor_id or "op-agora",
+            "userId": kwargs.get("user_id") or actor_id or "op-agora",
+        }
         self._data.setdefault("decision_journal_entries", {})[entry["id"]] = entry
         return entry
 
@@ -289,17 +341,36 @@ def _seed_read_store() -> AgoraCoreTestReadPorts:
 @contextmanager
 def _isolated_agora_bff() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        bff_main.read_store = _seed_read_store()
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        store = _seed_read_store()
+        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        idempotency_store: dict[str, Any] = {}
+        router = create_agora_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            require_write_role=_require_operator_role,
+            require_operator_role=_require_operator_role,
+            require_journal_write_role=_require_operator_role,
+            require_agora_signal_write_role=_require_agora_signal_write_role,
+            require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
+            bff_error=_bff_error,
+            utc_now=_utc_now_rfc3339,
+            read_surface=store,
+            journal_write_owner=store,
+            command_store=command_store,
+            idempotency_store=idempotency_store,
+            sync_servant_agent=lambda p: {},
+        )
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _http_exception_handler(request, exc):
+            if isinstance(exc.detail, dict) and "error" in exc.detail:
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+        app.include_router(router)
+        yield TestClient(app)
 
 
 def _assert_command(payload: dict, command: CommandType) -> None:
@@ -476,3 +547,51 @@ def test_agora_core_error_envelopes_for_missing_objects() -> None:
         )
         assert memory.status_code == 404
         assert _error(memory)["details"]["precondition_failed"] == "memory_id"
+
+
+def test_agora_signal_and_feedback_role_checks_contract() -> None:
+    """Verify require_agora_signal_write_role and require_agora_bulk_feedback_role accept analyst and enforce error contracts."""
+    with _isolated_agora_bff() as client:
+        analyst_headers = {"Authorization": "Bearer op-analyst:analyst", "Idempotency-Key": "sig-analyst-001"}
+        viewer_headers = {"Authorization": "Bearer op-viewer:viewer", "Idempotency-Key": "sig-viewer-001"}
+
+        # Signal write accepts analyst
+        sig_resp = client.post(
+            "/bff/agora/signals",
+            headers=analyst_headers,
+            json={"title": "analyst-signal", "body": "analyst signal body", "severity": "info"},
+        )
+        assert sig_resp.status_code in (200, 201), sig_resp.text
+
+        # Signal write rejects unauthorized role (viewer) with role_check precondition error
+        viewer_sig = client.post(
+            "/bff/agora/signals",
+            headers=viewer_headers,
+            json={"title": "viewer-signal", "body": "viewer signal body", "severity": "info"},
+        )
+        assert viewer_sig.status_code == 403, viewer_sig.text
+        err = _error(viewer_sig)
+        assert err["code"] == "FORBIDDEN"
+        assert err["message"] == "Agora signal creation requires analyst-level role"
+        assert err["details"]["precondition_failed"] == "role_check"
+
+        # Bulk feedback accepts analyst
+        fb_resp = client.post(
+            "/bff/agora/feedback",
+            headers={"Authorization": "Bearer op-analyst:analyst", "Idempotency-Key": "fb-analyst-001"},
+            json={"signal_id": "sig-001", "verdict": "useful"},
+        )
+        assert fb_resp.status_code in (200, 201), fb_resp.text
+
+        # Bulk feedback rejects unauthorized role (viewer) with role_check precondition error
+        viewer_fb = client.post(
+            "/bff/agora/feedback",
+            headers={"Authorization": "Bearer op-viewer:viewer", "Idempotency-Key": "fb-viewer-001"},
+            json={"signal_id": "sig-001", "verdict": "useful"},
+        )
+        assert viewer_fb.status_code == 403, viewer_fb.text
+        err_fb = _error(viewer_fb)
+        assert err_fb["code"] == "FORBIDDEN"
+        assert err_fb["message"] == "Agora feedback access requires analyst role"
+        assert err_fb["details"]["precondition_failed"] == "role_check"
+

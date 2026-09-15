@@ -7,34 +7,35 @@ fixture-backed fallback data.
 
 Run:
     pytest services/control-plane/bff/test_persona_live_integration.py -q
-
-Task:  PER-003
-Owner: Claude2
-Reviewer: Codex2
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import create_read_surface_ports
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
 
 # ---------------------------------------------------------------------------
 # Seed helpers
 # ---------------------------------------------------------------------------
 
-def _persona_record(persona_id: str, name: str, lifecycle_state: str = "research_only") -> dict:
+def _persona_record(
+    persona_id: str,
+    name: str,
+    lifecycle_state: str = "research_only",
+    tenant_id: str = "pantheon-dev",
+) -> dict[str, Any]:
     return {
         "persona_id": persona_id,
         "name": name,
@@ -42,10 +43,11 @@ def _persona_record(persona_id: str, name: str, lifecycle_state: str = "research
         "lifecycle_state": lifecycle_state,
         "created_at": "2026-05-16T00:00:00Z",
         "status": "active",
+        "tenant_id": tenant_id,
     }
 
 
-def _write_registry(path: Path, personas: list) -> None:
+def _write_registry(path: Path, personas: list[dict[str, Any]]) -> None:
     data = {p["persona_id"]: p for p in personas}
     path.write_text(json.dumps(data, indent=2))
 
@@ -54,20 +56,46 @@ def _write_registry(path: Path, personas: list) -> None:
 # Test client factory
 # ---------------------------------------------------------------------------
 
+class _FakeOwner:
+    pass
+
+
+class _FakeCommandStore:
+    def get_all(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    def record(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+def _create_client(store: Any) -> TestClient:
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+    service = PersonaService(
+        read_store=store,
+        write_owner=_FakeOwner(),
+        ranking_write_owner=_FakeOwner(),
+        command_store=_FakeCommandStore(),
+    )
+    app = FastAPI()
+    app.include_router(create_personas_router(service=service))
+    return TestClient(app)
+
+
 def _fresh_client(td: str, registry_path: str) -> TestClient:
     records = json.loads(Path(registry_path).read_text(encoding="utf-8"))
     store = create_read_surface_ports()
 
-    def clone(value):
+    def clone(value: Any) -> Any:
         return json.loads(json.dumps(value))
 
-    def list_personas(**_kwargs):
+    def list_personas(**_kwargs: Any) -> list[dict[str, Any]]:
         return [
             {"id": persona_id, **clone(record)}
             for persona_id, record in records.items()
         ]
 
-    def get_persona(persona_id):
+    def get_persona(persona_id: str) -> dict[str, Any] | None:
         record = records.get(str(persona_id))
         return {"id": str(persona_id), **clone(record)} if record else None
 
@@ -77,20 +105,7 @@ def _fresh_client(td: str, registry_path: str) -> TestClient:
     store.dataset_source = lambda dataset: (
         "service_store" if dataset == "personas" else original_dataset_source(dataset)
     )
-    bff_main.read_store = store
-    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._PERSONA_BFF_OVERLAY.clear()
-    os.environ["PANTHEON_BFF_PERSONA_REGISTRY_STORE"] = registry_path
-    return TestClient(bff_main.app)
-
-
-def _restore(original_store, original_env) -> None:
-    bff_main.read_store = original_store
-    if original_env is None:
-        os.environ.pop("PANTHEON_BFF_PERSONA_REGISTRY_STORE", None)
-    else:
-        os.environ["PANTHEON_BFF_PERSONA_REGISTRY_STORE"] = original_env
+    return _create_client(store)
 
 
 # ---------------------------------------------------------------------------
@@ -105,26 +120,21 @@ def test_bff_personas_list_source_is_service_backed() -> None:
             _persona_record("persona-alpha", "Alpha Momentum"),
             _persona_record("persona-beta", "Beta Reversion"),
         ])
-        original_store = bff_main.read_store
-        original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
-        try:
-            client = _fresh_client(td, registry_path)
-            resp = client.get("/bff/personas", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "meta" in body
-            surface_source = (
-                body["meta"]
-                .get("surfaces", {})
-                .get("persona_list", {})
-                .get("source")
-            )
-            assert surface_source == "service_store", (
-                f"Expected source=service_store (service_backed), got {surface_source!r}. "
-                "Persona list is served from fixture fallback instead of live registry."
-            )
-        finally:
-            _restore(original_store, original_env)
+        client = _fresh_client(td, registry_path)
+        resp = client.get("/bff/personas", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "meta" in body
+        surface_source = (
+            body["meta"]
+            .get("surfaces", {})
+            .get("persona_list", {})
+            .get("source")
+        )
+        assert surface_source == "service_store", (
+            f"Expected source=service_store (service_backed), got {surface_source!r}. "
+            "Persona list is served from fixture fallback instead of live registry."
+        )
 
 
 def test_bff_personas_list_returns_seeded_personas() -> None:
@@ -135,19 +145,14 @@ def test_bff_personas_list_returns_seeded_personas() -> None:
             _persona_record("persona-alpha", "Alpha Momentum"),
             _persona_record("persona-beta", "Beta Reversion"),
         ])
-        original_store = bff_main.read_store
-        original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
-        try:
-            client = _fresh_client(td, registry_path)
-            resp = client.get("/bff/personas", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            returned_ids = {item["id"] for item in body["data"]}
-            assert "persona-alpha" in returned_ids, "persona-alpha must be in live registry response"
-            assert "persona-beta" in returned_ids, "persona-beta must be in live registry response"
-        finally:
-            _restore(original_store, original_env)
+        client = _fresh_client(td, registry_path)
+        resp = client.get("/bff/personas", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "data" in body
+        returned_ids = {item["id"] for item in body["data"]}
+        assert "persona-alpha" in returned_ids, "persona-alpha must be in live registry response"
+        assert "persona-beta" in returned_ids, "persona-beta must be in live registry response"
 
 
 def test_bff_personas_list_pagination() -> None:
@@ -159,29 +164,24 @@ def test_bff_personas_list_pagination() -> None:
             _persona_record("persona-p2", "P2"),
             _persona_record("persona-p3", "P3"),
         ])
-        original_store = bff_main.read_store
-        original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
-        try:
-            client = _fresh_client(td, registry_path)
-            resp = client.get("/bff/personas?page_size=1", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert len(body["data"]) == 1, "page_size=1 must return exactly 1 item"
-            page_info = body.get("page_info", {})
-            assert "next_page_token" in page_info, "page_info must have next_page_token"
-            next_token = page_info["next_page_token"]
-            if next_token:
-                resp2 = client.get(
-                    f"/bff/personas?page_size=1&page_token={next_token}", headers=HEADERS
-                )
-                assert resp2.status_code == 200, resp2.text
-                body2 = resp2.json()
-                assert len(body2["data"]) == 1, "second page must return 1 item"
-                assert body2["data"][0]["id"] != body["data"][0]["id"], (
-                    "second page item must differ from first page item"
-                )
-        finally:
-            _restore(original_store, original_env)
+        client = _fresh_client(td, registry_path)
+        resp = client.get("/bff/personas?page_size=1", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["data"]) == 1, "page_size=1 must return exactly 1 item"
+        page_info = body.get("page_info", {})
+        assert "next_page_token" in page_info, "page_info must have next_page_token"
+        next_token = page_info["next_page_token"]
+        if next_token:
+            resp2 = client.get(
+                f"/bff/personas?page_size=1&page_token={next_token}", headers=HEADERS
+            )
+            assert resp2.status_code == 200, resp2.text
+            body2 = resp2.json()
+            assert len(body2["data"]) == 1, "second page must return 1 item"
+            assert body2["data"][0]["id"] != body["data"][0]["id"], (
+                "second page item must differ from first page item"
+            )
 
 
 def test_bff_persona_detail_readback() -> None:
@@ -191,26 +191,21 @@ def test_bff_persona_detail_readback() -> None:
         _write_registry(Path(registry_path), [
             _persona_record("persona-live-001", "Live Detail Persona", "consultable"),
         ])
-        original_store = bff_main.read_store
-        original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
-        try:
-            client = _fresh_client(td, registry_path)
-            resp = client.get("/bff/personas/persona-live-001", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["data"]["id"] == "persona-live-001"
-            assert body["data"]["name"] == "Live Detail Persona"
-            surface_source = (
-                body["meta"]
-                .get("surfaces", {})
-                .get("persona_detail", {})
-                .get("source")
-            )
-            assert surface_source == "service_store", (
-                f"Detail source must be service_store, got {surface_source!r}"
-            )
-        finally:
-            _restore(original_store, original_env)
+        client = _fresh_client(td, registry_path)
+        resp = client.get("/bff/personas/persona-live-001", headers=HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["data"]["id"] == "persona-live-001"
+        assert body["data"]["name"] == "Live Detail Persona"
+        surface_source = (
+            body["meta"]
+            .get("surfaces", {})
+            .get("persona_detail", {})
+            .get("source")
+        )
+        assert surface_source == "service_store", (
+            f"Detail source must be service_store, got {surface_source!r}"
+        )
 
 
 def test_strict_mode_does_not_fallback_to_fixture() -> None:
@@ -218,28 +213,18 @@ def test_strict_mode_does_not_fallback_to_fixture() -> None:
     When allow_local_snapshot_fallback=False and no registry env var is set,
     the persona list source must NOT be local_snapshot (fixture_backed).
     """
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
-        try:
-            os.environ.pop("PANTHEON_BFF_PERSONA_REGISTRY_STORE", None)
-            bff_main.read_store = create_read_surface_ports()
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-            bff_main._STRATEGY_BFF_OVERLAY.clear()
-            bff_main._PERSONA_BFF_OVERLAY.clear()
-            client = TestClient(bff_main.app)
-            resp = client.get("/bff/personas", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            surface_source = (
-                body["meta"]
-                .get("surfaces", {})
-                .get("persona_list", {})
-                .get("source", "")
-            )
-            assert surface_source != "local_snapshot", (
-                "Strict mode must not fall back to fixture (local_snapshot). "
-                f"Got source={surface_source!r}"
-            )
-        finally:
-            _restore(original_store, original_env)
+    client = _create_client(create_read_surface_ports())
+    resp = client.get("/bff/personas", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    surface_source = (
+        body["meta"]
+        .get("surfaces", {})
+        .get("persona_list", {})
+        .get("source", "")
+    )
+    assert surface_source != "local_snapshot", (
+        "Strict mode must not fall back to fixture (local_snapshot). "
+        f"Got source={surface_source!r}"
+    )
+

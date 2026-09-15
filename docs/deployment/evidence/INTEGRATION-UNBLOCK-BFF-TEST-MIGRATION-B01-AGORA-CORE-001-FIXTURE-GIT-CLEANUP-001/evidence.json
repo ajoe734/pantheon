@@ -1,0 +1,260 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-FIXTURE-GIT-CLEANUP-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "6f00d0eb38e57946fe784de493df4606a55169b3",
+  "source_sha": "a4e7171cc8140ca2790cb4d148a3dcae8ce1ef06",
+  "source_file_sha256": "2902bec8a402373c6c443d2d84516e8ab463c4ec8762747e91fd8c349e7d4c2b",
+  "changed_files": [
+    "scripts/test_dev_paper_diagnostics_failure_path.py",
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-FIXTURE-GIT-CLEANUP-001/evidence.json"
+  ],
+  "pr": "https://github.com/ajoe734/pantheon/pull/5773",
+  "fix": {
+    "command_config": [
+      "maintenance.auto=false",
+      "maintenance.autoDetach=false",
+      "gc.auto=0"
+    ],
+    "commands": [
+      "clone",
+      "config --local",
+      "cat-file",
+      "fetch",
+      "sparse-checkout init",
+      "sparse-checkout set",
+      "checkout",
+      "init",
+      "config user.name",
+      "config user.email",
+      "add",
+      "commit",
+      "rev-parse"
+    ],
+    "persistent_local_config_repositories": [
+      "lease-controller",
+      "release-root"
+    ],
+    "mechanism": "Prevent automatic maintenance from starting in fixture Git commands and later direct Git subprocesses, including clone/init before repository-local config exists.",
+    "cleanup_semantics": "TemporaryDirectory cleanup remains strict; no sleeps, retries, or suppressed cleanup errors added.",
+    "unchanged_layers": [
+      "B01 source",
+      "product runtime",
+      "provider configuration",
+      "required-check policy",
+      "canonical task files"
+    ]
+  },
+  "environment": {
+    "python": "3.12.3",
+    "pytest": "9.1.1",
+    "git": "2.43.0"
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 1,
+      "result": "Initial dependency probe failed: no candidate interpreter had pytest; resolved using isolated dependency venv."
+    },
+    {
+      "command": "python3 -m venv /tmp/pantheon-fixture-git-cleanup-deps && /tmp/pantheon-fixture-git-cleanup-deps/bin/python -m pip install pytest && PANTHEON_DEPENDENCY_PYTHON=/tmp/pantheon-fixture-git-cleanup-deps/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "passed": 20,
+      "output": "....................                                                     [100%]\n20 passed in 47.31s"
+    },
+    {
+      "command": "timeout 480 bash -c 'for iteration in {1..10}; do echo \"Repeat ${iteration}/10\"; .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py -k \"d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression or d3_8_composed_baseline_failure_capture_quarantine_compensation\" || exit $?; done'",
+      "exit_code": 0,
+      "paths": [
+        "test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression",
+        "test_d3_8_composed_baseline_failure_capture_quarantine_compensation_success",
+        "test_d3_8_composed_baseline_failure_capture_quarantine_compensation_failure"
+      ],
+      "repetitions_per_path": 10,
+      "total_passed": 30,
+      "cleanup_failures": 0,
+      "batches": [
+        {
+          "iteration": 1,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 10.18
+        },
+        {
+          "iteration": 2,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 7.55
+        },
+        {
+          "iteration": 3,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 11.24
+        },
+        {
+          "iteration": 4,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 11.63
+        },
+        {
+          "iteration": 5,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 11.42
+        },
+        {
+          "iteration": 6,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 12.26
+        },
+        {
+          "iteration": 7,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 12.07
+        },
+        {
+          "iteration": 8,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 11.87
+        },
+        {
+          "iteration": 9,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 12.28
+        },
+        {
+          "iteration": 10,
+          "passed": 3,
+          "exit_code": 0,
+          "seconds": 11.94
+        }
+      ],
+      "output": "Repeat 1/10\n...                                                                      [100%]\n3 passed, 17 deselected in 10.18s\nRepeat 2/10\n...                                                                      [100%]\n3 passed, 17 deselected in 7.55s\nRepeat 3/10\n...                                                                      [100%]\n3 passed, 17 deselected in 11.24s\nRepeat 4/10\n...                                                                      [100%]\n3 passed, 17 deselected in 11.63s\nRepeat 5/10\n...                                                                      [100%]\n3 passed, 17 deselected in 11.42s\nRepeat 6/10\n...                                                                      [100%]\n3 passed, 17 deselected in 12.26s\nRepeat 7/10\n...                                                                      [100%]\n3 passed, 17 deselected in 12.07s\nRepeat 8/10\n...                                                                      [100%]\n3 passed, 17 deselected in 11.87s\nRepeat 9/10\n...                                                                      [100%]\n3 passed, 17 deselected in 12.28s\nRepeat 10/10\n...                                                                      [100%]\n3 passed, 17 deselected in 11.94s"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "local_config_probe": {
+    "setup": "Call setup_compensation_fixture in TemporaryDirectory with rollback_bff='1'*40 and rollback_fe='2'*40, then inspect each returned repository using unwrapped git config --local --get.",
+    "commands_per_repository": [
+      "git -C <repo> config --local --get maintenance.auto",
+      "git -C <repo> config --local --get maintenance.autoDetach",
+      "git -C <repo> config --local --get gc.auto"
+    ],
+    "exit_code": 0,
+    "output": "lease-controller maintenance.auto false\nlease-controller maintenance.autoDetach false\nlease-controller gc.auto 0\nrelease-root maintenance.auto false\nrelease-root maintenance.autoDetach false\nrelease-root gc.auto 0\nBoth fixture repositories persist all three settings; cleanup completed"
+  },
+  "ci": {
+    "check_name": "Persona provisioning owner contracts",
+    "workflow": "persona-owner-contract.yml",
+    "dispatch_command": "gh workflow run persona-owner-contract.yml --ref task/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-FIXTURE-GIT-CLEANUP-001",
+    "dispatch_exit_code": 0,
+    "reason": "Existing pull_request path filter omits this fixture test; use the existing workflow_dispatch entry point without editing CI policy.",
+    "source_head_run": {
+      "conclusion": "success",
+      "headSha": "a4e7171cc8140ca2790cb4d148a3dcae8ce1ef06",
+      "jobs": [
+        {
+          "completedAt": "2026-09-10T14:16:50Z",
+          "conclusion": "success",
+          "databaseId": 102904282014,
+          "name": "Persona provisioning owner contracts",
+          "startedAt": "2026-09-10T14:09:11Z",
+          "status": "completed",
+          "steps": [
+            {
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Initialize containers",
+              "number": 2,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Run actions/checkout@v6",
+              "number": 3,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Fetch immutable lease controller for compensation fixtures",
+              "number": 4,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v6",
+              "number": 5,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Provision isolated runner distribution",
+              "number": 6,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Verify shipped Governance image candidate validators",
+              "number": 7,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Verify real owners, paper scope, renewal and durable receipt reload",
+              "number": 8,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v6",
+              "number": 14,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v6",
+              "number": 15,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Stop containers",
+              "number": 16,
+              "status": "completed"
+            },
+            {
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 17,
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/ajoe734/pantheon/actions/runs/34487161323/job/102904282014"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/34487161323"
+    },
+    "final_head_requirement": "After committing this manifest, rerun this workflow on the final PR head. Freeze the final head and record its completed successful run URL/SHA in canonical handoff; the reviewer must verify that run before approval. This source-head run alone does not authorize final-head merge."
+  },
+  "delivery_boundary": "Independent Claude review, supervisor exact-head merge, then owner closeout. The separate B01 CI-unblock task refreshes or supersedes PR #5760 after this prerequisite lands."
+}

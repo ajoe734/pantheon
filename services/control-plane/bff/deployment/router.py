@@ -13,7 +13,7 @@ Design unit:
   8. GET /bff/deployments: BFF deployment-plan list (execute-plans compatibility surface)
   9. GET /bff/deployments/{deployment_id}: BFF deployment-plan detail
   10. POST /bff/deployments/{deployment_id}/actions/{action_id}: BFF deployment action (deprecated
-      passthrough to /bff/actions/deployment/{deployment_id}/{action_id})
+      passthrough to /bff/v1/commands)
   11. POST /bff/deployments: SEM deployment create command
   12. PATCH /bff/deployments/{deployment_id}: SEM deployment patch command
 
@@ -738,7 +738,7 @@ def create_deployment_router(
         """BFF: submit an action against a deployment plan."""
         return deprecated_bff_path_response(
             route="/bff/deployments/{deployment_id}/actions/{action_id}",
-            replacement="/bff/actions/deployment/{deployment_id}/{action_id}",
+            replacement="/bff/v1/commands",
         )
 
 

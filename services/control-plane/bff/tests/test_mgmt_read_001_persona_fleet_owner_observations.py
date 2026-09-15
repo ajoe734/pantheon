@@ -19,12 +19,83 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-BFF_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BFF_DIR))
+import ast
+import json
+import re
+from services.control_plane.bff.management_read_models.service import ManagementService
+from services.control_plane.bff.personas.service import (
+    _normalize_lifecycle_state,
+    _normalize_risk_level,
+    _PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+)
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
-import main as bff_main  # noqa: E402
-from management_read_models.service import ManagementService  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+_FLEET_FUNCS = None
+
+
+def _get_fleet_collector(store, personas=None, service=None, utc_now=None):
+    global _FLEET_FUNCS
+    if _FLEET_FUNCS is None:
+        tree = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
+        target_names = {
+            "_mgmt_nl_collect_context",
+            "_mgmt_nl_filter_tenant_records",
+            "_mgmt_nl_record_matches_tenant",
+            "_mgmt_nl_record_tenant_ids",
+            "_mgmt_nl_scope_values",
+            "_mgmt_nl_merge_owner_observations",
+            "_mgmt_nl_add_record_entities",
+            "_mgmt_nl_add_entity",
+            "_project_persona_fleet_item",
+            "_project_persona_dto",
+            "_project_persona_fleet_health",
+            "_is_persona_lifecycle_operational",
+            "_persona_fleet_runtime_matches",
+            "_sort_records_latest_first",
+        }
+        _FLEET_FUNCS = [
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name in target_names
+        ]
+
+    clock = utc_now or (lambda: NOW)
+    context_service = service or ManagementService(read_store=store, utc_now=clock)
+    persona_supplier = (lambda *a: personas(*a)) if callable(personas) else (lambda *a: personas if personas is not None else (store.list_personas() if hasattr(store, "list_personas") else []))
+
+    ns = dict(__import__("typing").__dict__)
+    ns.update({
+        "re": re,
+        "json": json,
+        "read_store": store,
+        "_management_ai_context_service": context_service,
+        "_list_persona_records": persona_supplier,
+        "utc_now": clock,
+        "_normalize_lifecycle_state": _normalize_lifecycle_state,
+        "_normalize_risk_level": _normalize_risk_level,
+        "_PERSONA_OPERATIONAL_LIFECYCLE_STATES": _PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+    })
+    mod = ast.Module(body=_FLEET_FUNCS, type_ignores=[])
+    exec(compile(mod, "main_fleet.py", "exec"), ns)
+    return ns
+
+
+class _MockBffMain:
+    def __init__(self):
+        self.store = None
+        self._management_ai_context_service = None
+        self._list_persona_records = None
+
+    def _mgmt_nl_collect_context(self, focus, snapshot_at, tenant_id=None):
+        ns = _get_fleet_collector(
+            store=self.store,
+            personas=self._list_persona_records,
+            service=self._management_ai_context_service,
+            utc_now=lambda: snapshot_at,
+        )
+        return ns["_mgmt_nl_collect_context"](focus, snapshot_at, tenant_id)
+
+
+bff_main = _MockBffMain()
 
 NOW = "2026-09-08T18:00:00Z"
 
@@ -60,17 +131,17 @@ def _persona_capital_binding() -> Dict[str, Any]:
 
 
 def _use_store(store: Any) -> None:
-    bff_main.read_store = store
+    bff_main.store = store
     bff_main._management_ai_context_service = ManagementService(read_store=store, utc_now=lambda: NOW)
 
 
 def _restore(original_store: Any, original_service: Any) -> None:
-    bff_main.read_store = original_store
+    bff_main.store = original_store
     bff_main._management_ai_context_service = original_service
 
 
 def test_persona_fleet_surfaces_telemetry_owner_reported_unavailable() -> None:
-    original_store = bff_main.read_store
+    original_store = bff_main.store
     original_service = bff_main._management_ai_context_service
     try:
         store = create_in_memory_read_surface_ports(
@@ -105,7 +176,7 @@ def test_persona_fleet_surfaces_telemetry_owner_reported_unavailable() -> None:
 
 
 def test_persona_fleet_surfaces_persona_owner_reported_unavailable() -> None:
-    original_store = bff_main.read_store
+    original_store = bff_main.store
     original_service = bff_main._management_ai_context_service
     try:
         persona = dict(_persona())
@@ -136,7 +207,7 @@ def test_persona_fleet_surfaces_persona_owner_reported_unavailable() -> None:
 
 
 def test_persona_fleet_reports_degraded_when_auxiliary_owners_lack_records() -> None:
-    original_store = bff_main.read_store
+    original_store = bff_main.store
     original_service = bff_main._management_ai_context_service
     try:
         store = create_in_memory_read_surface_ports(

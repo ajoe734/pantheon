@@ -537,8 +537,8 @@ def create_identity_router(
         session = svc.get_session(session_id) or session
         command_id = f"cmd-{uuid.uuid4().hex[:16]}"
         cmd_store = svc.command_store
-        if cmd_store is not None and hasattr(cmd_store, "submit_command"):
-            cmd_store.submit_command(
+        if cmd_store is not None and hasattr(cmd_store, "submit_terminal_command"):
+            cmd_store.submit_terminal_command(
                 command_id,
                 CommandType.AGORA_MESSAGE_ACTION,
                 TargetObject(type=ObjectType.AGORA_MESSAGE, id=message_id),

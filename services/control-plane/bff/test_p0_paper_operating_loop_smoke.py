@@ -10,24 +10,29 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.governance.deployment_plan import (
+    RollbackRef,
+    StagePlanner,
+)
+from services.control_plane.bff.management_read_models.service import (
+    _page_slice,
+    _project_operator_runtime_state_row,
+    _snapshot_meta,
+)
+from services.control_plane.bff.runtime.router import create_runtime_router
 
 _BFF_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _BFF_DIR.parents[2]
-_GOVERNANCE_DIR = _BFF_DIR.parent / "governance"
 _RUNTIME_MANAGER_SERVICE = _REPO_ROOT / "services" / "runtime-manager" / "service.py"
 _EXEC_RUNTIME_MANAGER_DIR = _REPO_ROOT / "services" / "execution" / "runtime-manager"
 
-for _path in (_REPO_ROOT, _GOVERNANCE_DIR, _BFF_DIR):
-    _path_str = str(_path)
-    if _path_str not in sys.path:
-        sys.path.insert(0, _path_str)
-
 os.environ.setdefault("PANTHEON_EXEC_RUNTIME_MANAGER_DIR", str(_EXEC_RUNTIME_MANAGER_DIR))
 
-import main as bff_main  # noqa: E402
-from deployment_plan import RollbackRef, StagePlanner  # noqa: E402
-from services.execution.lean_runtime.bootstrap_contract import (  # noqa: E402
+from services.execution.lean_runtime.bootstrap_contract import (
     PANTHEON_LEAN_REMOTE,
     PANTHEON_LEAN_SOURCE_PATH,
     materialize_runtime_bootstrap_request,
@@ -284,11 +289,14 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
         )
         projection = planner.build_execution_projection(plan, registry_entry)
 
-        with tempfile.TemporaryDirectory(prefix="p0_loop_smoke_") as temp_dir:
-            runtime_manager = RuntimeManagerService(
-                store_path=Path(temp_dir) / "runtime_bindings.json",
-                single_runtime_enforced=True,
-            )
+        orig_outbox = os.environ.get("PANTHEON_LIFECYCLE_OUTBOX_PATH")
+        try:
+            with tempfile.TemporaryDirectory(prefix="p0_loop_smoke_") as temp_dir:
+                os.environ["PANTHEON_LIFECYCLE_OUTBOX_PATH"] = str(Path(temp_dir) / "lifecycle-outbox.json")
+                runtime_manager = RuntimeManagerService(
+                    store_path=Path(temp_dir) / "runtime_bindings.json",
+                    single_runtime_enforced=True,
+                )
             binding = runtime_manager.deploy(
                 {
                     "plan_id": plan.plan_id,
@@ -420,30 +428,95 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
                 ),
             )
 
-            original_store = bff_main.read_store
-            original_auth_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
-            original_auth_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
-            os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
-            os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
-            bff_main.read_store = _BffRuntimeStateStore(
+            store = _BffRuntimeStateStore(
                 runtime_manager=runtime_manager,
                 runtime_summary_store=summary_store,
             )
-            try:
-                response = TestClient(bff_main.app).get(
-                    "/api/v1/operator/runtime-state",
-                    headers={"Authorization": _OPERATOR_TOKEN},
-                )
-            finally:
-                bff_main.read_store = original_store
-                if original_auth_stub is None:
-                    os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
-                else:
-                    os.environ["PANTHEON_BFF_AUTH_STUB"] = original_auth_stub
-                if original_auth_mode is None:
-                    os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
-                else:
-                    os.environ["PANTHEON_BFF_AUTH_MODE"] = original_auth_mode
+
+            def _utc_now() -> str:
+                return "2026-06-09T00:00:00Z"
+
+            def _dataset_surface_status(
+                dataset: str,
+                *,
+                snapshot_at: str | None = None,
+                has_data: bool | None = None,
+                missing_message: str | None = None,
+                source: str | None = None,
+            ) -> dict[str, Any]:
+                source = source or store.dataset_source(dataset)
+                surface: dict[str, Any] = {"status": "ok", "source": source}
+                now = snapshot_at or _utc_now()
+                if source == "local_snapshot":
+                    surface["status"] = "degraded"
+                    surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+                    surface["staleness"] = {
+                        "served_from": "local_snapshot",
+                        "last_known_at": now,
+                    }
+                elif source == "missing":
+                    surface["status"] = "unavailable"
+                    surface["staleness"] = {
+                        "served_from": "unverifiable",
+                        "last_known_at": now,
+                    }
+                elif source in {"canonical", "service_client"}:
+                    surface["status"] = "ok"
+
+                if has_data is False:
+                    surface["status"] = "unavailable"
+                    if missing_message:
+                        surface["message"] = missing_message
+                    surface["staleness"] = {
+                        "served_from": "unverifiable",
+                        "last_known_at": now,
+                    }
+                return surface
+
+            def _composed_surface_status(
+                *,
+                snapshot_at: str | None = None,
+                available: bool = True,
+                missing_message: str | None = None,
+            ) -> dict[str, Any]:
+                now = snapshot_at or _utc_now()
+                surface: dict[str, Any] = {"status": "ok", "source": "bff_composed"}
+                if not available:
+                    surface["status"] = "degraded"
+                    if missing_message:
+                        surface["message"] = missing_message
+                    surface["staleness"] = {
+                        "served_from": "unverifiable",
+                        "last_known_at": now,
+                    }
+                return surface
+
+            def _split_csv_query(value: str | None) -> list[str]:
+                if not value:
+                    return []
+                return [part.strip() for part in str(value).split(",") if part.strip()]
+
+            router = create_runtime_router(
+                read_surface=store,
+                dependencies={
+                    "_extract_identity": lambda auth, **kw: auth_policy.extract_identity_stub(auth),
+                    "_require_read_role": auth_policy.require_read_role,
+                    "_bff_error": auth_policy.bff_error,
+                    "utc_now": _utc_now,
+                    "_split_csv_query": _split_csv_query,
+                    "_project_operator_runtime_state_row": lambda binding: _project_operator_runtime_state_row(store, binding),
+                    "_dataset_surface_status": _dataset_surface_status,
+                    "_composed_surface_status": _composed_surface_status,
+                    "_page_slice": _page_slice,
+                    "_snapshot_meta": _snapshot_meta,
+                },
+            )
+            app = FastAPI()
+            app.include_router(router)
+            response = TestClient(app).get(
+                "/api/v1/operator/runtime-state",
+                headers={"Authorization": _OPERATOR_TOKEN},
+            )
 
             self.assertEqual(response.status_code, 200, response.text)
             payload = response.json()
@@ -464,6 +537,11 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
                 runtime_row["telemetry_summary"]["health_summary"]["broker"],
                 "not_applicable",
             )
+        finally:
+            if orig_outbox is None:
+                os.environ.pop("PANTHEON_LIFECYCLE_OUTBOX_PATH", None)
+            else:
+                os.environ["PANTHEON_LIFECYCLE_OUTBOX_PATH"] = orig_outbox
 
 
 if __name__ == "__main__":

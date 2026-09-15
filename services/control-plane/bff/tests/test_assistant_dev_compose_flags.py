@@ -46,14 +46,8 @@ def test_product_bff_compose_has_no_development_bridge_or_status_root() -> None:
         == "${PANTHEON_BFF_STUB_CAPABILITIES:-}"
     )
     assert env["PANTHEON_BFF_MFA_REQUIRED"] == "${PANTHEON_BFF_MFA_REQUIRED:-false}"
-    assert (
-        env["PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED"]
-        == "${PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"
-    )
-    assert (
-        env["PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED"]
-        == "${PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-false}"
-    )
+    assert not any(key.startswith("PANTHEON_BFF_DEV_LOGIN_") and key.endswith("_MFA_VERIFIED")
+                   for key in env)
     assert (
         env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
         == "${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.json}"
@@ -88,10 +82,11 @@ def test_product_bff_compose_has_no_development_bridge_or_status_root() -> None:
         env["PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS"]
         == "${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}"
     )
-    assert (
-        env["PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED"]
-        == "${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED:-true}"
-    )
+    # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the durable
+    # ManagementNlCommandIdempotencyStore is now the sole, unconditional
+    # Management NL command-admission mechanism -- there is no more
+    # env-gated bypass flag to assert on here.
+    assert "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED" not in env
     assert (
         env["PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"]
         == "${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/management-nl-command-idempotency.json}"

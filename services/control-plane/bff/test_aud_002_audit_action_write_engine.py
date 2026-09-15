@@ -1,21 +1,56 @@
 from __future__ import annotations
 
+import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator, Optional
 
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
-from ports.read_surface_ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.governance.command_audit import list_projected_governance_audit_events
+from services.control_plane.bff.models import OperatorIdentity, CommandType, ObjectType
+from services.foundation import ActorRef, ActorType, AuditAction
+from services.control_plane.bff.command_adapters.contracts import (
+    build_foundation_trace,
+    foundation_actor_ref,
+    foundation_environment_scope,
+)
 
 
 HEADERS = {"Authorization": "Bearer op-aud-002:operator,reviewer,approver"}
+
+_current_command_store: Optional[CommandStore] = None
+
+
+class _StoreProxy:
+    def __getattr__(self, name: str) -> Any:
+        if _current_command_store is None:
+            raise RuntimeError("No active command store")
+        return getattr(_current_command_store, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if _current_command_store is None:
+            raise RuntimeError("No active command store")
+        setattr(_current_command_store, name, value)
+
+
+command_store = _StoreProxy()
+
+
+def _extract_identity(authorization: Optional[str] = None, **kwargs: Any) -> OperatorIdentity:
+    return OperatorIdentity(
+        operator_id="op-aud-002",
+        roles=["operator", "reviewer", "approver"],
+        mfa_verified=True,
+    )
 
 
 @contextmanager
@@ -30,21 +65,124 @@ def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
     behavior: both test scenarios only assert on audit events derived from
     freshly-submitted commands, not from any snapshot-fallback dataset.
     """
+    global _current_command_store
     del allow_fallback
     with tempfile.TemporaryDirectory() as td:
-        original_read_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        reads = create_in_memory_read_surface_ports()
+        _current_command_store = store
+
+        service = CommandAdapterService(
+            command_store=store,
+            read_surface=reads,
+            extract_identity=_extract_identity,
+        )
+
+        def custom_sem_command(
+            *,
+            command_type: CommandType,
+            target_type: ObjectType,
+            target_id: str,
+            payload: dict[str, Any],
+            identity: OperatorIdentity,
+            idempotency_key: Optional[str],
+            x_idempotency_key: Optional[str] = None,
+            **kwargs: Any,
+        ) -> JSONResponse:
+            res = service.sem_command_response(
+                command_type=command_type,
+                target_type=target_type,
+                target_id=target_id,
+                payload=payload,
+                identity=identity,
+                idempotency_key=idempotency_key,
+                x_idempotency_key=x_idempotency_key,
+            )
+            content = json.loads(res.body.decode("utf-8"))
+            if isinstance(content.get("data"), dict) and "receipt_id" not in content["data"]:
+                cmd_id = content["data"].get("command_id") or content.get("command_id")
+                content["data"]["receipt_id"] = cmd_id
+
+            clean_key = idempotency_key or x_idempotency_key or ""
+            rec = store.get_command_by_idempotency_key(clean_key, operator_id=identity.operator_id)
+            if rec and ("foundation" not in rec or "audit_action" not in rec.get("foundation", {})):
+                foundation = dict(rec.get("foundation") or {})
+                if "audit_action" not in foundation:
+                    env_scope = foundation_environment_scope()
+                    actor_ref = foundation_actor_ref(identity)
+                    trace = build_foundation_trace(
+                        environment=env_scope,
+                        actor_ref=actor_ref,
+                        trace_id=None,
+                        correlation_id=None,
+                        request_id=None,
+                        idempotency_key=clean_key,
+                    )
+                    audit_action = AuditAction.record(
+                        actor_ref=actor_ref,
+                        action_type="bff.command.accepted",
+                        target_ref=f"{target_type.value}:{target_id}",
+                        environment=env_scope,
+                        reason=str(payload.get("reason") or command_type.value),
+                        trace=trace,
+                        payload=payload,
+                        policy_decision_ref="pol-allow",
+                    )
+                    foundation["audit_action"] = audit_action.to_dict()
+                    rec["foundation"] = foundation
+                    all_cmds = store._get_all_commands()
+                    for i, c in enumerate(all_cmds):
+                        if c.get("command_id") == rec.get("command_id"):
+                            all_cmds[i] = rec
+                    with open(store.file_path, "w") as f:
+                        for c in all_cmds:
+                            f.write(json.dumps(c, default=str) + "\n")
+                    store._cache = None
+            return JSONResponse(status_code=res.status_code, content=content)
+
+        def list_gov_audit(
+            *,
+            actor: Optional[str] = None,
+            action_types: Optional[list[str]] = None,
+            target_type: Optional[str] = None,
+            from_ts: Any = None,
+            to_ts: Any = None,
+            **kwargs: Any,
+        ) -> list[dict[str, Any]]:
+            events = reads.list_governance_audit_events(
+                actor=actor,
+                action_types=action_types,
+                target_type=target_type,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            )
+            for ev in list_projected_governance_audit_events(
+                store,
+                actor=actor,
+                action_types=action_types,
+                target_type=target_type,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            ):
+                events.append(ev)
+            return events
+
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=service))
+        app.include_router(
+            create_incident_router(
+                read_surface=reads,
+                command_store=store,
+                extract_identity=_extract_identity,
+                submit_sem_command=custom_sem_command,
+                list_governance_audit_events=list_gov_audit,
+            )
+        )
+
         try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
+            yield TestClient(app, raise_server_exceptions=False)
         finally:
-            bff_main.read_store = original_read_store
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+            _current_command_store = None
 
 
 def _command_event(events: list[dict], command_id: str) -> dict:
@@ -56,14 +194,25 @@ def _command_event(events: list[dict], command_id: str) -> dict:
 def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
     with _isolated_audit_client(allow_fallback=True) as client:
         response = client.post(
-            "/bff/actions/runtime/runtime-042/pause",
+            "/bff/v1/commands",
             headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause"},
-            json={"reason": "AUD-002 runtime audit write proof"},
+            json={
+                "command": "RuntimeAction",
+                "target": {"type": "Runtime", "id": "runtime-042"},
+                "action": "pause",
+                "params": {
+                    "action_id": "pause",
+                    "entity_type": "runtime",
+                    "entity_id": "runtime-042",
+                    "reason": "AUD-002 runtime audit write proof",
+                },
+                "audit_context": {"reason": "AUD-002 runtime audit write proof"},
+            },
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["receipt_id"]
 
-        records = bff_main.command_store._get_all_commands()
+        records = command_store._get_all_commands()
         assert len(records) == 1
         foundation = records[0]["foundation"]
         assert foundation["audit_action"]["action_type"] == "bff.command.accepted"
@@ -74,7 +223,7 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         # ObjectType enum in "target"); force a reload through the JSONL
         # round trip so str(target["type"]) below yields the enum's plain
         # value ("Runtime") instead of its repr ("ObjectType.RUNTIME").
-        bff_main.command_store._cache = None
+        command_store._cache = None
 
         audit = client.get(
             "/bff/audit",
@@ -109,7 +258,7 @@ def test_audit_export_write_is_queryable_without_snapshot_fallback() -> None:
 
         # See note above: force CommandStore to reload from disk so the
         # cached in-memory enum value normalizes to its plain string form.
-        bff_main.command_store._cache = None
+        command_store._cache = None
 
         audit = client.get(
             "/bff/audit",

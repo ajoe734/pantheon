@@ -1,0 +1,10 @@
+{
+  "candidate_id": "db72b8b9087fe1d2ec0f11ebd8033631070a82385bf0976bc325aab1091bef03",
+  "execute_plans_sha": "dbe737e0676640f1b9b2395b54fb3c0416099f8a",
+  "expires_at": "2026-09-13T10:40:22.853471Z",
+  "pair_id": "97486af4ab16b9459b3495fdae385be38a091824dfef89c8c1d443e526e3e687",
+  "pantheon_sha": "ae41705b4637110e665d2eed735afbd8307e28e6",
+  "profile": "read-only",
+  "restored_at": "2026-09-13T10:35:10.506986Z",
+  "source_mode": "reconcile-only"
+}

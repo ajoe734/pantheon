@@ -108,6 +108,6 @@ def test_runtime_action_route_injects_request_without_a_query_parameter() -> Non
     assert response.json() == {
         "deprecated": {
             "route": "/bff/runtimes/{runtime_id}/actions/{action_id}",
-            "replacement": "/bff/actions/runtime/{runtime_id}/{action_id}",
+            "replacement": "/bff/v1/commands",
         }
     }

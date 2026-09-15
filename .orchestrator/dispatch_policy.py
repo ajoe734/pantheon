@@ -17,10 +17,6 @@ rewrite.dispatch_admission, rewrite.task_machine, and task_archive are
 now required at import time, not just supervisor.py. Any isolated-copy
 test fixture that copies this file must also copy those four.
 
-OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 added a fifth: execution_authorization,
-imported so evaluate_task_delivery_admission can feed the one normalized
-execution-authorization verdict into TaskIntent (see that module's docstring).
-
 OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001 added multi_repo_registry
 and integration_receipt for multi-repository finalization admission.
 To preserve import isolation for lightweight status and bridge tooling, both
@@ -34,7 +30,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-import execution_authorization
 from common import display_name_for, normalize_agent_id, utc_now
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import task_machine as rewrite_task_machine
@@ -219,13 +214,14 @@ def is_non_default_repository_finalization_pending(
     config: Mapping[str, Any] | None,
     task: Mapping[str, Any] | None,
 ) -> bool:
-    """Return whether owner-finalization dispatch must be suppressed for unreceipted multirepo work.
+    """Return whether owner-finalization dispatch must be suppressed for an unreceipted PR delivery.
 
-    For every configured non-default registry repository, an exact review_approved delivery
-    with no current canonical integration receipt must not reserve owned_finalize_dispatch.
-    It remains visible to the existing sole auto-integrator; once that existing receipt is
-    current, normal owner closeout remains eligible.
-    Normal unmerged Pantheon finalization remains eligible.
+    Any exact review_approved row with a live ``review_binding`` (a PR the sole
+    auto-integrator must merge and stamp with a canonical integration receipt,
+    Pantheon included) must not reserve owned_finalize_dispatch until that exact
+    receipt is current. It remains visible to the auto-integrator meanwhile; once
+    the receipt lands, normal owner closeout is eligible.
+    A row with no ``review_binding`` at all (a non-PR closeout) is never receipt-gated.
     Unknown or misconfigured repositories fail closed (treated as pending / not reconciled).
     """
     if not isinstance(task, Mapping):
@@ -238,11 +234,11 @@ def is_non_default_repository_finalization_pending(
     import multi_repo_registry
 
     try:
-        repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, task)
+        multi_repo_registry.validate_task_repository_scope(config_dict, task)
     except (ValueError, TypeError, AttributeError):
         return True
 
-    if repo_id == "pantheon":
+    if not isinstance(task.get("review_binding"), Mapping):
         return False
 
     return not task_has_current_canonical_integration_receipt(config_dict, task)
@@ -506,7 +502,6 @@ def evaluate_task_delivery_admission(
         human_ops_hold=bool(
             (
                 str(task.get("waiting_for") or "").strip()
-                and not execution_authorization.is_execution_authorization_hold(task)
             )
             or (
                 task.get("review_decision_intent") not in (None, {}, [])
@@ -518,9 +513,6 @@ def evaluate_task_delivery_admission(
         ),
         review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
         execution_resources=tuple(task_execution_resources(task)),
-        execution_authorized=execution_authorization.is_execution_authorized(
-            task, now=datetime.now(timezone.utc)
-        ),
     )
     decision = rewrite_dispatch_admission.evaluate_dispatch_intent(
         task_intent,

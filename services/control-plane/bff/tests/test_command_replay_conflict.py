@@ -67,28 +67,49 @@ def _pause_execution_payload(reason: str = "BFF-CONSOL-021 replay proof") -> dic
     }
 
 
-def test_legacy_action_dual_writes_action_and_command_receipts() -> None:
+def _strategy_action_payload(
+    reason: str,
+    *,
+    strategy_id: str = "stg-bff-021",
+    action_id: str = "submit_review",
+) -> dict:
+    """Build the same StrategyAction command envelope the retired
+    `/bff/actions/{type}/{id}/{action}` adapter route used to construct
+    before forwarding into the shared `/bff/v1/commands` admission path.
+    """
+    audit_event = f"strategy.{action_id}"
+    return {
+        "command": "StrategyAction",
+        "target": {"type": "Strategy", "id": strategy_id},
+        "action": action_id,
+        "params": {
+            "reason": reason,
+            "action_id": action_id,
+            "actionId": action_id,
+            "entity_type": "strategy",
+            "entityType": "strategy",
+            "entity_id": strategy_id,
+            "entityId": strategy_id,
+            "audit_event": audit_event,
+        },
+        "audit_context": {"reason": reason},
+    }
+
+
+def test_strategy_action_command_writes_command_receipt() -> None:
     with _isolated_command_client() as client:
         response = client.post(
-            "/bff/actions/strategy/stg-bff-021/submit_review",
+            "/bff/v1/commands",
             headers={**HEADERS, "Idempotency-Key": "bff-consol-021-action-dual"},
-            json={"reason": "submit strategy review through dual-write proof"},
+            json=_strategy_action_payload("submit strategy review through dual-write proof"),
         )
 
         assert response.status_code == 202, response.text
-        assert response.headers["Deprecation"] == "true"
-        assert response.headers["Sunset"] == "Mon, 15 Jun 2026 00:00:00 GMT"
-        assert response.headers["X-Pantheon-Deprecated-Route"] == "/bff/actions/*"
-        assert "/bff/v1/commands" in response.headers["Link"]
+        assert "Deprecation" not in response.headers
         body = response.json()
         action_receipt_id = _receipt_id(body)
         assert body["data"]["command"] == "StrategyAction"
-        assert body["data"]["deprecated"] is True
-        assert body["data"]["deprecation"]["deprecated_since"] == "2026-05-14"
-        assert body["data"]["deprecation"]["replacement"] == "/bff/v1/commands"
-        assert body["data"]["receipt"]["deprecated"] is True
-        assert body["meta"]["deprecated"] is True
-        assert body["meta"]["deprecation"]["sunset"] == "2026-06-15"
+        assert "deprecated" not in body["data"]
         assert body["meta"]["durable"] is True
         assert body["meta"]["idempotency"]["idempotencyKey"] == "bff-consol-021-action-dual"
         assert body["meta"]["idempotency"]["replayed"] is False
@@ -103,48 +124,42 @@ def test_legacy_action_dual_writes_action_and_command_receipts() -> None:
 
         foundation = command_receipt["foundation"]
         assert foundation["admission_route"] == "POST /bff/v1/commands"
-        assert foundation["source_route"] == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
         assert foundation["idempotency_record"]["idempotency_key"] == "bff-consol-021-action-dual"
-        assert foundation["command_envelope"]["payload"]["source_route"] == (
-            "POST /bff/actions/{entityType}/{entityId}/{actionId}"
-        )
         assert command_receipt["audit"]["foundation"]["audit_action"]["metadata"]["route"] == (
             "POST /bff/v1/commands"
         )
 
 
-def test_legacy_action_idempotency_replay_returns_same_receipt() -> None:
+def test_strategy_action_idempotency_replay_returns_same_receipt() -> None:
     with _isolated_command_client() as client:
         headers = {**HEADERS, "Idempotency-Key": "bff-consol-021-action-replay"}
-        payload = {"reason": "same legacy action body replays"}
+        payload = _strategy_action_payload("same strategy action body replays")
 
-        first = client.post("/bff/actions/strategy/stg-bff-021/submit_review", headers=headers, json=payload)
-        second = client.post("/bff/actions/strategy/stg-bff-021/submit_review", headers=headers, json=payload)
+        first = client.post("/bff/v1/commands", headers=headers, json=payload)
+        second = client.post("/bff/v1/commands", headers=headers, json=payload)
 
         assert first.status_code == 202, first.text
         assert second.status_code == 202, second.text
-        assert second.headers["Deprecation"] == "true"
+        assert "Deprecation" not in second.headers
         assert _receipt_id(second.json()) == _receipt_id(first.json())
-        assert second.json()["data"]["deprecated"] is True
-        assert second.json()["data"]["receipt"]["deprecated"] is True
-        assert second.json()["meta"]["deprecation"]["replacement"] == "/bff/v1/commands"
+        assert "deprecated" not in second.json()["data"]
         assert second.json()["meta"]["idempotency"]["replayed"] is True
         assert len(bff_main.command_store._get_all_commands()) == 1
 
 
-def test_legacy_action_idempotency_conflict_returns_409() -> None:
+def test_strategy_action_idempotency_conflict_returns_409() -> None:
     with _isolated_command_client() as client:
         headers = {**HEADERS, "Idempotency-Key": "bff-consol-021-action-conflict"}
 
         first = client.post(
-            "/bff/actions/strategy/stg-bff-021/submit_review",
+            "/bff/v1/commands",
             headers=headers,
-            json={"reason": "initial action body"},
+            json=_strategy_action_payload("initial action body"),
         )
         conflict = client.post(
-            "/bff/actions/strategy/stg-bff-021/submit_review",
+            "/bff/v1/commands",
             headers=headers,
-            json={"reason": "changed action body"},
+            json=_strategy_action_payload("changed action body"),
         )
 
         assert first.status_code == 202, first.text

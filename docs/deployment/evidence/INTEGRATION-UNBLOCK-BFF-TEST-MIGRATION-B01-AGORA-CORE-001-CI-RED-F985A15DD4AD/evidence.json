@@ -1,0 +1,100 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-CI-RED-F985A15DD4AD",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "1a46c158c210d82ef93f43ed5db24087f417512f",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-CI-RED-F985A15DD4AD/evidence.json"
+  ],
+  "source_task": "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/5760",
+  "original_head": "5ac94fb9151c3f6dbb21a51924a074817ff28fb3",
+  "original_base": "d2defcc36580c76a36a6c95f9d246cdc56a6beb5",
+  "root_cause": {
+    "workflow": "Persona Owner Contract",
+    "check": "Persona provisioning owner contracts",
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/34474829564/attempts/1",
+    "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_lease_audit_atomicity_controlled_barrier_forced_interleaving_regression",
+    "failure": "OSError: [Errno 39] Directory not empty: compensation/lease-controller/.git/info during TemporaryDirectory cleanup",
+    "result": "1 failed, 1247 passed, 1 skipped, 9 subtests passed; exit 1",
+    "mechanism": "Fixture Git automatic maintenance can leave a detached writer alive during strict temporary-directory cleanup. The old PR head does not contain the merged fixture maintenance repair.",
+    "fix_pr": "https://github.com/ajoe734/pantheon/pull/5773",
+    "fix_commit": "a4e7171cc8140ca2790cb4d148a3dcae8ce1ef06",
+    "fix_merge": "80e283038b131369ab357bc20687631ee67e3613",
+    "fix_evidence": "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-B01-AGORA-CORE-001-FIXTURE-GIT-CLEANUP-001/evidence.json",
+    "integrator_disposition": "No auto_integrator.py change needed: rejecting a substantive failed CI check is correct."
+  },
+  "review_gate_observation": {
+    "canonical_source_status": "review_approved",
+    "github_context": "Pantheon canonical review gate",
+    "github_state": "failure",
+    "proof_tag_lookup": "GET git/ref/tags/pantheon-review/approve/5ac94fb9151c3f6dbb21a51924a074817ff28fb3 returned HTTP 404",
+    "required_followup": "The source owner and reviewer must renew the exact-head governed handoff and approval after the PR refresh. This unblock task does not manufacture approval proof or use the old approval for a new head."
+  },
+  "pr_refresh": {
+    "command": "gh api --method PUT repos/ajoe734/pantheon/pulls/5760/update-branch -f expected_head_sha=5ac94fb9151c3f6dbb21a51924a074817ff28fb3",
+    "exit_code": 0,
+    "head_sha": "16fc8756cc97d54e93ced1b1a6cc7971da8863f5",
+    "parents": [
+      "5ac94fb9151c3f6dbb21a51924a074817ff28fb3",
+      "1a46c158c210d82ef93f43ed5db24087f417512f"
+    ],
+    "method": "Merge current dev into original PR using expected-head compare-and-swap; no force push",
+    "auto_merge_request": null,
+    "original_scope_unchanged": "All 17 B01 source paths and its evidence manifest are byte-identical to the original reviewed head. The diff against updated dev still contains exactly those 18 paths."
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 1,
+      "result": "Initial probe found no pytest dependency interpreter; resolved with the existing isolated dependency venv."
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/pantheon-fixture-git-cleanup-deps/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable install verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "result": "20 passed in 36.98s",
+      "tested_source": "1a46c158c210d82ef93f43ed5db24087f417512f",
+      "limitation": "Tests ran in this task worktree; fixture source is byte-identical at refreshed B01 head. This is not a rerun of the 17 B01 tests."
+    },
+    {
+      "command": "git merge-base --is-ancestor 80e283038b131369ab357bc20687631ee67e3613 16fc8756cc97d54e93ced1b1a6cc7971da8863f5",
+      "exit_code": 0,
+      "result": "Refreshed PR contains the merged fixture repair."
+    },
+    {
+      "command": "git diff --exit-code 5ac94fb9151c3f6dbb21a51924a074817ff28fb3 16fc8756cc97d54e93ced1b1a6cc7971da8863f5 -- <the source task's 18 exact declared artifacts>",
+      "exit_code": 0,
+      "result": "Every source-task artifact preserved byte-for-byte. Exact paths are listed by the source task manifest and by git diff --name-only 1a46c158c210d82ef93f43ed5db24087f417512f...16fc8756cc97d54e93ced1b1a6cc7971da8863f5."
+    },
+    {
+      "command": "git diff --exit-code 1a46c158c210d82ef93f43ed5db24087f417512f 16fc8756cc97d54e93ced1b1a6cc7971da8863f5 -- scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "result": "Locally tested fixture equals refreshed source-PR fixture."
+    }
+  ],
+  "ci_readback_contract": {
+    "head_sha": "16fc8756cc97d54e93ced1b1a6cc7971da8863f5",
+    "persona_run": "https://github.com/ajoe734/pantheon/actions/runs/34493059474",
+    "branch_run": "https://github.com/ajoe734/pantheon/actions/runs/34493059470",
+    "requirement": "Before handoff, collect terminal output and successful exit status for these exact-head runs and record results in the canonical handoff. Reviewer must independently read their head SHA and conclusions. Run URLs alone are not a passing claim.",
+    "old_head_diagnostic_rerun": "https://github.com/ajoe734/pantheon/actions/runs/34474829564/attempts/2",
+    "old_head_rerun_limitation": "This diagnostic rerun retains the unrepaired old head and cannot establish acceptance of the refreshed head. Its terminal result must also be collected before handoff."
+  },
+  "source_review_followup": {
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "required_actions": [
+      "Owner or assigned reviewer reopens BFF-TEST-MIGRATION-B01-AGORA-CORE-001 to invalidate the old review binding.",
+      "Owner admits PR #5760 head 16fc8756cc97d54e93ced1b1a6cc7971da8863f5 with its already-committed declared evidence manifest; refresh again first if dev has advanced.",
+      "Claude independently reviews the fresh binding through the governed approve command, which must publish the legitimate approval proof and gate status.",
+      "Only the supervisor integrator merges the newly approved exact head; original owner finalizes the source task afterward."
+    ]
+  },
+  "delivery_status": "Original PR refreshed with merged root-cause fix; independent source-task review and supervisor integration remain required. This evidence PR does not close or approve the source task."
+}

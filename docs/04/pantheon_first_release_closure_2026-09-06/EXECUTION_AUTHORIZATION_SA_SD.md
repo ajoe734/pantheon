@@ -1,5 +1,11 @@
 # SA/SD — privileged task intake separated from execution authorization
 
+> Historical design, superseded on 2026-09-11 by operator-authorized
+> [development tooling MFA retirement](../../operations/development-tooling-mfa-retirement.md).
+> The text below is provenance, not a current instruction to require or recreate
+> an issuer, execution grant, or authorization preflight. Existing task holds
+> must not be automatically released. Product authentication remains separate.
+
 2026-09-06. Operator explicitly approved: admit privileged tasks as non-executable pending-authorization records first; require genuine MFA before real execution. This supersedes only the former MFA-at-intake rule. It does not grant any MFA assertion, hosted action, product approval, real-capital operation or development-workflow bypass.
 
 Task: OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001. Implementation: existing supervisor/auto-worker, Claude; independent exact-head review: Codex2. Baseline: protected pantheon/dev 55cd327b9200648e5d42360907dedc17ddf6f5fc; current qualified supervisor runtime dd3f0563a6a3f9ca2976a354de29221d91665a73. Re-pin current dev at implementation/delivery. Keep dirty shared-root changes and existing workers untouched.
@@ -65,4 +71,3 @@ Input: /tmp/pantheon-dispatch-dedup-20260906.0T4kBq/hosted-packet.pending-genuin
 They must retain hosted work class, existing pantheon-dev resource, real implementation/reviewer identities and explicit pending-authorization state after materialization. Record processed/admitted receipt, canonical readback and the zero-launch reason; do not invent mfaVerified or authorize execution to make the dashboard green. Authenticated Management/Agora/OpenClaw, all12 loops, exact FE/BFF artifact release and rollback remain entirely unaccepted until their later genuine execution and evidence.
 
 This planning/implementation task is not complete merely when queued or when source tests pass. No source/runtime/gate defect is hidden behind a perpetual manual owner fence. If live MFA issuer setup remains unavailable, label that later execution prerequisite truthfully; it must not prevent storing pending tasks.
-

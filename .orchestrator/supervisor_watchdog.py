@@ -27,6 +27,8 @@ from common import (
     STATUS_COMMAND_SHA_ENV,
     LockContentionError,
     config_path,
+    cmdline_is_worker_runner,
+    worker_runner_script,
     durable_write_bytes,
     load_config,
     repo_root_for_config,
@@ -483,17 +485,6 @@ def active_worker_count(runtime_state: dict[str, Any]) -> int:
     return sum(1 for worker in workers.values() if str(worker.get("status") or "") in ACTIVE_WORKER_STATUSES)
 
 
-def cmdline_is_worker_runner(parts: list[str]) -> bool:
-    """Match only the one-per-worker wrapper, never CLI children or prompts."""
-    for part in parts[:4]:
-        if not part.startswith(("/", ".")) or any(character.isspace() for character in part):
-            continue
-        path = Path(part)
-        if path.name == "worker_runner.py" and ".orchestrator" in path.parts:
-            return True
-    return False
-
-
 def worker_runner_process_identity(proc_dir: Path) -> tuple[int, int]:
     """Return a PID plus Linux start-time identity to reject PID reuse."""
     pid = int(proc_dir.name)
@@ -553,21 +544,21 @@ def scan_worker_runner_roots(proc_root: Path = Path("/proc")) -> tuple[set[str],
             continue
         if not raw_cmdline:
             continue
-        parts = [part.decode("utf-8", errors="ignore") for part in raw_cmdline.split(b"\x00") if part]
-        if not cmdline_is_worker_runner(parts):
+        parts = [part.decode("utf-8", errors="ignore")
+                 for part in raw_cmdline.removesuffix(b"\x00").split(b"\x00")]
+        script = worker_runner_script(parts)
+        if script is None:
             continue
         # Prefer the runner script's own checkout: a worker runs inside a task
         # worktree lease, so its cwd is not the control-plane root.
-        runner_root: str | None = None
-        for part in parts[:4]:
-            path = Path(part)
-            if path.name == "worker_runner.py" and ".orchestrator" in path.parts:
-                runner_root = str(path.resolve().parent.parent)
-                break
-        if runner_root is None:
-            runner_root, _error = process_working_directory(int(proc_dir.name), proc_root=proc_root)
-        if runner_root:
-            roots.add(runner_root)
+        script_path = Path(script)
+        if not script_path.is_absolute():
+            cwd, error = process_working_directory(int(proc_dir.name), proc_root=proc_root)
+            if cwd is None:
+                errors.append(f"pid={proc_dir.name}:{error}")
+                continue
+            script_path = Path(cwd) / script_path
+        roots.add(str(script_path.resolve().parent.parent))
 
     return roots, (";".join(errors[:8]) if errors else None)
 
@@ -647,7 +638,8 @@ def scan_live_worker_runner_identities(
             continue
         if not raw_cmdline:
             continue
-        parts = [part.decode("utf-8", errors="ignore") for part in raw_cmdline.split(b"\x00") if part]
+        parts = [part.decode("utf-8", errors="ignore")
+                 for part in raw_cmdline.removesuffix(b"\x00").split(b"\x00")]
         if not cmdline_is_worker_runner(parts):
             continue
         try:

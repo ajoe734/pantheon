@@ -39,10 +39,26 @@ _TWO_MAN_SIGNER_FIELDS = {
     "signer_operator_id",
     "operatorId",
     "operator_id",
+    "first_operator_id",
+    "firstOperatorId",
+    "primary_operator_id",
+    "primaryOperatorId",
+    "second_operator_id",
+    "secondOperatorId",
+    "secondOperatorSignature",
+    "second_operator_signature",
+    "signed_by",
+    "signedBy",
+    "confirmed_by",
+    "confirmedBy",
 }
-_TWO_MAN_SIGNER_LIST_FIELDS = {"signerOperatorIds", "signer_operator_ids"}
+_TWO_MAN_SIGNER_LIST_FIELDS = {
+    "signerOperatorIds",
+    "signer_operator_ids",
+    "operator_ids",
+    "operatorIds",
+}
 _V5_TWO_MAN_EVIDENCE_PRODUCER = "bff.v5.intervention.two-man-sign"
-_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 
 
 def _default_extract_identity(authorization: Optional[str] = None) -> OperatorIdentity:
@@ -204,7 +220,10 @@ def create_control_loops_router(
                 precondition_failed="submit_final_command_admission",
             )
         result = submit_final_command_admission(**kwargs)
-        return await result if inspect.isawaitable(result) else result
+        resolved = await result if inspect.isawaitable(result) else result
+        if hasattr(resolved, "model_dump"):
+            return resolved.model_dump(by_alias=True)
+        return resolved
 
     # 1-2: OODA packet management reads.
     @router.get("/bff/ooda/packets")
@@ -285,7 +304,7 @@ def create_control_loops_router(
             x_confirm_token=x_confirm_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            route=_FOUNDATION_COMMAND_ROUTE,
+            route="POST /bff/v5/interventions/{intervention_id}/remediate",
             foundation_raw_payload={**payload, "intervention_id": clean_id},
         )
 
@@ -378,6 +397,15 @@ def create_control_loops_router(
         trusted_evidence_producer: Optional[str] = None
         terminal_on_persist = False
         if action == "two-man-sign":
+            roles = set(getattr(identity, "roles", []) or [])
+            if not {"operator", "approver", "admin"}.intersection(roles):
+                raise _err(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Two-man evidence requires operator authority",
+                    "Reviewer and viewer roles cannot sign guarded command evidence",
+                    precondition_failed="role_check",
+                )
             signature_id = str(
                 payload.get("twoManSignatureId") or payload.get("two_man_signature_id") or ""
             ).strip()
