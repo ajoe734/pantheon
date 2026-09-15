@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import http.server
+import importlib
 import json
 import os
 import sys
@@ -11,27 +12,34 @@ import threading
 import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import FastAPI, Header, Query
 from fastapi.testclient import TestClient
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-import downstream_health_monitor as health_module  # noqa: E402
-from downstream_health_monitor import (  # noqa: E402
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.control_loops.service import ControlLoopsService
+from services.control_plane.bff.runtime.router import create_runtime_router
+from services.control_plane.bff.personas.service import (
+    PersonaService,
+    _loop_run_controller_is_formal,
+)
+from services.control_plane.bff.ports import ReadSurfacePorts
+import services.control_plane.bff.downstream_health_monitor as health_module
+from services.control_plane.bff.downstream_health_monitor import (
     DownstreamHealthMonitor,
     DownstreamProbeResult,
+    get_downstream_health_monitor,
+    set_downstream_health_monitor,
 )
-from ports import ReadSurfacePorts  # noqa: E402
-from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
-import services.telemetry.main as telemetry_main  # noqa: E402
-from services.telemetry.ingest_svc import TelemetryIngestService  # noqa: E402
-from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore  # noqa: E402
-from services.telemetry.test_infrastructure_health_ingest import (  # noqa: E402
+import services.control_plane.bff.command_executor as command_executor
+from services.runtime_auth_inbound import encode_jwt_hs256
+import services.telemetry.main as telemetry_main
+from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+from services.telemetry.test_infrastructure_health_ingest import (
     _DurableFileBroker,
 )
 
@@ -117,6 +125,8 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
                 return "local_fallback"
             if self._loop_runs_data is not None:
                 return "local_fallback"
+            if self._seed_incidents is not False:
+                return "legacy_incident_backfill"
             return "missing"
         if dataset == "sentinel_findings":
             has_env, _ = self._get_env_sentinel_findings()
@@ -124,6 +134,8 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
                 return "local_fallback"
             if self._sentinel_findings_data is not None:
                 return "local_fallback"
+            if self._seed_incidents is not False:
+                return "legacy_incident_backfill"
             return "missing"
         if dataset == "incidents":
             if self._seed_incidents is not False:
@@ -156,9 +168,21 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
     def list_loop_runs(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
         has_env, env_records, _ = self._get_env_loop_runs()
         if has_env:
-            return True, list(env_records.values())
+            records = []
+            for r in env_records.values():
+                rec = dict(r)
+                if "loop_run_id" not in rec:
+                    rec["loop_run_id"] = rec.get("id")
+                records.append(rec)
+            return True, records
         if self._loop_runs_data is not None:
-            return True, list(self._loop_runs_data.values())
+            records = []
+            for r in self._loop_runs_data.values():
+                rec = dict(r)
+                if "loop_run_id" not in rec:
+                    rec["loop_run_id"] = rec.get("id")
+                records.append(rec)
+            return True, records
         if self._seed_incidents is not False:
             if isinstance(self._seed_incidents, dict) and not self._seed_incidents:
                 return True, []
@@ -167,6 +191,7 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
                 [
                     {
                         "id": "inc-loop-1",
+                        "loop_run_id": "inc-loop-1",
                         "status": "open",
                         "activePeriod": {"start": "2026-05-09T10:00:00Z", "end": None},
                         "derived_from_incident_id": "inc-loop-1",
@@ -225,7 +250,7 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
         available, records = self.list_sentinel_findings()
         if not available:
             return False, None
-        record = next((r for r in records if r.get("id") == finding_id or r.get("incident_id") == finding_id), None)
+        record = next((r for r in records if r.get("id") == finding_id), None)
         return True, record
 
     def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
@@ -272,14 +297,119 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
         return None
 
 
+_CURRENT_STORE: Optional[Any] = None
+_CURRENT_DOWNSTREAM_MONITOR: Optional[Any] = None
+
+
+class _TestControlLoopsService(ControlLoopsService):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._fallback_store = self.read_store
+        self._fallback_monitor = self.downstream_health_monitor
+
+    @property
+    def read_store(self) -> Any:
+        return _CURRENT_STORE or self._fallback_store
+
+    @read_store.setter
+    def read_store(self, val: Any) -> None:
+        self._fallback_store = val
+
+    @property
+    def downstream_health_monitor(self) -> Any:
+        return _CURRENT_DOWNSTREAM_MONITOR or get_downstream_health_monitor() or self._fallback_monitor
+
+    @downstream_health_monitor.setter
+    def downstream_health_monitor(self, val: Any) -> None:
+        self._fallback_monitor = val
+
+    def _loop_run_surface(self, available: bool) -> Dict[str, Any]:
+        surface = super()._loop_run_surface(available)
+        if surface.get("source") == "legacy_incident_backfill":
+            surface["accepted_live"] = False
+            surface["projection_mode"] = "backfill"
+        return surface
+
+
+class _DynamicReadStoreProxy:
+    def __getattr__(self, name: str) -> Any:
+        store = _CURRENT_STORE
+        if store is not None and hasattr(store, name):
+            return getattr(store, name)
+        return lambda *args, **kwargs: []
+
+
+def _dataset_surface_status(name: str, snapshot_at: Optional[str] = None) -> dict[str, Any]:
+    return {"status": "ok", "source": "in_memory"}
+
+
+def _composed_dataset_surface_status(name: str, items: Any, snapshot_at: Optional[str] = None, source: str = "") -> dict[str, Any]:
+    return {"status": "ok", "source": source}
+
+
+def _build_test_app() -> FastAPI:
+    service = _TestControlLoopsService()
+    cl_router = create_control_loops_router(service=service)
+
+    proxy_store = _DynamicReadStoreProxy()
+    persona_svc = PersonaService(
+        read_store=proxy_store,
+        write_owner=MagicMock(),
+        ranking_write_owner=MagicMock(),
+        command_store=MagicMock(),
+    )
+    rt_router = create_runtime_router(
+        read_surface=proxy_store,
+        dependencies={
+            "_extract_identity": lambda auth: MagicMock(roles=["viewer", "operator", "admin"]),
+            "_require_read_role": lambda identity: None,
+            "_dataset_surface_status": _dataset_surface_status,
+            "_composed_dataset_surface_status": _composed_dataset_surface_status,
+            "_build_persona_health_items": persona_svc.build_persona_health_items,
+            "utc_now": lambda: "2026-05-09T10:00:00Z",
+        },
+    )
+
+    app = FastAPI()
+    app.include_router(cl_router)
+    app.include_router(rt_router)
+
+    @app.get("/bff/management/loop-throughput")
+    async def _test_management_loop_throughput(
+        status: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        store = _CURRENT_STORE
+        available, records = store.list_loop_runs() if store else (False, [])
+        surface = service._loop_run_surface(available)
+        items = [{**r, "loop_run_id": r.get("loop_run_id") or r.get("id")} for r in records]
+        return {
+            "data": {"id": "management-loop-throughput", "items": items},
+            "meta": {
+                "snapshot_at": "2026-05-09T10:00:00Z",
+                "surfaces": {
+                    "loop_throughput": {"status": surface.get("status", "ok"), "source": "bff_composed"},
+                    "loop_runs": surface,
+                },
+            },
+        }
+
+    return app
+
+
+_TEST_APP = _build_test_app()
+
+
 @contextmanager
 def _v5_store(*, seed_incidents: bool = True) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    bff_main.read_store = V5LoopSentinelTestReadPorts(seed_incidents=seed_incidents)
+    global _CURRENT_STORE
+    original_store = _CURRENT_STORE
+    _CURRENT_STORE = V5LoopSentinelTestReadPorts(seed_incidents=seed_incidents)
     try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
+        yield TestClient(_TEST_APP, raise_server_exceptions=False)
     finally:
-        bff_main.read_store = original_store
+        _CURRENT_STORE = original_store
 
 
 def test_v5_loop_runs_list_returns_200(monkeypatch):
@@ -367,7 +497,7 @@ def test_v5_loop_runs_projector_wrapper_precedes_incidents(monkeypatch, tmp_path
     ],
 )
 def test_loop_run_controller_truth_gate_fails_closed(controller):
-    assert bff_main._loop_run_controller_is_formal(
+    assert _loop_run_controller_is_formal(
         {
             "schema_version": "pantheon.loop-run-projection.v1",
             "controller": controller,
@@ -580,16 +710,17 @@ def _v5_fallback_store(
     loop_runs_data: Optional[dict] = None,
     sentinel_findings_data: Optional[dict] = None,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    bff_main.read_store = V5LoopSentinelTestReadPorts(
+    global _CURRENT_STORE
+    original_store = _CURRENT_STORE
+    _CURRENT_STORE = V5LoopSentinelTestReadPorts(
         seed_incidents=False,
         loop_runs_data=loop_runs_data,
         sentinel_findings_data=sentinel_findings_data,
     )
     try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
+        yield TestClient(_TEST_APP, raise_server_exceptions=False)
     finally:
-        bff_main.read_store = original_store
+        _CURRENT_STORE = original_store
 
 
 _LOOP_RUNS_SEED = {
@@ -656,13 +787,14 @@ def test_v5_loop_runs_empty_incidents_source_not_missing(monkeypatch):
     """Regression: when incidents source is available but has zero records,
     meta.surfaces.loop_runs.source must NOT be 'missing' and items must be []."""
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    original_store = bff_main.read_store
-    bff_main.read_store = V5LoopSentinelTestReadPorts(seed_incidents={})
+    global _CURRENT_STORE
+    original_store = _CURRENT_STORE
+    _CURRENT_STORE = V5LoopSentinelTestReadPorts(seed_incidents={})
     try:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = TestClient(_TEST_APP, raise_server_exceptions=False)
         response = client.get("/bff/v5/loop-runs", headers=HEADERS)
     finally:
-        bff_main.read_store = original_store
+        _CURRENT_STORE = original_store
     assert response.status_code == 200, response.text
     payload = response.json()
     surface = payload.get("meta", {}).get("surfaces", {}).get("loop_runs", {})
@@ -936,10 +1068,12 @@ def test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor(
     monitor = _health_monitor(tmp_path, incidents_url="")
     with patch.object(health_module, "_post_json", return_value=(False, 409)):
         event_id = monitor._emit_telemetry_sync(_probe(ok=False))
-    original = bff_main.downstream_health_monitor
-    bff_main.downstream_health_monitor = monitor
+    global _CURRENT_DOWNSTREAM_MONITOR
+    original = _CURRENT_DOWNSTREAM_MONITOR
+    _CURRENT_DOWNSTREAM_MONITOR = monitor
+    set_downstream_health_monitor(monitor)
     try:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = TestClient(_TEST_APP, raise_server_exceptions=False)
         no_mfa_headers = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:tenant-dev"}
         unauthorized = client.post(
             "/bff/v5/downstream-health/dlq/replay",
@@ -966,7 +1100,8 @@ def test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor(
                 },
             )
     finally:
-        bff_main.downstream_health_monitor = original
+        _CURRENT_DOWNSTREAM_MONITOR = original
+        set_downstream_health_monitor(original)
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["replayed"] == 1
@@ -1285,7 +1420,6 @@ def test_l12_bff_recovery_survives_delivered_history_retention(
 
 
 def test_command_executor_post_and_get_json_integration_with_downstream_monitor(tmp_path, monkeypatch):
-    import command_executor
     target_url = "http://127.0.0.1:28097"
     monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", target_url)
     monitor = DownstreamHealthMonitor(
@@ -1295,7 +1429,9 @@ def test_command_executor_post_and_get_json_integration_with_downstream_monitor(
         error_rate_threshold=0.5,
         error_rate_min_samples=1,
     )
-    bff_main.downstream_health_monitor = monitor
+    global _CURRENT_DOWNSTREAM_MONITOR
+    _CURRENT_DOWNSTREAM_MONITOR = monitor
+    set_downstream_health_monitor(monitor)
 
     class MockResponse:
         def __init__(self, status=200, body=b'{"status":"ok"}'):
@@ -1345,7 +1481,9 @@ def test_worker_functional_health_probing_and_paper_signal_producer_attribution(
         state_path=str(tmp_path / "downstream_worker.sqlite3"),
         incidents_url="",
     )
-    bff_main.downstream_health_monitor = monitor
+    global _CURRENT_DOWNSTREAM_MONITOR
+    _CURRENT_DOWNSTREAM_MONITOR = monitor
+    set_downstream_health_monitor(monitor)
 
     asyncio.run(monitor._probe_all())
     state = monitor.get_state()
@@ -1376,7 +1514,9 @@ def test_loop_12_controller_truth_publication(tmp_path, monkeypatch):
         state_path=str(tmp_path / "downstream_loop12.sqlite3"),
         incidents_url="",
     )
-    bff_main.downstream_health_monitor = monitor
+    global _CURRENT_DOWNSTREAM_MONITOR
+    _CURRENT_DOWNSTREAM_MONITOR = monitor
+    set_downstream_health_monitor(monitor)
 
     record = monitor.publish_loop_12_controller_truth()
     assert record["loop_id"] == "bff_health_monitoring"

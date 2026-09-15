@@ -1,0 +1,42 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001",
+  "base_ref": "dev@122b0e0bb",
+  "decision_ref": "BFF-COMMAND-STORE-CONTRACT-DECISION-001",
+  "scope": "V2 U3 command admission/confirmation/audit single owner: converge command admission, confirmation token lifecycle, and audit projection onto existing CommandAdapterService and CommandStore. Migrate normalization, policy, preconditions, foundation context, and receipt projection out of main.py into command_adapters/. Implement single governance projector in governance/command_audit.py projecting persistent CommandStore records. Fix multiprocess and multi-instance coherence in CommandStore via sidecar flock (commands.jsonl.lock), transactional fresh reads, and re-entrancy tracking. Eliminate fake accepted receipts and in-memory bypasses in agora/service, personas/service, governance/service, tools_integrations/service, and control_loops/router.",
+  "source_hashes": {
+    "services/control-plane/bff/action_catalog.py": "535040faa50124df858a4e6024b8aec6b264cb8e1f0b9acd82d686177d541482",
+    "services/control-plane/bff/agora/identity/router.py": "5861a717ba95abdb469526a22b066c302d44ea62c4c35aa9ef2f456a74d814e1",
+    "services/control-plane/bff/agora/service.py": "a85fadde5ca5ca10397bc497f7ef7950b3e7bf2d15b5cce9938dbac056ecc47d",
+    "services/control-plane/bff/command_adapters/contracts.py": "36865490c25b04d9231a8a0fac9d8ff05a968e1e1e26f662e960d8240f461e0e",
+    "services/control-plane/bff/command_adapters/preconditions.py": "b1367a095b704b7759b1be49340ae149d891e0ef4336ef8adcec893859a783a6",
+    "services/control-plane/bff/command_adapters/receipts.py": "0dd2d3c939bdf92fc9a4950bc988878b8d7503c31079a1de77dfd4da81f2d0d3",
+    "services/control-plane/bff/command_adapters/router.py": "60507bee3803bddf3917399119f77051240badc35dba2848595768cff343ff31",
+    "services/control-plane/bff/command_adapters/service.py": "e4afff65398ae5afe4066b70dd7393c58a4eee5238af57e386c09e66ac09da83",
+    "services/control-plane/bff/command_queue.py": "9ad2123761ae6a551b69a8a5717408ebd05023efd441e8875a765f2cfe535eba",
+    "services/control-plane/bff/control_loops/router.py": "94002eb4b6af0c51640c7f9763dd1b0e713168115b1bd1841c5f3a7be5558724",
+    "services/control-plane/bff/governance/command_audit.py": "d4ec3d815c4637040790782348095327cbb42bab559cafd6cecb8453ce7a748b",
+    "services/control-plane/bff/governance/service.py": "3b224af7fe68ef98b208b043ec9a647118425df207f6e0f6b5bf4e5922c01ad4",
+    "services/control-plane/bff/incidents/router.py": "668005c9d5feca3d51d8245cb3f94bd19cbfa4106fc80a9f3d18d5aa1a1808f1",
+    "services/control-plane/bff/main.py": "f285d2b11f37cde412cbae3b4545dd5235ec615832daa4199bc78d1656399d11",
+    "services/control-plane/bff/personas/service.py": "d4bfa4adad640e5bdcf1d2c9fae46c60915d7748517b7826cbf13182b5727291",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py": "32e7f89c1eef1c78263248a19617fb6abc6b968efd5111ddc354189461690b79",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "54cf3d52b28856331151fa7708a8f15cc48adf73e3800351c5b0a926ffc54a59",
+    "services/control-plane/bff/tests/test_command_admission_single_owner.py": "fe3dc402df63771a81f1124060e6729eb083c2f2e115cc77c8318f356485b775",
+    "services/control-plane/bff/tests/test_command_audit_scope.py": "ab9f52dd122dcca382a490fa1e16b0e93ba58cabc5dd25259eaad0ca210055cb",
+    "services/control-plane/bff/tests/test_command_store_multiprocess.py": "11693370d233aa7298e2e914a226e56ad8d9001ee3c8131a2c624ca414b07363",
+    "services/control-plane/bff/tools_integrations/service.py": "ecd172b31d6b83ad9ce53315909a1a9e82a12919bb211ebd7c75f8c03a067cbe"
+  },
+  "verification": [
+    {
+      "command": "/tmp/ops-tj-fence-venv/bin/pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_admission_single_owner.py services/control-plane/bff/tests/test_command_audit_scope.py services/control-plane/bff/tests/test_command_store_multiprocess.py",
+      "exit_code": 0,
+      "result": "93 passed in 40.43s"
+    },
+    {
+      "command": "/tmp/ops-tj-fence-venv/bin/pytest services/control-plane/bff/tests/test_command_adapters_router.py -k test_zero_reverse_main_imports",
+      "exit_code": 0,
+      "result": "1 passed"
+    }
+  ]
+}
