@@ -8943,17 +8943,6 @@ def _bff_error(
 
 
 # --- _deprecation_constants ---
-_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
-_FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
-_CANONICAL_ACTIONS_ROUTE = "POST /bff/actions/{type}/{id}/{action}"
-_ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
-_ACTIONS_DEPRECATION_SINCE = "2026-05-14"
-_ACTIONS_SUNSET_DATE = "2026-06-15"
-_ACTIONS_SUNSET_HTTP_DATE = "Mon, 15 Jun 2026 00:00:00 GMT"
-_ACTIONS_DEPRECATION_MESSAGE = (
-    "/bff/actions/* is deprecated; submit the equivalent command envelope to "
-    "/bff/v1/commands."
-)
 _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
 

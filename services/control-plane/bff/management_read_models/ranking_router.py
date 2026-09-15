@@ -498,7 +498,7 @@ def create_rankings_long_tail_router(
         """BFF: ranking formula action — routes through command/precondition machinery."""
         return deprecated_bff_path_response(
             route="/bff/ranking/formulas/{formula_id}/actions/{action_id}",
-            replacement="/bff/actions/rankingFormula/{formula_id}/{action_id}",
+            replacement="/bff/v1/commands",
         )
 
 
