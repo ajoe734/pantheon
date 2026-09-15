@@ -25,6 +25,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
@@ -38,6 +40,19 @@ from test_management_nl_assistant_provider import (  # noqa: E402
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
 
 
 # ---------------------------------------------------------------------------

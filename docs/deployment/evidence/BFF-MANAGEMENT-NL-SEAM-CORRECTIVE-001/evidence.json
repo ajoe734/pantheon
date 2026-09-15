@@ -21,7 +21,6 @@
   },
   "changed_files": [
     "services/control-plane/bff/main.py",
-    "services/control-plane/bff/conftest.py",
     "docker-compose.yml",
     "services/control-plane/bff/tests/test_management_nl_single_owner.py",
     "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
@@ -39,19 +38,18 @@
   ],
   "document_proof": {
     "services/control-plane/bff/main.py": {"sha256": "6a313e4d6ae48c09a41c6b9f87af8acd5c045d304f063fd71786d3952becf6e5", "bytes": 855972},
-    "services/control-plane/bff/conftest.py": {"sha256": "e1c7faa71c1882d041749d30c205f63d49abdeb22f5e292d15fd0c1efc2e2ca1", "bytes": 2602},
     "services/control-plane/bff/assistant/management_contracts.py": {"sha256": "1474b80646d053ece6b471afb34c14c07a988030fee5e6738dedac5759126019", "bytes": 2399},
     "services/control-plane/bff/assistant/management_service.py": {"sha256": "29221033d35b50b50bfca70cbbb589893a622f785247c21844655513cdcdfbb8", "bytes": 6299},
-    "services/control-plane/bff/tests/test_management_nl_single_owner.py": {"sha256": "6a6f79deb983ce28faeec40d326ec677a6e8e4a0d6de4e6fa066695de7377fb7", "bytes": 10418},
-    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py": {"sha256": "94a8ad77ba845783161f24e511288a429cb30a2bf68206338a05d565b543c0b9", "bytes": 27606},
-    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py": {"sha256": "7a5606d1570bdd927df8035a6f8f119ef584a237b1b42cd65fcda71284426314", "bytes": 7129},
-    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {"sha256": "9a31e8ef14241173c8e506ed6acf5188df371de9a22afaa91d3c7b7390d6a1ff", "bytes": 12383},
-    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py": {"sha256": "2e89b05e71bf4159f41985a71af2de9091a86bd8e8bd4c8d4bed87ad0536df09", "bytes": 142700},
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py": {"sha256": "b09a51e36810685f3bbc767eeb29f3c73f94fded32917edea2809bc81952fd88", "bytes": 11084},
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py": {"sha256": "8b1130b2f4f3a0289cc5edf5bfcdf7295a7878f363c15ae7d53823acb9a5cf34", "bytes": 28272},
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py": {"sha256": "9710bb117218440d5285b04b66995704e3e6fb183fcd45dce8a1dda7433d92b9", "bytes": 7781},
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {"sha256": "8362fe4d5f7c47f0b8351923c147f8da5bf093e4a55818e8232809b567e13c7f", "bytes": 13048},
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py": {"sha256": "2e9dade9490383bfb68c704613563aa4c696eb622008c8a54d6c9e6862fce9a5", "bytes": 143351},
     "services/control-plane/bff/tests/test_assistant_dev_compose_flags.py": {"sha256": "ecad887f1081c7b278c7b0bb77aaf818c359ca107525c07c9724a0fe657f5cd1", "bytes": 5012},
-    "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py": {"sha256": "bccface7abd92e8bfbc76428d71560186537429880da24df74f935d0ee66563f", "bytes": 38164},
+    "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py": {"sha256": "b9f506f7476b20462cafeb35dd2cee66af636c4a544e7030fb8da9f2f40dd992", "bytes": 38815},
     "docker-compose.yml": {"sha256": "c60c9a3622d3d2128754d02584e3619050e7fa59079e326b2f3811c4ad84c640", "bytes": 145758}
   },
-  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself. services/control-plane/bff/conftest.py is intentionally absent from both changed_files and document_proof as of the amend commit below -- it is out of this task's declared artifact contract and was reverted to its exact base_sha content; the per-test durable-store default path it briefly carried was moved into a small autouse fixture duplicated directly in each of the six declared test files that need it instead.",
   "seam_implementation": {
     "module": "services/control-plane/bff/assistant/management_service.py",
     "class": "ManagementNlUseCase",
@@ -76,9 +74,16 @@
     ],
     "bug_fixed_in_same_change": "bff_management_nl_ask's dry-run short-circuit called _request_dry_run_requested() with no arguments; the module's _REQUEST_DRY_RUN_CONTEXT ContextVar is never set for this route (it is only ever set inside tools_integrations' own router, a separate request/task context), so X-Dry-Run could never actually trigger dry-run for this endpoint even at base_sha, independent of this task's other changes. Added an explicit x_dry_run: Optional[str] = Header(default=None, alias='X-Dry-Run') parameter to bff_management_nl_ask and pass it as _request_dry_run_requested(x_dry_run), the same explicit_header pattern several other routers in the repo already use for this exact helper. Verified via git-stash bisection that test_nl_ask_dry_run_returns_compact_receipt_without_context_work also fails identically at base_sha with only this fix reverted."
   },
-  "conftest_change": {
-    "file": "services/control-plane/bff/conftest.py",
-    "reason": "Durable admission via ManagementNlCommandIdempotencyStore is now unconditional for every /bff/management/nl/ask(/stream) request. The store's module default path is /data/bff/management-nl-command-idempotency.json, an absolute path that does not exist and is not writable in the test sandbox (production supplies it via the operator-bff container's /data volume). Added an autouse fixture that sets PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH to a fresh per-test tmp_path unless a test has already set it itself, so every existing nl/ask(/stream) test gets a real writable durable store transparently instead of 503-ing on a missing /data/bff directory."
+  "test_fixture_note": {
+    "reason": "Durable admission via ManagementNlCommandIdempotencyStore is now unconditional for every /bff/management/nl/ask(/stream) request. The store's module default path is /data/bff/management-nl-command-idempotency.json, an absolute path that does not exist and is not writable in the test sandbox (production supplies it via the operator-bff container's /data volume). Rather than editing the shared, undeclared services/control-plane/bff/conftest.py (outside this task's artifact contract), a small autouse fixture (_management_nl_command_idempotency_default_path) that sets PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH to a fresh per-test tmp_path unless a test has already set it itself was added directly to each of the six declared test files that exercise the NL endpoints: test_bff_b6_management_nl_ask.py, test_bff_b6_003_nl_high_risk_refusal.py, test_management_nl_assistant_provider.py, test_management_nl_single_owner.py, test_bff_b6_001_security_hardening.py, test_bff_mgmt_ai_persistence_2026_06_03.py.",
+    "files": [
+      "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+      "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "services/control-plane/bff/tests/test_management_nl_single_owner.py",
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+      "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ]
   },
   "cross_tenant_and_conflict_coverage": {
     "test_management_nl_single_owner.py": [

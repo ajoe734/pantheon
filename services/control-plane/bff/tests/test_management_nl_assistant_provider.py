@@ -32,6 +32,19 @@ from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, Op
 from rebalance_authority_test_support import create_market_persona_projection_test_double
 
 
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
+
+
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}
 
 
