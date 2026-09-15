@@ -170,17 +170,28 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = program_id or "prog-001"
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="EvolutionProgram",
-            entity_id=target_id,
+        """U8A does not implement real program lifecycle actions.
+
+        Per docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md
+        §3/§4/§7, real effects for submit_evolution_review, approve_program,
+        pause_program, resume_program, complete_program, retire_program,
+        stop, freeze_generation, promote_candidate_paper/live and
+        approve_mutation/reject_mutation are U8B's obligation. Fabricating a
+        program_id (``prog-001``) or a status (``executed``/``active``) here
+        would silently claim authority this task does not have — report the
+        obligation as honestly unavailable instead, leaving it open for U8B.
+        """
+        target_id = str(program_id or "").strip()
+        if not target_id:
+            raise ValueError("EvolutionProgramAction requires program_id.")
+        raise ActionUnavailableError(
+            f"Program action {action_id!r} on {target_id!r} is not yet implemented; "
+            "real program lifecycle effects are an outstanding U8B obligation.",
             action_id=action_id,
-            status="executed",
-            dispatch_path="evolution_program_authority",
-            domain_receipt={"program_id": target_id, "action": action_id, "executed": True},
-            authoritative_readback={"program_id": target_id, "status": "active"},
-            extra={"program_id": target_id},
+            entity_type="EvolutionProgram",
+            suggestion="No program lifecycle action is available yet; this obligation remains open pending U8B.",
+            retryable=False,
+            downstream_status=422,
         )
 
     def _execute_experiment_or_job(
