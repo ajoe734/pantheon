@@ -1145,6 +1145,7 @@ class GovernanceService:
             "risk_level": decision.get("risk_level"),
             "created_at": decision.get("created_at"),
             "approval_decision_id": decision.get("approval_decision_id"),
+            "approval_decision": approval_decision,
             "proposed_changes": proposed_changes,
             "risk_assessment": risk_assessment,
             "required_approvals": self._mutation_required_approvals(decision),
