@@ -77,6 +77,8 @@ components:
       - docs/02-architecture/development-tooling-product-boundary.md
       - docs/orchestrator-portability.md
       - docs/operations/provider-auth-health-contract.md
+      - docs/deployment/main-py-test-coupling-measurement.md
+      # Superseded path retained so the rename classifies on both sides.
       - docs/deployment/main-py-seam-inventory.md
       - ai-task-archive/
     runtime_required: false
