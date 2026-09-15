@@ -23,11 +23,10 @@ from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
+from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-from jsonschema import Draft7Validator
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -7031,66 +7030,6 @@ def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
             precondition_failed="role_check",
             suggestion="Escalate to a user with analyst-level Agora write access",
         )
-def _agora_private_record_owner(record: Dict[str, Any]) -> str:
-    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId", "author"):
-        clean = str(record.get(key) or "").strip()
-        if clean:
-            return clean
-    owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
-    return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
-def _agora_private_record_visible(
-    record: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> bool:
-    from .agora.identity.scope import resolve_canonical_agora_scope
-
-    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
-        identity,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
-    identity_tenant = str(resolved_tenant or "").strip()
-    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-    if identity_tenant:
-        if not record_tenant or record_tenant != identity_tenant:
-            return False
-    elif record_tenant:
-        return False
-    visibility = str(record.get("visibility") or "private").strip().lower()
-    owner = _agora_private_record_owner(record)
-    if visibility != "private" or not owner:
-        return True
-    operator_id = str(getattr(identity, "operator_id", "") or "").strip() if identity else ""
-    allowed_users = {u for u in (resolved_user, operator_id) if u}
-    return owner in allowed_users
-def _agora_filter_private_records(
-    records: List[Dict[str, Any]],
-    identity: OperatorIdentity,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    from .agora.identity.scope import resolve_canonical_agora_scope
-
-    resolved_tenant, resolved_user = resolve_canonical_agora_scope(
-        identity,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
-    return [
-        record
-        for record in records
-        if isinstance(record, dict)
-        and _agora_private_record_visible(
-            record,
-            identity,
-            tenant_id=resolved_tenant,
-            user_id=resolved_user,
-        )
-    ]
 def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
     for field in fields:
         clean = str(payload.get(field) or "").strip()
@@ -20528,166 +20467,25 @@ app.include_router(
 )
 def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, Any]:
     return OpenClawOpsClient().ensure_agora_servant_agent(persona)
-def _resolve_agora_interaction_context_ref(
-    *,
-    kind: str,
-    ref_id: str,
-    ref_version: Optional[str],
-    resolved: Any,
-    session: Dict[str, Any],
-    context_refs: List[Dict[str, Any]],
-    authorization: Optional[str],
-    source_route: Optional[str],
-    focused_object: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Resolve only context kinds whose existing owner can prove audience scope.
-
-    Management positions, performance windows, and Human Inbox rows currently
-    have no canonical per-user ownership contract.  They remain explicit
-    dependency-unavailable sources instead of being promoted from a global
-    read-model row into a user-scoped interaction receipt.
+from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+from .agora.interaction.context_resolver import resolve_agora_interaction_context_ref
+def _resolve_agora_interaction_context_ref(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Composition-root binding for the single ACL owner of interaction
+    context refs.  Explicitly imports ``_trade_journal_allowed`` at module
+    scope (see ``docs/operations/bff-test-migration-b05-journal-context-resolver-seam.md``
+    § 4.2) so the seam never depends on an undefined module global.
     """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    if kind in {"position", "performance_window", "human_inbox_item"}:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            f"Canonical {kind} interaction scope is unavailable",
-            f"{kind} does not yet expose a tenant-and-user-scoped ownership receipt",
-            precondition_failed=f"{kind}_scope_unavailable",
-        )
-
-    if kind == "decision_event":
-        if (
-            focused_object.get("kind") == "decision_event"
-            and str(focused_object.get("id") or "") == ref_id
-        ):
-            raise _bff_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Focused Decision Event interaction source is unavailable",
-                "No canonical frontend Decision Event source-route owner is registered yet",
-                precondition_failed="decision_event_source_route_unavailable",
-            )
-        from .agora.trading_room.router import _get_store as _get_trading_room_store
-
-        event = _get_trading_room_store().get_decision_event(ref_id)
-        if not isinstance(event, dict):
-            return {"row": None, "audience_verified": False}
-        event_strategy = str(event.get("strategy_id") or "")
-        event_version = str(event.get("strategy_spec_registry_id") or "")
-        scoped_strategy = str(session.get("strategy_id") or "")
-        scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
-        audience_verified = bool(
-            event_strategy
-            and event_strategy == scoped_strategy
-            and (not event_version or event_version == scoped_version)
-        )
-        return {"row": event, "audience_verified": audience_verified}
-
-    if kind == "journal_entry":
-        from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
-        from services.control_plane.bff.trade_journal import _load as _load_trade_journal
-
-        episodes = _load_trade_journal("PANTHEON_BFF_TRADE_EPISODES_STORE")
-        matches = [
-            row for row in (episodes or [])
-            if str(row.get("trade_episode_id") or "") == ref_id
-        ]
-        if len(matches) == 1:
-            episode = matches[0]
-            schema_path = (
-                Path(__file__).resolve().parents[2]
-                / "telemetry"
-                / "trade_episode_projection.schema.json"
-            )
-            try:
-                projection_schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                projection_valid = Draft7Validator(projection_schema).is_valid(episode)
-            except (OSError, TypeError, ValueError):
-                projection_valid = False
-            persona_id = str(episode.get("persona_id") or "")
-            referenced_personas = {
-                str(item.get("id") or "")
-                for item in context_refs
-                if item.get("kind") == "persona"
-            }
-            persona = _get_persona_directory_snapshot(
-                str(resolved.tenant_id or "").strip()
-            ).records_by_id.get(persona_id)
-            episode_strategy = str(episode.get("strategy_id") or "")
-            artifact_id = str(episode.get("artifact_id") or "")
-            artifact_version = str(episode.get("artifact_version") or "")
-            episode_strategy_version = str(episode.get("strategy_spec_registry_id") or "")
-            scoped_strategy = str(session.get("strategy_id") or "")
-            scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
-            source = urlsplit(str(source_route or ""))
-            source_path = unquote(source.path).rstrip("/")
-            source_query = parse_qs(source.query, keep_blank_values=True)
-            focused_is_episode = (
-                focused_object.get("kind") == "journal_entry"
-                and str(focused_object.get("id") or "") == ref_id
-            )
-            canonical_persona_journal_route = bool(
-                source_path == f"/management/personas/{persona_id}"
-                and source_query.get("tab") == ["tradeJournal"]
-                and not source.fragment
-            )
-            canonical_workshop_route = bool(
-                not focused_is_episode
-                and source_path == f"/agora/strategy-workshop/{session.get('workshop_id')}"
-                and not source.fragment
-            )
-            audience_verified = bool(
-                projection_valid
-                and persona_id
-                and episode_strategy
-                and artifact_id
-                and artifact_version
-                and persona_id in referenced_personas
-                and isinstance(persona, dict)
-                and _persona_record_tenant_id(persona) == resolved.tenant_id
-                and _trade_journal_allowed(identity, persona_id)
-                and episode_strategy == scoped_strategy
-                and (not episode_strategy_version or episode_strategy_version == scoped_version)
-                and (canonical_persona_journal_route or canonical_workshop_route)
-            )
-            return {"row": episode, "audience_verified": audience_verified}
-
-        from .agora.identity.scope import resolve_canonical_agora_scope
-
-        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
-            identity,
-            tenant_id=getattr(resolved, "tenant_id", None),
-            user_id=getattr(resolved, "user_id", None),
-        )
-        try:
-            journal_entries = read_store.list_decision_journal_entries(tenant_id=scoped_tenant, user_id=scoped_user)
-        except TypeError:
-            journal_entries = read_store.list_decision_journal_entries()
-        journal_rows = _agora_filter_private_records(
-            journal_entries,
-            identity,
-            tenant_id=scoped_tenant,
-            user_id=scoped_user,
-        )
-        journal = next(
-            (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),
-            None,
-        )
-        # Legacy Decision Journal rows are returned for exact not-found/error
-        # semantics, but without explicit scope they are intentionally not
-        # elevated to an audience-verified receipt.
-        return {"row": journal, "audience_verified": False}
-
-    raise _bff_error(
-        503,
-        ErrorCode.DEPENDENCY_UNAVAILABLE,
-        f"Canonical {kind} readback is unavailable",
-        f"{kind}_store_unavailable",
-        precondition_failed=f"{kind}_store_unavailable",
+    return resolve_agora_interaction_context_ref(
+        *args,
+        read_store=read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        persona_directory_snapshot_fn=_get_persona_directory_snapshot,
+        persona_record_tenant_id_fn=_persona_record_tenant_id,
+        trade_journal_allowed_fn=_trade_journal_allowed,
+        utc_now=utc_now,
+        **kwargs,
     )
 from .auth.router import create_auth_router
 from .auth.service import AuthFacadeService

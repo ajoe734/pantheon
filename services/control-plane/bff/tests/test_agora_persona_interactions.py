@@ -117,7 +117,7 @@ class FakeReadStore:
     def list_approval_decisions(self):
         return []
 
-    def list_decision_journal_entries(self):
+    def list_decision_journal_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [{"id": "entry-7", "tenant_id": "pantheon-dev", "owner_user_id": "interaction-user"}]
 
 

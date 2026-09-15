@@ -87,7 +87,7 @@ class FakePersonaReadStore:
     def list_approval_decisions(self):
         return []
 
-    def list_decision_journal_entries(self):
+    def list_decision_journal_entries(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return []
 
 
