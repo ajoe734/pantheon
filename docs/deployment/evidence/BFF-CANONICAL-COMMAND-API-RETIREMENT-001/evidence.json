@@ -20,8 +20,8 @@
     "services/control-plane/bff/personas/routes/lifecycle.py": "2d4123d8672814b357c9e050184a0a8e50ea889e91e5517b2ce08105631d3b2b",
     "services/control-plane/bff/personas/service.py": "fd76db2a84b7339fad7e3daa2cbbd4b9fedae4e89c2c35387d41ee0b427c4606",
     "services/control-plane/bff/runtime/router.py": "0b2ac9c6fdd53f870cead8ae60db2658be19756b5ae6147ffeb0e0b5209e828e",
-    "services/control-plane/bff/smoke_test.py": "6bbbaee6149ca671016cb68ccb75081a9da90c6efd39fca32a7f0f776222f12a",
-    "services/control-plane/bff/smoke_test_incident.py": "fc0caa5088f1f487f959ed1218795034300d998b2f698b7e5b1dffd412c8160e",
+    "services/control-plane/bff/smoke_test.py": "ac3ac41c1a3bc3bf2d058ddb2011420d74fbd35c66e402b79cf0f22e168371e4",
+    "services/control-plane/bff/smoke_test_incident.py": "4043369650c902ecebcb5ebc74fa5c88a458f0cf6c394d5cbc72c385652694cd",
     "services/control-plane/bff/strategies/routes/detail.py": "51bb88ac97f7fe467492f781827b24cbe6b1bc5ab0ae96c8debce3a322e9d994",
     "services/control-plane/bff/test_aud_002_audit_action_write_engine.py": "21a9f8e57fb4d3ce4f1964b3af5310ba32da8bc443335892dcf09288dafa70ee",
     "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py": "dd376b01df42ac20a4c635a0261a8c3e3d8c953bde2723debdb74bba0837d6e5",
@@ -48,6 +48,16 @@
     "services/control-plane/bff/tests/test_actions_to_commands_adapter.py": "Every test in this file was solely about the mechanics of the retired POST /bff/actions/{type}/{id}/{action} route (idempotency-key/entity-type/audit-event validation on that exact route); once the route is deleted there is no surviving subject for these tests to cover, and the equivalent envelope/idempotency/audit behavior for the surviving POST /bff/v1/commands route is already covered by tests/test_command_adapters_router.py and the new tests/test_legacy_command_write_retirement.py."
   },
   "verification": [
+    {
+      "command": "<provisioned python> -m services.control_plane.bff.smoke_test (equivalent to the Branch CI Gate 'Smoke acceptance' stage0-baseline invocation)",
+      "exit_code": 0,
+      "result": "Ran 26 tests in 1.427s -- OK. Fixes acceptance-review finding on PR #5833: switching ApproveDeployment/ApproveEvolutionDecision/ExecuteEvolutionAction/ExecuteRollback/PauseRuntime/ActivateKillSwitch smoke callers from /api/v1/operator/commands to /bff/v1/commands triggers the strict require_final_command_preconditions gate (428 CONFIRMATION_REQUIRED / 409 HUMAN_GATE_PENDING) that the retired legacy route skipped; the 9 previously-failing tests now seed approval decisions (via a narrow bff_main.read_store.get_approval_decision override), confirm tokens (via POST /bff/confirm-tokens), and a two-man signature (via POST /bff/v5/interventions/{id}/two-man-sign) bound to the exact command/target/operator being submitted, matching the pattern already established in test_governance_command_submission.py::test_runtime_deployment_approval_incident_commands_record_foundation_controls."
+    },
+    {
+      "command": "<provisioned python> services/control-plane/bff/smoke_test_incident.py (exact CI invocation form; also verified via pytest)",
+      "exit_code": 0,
+      "result": "21 passed, 0 failed -- ALL ACCEPTANCE CRITERIA VERIFIED. Fixes the same acceptance-review finding for the four IN-05 command-schema smoke tests (IssueRiskOff, LiquidateAll, HardRollback, IssueSafeMode); also gave each test a distinct target id (e.g. runtime-042-risk-off) instead of the shared runtime-042 fixture target, since satisfying the confirm-token/approval preconditions surfaced a pre-existing false pass masked by the earlier 428/409 short-circuit: sequential /bff/v1/commands submissions against the same target while an earlier command is still 'submitted' now correctly hit the RESOURCE_CONFLICT concurrent-safety gate."
+    },
     {
       "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 <provisioned .venv-pantheon python> -m pytest -q services/control-plane/bff/tests/test_legacy_command_write_retirement.py",
       "exit_code": 0,

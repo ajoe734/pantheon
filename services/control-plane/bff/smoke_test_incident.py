@@ -229,10 +229,10 @@ AUTH = "Bearer test-operator:operator,admin"
 ADMIN_MFA_AUTH = "Bearer test-admin:admin:mfa"
 
 
-def _incident_command_payload(command: str, params: dict) -> dict:
+def _incident_command_payload(command: str, params: dict, target_id: str = "runtime-042") -> dict:
     return {
         "command": command,
-        "target": {"type": "Runtime", "id": "runtime-042"},
+        "target": {"type": "Runtime", "id": target_id},
         "params": params,
         "audit_context": {
             "reason": f"{command} test rationale",
@@ -247,6 +247,63 @@ def _command_headers(auth: str, key: str) -> dict:
         "Authorization": auth,
         "X-Idempotency-Key": key,
     }
+
+
+# /bff/v1/commands enforces the full action-catalog precondition set
+# (confirm token / approval evidence / two-man signature) for every command,
+# unlike the retired legacy /api/v1/operator/commands route. The IN-05
+# incident command schema smoke tests below only intend to prove the
+# command shape is accepted, so seed the required evidence here.
+_approval_decisions: dict = {}
+_original_get_approval_decision = bff_main.read_store.get_approval_decision
+
+
+def _get_approval_decision(decision_id):
+    if decision_id in _approval_decisions:
+        return _approval_decisions[decision_id]
+    return _original_get_approval_decision(decision_id)
+
+
+bff_main.read_store.get_approval_decision = _get_approval_decision
+
+
+def _seed_approval_decision(approval_id: str, *, command: str, target_type: str, target_id: str) -> None:
+    _approval_decisions[approval_id] = {
+        "id": approval_id,
+        "outcome": "approved",
+        "state": "approved",
+        "command": command,
+        "target_type": target_type,
+        "target_id": target_id,
+    }
+
+
+def _create_confirm_token(token_id: str, *, command: str, target_type: str, target_id: str, auth: str) -> None:
+    resp = client.post(
+        "/bff/confirm-tokens",
+        json={
+            "tokenId": token_id,
+            "command": command,
+            "target": {"type": target_type, "id": target_id},
+        },
+        headers=_command_headers(auth, f"create-{token_id}"),
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def _create_two_man_signature(signature_id: str, *, command: str, target_type: str, target_id: str) -> None:
+    for suffix, auth in (("a", ADMIN_MFA_AUTH), ("b", "Bearer test-second-signer:operator")):
+        resp = client.post(
+            f"/bff/v5/interventions/{signature_id}/two-man-sign",
+            json={
+                "twoManSignatureId": signature_id,
+                "command": command,
+                "target": {"type": target_type, "id": target_id},
+                "reason": "smoke test two-man signature",
+            },
+            headers=_command_headers(auth, f"sign-{signature_id}-{suffix}"),
+        )
+        assert resp.status_code == 202, resp.text
 
 
 def test_in01_incident_list():
@@ -442,12 +499,16 @@ def test_in05_pause_execution_command_schema():
 
 
 def test_in05_issue_risk_off_command_schema():
+    target_id = "runtime-042-risk-off"
+    _create_confirm_token(
+        "ct-in05-risk-off", command="IssueRiskOff", target_type="Runtime", target_id=target_id, auth=AUTH
+    )
     resp = client.post(
         "/bff/v1/commands",
-        json=_incident_command_payload(
-            "IssueRiskOff",
-            {"reduce_exposure_pct": 100},
-        ),
+        json={
+            **_incident_command_payload("IssueRiskOff", {"reduce_exposure_pct": 100}, target_id=target_id),
+            "confirmToken": "ct-in05-risk-off",
+        },
         headers=_command_headers(AUTH, "smoke-in05-risk-off"),
     )
     assert resp.status_code == 202, f"IssueRiskOff rejected: {resp.status_code} {resp.text}"
@@ -457,9 +518,28 @@ def test_in05_issue_risk_off_command_schema():
 
 
 def test_in05_liquidate_all_command_schema():
+    target_id = "runtime-042-liquidate-all"
+    _seed_approval_decision(
+        "appr-in05-liquidate-all", command="LiquidateAll", target_type="Runtime", target_id=target_id
+    )
+    _create_confirm_token(
+        "ct-in05-liquidate-all",
+        command="LiquidateAll",
+        target_type="Runtime",
+        target_id=target_id,
+        auth=ADMIN_MFA_AUTH,
+    )
+    _create_two_man_signature(
+        "tms-in05-liquidate-all", command="LiquidateAll", target_type="Runtime", target_id=target_id
+    )
     resp = client.post(
         "/bff/v1/commands",
-        json=_incident_command_payload("LiquidateAll", {}),
+        json={
+            **_incident_command_payload("LiquidateAll", {}, target_id=target_id),
+            "approvalId": "appr-in05-liquidate-all",
+            "confirmToken": "ct-in05-liquidate-all",
+            "twoManSignatureId": "tms-in05-liquidate-all",
+        },
         headers=_command_headers(ADMIN_MFA_AUTH, "smoke-in05-liquidate-all"),
     )
     assert resp.status_code == 202, f"LiquidateAll rejected: {resp.status_code} {resp.text}"
@@ -469,12 +549,26 @@ def test_in05_liquidate_all_command_schema():
 
 
 def test_in05_hard_rollback_command_schema():
+    target_id = "runtime-042-hard-rollback"
+    _seed_approval_decision(
+        "appr-in05-hard-rollback", command="HardRollback", target_type="Runtime", target_id=target_id
+    )
+    _create_confirm_token(
+        "ct-in05-hard-rollback", command="HardRollback", target_type="Runtime", target_id=target_id, auth=AUTH
+    )
+    _create_two_man_signature(
+        "tms-in05-hard-rollback", command="HardRollback", target_type="Runtime", target_id=target_id
+    )
     resp = client.post(
         "/bff/v1/commands",
-        json=_incident_command_payload(
-            "HardRollback",
-            {"target_artifact_id": "artifact-fallback-001"},
-        ),
+        json={
+            **_incident_command_payload(
+                "HardRollback", {"target_artifact_id": "artifact-fallback-001"}, target_id=target_id
+            ),
+            "approvalId": "appr-in05-hard-rollback",
+            "confirmToken": "ct-in05-hard-rollback",
+            "twoManSignatureId": "tms-in05-hard-rollback",
+        },
         headers=_command_headers(AUTH, "smoke-in05-hard-rollback"),
     )
     assert resp.status_code == 202, f"HardRollback rejected: {resp.status_code} {resp.text}"
@@ -484,12 +578,20 @@ def test_in05_hard_rollback_command_schema():
 
 
 def test_in05_issue_safe_mode_command_schema():
+    target_id = "runtime-042-safe-mode"
+    _create_confirm_token(
+        "ct-in05-safe-mode",
+        command="IssueSafeMode",
+        target_type="Runtime",
+        target_id=target_id,
+        auth=ADMIN_MFA_AUTH,
+    )
     resp = client.post(
         "/bff/v1/commands",
-        json=_incident_command_payload(
-            "IssueSafeMode",
-            {"safe_mode_level": "soft"},
-        ),
+        json={
+            **_incident_command_payload("IssueSafeMode", {"safe_mode_level": "soft"}, target_id=target_id),
+            "confirmToken": "ct-in05-safe-mode",
+        },
         headers=_command_headers(ADMIN_MFA_AUTH, "smoke-in05-safe-mode"),
     )
     assert resp.status_code == 202, f"IssueSafeMode rejected: {resp.status_code} {resp.text}"
