@@ -14,20 +14,110 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
-from models import (
+from services.control_plane.bff.action_catalog import get_catalog_entry
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.command_adapters.router import (
+    create_action_command_router,
+    create_command_adapters_router,
+)
+from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.events.service import DEFAULT_SSE_RESYNC_ROUTES
+from services.control_plane.bff.models import (
     CommandType,
+    ErrorCode,
     InterventionKind,
     InterventionRecord,
     InterventionStatus,
     ObjectType,
+    utc_now,
 )
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+
+
+_VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
+_REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
+_VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
+_DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
+
+
+def _validate_remediate_sentinel_intervention(params: dict[str, Any], identity: Any) -> None:
+    missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
+    if missing:
+        raise bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for RemediateSentinelIntervention",
+            f"Missing fields: {sorted(missing)}",
+        )
+    remediation_action = str(params.get("remediation_action") or "").strip()
+    if remediation_action not in _VALID_REMEDIATION_ACTIONS:
+        raise bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid remediation_action value",
+            f"remediation_action must be one of {sorted(_VALID_REMEDIATION_ACTIONS)}",
+        )
+    roles = getattr(identity, "roles", []) or []
+    if not {"approver", "admin"}.intersection(roles):
+        raise bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "RemediateSentinelIntervention requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_decide_v5_intervention(params: dict[str, Any], identity: Any) -> None:
+    missing = _DECIDE_V5_INTERVENTION_REQUIRED - params.keys()
+    if missing:
+        raise bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Missing required params for DecideV5Intervention",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="decision",
+        )
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_V5_INTERVENTION_DECISIONS:
+        raise bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid intervention decision value",
+            f"decision must be one of {sorted(_VALID_V5_INTERVENTION_DECISIONS)}",
+            precondition_failed="decision",
+        )
+    roles = getattr(identity, "roles", []) or []
+    if not {"operator", "approver", "admin"}.intersection(roles):
+        raise bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "DecideV5Intervention requires 'operator', 'approver', or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+
+
+_V5_COMMAND_VALIDATORS = {
+    CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
+    CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
+    "RemediateSentinelIntervention": _validate_remediate_sentinel_intervention,
+    "DecideV5Intervention": _validate_decide_v5_intervention,
+}
 
 
 OPERATOR_TOKEN = "Bearer op-v5:operator"
@@ -70,33 +160,102 @@ class _V5ReadSurfaceDouble(ReadSurfacePorts):
         ]
 
 
+class _TestState:
+    def __init__(self) -> None:
+        self.command_store: Optional[CommandStore] = None
+        self.read_store: _V5ReadSurfaceDouble = _V5ReadSurfaceDouble()
+        self.v5_interventions_store: list[dict] = []
+
+
+_state = _TestState()
+
+
+def _v5_intervention_records(*, status=None, kind=None):
+    records_by_id: dict[str, dict] = {}
+    store_lister = getattr(_state.read_store, "list_v5_interventions", None)
+    if callable(store_lister):
+        for record in store_lister(status=status, kind=kind):
+            if isinstance(record, dict):
+                record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+                if record_id:
+                    records_by_id[record_id] = dict(record)
+    for record in _state.v5_interventions_store:
+        if not isinstance(record, dict):
+            continue
+        if status and str(record.get("status") or "") != status:
+            continue
+        if kind and str(record.get("kind") or "") != kind:
+            continue
+        record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+        if record_id:
+            records_by_id[record_id] = dict(record)
+    return list(records_by_id.values())
+
+
 async def _noop_process_command(_command_id: str) -> None:
     return None
 
 
 @contextmanager
 def _isolated_client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.command_store
-        original_worker = bff_main._process_command_stub
-        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
-        original_read_store = bff_main.read_store
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = _V5ReadSurfaceDouble()
-        bff_main._process_command_stub = _noop_process_command
-        bff_main._V5_INTERVENTIONS_STORE.clear()
+    with tempfile.TemporaryDirectory(prefix="v5_bff_") as td:
+        _state.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        _state.read_store = _V5ReadSurfaceDouble()
+        _state.v5_interventions_store.clear()
+
+        _extract = lambda auth, mfa_token=None, **kw: extract_identity_stub(auth)
+        svc = CommandAdapterService(
+            command_store=lambda: _state.command_store,
+            read_surface=lambda: _state.read_store,
+            extract_identity=_extract,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+            validators=_V5_COMMAND_VALIDATORS,
+            process_command_task=lambda cmd_id: _noop_process_command(cmd_id),
+        )
+
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _http_exception_handler(request: Any, exc: HTTPException) -> JSONResponse:
+            if isinstance(exc.detail, dict):
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+        app.include_router(
+            create_control_loops_router(
+                extract_identity=_extract,
+                require_operator_role=require_operator_role,
+                require_read_role=require_read_role,
+                bff_error=bff_error,
+                submit_final_command_admission=svc.submit_command_admission,
+                submit_sem_command=svc.sem_command_response,
+                intervention_records_provider=_v5_intervention_records,
+            )
+        )
+        app.include_router(create_command_adapters_router(service=svc))
+        app.include_router(
+            create_action_command_router(
+                submit_command_admission=svc.submit_command_admission,
+                command_store=_state.command_store,
+                extract_identity=_extract,
+                require_operator_role=require_operator_role,
+                bff_error=bff_error,
+                utc_now=utc_now,
+            )
+        )
+
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app, raise_server_exceptions=False)
         finally:
-            bff_main.command_store = original_store
-            bff_main._process_command_stub = original_worker
-            bff_main.read_store = original_read_store
-            bff_main._V5_INTERVENTIONS_STORE.clear()
-            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+            _state.v5_interventions_store.clear()
 
 
 def _seed_approval_decision(approval_id: str, target_id: str) -> None:
-    bff_main.read_store.seed_approval_decision({
+    _state.read_store.seed_approval_decision({
         "id": approval_id,
         "decision_id": approval_id,
         "state": "approved",
@@ -194,7 +353,7 @@ def test_get_v5_interventions_returns_200_empty_list() -> None:
 def test_get_v5_interventions_returns_seeded_records() -> None:
     """GET /bff/v5/interventions returns records seeded into the in-memory store."""
     with _isolated_client() as client:
-        bff_main._V5_INTERVENTIONS_STORE.append({
+        _state.v5_interventions_store.append({
             "intervention_id": "intv-v5-001",
             "kind": "hiq_sentinel",
             "status": "pending",
@@ -218,7 +377,7 @@ def test_get_v5_interventions_returns_seeded_records() -> None:
 
 def test_get_v5_interventions_filters_by_status() -> None:
     with _isolated_client() as client:
-        bff_main._V5_INTERVENTIONS_STORE.extend([
+        _state.v5_interventions_store.extend([
             {
                 "intervention_id": "intv-v5-002",
                 "kind": "hiq_sentinel",
@@ -265,9 +424,7 @@ def test_get_v5_interventions_reads_service_backed_store() -> None:
                 handle,
             )
         original_env = os.environ.get("PANTHEON_BFF_V5_INTERVENTION_STORE")
-        original_read_store = bff_main.read_store
         os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = intervention_path
-        bff_main.read_store = _V5ReadSurfaceDouble()
         try:
             with _isolated_client() as client:
                 response = client.get(
@@ -279,7 +436,6 @@ def test_get_v5_interventions_reads_service_backed_store() -> None:
                 assert body["count"] == 1
                 assert body["items"][0]["intervention_id"] == "intv-store-001"
         finally:
-            bff_main.read_store = original_read_store
             if original_env is None:
                 os.environ.pop("PANTHEON_BFF_V5_INTERVENTION_STORE", None)
             else:
@@ -476,7 +632,7 @@ def test_decide_v5_intervention_records_dedicated_command_and_trace() -> None:
         assert body["meta"]["liveCapitalSideEffects"] is False
         assert body["meta"]["idempotency"]["key"] == idem_key
 
-        stored = bff_main.command_store.get_command_by_idempotency_key(idem_key)
+        stored = _state.command_store.get_command_by_idempotency_key(idem_key)
         assert stored is not None
         assert stored["type"] == "DecideV5Intervention"
         assert stored["target"]["type"] == ObjectType.SENTINEL_INTERVENTION.value
@@ -516,7 +672,7 @@ def test_decide_v5_intervention_replays_same_idempotency_key() -> None:
         assert second.status_code == 202, second.text
         assert second.json()["data"]["commandId"] == first.json()["data"]["commandId"]
         assert second.json()["meta"]["idempotency"]["replayed"] is True
-        assert len(bff_main.command_store._get_all_commands()) == 1
+        assert len(_state.command_store._get_all_commands()) == 1
 
 
 def test_decide_v5_intervention_invalid_decision_returns_422_without_store() -> None:
@@ -530,7 +686,7 @@ def test_decide_v5_intervention_invalid_decision_returns_422_without_store() -> 
         error = response.json()["error"]
         assert error["code"] == "VALIDATION_FAILED"
         assert error["details"]["precondition_failed"] == "decision"
-        assert bff_main.command_store._get_all_commands() == []
+        assert _state.command_store._get_all_commands() == []
 
 
 def test_decide_v5_intervention_body_idempotency_key_rejected_before_store() -> None:
@@ -543,7 +699,7 @@ def test_decide_v5_intervention_body_idempotency_key_rejected_before_store() -> 
         assert response.status_code in {400, 422}, response.text
         error = response.json()["error"]
         assert error["code"] == "VALIDATION_FAILED"
-        assert bff_main.command_store._get_all_commands() == []
+        assert _state.command_store._get_all_commands() == []
 
 
 # --------------------------------------------------------------------------- #
@@ -552,7 +708,7 @@ def test_decide_v5_intervention_body_idempotency_key_rejected_before_store() -> 
 
 def test_v5_interventions_listed_in_approval_sse_resync_routes() -> None:
     """The approval SSE resync routes must reference /bff/v5/interventions."""
-    resync_routes = bff_main._SSE_RESYNC_ROUTES.get("approval", ())
+    resync_routes = DEFAULT_SSE_RESYNC_ROUTES.get("approval", ())
     assert "/bff/v5/interventions" in resync_routes, (
         f"Expected /bff/v5/interventions in approval resync routes, got: {resync_routes}"
     )
@@ -567,7 +723,6 @@ def test_v5_interventions_listed_in_approval_sse_resync_routes() -> None:
 
 def test_remediate_sentinel_intervention_in_action_catalog() -> None:
     """RemediateSentinelIntervention must be in the action catalog with two-man gate."""
-    from action_catalog import get_catalog_entry
     entry = get_catalog_entry("RemediateSentinelIntervention")
     assert entry is not None, "RemediateSentinelIntervention missing from action catalog"
     assert entry.requires_two_man is True, "RemediateSentinelIntervention must require two-man"
@@ -577,7 +732,6 @@ def test_remediate_sentinel_intervention_in_action_catalog() -> None:
 
 
 def test_decide_v5_intervention_in_action_catalog() -> None:
-    from action_catalog import get_catalog_entry
     entry = get_catalog_entry("DecideV5Intervention")
     assert entry is not None, "DecideV5Intervention missing from action catalog"
     assert entry.endpoint == "/bff/v5/interventions/{intervention_id}/decide"
@@ -807,7 +961,7 @@ def test_bff_v1_commands_remediate_sentinel_top_level_two_man_propagates_to_stor
         assert response.status_code == 202, response.text
 
         # Retrieve the stored command and verify the two-man evidence was propagated
-        stored = bff_main.command_store.get_command_by_idempotency_key(idem_key)
+        stored = _state.command_store.get_command_by_idempotency_key(idem_key)
         assert stored is not None, "Command should be stored after 202 acceptance"
         stored_params = stored.get("params") or {}
         assert stored_params.get("two_man_signature_id") == "tms-propagation-sig-001", (
@@ -850,7 +1004,7 @@ def test_bff_v1_commands_remediate_sentinel_second_operator_alias_propagates() -
         )
         assert response.status_code == 202, response.text
 
-        stored = bff_main.command_store.get_command_by_idempotency_key(idem_key)
+        stored = _state.command_store.get_command_by_idempotency_key(idem_key)
         assert stored is not None
         stored_params = stored.get("params") or {}
         assert stored_params.get("two_man_signature_id") == "op-second-sig-001", (
