@@ -7,6 +7,7 @@ Thin composition factory delegating to cohesive subrouters:
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -49,12 +50,24 @@ def create_research_router(
     research_plan_store: Any = None,
     workshop_store: Any = None,
     dataset_store: Any = None,
+    adapter_registry: Optional[Any] = None,
 ) -> APIRouter:
     """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
     _ACTIVE_RESEARCH_STORE = store
+    if adapter_registry is None:
+        try:
+            from .dispatcher import build_authentic_adapter_registry
+        except ImportError:
+            from services.control_plane.bff.agora.research.dispatcher import build_authentic_adapter_registry
+        adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
+        adapter_registry = build_authentic_adapter_registry(
+            mode=adapter_mode,
+            allow_missing_endpoints=True,
+        )
     dispatcher = ResearchDispatcher(
         store=store,
+        adapter_registry=adapter_registry,
         publish_progress_fn=publish_research_progress,
         utc_now=utc_now,
         dataset_store=dataset_store,
@@ -76,4 +89,5 @@ def create_research_router(
     router.routes.extend(build_runs_router(ctx).routes)
     router.store = store
     router.dispatcher = dispatcher
+    router.adapter_registry = adapter_registry
     return router
