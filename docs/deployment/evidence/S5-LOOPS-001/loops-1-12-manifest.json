@@ -18,7 +18,7 @@
       "gap_reason": null,
       "loop_index": 1,
       "loop_name": "Source Ingestion",
-      "next_consumer_receipt_id": "distill-a2f236c1eec81efeeffa2d85,distill-3474db6981626aa0ded8f2f5",
+      "next_consumer_receipt_id": "distill-e9fb345a90b08dc829edcbd9,distill-8f02947c217da2b3fe324803",
       "owner_container": "0a8d968a3ec3",
       "owner_worker_identity": "0a8d968a3ec3e9246475192d2e75f79e2895ec314b0fc58cdaf62137c47cfb82",
       "status": "accepted",
@@ -26,14 +26,14 @@
         "is_real": false,
         "provenance": "simulation",
         "rows_per_source": 30,
-        "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
+        "snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
         "source_ids": [
-          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+          "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+          "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
         ]
       },
-      "terminal_output_id": "mss-c76a26dd68bd3e3ad2de513a",
-      "trigger_id": "ingest-e276cb8baffe"
+      "terminal_output_id": "mss-5fd4452dc6869e10c8e965b9",
+      "trigger_id": "ingest-65d1dd0d00d5"
     },
     {
       "canonical_id": "strategy_distillation",
@@ -46,18 +46,18 @@
       "gap_reason": null,
       "loop_index": 2,
       "loop_name": "Strategy Distillation",
-      "next_consumer_receipt_id": "adm-dd1f83dfbd55",
+      "next_consumer_receipt_id": "adm-e520f214e792",
       "owner_container": "distill-controller-5c099699",
       "owner_worker_identity": "distill-controller-5c099699",
       "status": "accepted",
       "terminal_output_details": {
         "execution_mode": "research_only",
-        "registry_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
-        "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8",
+        "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+        "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
         "strategy_version": "1.0.0"
       },
-      "terminal_output_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
-      "trigger_id": "distill-a2f236c1eec81efeeffa2d85,distill-3474db6981626aa0ded8f2f5"
+      "terminal_output_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
+      "trigger_id": "distill-e9fb345a90b08dc829edcbd9,distill-8f02947c217da2b3fe324803"
     },
     {
       "canonical_id": "alpha_replication",
@@ -83,14 +83,14 @@
       "owner_worker_identity": "alpha-revalidation-worker",
       "status": "unaccepted",
       "terminal_output_details": {
-        "approval_id": "apv-d3d2684ade22",
+        "approval_id": "apv-c83aa791b7a6",
         "evaluation_type": "replication_gate_schema_governance",
-        "experiment_run_id": "erun-alpha-6f2010a83d50a15c",
-        "research_authority_id": "rrun-20260914-007",
-        "research_task_id": "rtask-20260914-007"
+        "experiment_run_id": "erun-alpha-d20376aef23b4bd0",
+        "research_authority_id": "rrun-20260915-009",
+        "research_task_id": "rtask-20260915-009"
       },
-      "terminal_output_id": "erun-alpha-6f2010a83d50a15c",
-      "trigger_id": "adm-dd1f83dfbd55"
+      "terminal_output_id": "erun-alpha-d20376aef23b4bd0",
+      "trigger_id": "adm-e520f214e792"
     },
     {
       "canonical_id": "persona_teaching",

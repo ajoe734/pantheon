@@ -1,11 +1,11 @@
 {
-  "at": "2026-09-14T23:33:10Z",
+  "at": "2026-09-15T03:20:12Z",
   "authority_readbacks": [
     {
       "body": {
-        "id": "rrun-20260914-007",
-        "run_id": "rrun-20260914-007",
-        "task_id": "rtask-20260914-007",
+        "id": "rrun-20260915-009",
+        "run_id": "rrun-20260915-009",
+        "task_id": "rtask-20260915-009",
         "adapter": "manual",
         "requested_mode": "manual",
         "dispatch_mode": "manual",
@@ -13,7 +13,7 @@
         "production_activation": "disabled",
         "input_refs": [
           {
-            "id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+            "id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
             "type": "strategy_spec"
           },
           {
@@ -22,32 +22,32 @@
           }
         ],
         "parameters": {
-          "approval_decision_id": "apv-d3d2684ade22",
+          "approval_decision_id": "apv-c83aa791b7a6",
           "authority_transport": "manual_record",
           "experiment_run": {
             "artifact_refs": [],
             "backend_id": "replication_gate",
             "code_version": "unknown",
-            "created_at": "2026-09-14T23:33:10Z",
+            "created_at": "2026-09-15T03:20:12Z",
             "dataset_version_id": "dataset:ohlcv",
-            "finished_at": "2026-09-14T23:33:10Z",
-            "input_manifest_ref": "registry://reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8?checksum=sha256:db3e2de4884fc63cc5c35a9f747337c2b58b5ae07093274097b89a93107f262d",
+            "finished_at": "2026-09-15T03:20:12Z",
+            "input_manifest_ref": "registry://reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588?checksum=sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
             "metadata": {
-              "approval_decision_id": "apv-d3d2684ade22",
+              "approval_decision_id": "apv-c83aa791b7a6",
               "attempt_number": 1,
               "configured_mode": "handoff_only",
               "dispatch_mode": "authoritative",
-              "idempotency_key": "alpha-run:tenant-dev:reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8:0:1",
+              "idempotency_key": "alpha-run:tenant-dev:reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588:0:1",
               "production_activation": "disabled",
               "replay_count": 0,
               "replication_gate": {
                 "admission_status": "admitted",
-                "candidate_id": "erun-alpha-6f2010a83d50a15c",
-                "gate_run_id": "65f2b169",
+                "candidate_id": "erun-alpha-d20376aef23b4bd0",
+                "gate_run_id": "3698cb0a",
                 "metadata": {
                   "optional_pass_rate": 1.0,
                   "passed_all_required": true,
-                  "source_task_id": "etask-alpha-7a2545ea2490d89a"
+                  "source_task_id": "etask-alpha-5b1d0ddbab438b2a"
                 },
                 "replication_status": "passed",
                 "results": [
@@ -55,11 +55,11 @@
                     "criterion_id": "schema_validity",
                     "details": {
                       "schema": "OC-003",
-                      "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8"
+                      "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b"
                     },
                     "evidence": "Canonical StrategySpec schema is valid",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076658Z"
+                    "timestamp": "2026-09-15T03:20:12.409940Z"
                   },
                   {
                     "criterion_id": "lineage_complete",
@@ -72,7 +72,7 @@
                     },
                     "evidence": "Research handoff has complete lineage metadata",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076672Z"
+                    "timestamp": "2026-09-15T03:20:12.409957Z"
                   },
                   {
                     "criterion_id": "governance_context",
@@ -83,14 +83,14 @@
                     },
                     "evidence": "Governance context verified and complete",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076678Z"
+                    "timestamp": "2026-09-15T03:20:12.409964Z"
                   },
                   {
                     "criterion_id": "no_live_bypass",
                     "details": null,
                     "evidence": "No live bypass attempts detected",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076682Z"
+                    "timestamp": "2026-09-15T03:20:12.409970Z"
                   },
                   {
                     "criterion_id": "confidence_score",
@@ -101,7 +101,7 @@
                     },
                     "evidence": "Research confidence: high (score: 0.9)",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076692Z"
+                    "timestamp": "2026-09-15T03:20:12.409983Z"
                   },
                   {
                     "criterion_id": "replication_notes_present",
@@ -111,7 +111,7 @@
                     },
                     "evidence": "Replication notes present",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076697Z"
+                    "timestamp": "2026-09-15T03:20:12.409989Z"
                   },
                   {
                     "criterion_id": "evaluation_hypotheses",
@@ -121,7 +121,7 @@
                     },
                     "evidence": "Evaluation hypotheses defined",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076700Z"
+                    "timestamp": "2026-09-15T03:20:12.409994Z"
                   },
                   {
                     "criterion_id": "implementation_ready",
@@ -130,54 +130,54 @@
                     },
                     "evidence": "Implementation readiness: ready_for_replication",
                     "passed": true,
-                    "timestamp": "2026-09-14T23:33:10.076707Z"
+                    "timestamp": "2026-09-15T03:20:12.410003Z"
                   }
                 ],
                 "summary": "Replication gate evaluation: 4/4 required criteria, 4/4 optional criteria. 4/4 required criteria passed and 4/4 optional criteria passed",
-                "timestamp": "2026-09-14T23:33:10.076742Z"
+                "timestamp": "2026-09-15T03:20:12.410056Z"
               },
-              "strategy_spec_checksum": "sha256:db3e2de4884fc63cc5c35a9f747337c2b58b5ae07093274097b89a93107f262d",
+              "strategy_spec_checksum": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
               "worker_id": "alpha-revalidation-worker"
             },
-            "output_manifest_ref": "research-authority://experiment-runs/erun-alpha-6f2010a83d50a15c",
-            "run_id": "erun-alpha-6f2010a83d50a15c",
+            "output_manifest_ref": "research-authority://experiment-runs/erun-alpha-d20376aef23b4bd0",
+            "run_id": "erun-alpha-d20376aef23b4bd0",
             "runtime_env": "research",
-            "started_at": "2026-09-14T23:33:10Z",
+            "started_at": "2026-09-15T03:20:12Z",
             "status": "completed",
-            "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8",
-            "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+            "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+            "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
             "strategy_spec_version": "1.0.0",
-            "task_id": "etask-alpha-7a2545ea2490d89a",
+            "task_id": "etask-alpha-5b1d0ddbab438b2a",
             "tenant_id": "tenant-dev",
-            "trace_id": "trace-alpha-7a2545ea2490d89a:attempt:1"
+            "trace_id": "trace-alpha-5b1d0ddbab438b2a:attempt:1"
           },
           "producer_backend": "replication_gate",
           "record_type": "ExperimentRun",
-          "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+          "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
           "tenant_id": "tenant-dev"
         },
         "created_by": "alpha-revalidation-worker",
-        "created_at": "2026-09-14T23:33:10Z",
-        "updated_at": "2026-09-14T23:33:10Z",
-        "idempotency_key": "alpha-run:tenant-dev:reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8:0:1",
+        "created_at": "2026-09-15T03:20:12Z",
+        "updated_at": "2026-09-15T03:20:12Z",
+        "idempotency_key": "alpha-run:tenant-dev:reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588:0:1",
         "rejection": null,
         "events": [
           {
-            "event_id": "revt-20260914-001",
+            "event_id": "revt-20260915-001",
             "event_type": "run_queued",
             "summary": "Stub research orchestration run queued for bounded dispatch.",
             "actor": "alpha-revalidation-worker",
-            "run_id": "rrun-20260914-007",
-            "emitted_at": "2026-09-14T23:33:10Z",
+            "run_id": "rrun-20260915-009",
+            "emitted_at": "2026-09-15T03:20:12Z",
             "sequence_number": 1
           },
           {
-            "event_id": "revt-20260914-002",
+            "event_id": "revt-20260915-002",
             "event_type": "run_completed",
-            "summary": "Persisted authoritative replication_gate ExperimentRun erun-alpha-6f2010a83d50a15c.",
+            "summary": "Persisted authoritative replication_gate ExperimentRun erun-alpha-d20376aef23b4bd0.",
             "actor": "alpha-revalidation-worker",
-            "run_id": "rrun-20260914-007",
-            "emitted_at": "2026-09-14T23:33:10Z",
+            "run_id": "rrun-20260915-009",
+            "emitted_at": "2026-09-15T03:20:12Z",
             "sequence_number": 2
           }
         ],
@@ -185,7 +185,7 @@
         "proposal_refs": [],
         "registry_writebacks": []
       },
-      "path": "/api/research-orchestrator/runs/rrun-20260914-007",
+      "path": "/api/research-orchestrator/runs/rrun-20260915-009",
       "status": 200
     }
   ],
@@ -200,24 +200,24 @@
     "ticks": 1000
   },
   "queue_entry": {
-    "approval_decision_id": "apv-d3d2684ade22",
-    "approved_at": "2026-09-14T23:33:09Z",
+    "approval_decision_id": "apv-c83aa791b7a6",
+    "approved_at": "2026-09-15T03:20:11Z",
     "approver": "pantheon-dev-approver",
     "attempt_count": 0,
     "authority_run_ids": [
-      "rrun-20260914-007"
+      "rrun-20260915-009"
     ],
-    "authority_task_id": "rtask-20260914-007",
-    "checksum": "sha256:db3e2de4884fc63cc5c35a9f747337c2b58b5ae07093274097b89a93107f262d",
+    "authority_task_id": "rtask-20260915-009",
+    "checksum": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
     "claim_generation": 1,
     "consumed_replay_ids": [],
-    "enqueued_at": "2026-09-14T23:33:10Z",
+    "enqueued_at": "2026-09-15T03:20:12Z",
     "enqueued_by": "alpha-replication-controller",
     "experiment_run_ids": [
-      "erun-alpha-6f2010a83d50a15c"
+      "erun-alpha-d20376aef23b4bd0"
     ],
-    "experiment_task_id": "etask-alpha-7a2545ea2490d89a",
-    "last_revalidation_at": "2026-09-14T23:33:10Z",
+    "experiment_task_id": "etask-alpha-5b1d0ddbab438b2a",
+    "last_revalidation_at": "2026-09-15T03:20:12Z",
     "last_revalidation_status": "completed",
     "lifecycle_state": "approved",
     "reclaimed_count": 0,
@@ -225,9 +225,9 @@
     "revalidation_count": 1,
     "spec_version": "1.0.0",
     "status": "completed",
-    "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8",
-    "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+    "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+    "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
     "tenant_id": "tenant-dev"
   },
-  "registry_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8"
+  "registry_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588"
 }

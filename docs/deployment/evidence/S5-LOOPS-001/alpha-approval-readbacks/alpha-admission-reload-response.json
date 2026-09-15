@@ -1,22 +1,22 @@
 {
   "body": {
-    "admission_id": "adm-dd1f83dfbd55",
-    "approval_decision_id": "apv-d3d2684ade22",
-    "approved_at": "2026-09-14T23:33:09Z",
+    "admission_id": "adm-e520f214e792",
+    "approval_decision_id": "apv-c83aa791b7a6",
+    "approved_at": "2026-09-15T03:20:11Z",
     "approver": "pantheon-dev-approver",
-    "checksum": "sha256:db3e2de4884fc63cc5c35a9f747337c2b58b5ae07093274097b89a93107f262d",
-    "created_at": "2026-09-14T23:33:09Z",
+    "checksum": "sha256:7ab1eb0c154591e2f5aa08aee27ddb61d0a38c2d0c02ed5ed1fe10678ae17ea5",
+    "created_at": "2026-09-15T03:20:11Z",
     "mode": "initial",
     "requested_by": "pantheon-dev-operator-a",
-    "review_ref": "review://apv-d3d2684ade22",
+    "review_ref": "review://apv-c83aa791b7a6",
     "spec_version": "1.0.0",
     "status": "admitted",
-    "strategy_id": "strat-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-4440f455edf8",
-    "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8",
+    "strategy_id": "strat-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-f7c22d08b81b",
+    "strategy_spec_id": "reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588",
     "tenant_id": "tenant-dev"
   },
   "http_status": 200,
   "method": "GET",
-  "observed_at": "2026-09-14T23:33:09Z",
-  "route": "/api/research-orchestrator/alpha-replication/admissions/tenant-dev/reg-strategy-spec-src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor-b20788d168c8"
+  "observed_at": "2026-09-15T03:20:11Z",
+  "route": "/api/research-orchestrator/alpha-replication/admissions/tenant-dev/reg-strategy-spec-src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor-01c274a87588"
 }

@@ -1,11 +1,11 @@
 {
-  "anchor_source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
+  "anchor_source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
   "connector_request": {
     "connector": {
-      "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
       "license_scope": "internal",
       "metadata": {
-        "acceptance_stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+        "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
         "is_real": false,
         "provenance": "simulation",
         "tenant_id": "tenant-dev"
@@ -17,18 +17,18 @@
       "mode": "static_records",
       "records": [
         {
-          "content_ref": "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/previous",
+          "content_ref": "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/previous",
           "metadata": {
-            "acceptance_stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+            "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
             "access_scope": [
               "research"
             ],
-            "available_time": "2026-09-14T23:33:06Z",
+            "available_time": "2026-09-15T03:20:08Z",
             "is_real": false,
             "license_scope": "internal",
             "normalized_row": {
               "close": 519.243667,
-              "event_time": "2026-09-14T23:33:06Z",
+              "event_time": "2026-09-15T03:20:08Z",
               "is_real": false,
               "provenance": "simulation",
               "symbol": "SPY"
@@ -36,23 +36,23 @@
             "provenance": "simulation",
             "tenant_id": "tenant-dev"
           },
-          "source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-          "title": "SIMULATION paper-only SPY previous dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
+          "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+          "title": "SIMULATION paper-only SPY previous dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
         },
         {
-          "content_ref": "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor",
+          "content_ref": "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/anchor",
           "metadata": {
-            "acceptance_stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+            "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
             "access_scope": [
               "research"
             ],
-            "available_time": "2026-09-14T23:33:06Z",
+            "available_time": "2026-09-15T03:20:08Z",
             "is_real": false,
             "license_scope": "internal",
             "normalized_row": {
               "close": 520.876989,
-              "event_time": "2026-09-14T23:33:06Z",
+              "event_time": "2026-09-15T03:20:08Z",
               "is_real": false,
               "provenance": "simulation",
               "symbol": "SPY"
@@ -60,7 +60,7 @@
             "provenance": "simulation",
             "research_dataset": {
               "data_frequency": "daily",
-              "dataset_id": "dataset-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+              "dataset_id": "dataset-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
               "is_real": false,
               "metadata": {
                 "intended_use": "paper_only_acceptance",
@@ -732,7 +732,7 @@
                 }
               ],
               "source_dataset_refs": [
-                "source-ingest://source-records/src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+                "source-ingest://source-records/src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
               ]
             },
             "strategy_seed": {
@@ -763,25 +763,25 @@
             },
             "tenant_id": "tenant-dev"
           },
-          "source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
-          "title": "SIMULATION paper-only SPY anchor dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
+          "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+          "title": "SIMULATION paper-only SPY anchor dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
         }
       ]
     }
   },
-  "created_at": "2026-09-14T23:33:06Z",
+  "created_at": "2026-09-15T03:20:08Z",
   "is_real": false,
   "job_request": {
-    "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-    "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+    "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+    "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
     "trigger_type": "manual"
   },
   "provenance": "simulation",
   "source_ids": [
-    "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-    "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+    "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+    "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
   ],
-  "stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
   "tenant_id": "tenant-dev"
 }

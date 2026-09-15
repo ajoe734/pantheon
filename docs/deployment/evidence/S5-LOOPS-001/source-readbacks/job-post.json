@@ -1,95 +1,95 @@
 {
   "body": {
     "run": {
-      "ingest_run_id": "ingest-e276cb8baffe",
-      "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "ingest_run_id": "ingest-65d1dd0d00d5",
+      "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
       "source_type": "market",
       "trigger_type": "manual",
       "status": "completed",
-      "started_at": "2026-09-14T23:33:06Z",
-      "finished_at": "2026-09-14T23:33:06Z",
+      "started_at": "2026-09-15T03:20:08Z",
+      "finished_at": "2026-09-15T03:20:08Z",
       "raw_count": 2,
       "normalized_count": 2,
       "rejected_count": 0,
-      "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
       "events": [
         {
           "event_type": "IngestRunQueued",
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "status": "queued",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "created_at": "2026-09-14T23:33:06Z",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "created_at": "2026-09-15T03:20:08Z",
           "message": null
         },
         {
           "event_type": "IngestRunStarted",
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "status": "fetching",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "created_at": "2026-09-14T23:33:06Z",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "created_at": "2026-09-15T03:20:08Z",
           "message": "Ingest run started"
         },
         {
           "event_type": "SourceNormalizingStarted",
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "status": "normalizing",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "created_at": "2026-09-14T23:33:06Z",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "created_at": "2026-09-15T03:20:08Z",
           "message": "Scheduled source records fetched"
         },
         {
           "event_type": "EvidenceIndexingStarted",
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "status": "indexing",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "created_at": "2026-09-14T23:33:06Z",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "created_at": "2026-09-15T03:20:08Z",
           "message": "Scheduled source records normalized"
         },
         {
           "event_type": "IngestRunCompleted",
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "status": "completed",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "created_at": "2026-09-14T23:33:06Z",
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "created_at": "2026-09-15T03:20:08Z",
           "message": "Scheduled source records ready for indexing"
         },
         {
           "event_type": "SearchIndexRefreshObserved",
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "status": "completed",
-          "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-          "created_at": "2026-09-14T23:33:06Z",
-          "message": "{\"attempted_at\":\"2026-09-14T23:33:06Z\",\"configured\":true,\"error\":null,\"freshness_status\":\"fresh\",\"freshness_within_sla\":true,\"http_status\":200,\"ingest_run_id\":\"ingest-e276cb8baffe\",\"materialized\":true,\"materialized_matches_completion\":true,\"pipeline_run_id\":\"cd8e56ed-e457-42dd-b204-c63e95d7093b\",\"schema_version\":\"source_search_refresh_observed.v1\",\"search_url\":\"http://search-svc:8098\",\"status\":\"refreshed\"}"
+          "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+          "created_at": "2026-09-15T03:20:09Z",
+          "message": "{\"attempted_at\":\"2026-09-15T03:20:09Z\",\"configured\":true,\"error\":null,\"freshness_status\":\"fresh\",\"freshness_within_sla\":true,\"http_status\":200,\"ingest_run_id\":\"ingest-65d1dd0d00d5\",\"materialized\":true,\"materialized_matches_completion\":true,\"pipeline_run_id\":\"da2bf4ed-4142-402d-ac7f-52ffc10d9433\",\"schema_version\":\"source_search_refresh_observed.v1\",\"search_url\":\"http://search-svc:8098\",\"status\":\"refreshed\"}"
         }
       ]
     },
     "watermark": {
       "schema_version": "source_watermark.v1",
-      "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
       "source_type": "market",
       "value": null,
-      "updated_at": "2026-09-14T23:33:06Z",
-      "last_ingest_run_id": "ingest-e276cb8baffe"
+      "updated_at": "2026-09-15T03:20:08Z",
+      "last_ingest_run_id": "ingest-65d1dd0d00d5"
     },
     "records": [
       {
-        "source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-        "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+        "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+        "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
         "source_type": "market",
-        "title": "SIMULATION paper-only SPY previous dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-        "content_ref": "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/previous",
+        "title": "SIMULATION paper-only SPY previous dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+        "content_ref": "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/previous",
         "status": "normalized",
         "metadata": {
-          "acceptance_stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+          "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
           "access_scope": [
             "research"
           ],
-          "available_time": "2026-09-14T23:33:06Z",
+          "available_time": "2026-09-15T03:20:08Z",
           "is_real": false,
           "license_scope": "internal",
           "normalized_row": {
             "close": 519.243667,
-            "event_time": "2026-09-14T23:33:06Z",
+            "event_time": "2026-09-15T03:20:08Z",
             "is_real": false,
             "provenance": "simulation",
             "symbol": "SPY"
@@ -97,27 +97,27 @@
           "provenance": "simulation",
           "tenant_id": "tenant-dev"
         },
-        "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-        "created_at": "2026-09-14T23:33:06Z"
+        "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+        "created_at": "2026-09-15T03:20:08Z"
       },
       {
-        "source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
-        "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+        "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+        "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
         "source_type": "market",
-        "title": "SIMULATION paper-only SPY anchor dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-        "content_ref": "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor",
+        "title": "SIMULATION paper-only SPY anchor dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+        "content_ref": "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/anchor",
         "status": "normalized",
         "metadata": {
-          "acceptance_stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+          "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
           "access_scope": [
             "research"
           ],
-          "available_time": "2026-09-14T23:33:06Z",
+          "available_time": "2026-09-15T03:20:08Z",
           "is_real": false,
           "license_scope": "internal",
           "normalized_row": {
             "close": 520.876989,
-            "event_time": "2026-09-14T23:33:06Z",
+            "event_time": "2026-09-15T03:20:08Z",
             "is_real": false,
             "provenance": "simulation",
             "symbol": "SPY"
@@ -125,7 +125,7 @@
           "provenance": "simulation",
           "research_dataset": {
             "data_frequency": "daily",
-            "dataset_id": "dataset-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+            "dataset_id": "dataset-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
             "is_real": false,
             "metadata": {
               "intended_use": "paper_only_acceptance",
@@ -797,7 +797,7 @@
               }
             ],
             "source_dataset_refs": [
-              "source-ingest://source-records/src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+              "source-ingest://source-records/src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
             ]
           },
           "strategy_seed": {
@@ -828,47 +828,47 @@
           },
           "tenant_id": "tenant-dev"
         },
-        "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-        "created_at": "2026-09-14T23:33:06Z"
+        "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+        "created_at": "2026-09-15T03:20:08Z"
       }
     ],
     "evidence_refs": {
       "source_ids": [
-        "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-        "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
       ],
       "evidence_item_ids": [
-        "evi-dbeac89f21ff5d0a",
-        "evi-49f0c8195068a8e9"
+        "evi-e16d7e71274b3d4e",
+        "evi-af6d58f3c7ed1976"
       ],
-      "evidence_bundle_id": "evbundle-ingest-e276cb8baffe-880d02fe6c35",
+      "evidence_bundle_id": "evbundle-ingest-65d1dd0d00d5-0e70d50dbc34",
       "knowledge_object_ids": [
-        "ko-evi-dbeac89f21ff5d0a-be307e6fbd40",
-        "ko-evi-49f0c8195068a8e9-2cafbfeda562"
+        "ko-evi-e16d7e71274b3d4e-8aa936de1211",
+        "ko-evi-af6d58f3c7ed1976-efe31d6098f9"
       ],
       "distillation_admissions": {
-        "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous": {
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous": {
           "status": "admitted",
-          "job_id": "distill-a2f236c1eec81efeeffa2d85",
-          "source_digest": "sha256:a99d550a020681efbdf8d0088035977ad7cdc3df52cb92863f8a4e829bf754ea"
+          "job_id": "distill-e9fb345a90b08dc829edcbd9",
+          "source_digest": "sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d"
         },
-        "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor": {
+        "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor": {
           "status": "admitted",
-          "job_id": "distill-3474db6981626aa0ded8f2f5",
-          "source_digest": "sha256:b20788d168c84eded9871323bc086702fdf71c2ec811d44d2ff94440f455edf8"
+          "job_id": "distill-8f02947c217da2b3fe324803",
+          "source_digest": "sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b"
         }
       },
       "storage_refs": {
         "schema_version": "market_data_storage_manifest.v1",
-        "ingest_run_id": "ingest-e276cb8baffe",
-        "created_at": "2026-09-14T23:33:06Z",
+        "ingest_run_id": "ingest-65d1dd0d00d5",
+        "created_at": "2026-09-15T03:20:08Z",
         "raw_refs": [
           {
             "ref_type": "raw_object",
-            "source": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+            "source": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
             "dataset": "market",
-            "date": "2026-09-14",
-            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260914t233306z-f967879acea34b45ae5c45d1133401da/market/date=2026-09-14/ingest-e276cb8baffe.jsonl",
+            "date": "2026-09-15",
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260915t032008z-fdefb78114264130a108903d1d3884a7/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl",
             "row_count": 2,
             "compression": "none",
             "retention_days": null,
@@ -880,8 +880,8 @@
           {
             "ref_type": "normalized_rows",
             "dataset": "market",
-            "date": "2026-09-14",
-            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-14/ingest-e276cb8baffe.jsonl",
+            "date": "2026-09-15",
+            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl",
             "row_count": 2,
             "schema_hash": null
           }
@@ -896,17 +896,19 @@
       },
       "market_snapshots": {
         "schema_version": "source_ingest_latest_market_snapshot_batch.v1",
-        "ingest_run_id": "ingest-e276cb8baffe",
+        "ingest_run_id": "ingest-65d1dd0d00d5",
         "accepted_record_count": 2,
         "updated_snapshot_count": 1,
         "snapshots": [
           {
             "schema_version": "source_ingest_latest_market_snapshot.v1",
-            "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
+            "snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
             "symbol": "SPY",
-            "event_time": "2026-09-14T23:33:06Z",
-            "observed_at": "2026-09-14T23:33:06Z",
+            "event_time": "2026-09-15T03:20:08Z",
+            "observed_at": "2026-09-15T03:20:08Z",
             "closes": [
+              520.876989,
+              520.876989,
               520.876989,
               520.876989,
               520.876989
@@ -915,40 +917,48 @@
               "source_ids": [
                 "src-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e-spy-anchor",
                 "src-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa-spy-anchor",
-                "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+                "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
+                "src-dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6-spy-anchor",
+                "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
               ],
               "connector_ids": [
                 "conn-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e",
                 "conn-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa",
-                "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
+                "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+                "conn-dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6",
+                "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
               ],
               "content_refs": [
                 "simulation://dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e/SPY/anchor",
                 "simulation://dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa/SPY/anchor",
-                "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor"
+                "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor",
+                "simulation://dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6/SPY/anchor",
+                "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/anchor"
               ],
               "ingest_run_ids": [
+                "ingest-3d71219942fd",
                 "ingest-4aacd33aff7a",
+                "ingest-65d1dd0d00d5",
                 "ingest-6e63b51bdfa1",
                 "ingest-e276cb8baffe"
               ]
             },
-            "source_ref": "source-ingest://snapshots/mss-c76a26dd68bd3e3ad2de513a"
+            "source_ref": "source-ingest://snapshots/mss-5fd4452dc6869e10c8e965b9"
           }
         ]
       }
     },
     "storage_refs": {
       "schema_version": "market_data_storage_manifest.v1",
-      "ingest_run_id": "ingest-e276cb8baffe",
-      "created_at": "2026-09-14T23:33:06Z",
+      "ingest_run_id": "ingest-65d1dd0d00d5",
+      "created_at": "2026-09-15T03:20:08Z",
       "raw_refs": [
         {
           "ref_type": "raw_object",
-          "source": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+          "source": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
           "dataset": "market",
-          "date": "2026-09-14",
-          "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260914t233306z-f967879acea34b45ae5c45d1133401da/market/date=2026-09-14/ingest-e276cb8baffe.jsonl",
+          "date": "2026-09-15",
+          "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260915t032008z-fdefb78114264130a108903d1d3884a7/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl",
           "row_count": 2,
           "compression": "none",
           "retention_days": null,
@@ -960,8 +970,8 @@
         {
           "ref_type": "normalized_rows",
           "dataset": "market",
-          "date": "2026-09-14",
-          "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-14/ingest-e276cb8baffe.jsonl",
+          "date": "2026-09-15",
+          "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl",
           "row_count": 2,
           "schema_hash": null
         }
@@ -976,18 +986,18 @@
     },
     "source_search_refresh": {
       "schema_version": "source_search_refresh_notification.v1",
-      "ingest_run_id": "ingest-e276cb8baffe",
+      "ingest_run_id": "ingest-65d1dd0d00d5",
       "configured": true,
       "status": "refreshed",
-      "attempted_at": "2026-09-14T23:33:06Z",
+      "attempted_at": "2026-09-15T03:20:09Z",
       "search_url": "http://search-svc:8098",
       "search_service": {
         "schema_version": "source_search_refresh_service_summary.v1",
-        "pipeline_run_id": "cd8e56ed-e457-42dd-b204-c63e95d7093b",
+        "pipeline_run_id": "da2bf4ed-4142-402d-ac7f-52ffc10d9433",
         "freshness_status": "fresh",
         "freshness_within_sla": true,
         "materialized": true,
-        "materialized_at": "2026-09-14T23:33:06Z",
+        "materialized_at": "2026-09-15T03:20:09Z",
         "materialized_matches_completion": true
       },
       "http_status": 200
@@ -997,115 +1007,125 @@
     "frontier_id": null,
     "receipt": {
       "schema_version": "source_ingest_receipt.v1",
-      "ingest_run_id": "ingest-e276cb8baffe",
-      "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "ingest_run_id": "ingest-65d1dd0d00d5",
+      "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
       "status": "completed",
       "trigger_type": "manual",
-      "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-      "started_at": "2026-09-14T23:33:06Z",
-      "finished_at": "2026-09-14T23:33:06Z",
+      "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+      "started_at": "2026-09-15T03:20:08Z",
+      "finished_at": "2026-09-15T03:20:08Z",
       "raw_count": 2,
       "normalized_count": 2,
       "rejected_count": 0,
       "watermark": null,
-      "source_timestamp": "2026-09-14T23:33:06Z",
+      "source_timestamp": "2026-09-15T03:20:08Z",
       "source_timestamp_status": "valid",
       "evidence_refs": {
         "distillation_admissions": {
-          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor": {
-            "job_id": "distill-3474db6981626aa0ded8f2f5",
-            "source_digest": "sha256:b20788d168c84eded9871323bc086702fdf71c2ec811d44d2ff94440f455edf8",
+          "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor": {
+            "job_id": "distill-8f02947c217da2b3fe324803",
+            "source_digest": "sha256:01c274a875884cec538eaab2a03c974b9a5ad7e8f9ec634e4463f7c22d08b81b",
             "status": "admitted"
           },
-          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous": {
-            "job_id": "distill-a2f236c1eec81efeeffa2d85",
-            "source_digest": "sha256:a99d550a020681efbdf8d0088035977ad7cdc3df52cb92863f8a4e829bf754ea",
+          "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous": {
+            "job_id": "distill-e9fb345a90b08dc829edcbd9",
+            "source_digest": "sha256:886a54f9eef6b5ea9b3f8e857d45601b6a1037714d0dc8b1abb42796ab711c6d",
             "status": "admitted"
           }
         },
-        "evidence_bundle_id": "evbundle-ingest-e276cb8baffe-880d02fe6c35",
+        "evidence_bundle_id": "evbundle-ingest-65d1dd0d00d5-0e70d50dbc34",
         "evidence_item_ids": [
-          "evi-dbeac89f21ff5d0a",
-          "evi-49f0c8195068a8e9"
+          "evi-e16d7e71274b3d4e",
+          "evi-af6d58f3c7ed1976"
         ],
         "knowledge_object_ids": [
-          "ko-evi-dbeac89f21ff5d0a-be307e6fbd40",
-          "ko-evi-49f0c8195068a8e9-2cafbfeda562"
+          "ko-evi-e16d7e71274b3d4e-8aa936de1211",
+          "ko-evi-af6d58f3c7ed1976-efe31d6098f9"
         ],
         "market_snapshots": {
           "accepted_record_count": 2,
-          "ingest_run_id": "ingest-e276cb8baffe",
+          "ingest_run_id": "ingest-65d1dd0d00d5",
           "schema_version": "source_ingest_latest_market_snapshot_batch.v1",
           "snapshots": [
             {
               "closes": [
                 520.876989,
                 520.876989,
+                520.876989,
+                520.876989,
                 520.876989
               ],
-              "event_time": "2026-09-14T23:33:06Z",
+              "event_time": "2026-09-15T03:20:08Z",
               "lineage": {
                 "connector_ids": [
                   "conn-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e",
                   "conn-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa",
-                  "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
+                  "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+                  "conn-dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6",
+                  "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
                 ],
                 "content_refs": [
                   "simulation://dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e/SPY/anchor",
                   "simulation://dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa/SPY/anchor",
-                  "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor"
+                  "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor",
+                  "simulation://dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6/SPY/anchor",
+                  "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/anchor"
                 ],
                 "ingest_run_ids": [
+                  "ingest-3d71219942fd",
                   "ingest-4aacd33aff7a",
+                  "ingest-65d1dd0d00d5",
                   "ingest-6e63b51bdfa1",
                   "ingest-e276cb8baffe"
                 ],
                 "source_ids": [
                   "src-dev-product-20260914T233217Z-90a1aa728cd54f6895ae9c53b406706e-spy-anchor",
                   "src-dev-product-20260914T233234Z-dda6aefba768446ea42c82e67d75f3fa-spy-anchor",
-                  "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+                  "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
+                  "src-dev-product-20260915T031957Z-de7c2797378e4bea9d794736e3f838d6-spy-anchor",
+                  "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
                 ]
               },
-              "observed_at": "2026-09-14T23:33:06Z",
+              "observed_at": "2026-09-15T03:20:08Z",
               "schema_version": "source_ingest_latest_market_snapshot.v1",
-              "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
-              "source_ref": "source-ingest://snapshots/mss-c76a26dd68bd3e3ad2de513a",
+              "snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
+              "source_ref": "source-ingest://snapshots/mss-5fd4452dc6869e10c8e965b9",
               "symbol": "SPY"
             }
           ],
           "updated_snapshot_count": 1
         },
         "source_ids": [
-          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-          "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+          "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+          "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
         ]
       },
       "storage_refs": {
-        "created_at": "2026-09-14T23:33:06Z",
+        "created_at": "2026-09-15T03:20:08Z",
         "feature_refs": [],
-        "ingest_run_id": "ingest-e276cb8baffe",
+        "ingest_run_id": "ingest-65d1dd0d00d5",
         "normalized_refs": [
           {
             "dataset": "market",
-            "date": "2026-09-14",
+            "date": "2026-09-15",
             "ref_type": "normalized_rows",
             "row_count": 2,
             "schema_hash": null,
-            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-14/ingest-e276cb8baffe.jsonl"
+            "uri": "/data/source-ingest/market_data_store/normalized/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl"
           }
         ],
         "raw_refs": [
           {
             "compression": "none",
             "dataset": "market",
-            "date": "2026-09-14",
+            "date": "2026-09-15",
             "ref_type": "raw_object",
             "retention_days": null,
             "retention_policy_ref": null,
             "row_count": 2,
-            "source": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+            "source": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
             "storage_class": null,
-            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260914t233306z-f967879acea34b45ae5c45d1133401da/market/date=2026-09-14/ingest-e276cb8baffe.jsonl"
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260915t032008z-fdefb78114264130a108903d1d3884a7/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl"
           }
         ],
         "schema_version": "market_data_storage_manifest.v1",
@@ -1117,11 +1137,11 @@
         }
       },
       "typed_failure": null,
-      "created_at": "2026-09-14T23:33:06Z"
+      "created_at": "2026-09-15T03:20:09Z"
     }
   },
   "http_status": 201,
   "method": "POST",
-  "observed_at": "2026-09-14T23:33:06Z",
+  "observed_at": "2026-09-15T03:20:09Z",
   "route": "/api/source-ingest/jobs"
 }

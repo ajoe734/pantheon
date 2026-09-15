@@ -1,23 +1,23 @@
 {
   "body": {
     "source_record": {
-      "source_id": "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor",
-      "connector_id": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+      "source_id": "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor",
+      "connector_id": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
       "source_type": "market",
-      "title": "SIMULATION paper-only SPY anchor dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-      "content_ref": "simulation://dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da/SPY/anchor",
+      "title": "SIMULATION paper-only SPY anchor dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+      "content_ref": "simulation://dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7/SPY/anchor",
       "status": "normalized",
       "metadata": {
-        "acceptance_stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+        "acceptance_stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
         "access_scope": [
           "research"
         ],
-        "available_time": "2026-09-14T23:33:06Z",
+        "available_time": "2026-09-15T03:20:08Z",
         "is_real": false,
         "license_scope": "internal",
         "normalized_row": {
           "close": 520.876989,
-          "event_time": "2026-09-14T23:33:06Z",
+          "event_time": "2026-09-15T03:20:08Z",
           "is_real": false,
           "provenance": "simulation",
           "symbol": "SPY"
@@ -25,7 +25,7 @@
         "provenance": "simulation",
         "research_dataset": {
           "data_frequency": "daily",
-          "dataset_id": "dataset-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+          "dataset_id": "dataset-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
           "is_real": false,
           "metadata": {
             "intended_use": "paper_only_acceptance",
@@ -697,7 +697,7 @@
             }
           ],
           "source_dataset_refs": [
-            "source-ingest://source-records/src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+            "source-ingest://source-records/src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
           ]
         },
         "strategy_seed": {
@@ -730,10 +730,10 @@
         "raw_storage_refs": [
           {
             "ref_type": "raw_object",
-            "source": "conn-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
+            "source": "conn-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
             "dataset": "market",
-            "date": "2026-09-14",
-            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260914t233306z-f967879acea34b45ae5c45d1133401da/market/date=2026-09-14/ingest-e276cb8baffe.jsonl",
+            "date": "2026-09-15",
+            "uri": "/data/source-ingest/market_data_store/raw/conn-dev-product-20260915t032008z-fdefb78114264130a108903d1d3884a7/market/date=2026-09-15/ingest-65d1dd0d00d5.jsonl",
             "row_count": 2,
             "compression": "none",
             "retention_days": null,
@@ -741,19 +741,19 @@
             "storage_class": null
           }
         ],
-        "source_ingest_run_id": "ingest-e276cb8baffe",
+        "source_ingest_run_id": "ingest-65d1dd0d00d5",
         "canonical_url": null,
         "canonical_doi": null,
         "canonical_repo": null,
-        "content_hash": "sha256:bfc0719901c67f563e49238fde7088d33667b176ea4448120c15f1cd0ad96a93",
-        "source_dedupe_key": "content:sha256:bfc0719901c67f563e49238fde7088d33667b176ea4448120c15f1cd0ad96a93"
+        "content_hash": "sha256:dc1dad5232e7ffed3565d88974cd06f8efd4a7f46d3a0517a4f62b13b7c4f5f3",
+        "source_dedupe_key": "content:sha256:dc1dad5232e7ffed3565d88974cd06f8efd4a7f46d3a0517a4f62b13b7c4f5f3"
       },
-      "trace_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-      "created_at": "2026-09-14T23:33:06Z"
+      "trace_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+      "created_at": "2026-09-15T03:20:08Z"
     }
   },
   "http_status": 200,
   "method": "GET",
-  "observed_at": "2026-09-14T23:33:06Z",
-  "route": "/api/source-ingest/source-records/src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+  "observed_at": "2026-09-15T03:20:09Z",
+  "route": "/api/source-ingest/source-records/src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
 }

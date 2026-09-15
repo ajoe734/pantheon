@@ -1,21 +1,21 @@
 {
   "distillation_job_ids": [
-    "distill-a2f236c1eec81efeeffa2d85",
-    "distill-3474db6981626aa0ded8f2f5"
+    "distill-e9fb345a90b08dc829edcbd9",
+    "distill-8f02947c217da2b3fe324803"
   ],
-  "evidence_dir": "/tmp/pantheon-fresh-source-evidence-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da",
-  "ingest_run_id": "ingest-e276cb8baffe",
+  "evidence_dir": "/tmp/pantheon-fresh-source-evidence-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7",
+  "ingest_run_id": "ingest-65d1dd0d00d5",
   "remaining": [
     "Registry authenticated GET for actual outbox registry_id",
     "actual owner approval and Alpha receipt",
     "numeric research execution with simulation provenance",
     "remaining causal loops and hosted UI journeys"
   ],
-  "snapshot_id": "mss-c76a26dd68bd3e3ad2de513a",
+  "snapshot_id": "mss-5fd4452dc6869e10c8e965b9",
   "source_ids": [
-    "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-previous",
-    "src-dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da-spy-anchor"
+    "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-previous",
+    "src-dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7-spy-anchor"
   ],
   "status": "source-stimulus-and-readbacks-only-not-loops-1-through-12-pass",
-  "stimulus_id": "dev-product-20260914T233306Z-f967879acea34b45ae5c45d1133401da"
+  "stimulus_id": "dev-product-20260915T032008Z-fdefb78114264130a108903d1d3884a7"
 }
