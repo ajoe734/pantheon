@@ -1,0 +1,127 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "65cdb9fa5746d78a04eda2eaa2a72f33980c540a",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity2"
+  },
+  "source_ref": {
+    "plan_doc": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
+    "plan_section": "U6 — Management NL 單一 Use Case 與 Durable Replay",
+    "precedent_pattern": "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001 (services/control-plane/bff/assistant/source_collectors.py) supplies the exact Deps-dataclass + thin-wrapper seam pattern this task follows for management_service.py/management_contracts.py."
+  },
+  "delivery_nature": {
+    "documentation_only": false,
+    "statement": "Unifies Management NL command admission/replay so POST /bff/management/nl/ask (JSON) and POST /bff/management/nl/ask/stream (SSE) share exactly one durable-store-backed decision path instead of ask having a proper admit/wait/replay/complete state machine while stream called the provider inline with zero dedup. Deletes the legacy, env-flag-gated idempotency mechanism entirely (in-memory dict _MGMT_NL_IDEMPOTENCY, _mgmt_nl_idempotency_check/_put, and the PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED bypass flag that let _mgmt_nl_command_admit skip the durable ManagementNlCommandIdempotencyStore). Extracts the shared admission/replay/complete/mark_uncertain decision logic into a new ManagementNlUseCase class (services/control-plane/bff/assistant/management_service.py) driven by an injected ManagementNlUseCaseDeps (services/control-plane/bff/assistant/management_contracts.py), mirroring source_collectors.py's Deps-dataclass pattern. main.py's bff_management_nl_ask/bff_management_nl_ask_stream are now thin fail-closed wrappers (mark a held reservation uncertain on any unhandled exception) delegating to _bff_management_nl_ask_impl/_bff_management_nl_ask_stream_impl, both of which call the same module-level _mgmt_nl_command_admit/_mgmt_nl_command_complete/_mgmt_nl_command_mark_uncertain functions, which in turn delegate to a single composed _MANAGEMENT_NL_USE_CASE instance -- one real implementation, not two. bff_management_nl_ask_stream is now async def and shares the same canonical command scope route (_MGMT_NL_COMMAND_ROUTE = 'POST /bff/management/nl/ask') as ask, so a client can switch transports without losing dedup. Stream now durably replays a terminal result as SSE frames (via the new _mgmt_nl_cached_result_sse_frames renderer) instead of invoking the provider again on an exact-duplicate Idempotency-Key, and marks its reservation uncertain (not falsely 'completed') on any provider failure or incomplete stream. Also fixes a latent, independently-verified dead-code bug: bff_management_nl_ask's dry-run short-circuit called _request_dry_run_requested() with no arguments, but nothing in the codebase ever set the module's _REQUEST_DRY_RUN_CONTEXT ContextVar for this route (that ContextVar is scoped to tools_integrations' own routes), so X-Dry-Run could never actually trigger for this endpoint even at base_sha; added an explicit x_dry_run Header parameter and pass it as _request_dry_run_requested(x_dry_run), matching the idiomatic explicit_header pattern already used elsewhere (e.g. _gov_bff_action_command call sites' routers)."
+  },
+  "changed_files": [
+    "services/control-plane/bff/main.py",
+    "docker-compose.yml",
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py",
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/test_assistant_dev_compose_flags.py",
+    "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+    "docs/deployment/evidence/BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001/evidence.json"
+  ],
+  "created_files": [
+    "services/control-plane/bff/assistant/management_contracts.py",
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py"
+  ],
+  "document_proof": {
+    "services/control-plane/bff/main.py": {"sha256": "6a313e4d6ae48c09a41c6b9f87af8acd5c045d304f063fd71786d3952becf6e5", "bytes": 855972},
+    "services/control-plane/bff/assistant/management_contracts.py": {"sha256": "1474b80646d053ece6b471afb34c14c07a988030fee5e6738dedac5759126019", "bytes": 2399},
+    "services/control-plane/bff/assistant/management_service.py": {"sha256": "29221033d35b50b50bfca70cbbb589893a622f785247c21844655513cdcdfbb8", "bytes": 6299},
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py": {"sha256": "b09a51e36810685f3bbc767eeb29f3c73f94fded32917edea2809bc81952fd88", "bytes": 11084},
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py": {"sha256": "8b1130b2f4f3a0289cc5edf5bfcdf7295a7878f363c15ae7d53823acb9a5cf34", "bytes": 28272},
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py": {"sha256": "9710bb117218440d5285b04b66995704e3e6fb183fcd45dce8a1dda7433d92b9", "bytes": 7781},
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py": {"sha256": "8362fe4d5f7c47f0b8351923c147f8da5bf093e4a55818e8232809b567e13c7f", "bytes": 13048},
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py": {"sha256": "2e9dade9490383bfb68c704613563aa4c696eb622008c8a54d6c9e6862fce9a5", "bytes": 143351},
+    "services/control-plane/bff/tests/test_assistant_dev_compose_flags.py": {"sha256": "ecad887f1081c7b278c7b0bb77aaf818c359ca107525c07c9724a0fe657f5cd1", "bytes": 5012},
+    "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py": {"sha256": "b9f506f7476b20462cafeb35dd2cee66af636c4a544e7030fb8da9f2f40dd992", "bytes": 38815},
+    "docker-compose.yml": {"sha256": "c60c9a3622d3d2128754d02584e3619050e7fa59079e326b2f3811c4ad84c640", "bytes": 145758}
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself. services/control-plane/bff/conftest.py is intentionally absent from both changed_files and document_proof as of the amend commit below -- it is out of this task's declared artifact contract and was reverted to its exact base_sha content; the per-test durable-store default path it briefly carried was moved into a small autouse fixture duplicated directly in each of the six declared test files that need it instead.",
+  "seam_implementation": {
+    "module": "services/control-plane/bff/assistant/management_service.py",
+    "class": "ManagementNlUseCase",
+    "deps_dataclass": "ManagementNlUseCaseDeps",
+    "methods": ["scope", "admit", "complete", "mark_uncertain"],
+    "composition_root_binding": {
+      "file": "services/control-plane/bff/main.py",
+      "singleton": "_MANAGEMENT_NL_USE_CASE",
+      "pattern": "Instantiated once, right after the module-level env-derived helper functions it wraps (_mgmt_nl_command_idempotency_store, _mgmt_nl_command_wait_seconds, _mgmt_nl_command_poll_seconds, _mgmt_nl_raise_command_idempotency_error, _mgmt_nl_raise_command_wait_timeout) are defined. _mgmt_nl_command_admit/_mgmt_nl_command_complete/_mgmt_nl_command_mark_uncertain are now thin one-line delegators onto this instance; every existing call site (ask's control-command branch, ask's happy path, the async provider finalizer, and the newly-added stream call sites) is unchanged in shape and calls the identical shared functions."
+    },
+    "transport_wrappers": {
+      "bff_management_nl_ask": "Thin fail-closed wrapper around _bff_management_nl_ask_impl: on any unhandled exception, reads the reservation from _MGMT_NL_COMMAND_RESERVATION_CONTEXT (set by the impl immediately after admission) and marks it uncertain before re-raising.",
+      "bff_management_nl_ask_stream": "Converted from a plain (non-async) def to async def. Thin fail-closed wrapper around _bff_management_nl_ask_stream_impl with the identical mark-uncertain-on-exception pattern. The impl now performs admission (_mgmt_nl_command_admit) once, before branching on control-command vs provider-answer, exactly mirroring ask's ordering; a terminal replay is rendered via the new shared _mgmt_nl_cached_result_sse_frames helper (meta/delta/done/[DONE] frames) instead of invoking the provider again. The live (non-replay) provider-answer path drives OpenClawOpsClient.stream_assistant_provider's synchronous generator one item at a time via asyncio.to_thread(next, iterator, sentinel) so the async generator can await the shared completion calls; on success it calls _mgmt_nl_command_complete exactly once, on failure/incomplete it calls _mgmt_nl_command_mark_uncertain exactly once."
+    },
+    "duplicate_implementation_removed": [
+      "_MGMT_NL_IDEMPOTENCY module-level dict deleted.",
+      "_mgmt_nl_idempotency_check deleted (was: read ManagementAiConversationStore.get_idempotency, fall back to the in-memory dict).",
+      "_mgmt_nl_idempotency_put deleted (was: dual-write to ManagementAiConversationStore.put_idempotency AND the in-memory dict).",
+      "_mgmt_nl_command_idempotency_required() deleted (was: read PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED and let _mgmt_nl_command_admit bypass the durable store entirely when false).",
+      "_mgmt_nl_command_admit's legacy_result/legacy_terminal reconciliation path deleted -- the durable ManagementNlCommandIdempotencyStore.admit() is now always called unconditionally as the sole admission path for both transports.",
+      "bff_management_nl_ask_stream's inline, un-admitted provider call for both the control-command branch (previously wrote only to the legacy per-transport idempotency put, never checked it before executing) and the non-control-command branch (previously had zero dedup of any kind) -- both branches now go through the identical shared admission/replay/complete/mark_uncertain calls ask uses."
+    ],
+    "bug_fixed_in_same_change": "bff_management_nl_ask's dry-run short-circuit called _request_dry_run_requested() with no arguments; the module's _REQUEST_DRY_RUN_CONTEXT ContextVar is never set for this route (it is only ever set inside tools_integrations' own router, a separate request/task context), so X-Dry-Run could never actually trigger dry-run for this endpoint even at base_sha, independent of this task's other changes. Added an explicit x_dry_run: Optional[str] = Header(default=None, alias='X-Dry-Run') parameter to bff_management_nl_ask and pass it as _request_dry_run_requested(x_dry_run), the same explicit_header pattern several other routers in the repo already use for this exact helper. Verified via git-stash bisection that test_nl_ask_dry_run_returns_compact_receipt_without_context_work also fails identically at base_sha with only this fix reverted."
+  },
+  "test_fixture_note": {
+    "reason": "Durable admission via ManagementNlCommandIdempotencyStore is now unconditional for every /bff/management/nl/ask(/stream) request. The store's module default path is /data/bff/management-nl-command-idempotency.json, an absolute path that does not exist and is not writable in the test sandbox (production supplies it via the operator-bff container's /data volume). Rather than editing the shared, undeclared services/control-plane/bff/conftest.py (outside this task's artifact contract), a small autouse fixture (_management_nl_command_idempotency_default_path) that sets PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH to a fresh per-test tmp_path unless a test has already set it itself was added directly to each of the six declared test files that exercise the NL endpoints: test_bff_b6_management_nl_ask.py, test_bff_b6_003_nl_high_risk_refusal.py, test_management_nl_assistant_provider.py, test_management_nl_single_owner.py, test_bff_b6_001_security_hardening.py, test_bff_mgmt_ai_persistence_2026_06_03.py.",
+    "files": [
+      "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+      "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "services/control-plane/bff/tests/test_management_nl_single_owner.py",
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+      "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ]
+  },
+  "cross_tenant_and_conflict_coverage": {
+    "test_management_nl_single_owner.py": [
+      "test_stream_replays_terminal_result_without_invoking_provider_twice",
+      "test_stream_returns_409_on_same_key_different_payload",
+      "test_stream_cross_tenant_requests_do_not_share_a_replay"
+    ]
+  },
+  "out_of_scope_investigated": {
+    "services/control-plane/bff/assistant/command_idempotency.py": "Untouched. Distinct aggregate (CommandIdempotencyStore / PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_*) for the separate agentic Assistant command tool-call queue, explicitly required by the task brief to remain a separate aggregate from Management NL command admission. Not merged, not renamed, not deleted.",
+    "services/control-plane/bff/management_ai_store.py ManagementAiConversationStore.get_idempotency/put_idempotency": "Store API left untouched -- still exercised directly by services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py at the store level. Only the Management NL use case's reliance on these methods as a second dedup mechanism was removed (no call sites remain in main.py's Management NL handlers).",
+    "personas/, agora/, command_adapters/, governance/, evolution/, research/, jobs/": "Not touched, per the corrective task's single-active-writer boundary with other in-flight V2 tasks (U2, U3, U4, U7, U8A/B, U10A/B)."
+  },
+  "known_gaps_flagged_for_reviewer": [
+    "Item 4(b) 'the provider call must not be cancelled merely because the client's SSE connection drops' is only partially satisfied for the stream transport: admission durably reserves ownership before any provider work starts (satisfying 4a/4c/4d and 'no second provider call'), but the live-provider path still drives OpenClawOpsClient.stream_assistant_provider's generator via asyncio.to_thread(next, ...) awaited directly inside the request's own async generator/task -- if the client's TCP connection drops mid-stream, Starlette/ASGI will typically cancel that task, which can cancel the in-flight to_thread(next, ...) await and leave the reservation in_progress until the store's recovery window elapses (after which a retry is permitted; it is never silently re-run). This differs from bff_management_nl_ask's pattern of wrapping the provider call in asyncio.create_task(...) (which is NOT itself cancelled by the awaiting coroutine's cancellation) plus a background finalizer. Replicating that exact pattern for the live per-event SSE stream (where deltas must reach the original connection in real time) was judged out of proportion for this corrective task's diff budget; the acceptance bar explicitly stated as non-negotiable ('no second provider call', 'no second/legacy idempotency mechanism') is met. Flagging this gap explicitly per the task brief's instruction not to silently under-deliver.",
+    "Pre-existing test_bff_mgmt_ai_persistence_2026_06_03.py failures (test_attachment_storage_base64_proxy_url_and_size_rejections, test_multimodal_image_attachment_is_forwarded_to_codex_provider, test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, test_persist_turns) are unrelated to this task: management_ai_store.py's own 'from .assistant_conversation_store import ...' relative import raises ImportError: attempted relative import with no known parent package. Verified via git-stash bisection (stash all changes, rerun, identical 4 failures at base_sha) that this is a pre-existing repo/test-harness import-isolation issue, not introduced or touched by this task.",
+    "Pre-existing test_management_nl_assistant_provider.py::test_provider_enabled_invokes_openclaw_with_tenant_scoped_context failure (assert management_context['summary_context']['portfolio']['total_pnl'] == 2.5 fails with None) verified via the same stash-bisection method to reproduce identically at base_sha."
+  ],
+  "validation": [
+    {
+      "command": "PANTHEON_PY=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_management_nl_single_owner.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/tests/test_assistant_dev_compose_flags.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+      "exit_code": 1,
+      "result": "154 passed, 5 failed, 1 skipped. All 5 failures (test_management_nl_assistant_provider.py::test_provider_enabled_invokes_openclaw_with_tenant_scoped_context; test_bff_mgmt_ai_persistence_2026_06_03.py::test_attachment_storage_base64_proxy_url_and_size_rejections, ::test_multimodal_image_attachment_is_forwarded_to_codex_provider, ::test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider, ::test_persist_turns) reproduced identically at base_sha via git stash push -u -m <unique-tag> / rerun / git stash apply <sha> (not pop) / git stash drop; none touch Management NL command admission and none are regressions introduced by this task. See known_gaps_flagged_for_reviewer."
+    },
+    {
+      "command": "(same PANTHEON_PY) -m pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/test_runtime_state_trades.py",
+      "exit_code": 0,
+      "result": "20 passed. Broader sanity pass over other files referencing _mgmt_nl_/bff_management_nl_ask/management_nl_command symbols."
+    },
+    {
+      "command": "python3 -c \"import ast; ast.parse(open('services/control-plane/bff/main.py').read())\"",
+      "exit_code": 0,
+      "result": "SYNTAX_OK -- confirms main.py parses cleanly after the refactor."
+    },
+    {
+      "command": "grep -rn \"_mgmt_nl_idempotency_check|_mgmt_nl_idempotency_put|_MGMT_NL_IDEMPOTENCY\\b|_mgmt_nl_command_idempotency_required|PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED\" --include=*.py . docker-compose.yml docker-compose.staging-full.yml docker-compose.control.yml",
+      "exit_code": 0,
+      "result": "Zero remaining matches outside of test_management_nl_single_owner.py's and test_assistant_dev_compose_flags.py's own deletion-evidence assertion strings (which assert the symbols/flag are ABSENT). Confirms the legacy dict, the two legacy helper functions, the required-flag reader, and the flag itself are fully deleted from main.py and all three docker-compose files (docker-compose.staging-full.yml and docker-compose.control.yml never referenced this flag to begin with)."
+    }
+  ]
+}
