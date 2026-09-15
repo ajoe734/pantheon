@@ -629,7 +629,7 @@ def test_generic_quarterly_submit_paths_reject_unadmitted_or_tampered_tuple() ->
         )
         for route, idempotency_header in (
             ("/bff/v1/commands", "Idempotency-Key"),
-            ("/api/v1/operator/commands", "X-Idempotency-Key"),
+            ("/bff/v1/commands", "X-Idempotency-Key"),
         ):
             for field, forged_value in tamper_cases:
                 params = {

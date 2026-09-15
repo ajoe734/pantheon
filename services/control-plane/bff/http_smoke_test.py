@@ -116,7 +116,7 @@ class TestOperatorBFFHttpSmoke(unittest.TestCase):
 
     def _verify_command_roundtrip(self, client: httpx.Client) -> None:
         submit = client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             headers={"Authorization": APPROVER_TOKEN},
             json={
                 "command": "ApproveDeployment",
@@ -130,7 +130,7 @@ class TestOperatorBFFHttpSmoke(unittest.TestCase):
             },
         )
         self.assertEqual(submit.status_code, 202, submit.text)
-        receipt = submit.json()["receipt"]
+        receipt = submit.json()["data"]["receipt"]
         command_id = receipt["command_id"]
 
         status = client.get(

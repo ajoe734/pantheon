@@ -32,7 +32,6 @@ from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Heade
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.params import Param as FastAPIParam
 from pydantic import ValidationError
@@ -297,42 +296,7 @@ app = build_bff_app(
     origin_allowed=_cors_origin_allowed,
     validate_session=lambda token: _raise_if_session_logged_out(_extract_identity(f"Bearer {token}")),
 )
-_OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
-def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
-    http_schema = json.loads(json.dumps(schema))
-    paths = http_schema.setdefault("paths", {})
-    canonical = paths.get("/bff/actions/{type}/{id}/{action}")
-    if not isinstance(canonical, dict):
-        return http_schema
-    legacy_path = "/bff/actions/{entityType}/{entityId}/{actionId}"
-    if legacy_path in paths:
-        return http_schema
-    legacy = json.loads(json.dumps(canonical))
-    rename = {"type": "entityType", "id": "entityId", "action": "actionId"}
-    for operation in legacy.values():
-        if not isinstance(operation, dict):
-            continue
-        if operation.get("operationId"):
-            operation["operationId"] = f"{operation['operationId']}_legacy_named"
-        for parameter in operation.get("parameters") or []:
-            if isinstance(parameter, dict) and parameter.get("in") == "path":
-                name = str(parameter.get("name") or "")
-                if name in rename:
-                    parameter["name"] = rename[name]
-    paths[legacy_path] = legacy
-    return http_schema
-def _custom_openapi() -> Dict[str, Any]:
-    if app.openapi_schema is None:
-        app.openapi_schema = get_openapi(
-            title=app.title,
-            version=app.version,
-            routes=app.routes,
-        )
-    if _OPENAPI_HTTP_CONTEXT.get():
-        return _schema_with_legacy_action_path_for_http(app.openapi_schema)
-    return app.openapi_schema
-app.openapi = _custom_openapi  # type: ignore[method-assign]
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 def _lifecycle_projector_dependency() -> Dict[str, Any]:
     reader_backend = os.getenv(
@@ -577,7 +541,6 @@ _stub_identity_capabilities = auth_policy.stub_identity_capabilities
 _with_structured_identity_capabilities = auth_policy.with_structured_identity_capabilities
 _extract_identity_jwt = auth_policy.extract_identity_jwt
 _bff_error = auth_policy.bff_error
-_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
@@ -629,7 +592,7 @@ def _foundation_request_payload(
     cmd: OperatorCommand,
     raw_payload: Dict[str, Any],
     *,
-    route: str = _FOUNDATION_COMMAND_ROUTE,
+    route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload = {
@@ -698,7 +661,7 @@ def _build_foundation_command_context(
     correlation_id: Optional[str],
     request_id: Optional[str],
     idempotency_key: Optional[str],
-    route: str = _FOUNDATION_COMMAND_ROUTE,
+    route: str = _FINAL_COMMAND_ROUTE,
     source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     environment = _foundation_environment_scope()
@@ -818,7 +781,7 @@ def _foundation_bff_error(
 ) -> HTTPException:
     fields = _extract_error_fields(exc)
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
     source_route = str(foundation_context.get("source_route") or "").strip() or None
     route_metadata = _foundation_route_metadata(admission_route, source_route)
     if fields["status_code"] == 403:
@@ -922,7 +885,7 @@ def _foundation_idempotency_conflict_error(
 ) -> HTTPException:
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
-    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
     source_route = str(foundation_context.get("source_route") or "").strip() or None
     message = "Idempotency key was already used with a different command payload"
     reason = (
@@ -20444,18 +20407,7 @@ _deployment_router = (
 )
 app.include_router(_deployment_router)
 from .command_adapters.router import (
-    create_action_command_router as _create_action_command_router,
     create_command_adapters_router as _create_command_adapters_router,
-)
-app.include_router(
-    _create_action_command_router(
-        submit_command_admission=_submit_final_command_admission,
-        extract_identity=_extract_identity,
-        require_operator_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        command_store=app_deps.command_store,
-    )
 )
 app.include_router(
     _create_command_adapters_router(
