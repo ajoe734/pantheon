@@ -12,7 +12,19 @@ import inspect
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
+
+
+class ApprovalQueueReaderPort(Protocol):
+    """Typed read port protocol for approval queue items."""
+
+    def list_approval_queue_items(
+        self,
+        *,
+        decision_types: Optional[List[str]] = None,
+        risk_levels: Optional[List[str]] = None,
+        decision_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]: ...
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
@@ -841,8 +853,29 @@ class GovernanceService:
             or []
         )
 
-    def list_approval_queue(self, **filters: Any) -> List[Dict[str, Any]]:
-        records = self._call("list_approval_queue_items", default=[], **filters)
+    def list_approval_queue(
+        self,
+        *,
+        decision_types: Optional[List[str]] = None,
+        risk_levels: Optional[List[str]] = None,
+        decision_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        store = self.read_store
+        if store is not None and hasattr(store, "list_approval_queue_items"):
+            reader: ApprovalQueueReaderPort = store  # type: ignore[assignment]
+            records = reader.list_approval_queue_items(
+                decision_types=decision_types,
+                risk_levels=risk_levels,
+                decision_states=decision_states,
+            )
+            return list(records or [])
+        records = self._call(
+            "list_approval_queue_items",
+            default=[],
+            decision_types=decision_types,
+            risk_levels=risk_levels,
+            decision_states=decision_states,
+        )
         return list(records or [])
 
     def list_audit_events(
