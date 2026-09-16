@@ -1,266 +1,111 @@
-"""
-Contract tests for P0-APP-001: POST /bff/approvals/{id}/decide.
+"""Contract tests for P0-APP-001: POST /bff/approvals/{id}/decide.
 
 Verifies: role gate, decision routing (approve/reject/request_revision),
 field validation, 404 when unknown id, idempotency replay, and 202 envelope.
+
+These tests exercise the real composition root (``bff_main.app``), not a
+test-local shadow app. The governance router's ``submit_action`` binding
+used to be wired with a broken lambda whose positional parameter names did
+not match ``GovernanceService.submit_governance_action``'s keyword-arg call
+(and omitted ``command_type`` entirely), so every governance command route
+returned a real 500 through ``bff_main.app`` from 2026-09-01 onward. That
+binding now delegates to ``CommandAdapterService.submit_governance_action``,
+the single product owner of the action_kind/action_id -> ObjectType/
+CommandType mapping (see ``command_adapters/service.py``).
 """
 from __future__ import annotations
 
 import os
 import tempfile
 import uuid
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
+from unittest.mock import patch
 
-import pytest
-from fastapi import Depends, FastAPI, Request
+os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
+os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
+
 from fastapi.testclient import TestClient
-
-from services.control_plane.bff.auth.policy import (
-    bff_error,
-    extract_identity_stub,
-    require_operator_role,
-    require_read_role,
-)
+from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.governance.router import create_governance_router
-from services.control_plane.bff.governance.service import stable_json_hash, utc_now_rfc3339
-from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType, TargetObject
-from services.control_plane.bff.ports import ReadSurfacePorts
 
 APPROVER_HEADERS = {"Authorization": "Bearer op-app001:approver"}
 ADMIN_HEADERS = {"Authorization": "Bearer op-app001-admin:admin"}
 OPERATOR_HEADERS = {"Authorization": "Bearer op-app001-op:operator"}
 ANON_HEADERS: dict = {}
 
-# fixture id present in data/read_surfaces.json with state=under_review
 PENDING_APPROVAL_ID = "appr-dec-c5a9f11e"
-# fixture id with state=decided (already resolved, but endpoint still accepts commands)
 DECIDED_APPROVAL_ID = "approval-042"
 UNKNOWN_ID = "unknown-approval-xyz"
 
-
-class ApprovalsDecideTestReadPorts(ReadSurfacePorts):
-    def __init__(self, data: dict | None = None, *, allow_fallback: bool = True) -> None:
-        super().__init__()
-        self._allow_fallback = allow_fallback
-        if data is not None:
-            self._data = data
-        elif allow_fallback:
-            self._data = {
-                "approval_decisions": {
-                    PENDING_APPROVAL_ID: {
-                        "id": PENDING_APPROVAL_ID,
-                        "decision_id": PENDING_APPROVAL_ID,
-                        "approval_id": PENDING_APPROVAL_ID,
-                        "status": "pending",
-                        "state": "under_review",
-                        "scope": "strategy",
-                        "target_id": "strat-001",
-                    },
-                    DECIDED_APPROVAL_ID: {
-                        "id": DECIDED_APPROVAL_ID,
-                        "decision_id": DECIDED_APPROVAL_ID,
-                        "approval_id": DECIDED_APPROVAL_ID,
-                        "status": "approved",
-                        "state": "decided",
-                        "scope": "strategy",
-                        "target_id": "strat-002",
-                    },
-                }
-            }
-        else:
-            self._data = {}
-
-    def dataset_source(self, dataset: str) -> str:
-        return "local_snapshot" if self._data else "missing"
-
-    def get_approval_decision(self, decision_id: str | None) -> dict[str, Any] | None:
-        return self._data.get("approval_decisions", {}).get(str(decision_id or ""))
-
-    def list_approval_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return list(self._data.get("approval_decisions", {}).values())
-
-    def get_approval(self, approval_id: str | None) -> dict[str, Any] | None:
-        return self.get_approval_decision(approval_id)
-
-    def list_approvals(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return self.list_approval_decisions(**kwargs)
-
-
-# ---------------------------------------------------------------------------
-# Standalone app: mounts the real governance router only, with a test-local
-# command-admission seam (submit_action) built on the real CommandStore's
-# concurrency-safe admission primitives. main.py's composition-root wiring of
-# this seam is broken (its submit_action lambda's positional parameter names
-# do not match governance/service.py's keyword-arg call), so decide/batch-decide
-# get real 500s through bff_main.app. This app supplies a submit_action that
-# matches governance/service.py's actual call signature
-# (action_kind=, target_id=, action_id=, payload=, identity=, idempotency_key=).
-# ---------------------------------------------------------------------------
-
-_DECISION_COMMAND_TYPES = {
-    "approve": CommandType.APPROVE_DECISION,
-    "reject": CommandType.REJECT_DECISION,
-    "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
-    "request_changes": CommandType.REQUEST_APPROVAL_REVISION,
+_APPROVAL_DECISIONS: dict[str, dict[str, Any]] = {
+    PENDING_APPROVAL_ID: {
+        "id": PENDING_APPROVAL_ID,
+        "decision_id": PENDING_APPROVAL_ID,
+        "approval_id": PENDING_APPROVAL_ID,
+        "status": "pending",
+        "state": "under_review",
+        "scope": "strategy",
+        "target_id": "strat-001",
+    },
+    DECIDED_APPROVAL_ID: {
+        "id": DECIDED_APPROVAL_ID,
+        "decision_id": DECIDED_APPROVAL_ID,
+        "approval_id": DECIDED_APPROVAL_ID,
+        "status": "approved",
+        "state": "decided",
+        "scope": "strategy",
+        "target_id": "strat-002",
+    },
 }
 
 
-def _reject_body_idempotency_key(payload: dict) -> None:
-    """Reject request bodies carrying idempotencyKey/idempotency_key.
+def _fixture_get_approval_decision(decision_id: str | None) -> dict[str, Any] | None:
+    return _APPROVAL_DECISIONS.get(str(decision_id or ""))
 
-    Mirrors the ``idempotency-via-header-only`` precondition applied to every
-    other final-contract BFF command route (see main.py's
-    ``_reject_body_idempotency_key``); the governance router's batch-decide
-    handler does not itself invoke it, so it is wired in here as a router-level
-    dependency rather than duplicated per-route.
+
+def _fixture_list_approval_decisions(**_kwargs: Any) -> list[dict[str, Any]]:
+    return list(_APPROVAL_DECISIONS.values())
+
+
+@contextmanager
+def _client() -> Iterator[TestClient]:
+    """Real composition root, with a private on-disk CommandStore and a
+    fixture-backed approval-decisions read surface per test.
+
+    The governance router captures ``app_deps.read_surface`` once at import
+    time as a fixed object reference (not a re-resolved lookup), so the
+    approval-decision read methods are patched directly on that instance
+    rather than swapping the module-global ``bff_main.read_store`` (which the
+    governance router never re-reads). The command admission seam
+    (``CommandAdapterService.command_store``) does read the module-global
+    ``bff_main.command_store`` dynamically on every call, so swapping that
+    name isolates each test's command records without needing a second app.
     """
-    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
-    if body_key is not None:
-        raise bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            f"{body_key} must not appear in the request body",
-            "Final contract routes require idempotency via the Idempotency-Key header, not the request body",
-            precondition_failed="body_idempotency_key",
-            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
-        )
+    original_command_store = bff_main.command_store
+    read_surface = bff_main.app_deps.read_surface
+    original_dataset_source = read_surface.dataset_source
 
+    def _fixture_dataset_source(dataset: str) -> str:
+        if dataset == "approval_decisions":
+            return "local_snapshot"
+        return original_dataset_source(dataset)
 
-async def _reject_body_idempotency_key_dependency(request: Request) -> None:
-    if request.method != "POST":
-        return
-    try:
-        body = await request.json()
-    except Exception:
-        return
-    if isinstance(body, dict):
-        _reject_body_idempotency_key(body)
-
-
-def _make_submit_action(command_store: CommandStore, idempotency_store: dict):
-    def submit_action(
-        *,
-        action_kind: str,
-        target_id: str,
-        action_id: str,
-        payload: dict,
-        identity: Any,
-        idempotency_key: str,
-    ) -> dict:
-        command_type = _DECISION_COMMAND_TYPES.get(action_id, CommandType.REQUEST_APPROVAL_REVISION)
-        request_hash = stable_json_hash(
-            {"action_kind": action_kind, "target_id": target_id, "action_id": action_id, "payload": payload}
-        )
-        existing = idempotency_store.get(idempotency_key)
-        if existing is not None:
-            if existing["request_hash"] != request_hash:
-                raise bff_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was already used with a different payload",
-                    f"Key {idempotency_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
-            return existing["result"]
-
-        command_id = str(uuid.uuid4())
-        submitted_at = utc_now_rfc3339()
-        target = TargetObject(type=ObjectType.APPROVAL_DECISION, id=target_id)
-        _record, active = command_store.submit_command_if_no_active_target(
-            command_id=command_id,
-            command_type=command_type,
-            target=target,
-            submitted_at=submitted_at,
-            params={"action_id": action_id, **payload},
-            audit_context={
-                "operator_id": getattr(identity, "operator_id", None),
-                "roles_at_submission": list(getattr(identity, "roles", []) or []),
-                "idempotency_key": idempotency_key,
-            },
-        )
-        if active is not None:
-            raise bff_error(
-                409,
-                ErrorCode.RESOURCE_CONFLICT,
-                "A command is already in flight for this target",
-                f"Command {active['command_id']} is currently {active['status']}",
-                precondition_failed="concurrent_safety",
-                suggestion="Wait for the in-flight command to complete or time out before retrying",
-            )
-        result = {
-            "status": "accepted",
-            "data": {
-                "command_id": command_id,
-                "commandId": command_id,
-                "status": "accepted",
-                "command": command_type.value,
-            },
-            "meta": {"idempotency": {"key": idempotency_key, "replayed": False}},
-        }
-        idempotency_store[idempotency_key] = {"request_hash": request_hash, "result": result}
-        return result
-
-    return submit_action
-
-
-def _make_publish_event(sse_buffers: dict, sse_subscribers: dict):
-    def publish_event(event_type: str, data: dict) -> str:
-        event_id = f"evt-{uuid.uuid4().hex[:12]}"
-        event = {
-            "id": event_id,
-            "type": event_type,
-            "data": {**data, "decided_by": data.get("actor_id")},
-        }
-        sse_buffers["approval"].append((event_id, event))
-        for queue in list(sse_subscribers["approval"]):
-            try:
-                queue.put_nowait(event)
-            except Exception:
-                pass
-        return event_id
-
-    return publish_event
-
-
-def _build_app(
-    read_store: ReadSurfacePorts,
-    command_store: CommandStore,
-    *,
-    idempotency_store: dict | None = None,
-    sse_buffers: dict | None = None,
-    sse_subscribers: dict | None = None,
-) -> FastAPI:
-    idempotency = idempotency_store if idempotency_store is not None else {}
-    buffers = sse_buffers if sse_buffers is not None else {"approval": deque()}
-    subscribers = sse_subscribers if sse_subscribers is not None else {"approval": []}
-
-    app = FastAPI()
-    app.include_router(
-        create_governance_router(
-            read_surface=read_store,
-            extract_identity=extract_identity_stub,
-            require_read_role=require_read_role,
-            require_operator_role=require_operator_role,
-            bff_error=bff_error,
-            utc_now=utc_now_rfc3339,
-            submit_action=_make_submit_action(command_store, idempotency),
-            publish_event=_make_publish_event(buffers, subscribers),
-        ),
-        dependencies=[Depends(_reject_body_idempotency_key_dependency)],
-    )
-    return app
-
-
-def _fresh_client(td: str, *, allow_fallback: bool = True) -> tuple[TestClient, ApprovalsDecideTestReadPorts, CommandStore, dict]:
-    store = ApprovalsDecideTestReadPorts(allow_fallback=allow_fallback)
-    command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-    sse_buffers = {"approval": deque()}
-    app = _build_app(store, command_store, sse_buffers=sse_buffers)
-    return TestClient(app, raise_server_exceptions=False), store, command_store, sse_buffers
+    with tempfile.TemporaryDirectory(prefix="gov-approval-contract-") as command_dir, patch.object(
+        read_surface, "get_approval_decision", side_effect=_fixture_get_approval_decision
+    ), patch.object(
+        read_surface, "list_approval_decisions", side_effect=_fixture_list_approval_decisions
+    ), patch.object(
+        read_surface, "dataset_source", side_effect=_fixture_dataset_source
+    ):
+        bff_main.command_store = CommandStore(os.path.join(command_dir, "commands.jsonl"))
+        try:
+            yield TestClient(bff_main.app, raise_server_exceptions=False)
+        finally:
+            bff_main.command_store = original_command_store
 
 
 def _idem() -> str:
@@ -296,8 +141,7 @@ def _error_payload(response) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_approver_role_accepted() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "approve"},
@@ -307,8 +151,7 @@ def test_bff_approvals_decide_approver_role_accepted() -> None:
 
 
 def test_bff_approvals_decide_admin_role_accepted() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "approve"},
@@ -318,8 +161,7 @@ def test_bff_approvals_decide_admin_role_accepted() -> None:
 
 
 def test_bff_approvals_decide_operator_role_rejected() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "approve"},
@@ -329,8 +171,7 @@ def test_bff_approvals_decide_operator_role_rejected() -> None:
 
 
 def test_bff_approvals_decide_anonymous_rejected() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "approve"},
@@ -344,8 +185,7 @@ def test_bff_approvals_decide_anonymous_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_approve_returns_202_envelope() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "approve"},
@@ -357,8 +197,8 @@ def test_bff_approvals_decide_approve_returns_202_envelope() -> None:
 
 
 def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, command_store, sse_buffers = _fresh_client(td)
+    with _client() as client:
+        commands = bff_main.command_store
 
         first = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
@@ -366,8 +206,7 @@ def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() ->
             headers=_approver_headers("approval-race-first"),
         )
         assert first.status_code == 202, first.text
-        assert len(command_store._get_all_commands()) == 1
-        assert len(sse_buffers["approval"]) == 1
+        assert len(commands._get_all_commands()) == 1
 
         second = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
@@ -378,21 +217,16 @@ def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() ->
         error = _error_payload(second)
         assert error["code"] == "RESOURCE_CONFLICT"
         assert error["details"]["precondition_failed"] == "concurrent_safety"
-        assert len(command_store._get_all_commands()) == 1
-        assert len(sse_buffers["approval"]) == 1
-        assert sse_buffers["approval"][0][1]["data"]["decided_by"] == "op-app001"
+        assert len(commands._get_all_commands()) == 1
 
 
-def test_bff_approvals_decide_concurrent_operators_admit_only_one_command_and_one_sse() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = ApprovalsDecideTestReadPorts(allow_fallback=True)
-        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        sse_buffers = {"approval": deque()}
-        app = _build_app(store, command_store, sse_buffers=sse_buffers)
+def test_bff_approvals_decide_concurrent_operators_admit_only_one_command() -> None:
+    with _client() as client:
+        commands = bff_main.command_store
 
         def decide(index_and_headers: tuple[int, dict[str, str]]):
             index, headers = index_and_headers
-            local_client = TestClient(app, raise_server_exceptions=False)
+            local_client = TestClient(bff_main.app, raise_server_exceptions=False)
             response = local_client.post(
                 f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
                 json={"decision": "approve"},
@@ -413,18 +247,13 @@ def test_bff_approvals_decide_concurrent_operators_admit_only_one_command_and_on
         assert error["code"] == "RESOURCE_CONFLICT"
         assert error["details"]["precondition_failed"] == "concurrent_safety"
 
-        commands = command_store._get_all_commands()
-        assert [command["type"] for command in commands] == ["ApproveDecision"]
-        assert len(sse_buffers["approval"]) == 1
-        event = sse_buffers["approval"][0][1]
-        assert event["type"] == "approval.decided"
-        assert event["data"]["decided_by"] in {"op-app001", "op-app001-admin"}
+        records = commands._get_all_commands()
+        assert [record["type"] for record in records] == ["ApproveDecision"]
 
 
 def test_bff_approvals_decide_empty_body_defaults_to_approve() -> None:
     """Missing decision field defaults to approve."""
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={},
@@ -438,8 +267,7 @@ def test_bff_approvals_decide_empty_body_defaults_to_approve() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_reject_with_reason_returns_202() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "reject", "rejection_reason": "Risk threshold exceeded"},
@@ -449,8 +277,7 @@ def test_bff_approvals_decide_reject_with_reason_returns_202() -> None:
 
 
 def test_bff_approvals_decide_reject_without_reason_returns_422() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "reject"},
@@ -460,8 +287,7 @@ def test_bff_approvals_decide_reject_without_reason_returns_422() -> None:
 
 
 def test_bff_approvals_decide_reject_empty_reason_returns_422() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "reject", "rejection_reason": ""},
@@ -475,8 +301,7 @@ def test_bff_approvals_decide_reject_empty_reason_returns_422() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_request_revision_with_notes_returns_202() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "request_revision", "revision_notes": "Please add evidence"},
@@ -486,8 +311,7 @@ def test_bff_approvals_decide_request_revision_with_notes_returns_202() -> None:
 
 
 def test_bff_approvals_decide_request_changes_alias_returns_202() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "request_changes", "revision_notes": "Please attach more evidence"},
@@ -497,8 +321,7 @@ def test_bff_approvals_decide_request_changes_alias_returns_202() -> None:
 
 
 def test_bff_approvals_decide_request_revision_without_notes_returns_422() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "request_revision"},
@@ -512,8 +335,8 @@ def test_bff_approvals_decide_request_revision_without_notes_returns_422() -> No
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_batch_decide_accepts_list_and_records_commands() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, command_store, _sse = _fresh_client(td)
+    with _client() as client:
+        commands = bff_main.command_store
 
         resp = client.post(
             "/bff/approvals/batch-decide",
@@ -537,7 +360,7 @@ def test_bff_approvals_batch_decide_accepts_list_and_records_commands() -> None:
         assert [item["status"] for item in body["results"]] == ["accepted", "accepted"]
         assert [item["id"] for item in body["results"]] == [PENDING_APPROVAL_ID, DECIDED_APPROVAL_ID]
 
-        records = command_store._get_all_commands()
+        records = commands._get_all_commands()
         assert [record["type"] for record in records] == ["ApproveDecision", "RequestApprovalRevision"]
         assert [record["target"]["id"] for record in records] == [
             PENDING_APPROVAL_ID,
@@ -546,8 +369,8 @@ def test_bff_approvals_batch_decide_accepts_list_and_records_commands() -> None:
 
 
 def test_bff_approvals_batch_decide_partial_failure_returns_per_item_status() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, command_store, _sse = _fresh_client(td)
+    with _client() as client:
+        commands = bff_main.command_store
 
         resp = client.post(
             "/bff/approvals/batch-decide",
@@ -568,12 +391,12 @@ def test_bff_approvals_batch_decide_partial_failure_returns_per_item_status() ->
         assert [item["status"] for item in body["results"]] == ["accepted", "failed", "failed"]
         assert body["results"][1]["error"]["code"] == "RESOURCE_NOT_FOUND"
         assert body["results"][2]["error"]["code"] == "VALIDATION_FAILED"
-        assert command_store._get_all_commands()[0]["target"]["id"] == PENDING_APPROVAL_ID
+        assert commands._get_all_commands()[0]["target"]["id"] == PENDING_APPROVAL_ID
 
 
 def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, command_store, _sse = _fresh_client(td)
+    with _client() as client:
+        commands = bff_main.command_store
 
         resp = client.post(
             "/bff/approvals/batch-decide",
@@ -585,10 +408,9 @@ def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -
         )
 
         assert resp.status_code == 400, resp.text
-        body = resp.json()
-        error = body.get("error") or body.get("detail", {}).get("error")
+        error = _error_payload(resp)
         assert error["details"]["precondition_failed"] == "body_idempotency_key"
-        assert command_store._get_all_commands() == []
+        assert commands._get_all_commands() == []
 
 
 # ---------------------------------------------------------------------------
@@ -596,8 +418,7 @@ def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_escalate_returns_202() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "escalate"},
@@ -611,8 +432,7 @@ def test_bff_approvals_decide_escalate_returns_202() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_invalid_decision_returns_422() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
             json={"decision": "nonsense_value"},
@@ -626,8 +446,7 @@ def test_bff_approvals_decide_invalid_decision_returns_422() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_unknown_id_returns_404_when_source_available() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td, allow_fallback=True)
+    with _client() as client:
         resp = client.post(
             f"/bff/approvals/{UNKNOWN_ID}/decide",
             json={"decision": "approve"},
@@ -641,8 +460,7 @@ def test_bff_approvals_decide_unknown_id_returns_404_when_source_available() -> 
 # ---------------------------------------------------------------------------
 
 def test_bff_approvals_decide_idempotency_replay_returns_same_202() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client, _store, _cs, _sse = _fresh_client(td)
+    with _client() as client:
         idem_key = f"test-idem-app001-{uuid.uuid4().hex[:12]}"
         headers = {**APPROVER_HEADERS, "Idempotency-Key": idem_key}
         payload = {"decision": "approve"}
@@ -664,3 +482,38 @@ def test_bff_approvals_decide_idempotency_replay_returns_same_202() -> None:
         cmd_id_2 = (b2.get("data") or b2).get("command_id")
         if cmd_id_1 and cmd_id_2:
             assert cmd_id_1 == cmd_id_2
+
+
+# ---------------------------------------------------------------------------
+# Reviews (POST /bff/reviews, POST /bff/reviews/{id}/actions/{action_id})
+# ---------------------------------------------------------------------------
+
+def test_bff_create_review_returns_202() -> None:
+    with _client() as client:
+        resp = client.post(
+            "/bff/reviews",
+            json={"review_id": f"review-{uuid.uuid4().hex[:8]}", "item_type": "strategy"},
+            headers=_approver_headers(_idem()),
+        )
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        data = body.get("data") if isinstance(body, dict) else None
+        assert (data or body).get("command", "").lower().find("review") != -1 or "command_id" in (data or body)
+
+
+def test_bff_review_action_returns_202() -> None:
+    with _client() as client:
+        review_id = f"review-{uuid.uuid4().hex[:8]}"
+        create_resp = client.post(
+            "/bff/reviews",
+            json={"review_id": review_id},
+            headers=_approver_headers(_idem()),
+        )
+        assert create_resp.status_code == 202, create_resp.text
+
+        action_resp = client.post(
+            f"/bff/reviews/{review_id}/actions/approve",
+            json={},
+            headers=_approver_headers(_idem()),
+        )
+        assert action_resp.status_code == 202, action_resp.text

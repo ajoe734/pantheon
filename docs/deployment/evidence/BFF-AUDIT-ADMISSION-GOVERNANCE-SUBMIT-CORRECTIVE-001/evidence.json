@@ -1,0 +1,132 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-AUDIT-ADMISSION-GOVERNANCE-SUBMIT-CORRECTIVE-001",
+  "worker": "Claude",
+  "reviewer": "Antigravity",
+  "governing_spec": {
+    "document": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
+    "section": "U3 — Command Admission／Confirmation／Audit 一次收斂 (residual defect from BFF-TEST-MIGRATION-B05)",
+    "base_commit": "dev@08294e46a"
+  },
+  "defect_summary": {
+    "layer_1_router_binding": {
+      "location": "services/control-plane/bff/main.py:19949-19951 (pre-fix)",
+      "defect": "submit_action was bound to a lambda with 6 positional parameters named (entity_type, entity_id, action_id, resolved_key, identity, payload), but GovernanceService.submit_governance_action (governance/service.py:1241) always calls self.submit_action(action_kind=..., target_id=..., action_id=..., payload=..., identity=..., idempotency_key=...) — none of those keyword names match the lambda's positional parameter names, so every call raised TypeError: <lambda>() got an unexpected keyword argument 'action_kind'.",
+      "reproduction": "python3 -c invocation of the pre-fix lambda body with the exact keyword call governance/service.py makes reproduces: TypeError: broken() got an unexpected keyword argument 'action_kind' (captured verbatim during this task's verification; see verification.pre_fix_typeerror_repro below)."
+    },
+    "layer_2_missing_command_type": {
+      "location": "services/control-plane/bff/main.py:18356-18364 (_gov_bff_action_command signature, unchanged)",
+      "defect": "_gov_bff_action_command requires 7 parameters including command_type: CommandType. The broken lambda only forwarded 6 args and never supplied command_type, so even a keyword-name fix alone would still raise TypeError: missing 1 required positional argument: 'command_type'.",
+      "note": "_gov_bff_action_command itself was NOT broken and was left unmodified — incidents/router.py's bff_risk_alert_action and bff_incident_action call it correctly today with all 7 positional args (ObjectType.RISK_ALERT/INCIDENT, id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION/INCIDENT_ACTION). Only the governance composition-root binding was defective."
+    },
+    "layer_3_no_product_owner_for_mapping": {
+      "location": "services/control-plane/bff/test_bff_approvals_decide_contract.py (pre-fix, _DECISION_COMMAND_TYPES + _make_submit_action)",
+      "defect": "The action_kind/action_id -> ObjectType/CommandType mapping, and a full concurrency-safe command-admission implementation, existed only inside the test file's test-local FastAPI app (_build_app), never in product code. Product traffic through bff_main.app had no working implementation of this mapping at all."
+    },
+    "blast_radius": [
+      "POST /bff/reviews",
+      "POST /bff/reviews/{review_id}/actions/{action_id}",
+      "POST /bff/approvals/{approval_id}/decide",
+      "POST /bff/approvals/batch-decide"
+    ],
+    "regressed_since": "4cd637d0d (2026-09-01)"
+  },
+  "fix_summary": {
+    "single_owner_of_mapping": {
+      "status": "satisfied",
+      "location": "services/control-plane/bff/command_adapters/service.py: module-level _GOVERNANCE_ACTION_KIND_OBJECT_TYPES / _GOVERNANCE_DECISION_COMMAND_TYPES tables plus resolve_governance_object_type()/resolve_governance_command_type() helpers, consumed exclusively by CommandAdapterService.submit_governance_action.",
+      "mapping": {
+        "action_kind=review": "ObjectType.REVIEW, command_type=CommandType.REVIEW_ACTION",
+        "action_kind=approval, action_id in {approve,reject,request_revision,request_changes}": "ObjectType.APPROVAL_DECISION, command_type in {ApproveDecision,RejectDecision,RequestApprovalRevision,RequestApprovalRevision}",
+        "action_kind=approval, other action_id (e.g. escalate, freeze)": "ObjectType.APPROVAL_DECISION, command_type=CommandType.REQUEST_APPROVAL_REVISION (pass-through pending a dedicated command type, matching the removed test-local fallback)"
+      }
+    },
+    "command_adapter_service_owns_the_path": {
+      "status": "satisfied",
+      "location": "services/control-plane/bff/command_adapters/service.py: CommandAdapterService.submit_governance_action",
+      "implementation": "Owns body-idempotency-key rejection, request-hash based idempotency replay/conflict (self._gov_bff_idempotency, the same dict instance the pre-existing incidents/risk-alert path already shared via _GOV_BFF_IDEMPOTENCY), dry-run short-circuit, staleness-warning projection, and CommandStore admission + CommandResponse projection (project_final_command_response). Approval decisions use CommandStore.submit_command_if_no_active_target (concurrency-safe: a second conflicting decision on the same approval_id while the first is still in flight gets 409 RESOURCE_CONFLICT/concurrent_safety, matching the pre-existing decide-conflict contract tests). Review actions use plain CommandStore.submit_command (no active-target guard), because a review legitimately receives a sequential submit-then-act command pair on the same target with nothing in this seam marking the first command terminal; gating that pair would break the two-call POST /bff/reviews -> POST /bff/reviews/{id}/actions/{id} workflow that the ordered acceptance criteria requires."
+    },
+    "main_py_thin_binding": {
+      "status": "satisfied",
+      "location": "services/control-plane/bff/main.py:19949 (post-fix)",
+      "before": "submit_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(entity_type, entity_id, action_id, resolved_key, identity, payload)",
+      "after": "submit_action=_command_adapter_service.submit_governance_action",
+      "note": "main.py now holds zero mapping/normalization logic for this path; the binding is a direct method reference to the CommandAdapterService instance already constructed at main.py:6619 (command_adapter_service = _CommandAdapterService(...), which already shared gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY with the untouched incidents-router path)."
+    },
+    "typed_submit_action_protocol": {
+      "status": "satisfied",
+      "location": "services/control-plane/bff/governance/service.py",
+      "before": "SubmitAction = Callable[..., Any]",
+      "after": "class SubmitAction(Protocol): def __call__(self, *, action_kind: str, target_id: str, action_id: str, payload: Mapping[str, Any], identity: Any, idempotency_key: str) -> Union[Any, Awaitable[Any]]: ...",
+      "consumers_updated": ["services/control-plane/bff/governance/router.py: create_governance_router(submit_action: Optional[\"SubmitAction\"] = None, ...)"],
+      "static_check_evidence": "The pre-fix lambda's positional-parameter signature (entity_type, entity_id, action_id, resolved_key, identity, payload) is structurally incompatible with the keyword-only SubmitAction Protocol (would fail assignment under a Protocol-aware type checker); a project-wide mypy run was not available as a governed check for this package layout (services/control-plane maps to services.control_plane via sys.path, not a mypy-configured path — no mypy.ini/pyproject mypy section exists for this service and no CI job type-checks it), so the primary evidence for this criterion is the runtime TypeError reproduction below plus the new regression suite exercising the real composition-root binding end to end."
+    },
+    "batch_decide_body_idempotency_key_owned_by_product": {
+      "status": "satisfied",
+      "location": "services/control-plane/bff/governance/router.py: create_governance_router(reject_body_idempotency_key=...) + bff_approvals_batch_decide calls _reject_body_idempotency_key(payload) on the outer batch payload before iterating decisions.",
+      "wiring": "services/control-plane/bff/main.py: create_governance_router(..., reject_body_idempotency_key=_reject_body_idempotency_key) uses the same product-owned function main.py already uses for every other final-contract route.",
+      "removed_test_side_duplicate": "test_bff_approvals_decide_contract.py's _reject_body_idempotency_key/_reject_body_idempotency_key_dependency router-level FastAPI dependency workaround was deleted; the product route now performs this check directly."
+    }
+  },
+  "removed_test_local_seam": {
+    "file": "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+    "removed": [
+      "ApprovalsDecideTestReadPorts-backed standalone FastAPI app (_build_app) mounting only create_governance_router in isolation",
+      "_DECISION_COMMAND_TYPES (duplicate action_id -> CommandType table)",
+      "_make_submit_action (test-local CommandStore-backed submit_action reimplementing admission logic)",
+      "_reject_body_idempotency_key / _reject_body_idempotency_key_dependency (router-level FastAPI Depends workaround for the batch-decide body-key gap)",
+      "_make_publish_event (test-local SSE publish stub; the real composition root's publish_event is now used)"
+    ],
+    "replaced_with": "Real composition root: services.control_plane.bff.main.app via fastapi.testclient.TestClient, with the module-global bff_main.command_store swapped to a private on-disk CommandStore per test, and bff_main.app_deps.read_surface.get_approval_decision/list_approval_decisions/dataset_source patched to serve the same two approval fixtures (appr-dec-c5a9f11e pending, approval-042 decided) the removed test-local ReadPorts class used to serve. The governance router captures app_deps.read_surface as a fixed object reference at import time (not a re-resolved lookup), so those three methods are patched directly on that instance rather than swapping a module-global name."
+  },
+  "verification": {
+    "pre_fix_typeerror_repro": {
+      "command": "python3 -c reproducing the exact pre-fix lambda call shape with governance/service.py's real keyword call",
+      "result": "TypeError: broken() got an unexpected keyword argument 'action_kind'"
+    },
+    "post_fix_real_composition_root_suite": {
+      "command": "PANTHEON_PY=.venv-pantheon/bin/python3 && \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_bff_approvals_decide_contract.py",
+      "result": "23 passed",
+      "endpoints_covered": [
+        "POST /bff/approvals/{approval_id}/decide (role gate, approve/reject/request_revision/request_changes/escalate, invalid decision 422, unknown id 404, idempotency replay 202, concurrent-decision conflict 409)",
+        "POST /bff/approvals/batch-decide (accepted/partial/failed summaries, body-idempotency-key rejection 400)",
+        "POST /bff/reviews (create returns 202)",
+        "POST /bff/reviews/{review_id}/actions/{action_id} (sequential submit-then-act both return 202)"
+      ],
+      "before_after": "Every one of these routes previously returned a real 500 (TypeError surfaced as an unhandled server error) through bff_main.app; all now return 202 (or the correct negative-path status: 400/403/404/409/422) through the same real composition root."
+    },
+    "regression_suite_no_incident_router_breakage": {
+      "command": "PANTHEON_PY=.venv-pantheon/bin/python3 && \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/test_read_store_incident.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_incident_stream_route_order.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "result": "46 passed",
+      "note": "Confirms the untouched incidents-router callers of the shared _gov_bff_action_command (bff_risk_alert_action, bff_incident_action) are unaffected."
+    },
+    "governance_and_command_adapters_module_suites": {
+      "command": "PANTHEON_PY=.venv-pantheon/bin/python3 && \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/governance services/control-plane/bff/command_adapters services/control-plane/bff/incidents",
+      "result": "38 passed, 9 subtests passed"
+    },
+    "broader_governance_consumer_contract_sample": {
+      "command": "PANTHEON_PY=.venv-pantheon/bin/python3 && \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_cw04_redteam_memo_contract.py services/control-plane/bff/test_cw01_consult_request_contract.py",
+      "result": "51 passed, 3 failed",
+      "pre_existing_failures_confirmed_unrelated": {
+        "method": "git stash of this task's diff, rerun the same 2 files that had failures",
+        "tests": [
+          "test_cw04_redteam_memo_contract.py::test_cw04_detail_returns_backend_owned_shape_and_governance_gate_for_reviewer",
+          "test_cw04_redteam_memo_contract.py::test_cw04_detail_keeps_last_known_content_when_surface_degraded",
+          "test_cw01_consult_request_contract.py::test_cw01_create_and_cancel_use_consultation_service_store_when_configured"
+        ],
+        "result_on_base_dev_08294e46a": "Same 3 failures reproduce identically with none of this task's changes applied, confirming they are pre-existing and out of this task's scope."
+      }
+    }
+  },
+  "write_set": [
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/command_adapters/service.py",
+    "services/control-plane/bff/governance/service.py",
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py"
+  ],
+  "not_changed": [
+    "services/control-plane/bff/incidents/router.py (already correct 7-arg call sites)",
+    "_gov_bff_action_command in main.py (already correct signature, left as the incidents/risk-alert composition-root implementation)"
+  ]
+}
