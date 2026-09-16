@@ -725,9 +725,9 @@ def _list_ready_strategy_projections(
             hasattr(workshop_store, "list_events")
             and hasattr(workshop_store, "get_latest_completeness_snapshot")
         ):
-            from ...strategy_workshop.router import _build_readiness_assessment
+            from ...strategy_workshop.readiness import build_readiness_assessment
 
-            readiness = _build_readiness_assessment(
+            readiness = build_readiness_assessment(
                 session=session,
                 events=workshop_store.list_events(workshop_id),
                 snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
@@ -1017,10 +1017,10 @@ def _workspace_data_freshness(
                 hasattr(workshop_store, "list_events")
                 and hasattr(workshop_store, "get_latest_completeness_snapshot")
             ):
-                from ...strategy_workshop.router import _build_readiness_assessment
+                from ...strategy_workshop.readiness import build_readiness_assessment
 
                 try:
-                    readiness = _build_readiness_assessment(
+                    readiness = build_readiness_assessment(
                         session=matched_session,
                         events=workshop_store.list_events(workshop_id),
                         snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),

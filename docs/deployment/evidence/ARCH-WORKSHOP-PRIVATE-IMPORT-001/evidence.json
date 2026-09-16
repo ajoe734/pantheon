@@ -10,7 +10,7 @@
     "task_branch": "task/ARCH-WORKSHOP-PRIVATE-IMPORT-001",
     "base_branch": "dev"
   },
-  "summary": "Eliminated cross-module private imports of workshop internals (ACG-06-002 and ACG-06-003 residuals). Provided formal public interfaces ws_publish (and ws_replay_after) in strategy_workshop/events.py and build_readiness_assessment in strategy_workshop/readiness.py with backwards-compatible aliases. Migrated all cross-module consumers (agora/interaction/runner.py, agora/performance/consumer.py, and agora/research/routes/common.py) to use public interfaces with zero private symbol residuals.",
+  "summary": "Eliminated cross-module private imports of workshop internals (ACG-06-002 and ACG-06-003 residuals). Provided formal public interfaces ws_publish (and ws_replay_after) in strategy_workshop/events.py and build_readiness_assessment in strategy_workshop/readiness.py with backwards-compatible aliases. Migrated all cross-module consumers (agora/interaction/runner.py, agora/performance/consumer.py, agora/research/routes/common.py, and agora/trading_room/routes/common.py) to use public interfaces with zero private symbol residuals.",
   "promoted_public_symbols": [
     {
       "module": "services/control-plane/bff/agora/strategy_workshop/events.py",
@@ -66,6 +66,16 @@
         "publish_openclaw_degraded"
       ],
       "residual_private_imports": 0
+    },
+    {
+      "file": "services/control-plane/bff/agora/trading_room/routes/common.py",
+      "imported_symbol": "build_readiness_assessment",
+      "previous_import": "from ...strategy_workshop.router import _build_readiness_assessment",
+      "call_sites": [
+        "project_ready_strategies (readiness projection fallback)",
+        "project_trading_room_projections (readiness projection fallback)"
+      ],
+      "residual_private_imports": 0
     }
   ],
   "artifacts": [
@@ -74,6 +84,8 @@
     "services/control-plane/bff/agora/research/routes/common.py",
     "services/control-plane/bff/agora/strategy_workshop/events.py",
     "services/control-plane/bff/agora/strategy_workshop/readiness.py",
+    "services/control-plane/bff/agora/strategy_workshop/router.py",
+    "services/control-plane/bff/agora/trading_room/routes/common.py",
     "docs/deployment/evidence/ARCH-WORKSHOP-PRIVATE-IMPORT-001/evidence.json"
   ],
   "acceptance_verification": {
@@ -85,8 +97,8 @@
     "regression_tests_passed": true
   },
   "verification": {
-    "test_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_route_ownership.py",
-    "test_result": "172 passed, 1 skipped, 89 warnings in 114.99s",
+    "test_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/agora/trading_room/test_trading_room_stream.py",
+    "test_result": "240 passed, 1 skipped, 89 warnings in 142.12s",
     "static_assertion_command": "python3 assertion verifying public and alias exports and zero residual private symbol references in consumers",
     "static_assertion_result": "ALL CHECKS PASSED SUCCESSFULLY"
   }
