@@ -4,7 +4,7 @@
   "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "ajoe734/pantheon",
-  "base_sha": "f86865f9ec63a6422be9fad25c37047caa3de5ec",
+  "base_sha": "93d8f4353bb34a9f9c39e541aed722ae36a05934",
   "delivery_state": "ready_for_independent_review",
   "review_decision": {
     "status": "pending",
@@ -14,7 +14,8 @@
   "root_cause_analysis": {
     "router": "services/control-plane/bff/governance/router.py called _service().list_approval_queue(states=split_csv(state), ...) passing 'states' instead of 'decision_states'.",
     "service": "services/control-plane/bff/governance/service.py defined list_approval_queue(self, **filters: Any) with unconstrained kwargs forwarding blindly to self._call('list_approval_queue_items', default=[], **filters).",
-    "port": "services/control-plane/bff/ports/ooda_management.py defined ManagementReviewQueuePort.list_approval_queue_items with signature accepting only decision_states=, raising TypeError: list_approval_queue_items() got an unexpected keyword argument 'states'."
+    "port": "services/control-plane/bff/ports/ooda_management.py defined ManagementReviewQueuePort.list_approval_queue_items with signature accepting only decision_states=, raising TypeError: list_approval_queue_items() got an unexpected keyword argument 'states'.",
+    "contract_revision": "Human/Ops repair at 2026-09-16T11:46:30Z formally authorized services/control-plane/bff/tests/test_bff_approvals_surface_contract.py into the task artifact contract to satisfy acceptance criterion 4 (regression test through real router and real port)."
   },
   "before_vs_after": {
     "before": {
@@ -43,12 +44,12 @@
   ],
   "document_proof": {
     "services/control-plane/bff/governance/router.py": {
-      "sha256": "f4a872b6f58b27bcb147b513a0dee7700a62d36def07cacd0110b1baa66cac54",
-      "bytes": 47532
+      "sha256": "9533f614dfbdade3627b1ade7a87a34f6d959db797b18dbe3d413fdc87741060",
+      "bytes": 47761
     },
     "services/control-plane/bff/governance/service.py": {
-      "sha256": "3428335f0c2960070f43ddab4587f7e4fbd31e14ee7043eebabaf3543c7e4f3b",
-      "bytes": 62298
+      "sha256": "433556310408bbf985f50b9b0b77924493114d362de5c8972d1a9b2fde1c374e",
+      "bytes": 63042
     },
     "services/control-plane/bff/ports/ooda_management.py": {
       "sha256": "67f525e141e1bf6c8f1edbe6ddd32351311de2ac8840a4a40252159a2105e5a6",
@@ -64,14 +65,14 @@
       "services/control-plane/bff/governance/service.py::ApprovalQueueReaderPort",
       "services/control-plane/bff/ports/ooda_management.py::ManagementApprovalQueueReaderPort"
     ],
-    "verification_command": "PYTHONPATH=. mypy services/control-plane/bff/ports/ooda_management.py",
+    "verification_command": ".venv-pantheon/bin/python3 -m mypy --follow-imports=silent services/control-plane/bff/ports/ooda_management.py",
     "exit_code": 0,
     "output": "Success: no issues found in 1 source file",
     "runtime_signature_verification": "GovernanceService.list_approval_queue parameters: ['self', 'decision_types', 'risk_levels', 'decision_states']. Passing invalid keyword arguments (such as 'states=') is caught at runtime with TypeError: GovernanceService.list_approval_queue() got an unexpected keyword argument 'states' and at static analysis by type checkers."
   },
   "validation": [
     {
-      "command": "/tmp/gov-approval-venv/bin/pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
       "exit_code": 0,
       "result": "18 passed, 87 warnings in 31.58s. Includes 2 tests from test_pkt006 and 16 tests from test_bff_approvals_surface_contract.py."
     },
