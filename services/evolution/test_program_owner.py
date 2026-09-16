@@ -30,7 +30,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from services.evolution.program_router import create_program_router
 from services.evolution.program_service import (
     ProgramConflictError,
     ProgramDivergentReplayError,
@@ -181,6 +184,426 @@ def _run_restart_recovery(make_store) -> None:
     assert len(service2.list_programs(tenant_id="tenant-d")) == 1
 
 
+def _run_action_scenarios(make_store) -> None:
+    """Validate all lifecycle transitions, D1 active run handling, D2 freeze,
+    D3 steering, and receipt/idempotency invariants."""
+    store: ProgramStore = make_store()
+    service = ProgramService(store)
+
+    program, _ = service.create_program(
+        tenant_id="tenant-act", actor_id="actor-act", name="Action Test Program"
+    )
+    pid = program["program_id"]
+
+    # 1. draft -> submit_evolution_review -> under_review
+    res, replayed = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="submit_evolution_review", note="Submitting review",
+    )
+    assert replayed is False
+    assert res["program_status"] == "under_review"
+    assert res["program"]["status"] == "under_review"
+    assert res["action_id"] == "submit_evolution_review"
+
+    # 2. Illegal transition: draft action while under_review
+    with pytest.raises(ProgramConflictError) as exc_info:
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+            action_id="submit_evolution_review",
+        )
+    assert "Cannot submit review for program in status 'under_review'" in str(exc_info.value)
+
+    # 3. under_review -> approve_program -> active
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="approve_program", note="Approved by committee",
+    )
+    assert res["program_status"] == "active"
+    assert res["program"]["status"] == "active"
+
+    # 4. active -> pause_program -> paused
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="pause_program", note="Pausing for inspection",
+    )
+    assert res["program_status"] == "paused"
+    assert res["program"]["status"] == "paused"
+
+    # 5. paused -> resume_program -> active
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="resume_program", note="Resuming runs",
+    )
+    assert res["program_status"] == "active"
+    assert res["program"]["status"] == "active"
+
+    # 6. Stop and resume semantics (D1: stop cancels nonterminal runs -> stopped; resume refuses to reverse stop)
+    p_stop, _ = service.create_program(tenant_id="tenant-act", actor_id="actor-act", name="Stop Test Program")
+    pid_stop = p_stop["program_id"]
+    service.execute_action(tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop, action_id="submit_evolution_review")
+    service.execute_action(tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid_stop, action_id="approve_program")
+
+    res_stop, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop,
+        action_id="stop", note="Emergency stop",
+    )
+    assert res_stop["program_status"] == "stopped"
+    assert res_stop["program"]["status"] == "stopped"
+
+    # resume_program refuses to reverse a stop
+    with pytest.raises(ProgramConflictError) as exc_info:
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop,
+            action_id="resume_program",
+        )
+    assert "cannot resume stopped program" in str(exc_info.value).lower()
+
+    # pause_program refuses on stopped
+    with pytest.raises(ProgramConflictError):
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop,
+            action_id="pause_program",
+        )
+
+    # retire_program succeeds on stopped
+    res_retire_stop, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid_stop,
+        action_id="retire_program",
+    )
+    assert res_retire_stop["program_status"] == "retired"
+
+    # 7. Freeze & Unfreeze generation (D2)
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="freeze_generation", note="Freeze generation",
+    )
+    assert res["program"]["is_frozen"] is True
+
+    # While frozen, promote_candidate_paper and approve_mutation are blocked with 409
+    with pytest.raises(ProgramConflictError) as exc_info:
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+            action_id="promote_candidate_paper", payload={"candidate_id": "cand-01"},
+        )
+    assert "frozen" in str(exc_info.value).lower()
+
+    with pytest.raises(ProgramConflictError) as exc_info:
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+            action_id="approve_mutation", payload={"mutation_id": "mut-01"},
+        )
+    assert "frozen" in str(exc_info.value).lower()
+
+    # Unfreeze generation
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="unfreeze_generation",
+    )
+    assert res["program"]["is_frozen"] is False
+
+    # Now promote_candidate_paper and promote_candidate_live succeed
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="promote_candidate_paper", payload={"candidate_id": "cand-01"},
+    )
+    assert res["details"]["stage"] == "paper"
+    assert res["program_status"] == "active"
+    assert len(res["program"]["promotions"]) == 1
+    assert res["program"]["promotions"][0]["stage"] == "paper"
+
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="promote_candidate_live", payload={"candidate_id": "cand-01"},
+    )
+    assert res["details"]["stage"] == "live"
+    assert res["details"]["capital_authority"] == "none"
+    assert res["program_status"] == "active"
+    assert len(res["program"]["promotions"]) == 2
+    assert res["program"]["promotions"][1]["stage"] == "live"
+
+    # approve_mutation and reject_mutation
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="approve_mutation", payload={"mutation_id": "mut-01"},
+    )
+    assert res["details"]["decision"] == "approved"
+    assert res["program_status"] == "active"
+
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="reject_mutation", payload={"mutation_id": "mut-02"},
+    )
+    assert res["details"]["decision"] == "rejected"
+    assert res["program_status"] == "active"
+
+    # 8. Steering actions (D3)
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="create_constraint", payload={"name": "max_drawdown", "value": 0.15},
+    )
+    assert res["details"]["name"] == "max_drawdown"
+    assert res["program_status"] == "active"
+    assert len(res["program"]["constraints"]) == 1
+
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="create_fitness_formula", payload={"expression": "sharpe * 0.7 + sortino * 0.3"},
+    )
+    assert res["details"]["expression"] == "sharpe * 0.7 + sortino * 0.3"
+    assert res["program_status"] == "active"
+    assert len(res["program"]["fitness_formulas"]) == 1
+
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="create_mutation_rule", payload={"expression": "gaussian_perturbation"},
+    )
+    assert res["details"]["expression"] == "gaussian_perturbation"
+    assert res["program_status"] == "active"
+    assert len(res["program"]["mutation_rules"]) == 1
+
+    # 9. active -> complete_program -> completed
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+        action_id="complete_program",
+    )
+    assert res["program_status"] == "completed"
+    assert res["program"]["status"] == "completed"
+
+    # 10. completed -> retire_program -> retired (terminal)
+    res, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid,
+        action_id="retire_program",
+    )
+    assert res["program_status"] == "retired"
+    assert res["program"]["status"] == "retired"
+
+    # Cannot mutate after retirement
+    with pytest.raises(ProgramConflictError):
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+            action_id="resume_program",
+        )
+
+    # 11. Idempotency test on action
+    idem_key = f"idem-act-{uuid.uuid4().hex}"
+    p2, _ = service.create_program(tenant_id="tenant-act", actor_id="actor-act", name="Idem Program")
+    pid2 = p2["program_id"]
+
+    act1, rep1 = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid2,
+        action_id="submit_evolution_review", idempotency_key=idem_key,
+    )
+    assert rep1 is False
+    assert act1["program_status"] == "under_review"
+
+    # Replay same action & key
+    act2, rep2 = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid2,
+        action_id="submit_evolution_review", idempotency_key=idem_key,
+    )
+    assert rep2 is True
+    assert act2["receipt_id"] == act1["receipt_id"]
+    assert act2["idempotent_replay"] is True
+
+    # Divergent replay -> 409
+    with pytest.raises(ProgramDivergentReplayError):
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid2,
+            action_id="submit_evolution_review", idempotency_key=idem_key,
+            payload={"different": "payload"},
+        )
+    with pytest.raises(ProgramDivergentReplayError):
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", actor_role="approver", program_id=pid2,
+            action_id="approve_program", idempotency_key=idem_key,
+        )
+
+
+def _run_router_actions(make_store) -> None:
+    store: ProgramStore = make_store()
+    service = ProgramService(store)
+    router = create_program_router(
+        service=service,
+        current_tenant=lambda: "tenant-r",
+        authorize_request_tenant=lambda t: t or "tenant-r",
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    # Create program
+    resp = client.post("/api/evolution/programs", json={"name": "Router Test", "actor_id": "act-1"})
+    assert resp.status_code == 201
+    pid = resp.json()["program_id"]
+
+    # Action submit_evolution_review
+    resp = client.post(f"/api/evolution/programs/{pid}/actions/submit_evolution_review", json={"actor_id": "act-1"})
+    assert resp.status_code == 200
+    assert resp.json()["program_status"] == "under_review"
+
+    # Action approve_program
+    resp = client.post(f"/api/evolution/programs/{pid}/actions/approve_program", json={"actor_id": "appr-1", "actor_role": "approver"})
+    assert resp.status_code == 200
+    assert resp.json()["program_status"] == "active"
+
+    # Conflict on invalid action (already active, cannot approve again)
+    resp = client.post(f"/api/evolution/programs/{pid}/actions/approve_program", json={"actor_id": "appr-1", "actor_role": "approver"})
+    assert resp.status_code == 409
+
+    # Role rejection when operator attempts approver action
+    resp = client.post(f"/api/evolution/programs/{pid}/actions/retire_program", json={"actor_id": "act-1", "actor_role": "operator"})
+    assert resp.status_code == 422
+
+    # Not found for unknown program
+    resp = client.post("/api/evolution/programs/non-existent/actions/pause_program", json={"actor_id": "act-1"})
+    assert resp.status_code == 404
+
+    # Promotion via router (flat schema)
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/promote_candidate_paper",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "candidate_id": "cand-router-1",
+            "run_id": "run-router-1",
+            "artifact_id": "art-router-1",
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["candidate_id"] == "cand-router-1"
+    assert res_data["details"]["run_id"] == "run-router-1"
+    assert res_data["details"]["artifact_id"] == "art-router-1"
+    assert res_data["details"]["stage"] == "paper"
+
+    # Promotion via router with nested payload (BFF compatibility)
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/promote_candidate_live",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "payload": {
+                "candidate_id": "cand-router-live",
+                "run_id": "run-router-live",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["candidate_id"] == "cand-router-live"
+    assert res_data["details"]["run_id"] == "run-router-live"
+    assert res_data["details"]["stage"] == "live"
+    assert res_data["details"]["capital_authority"] == "none"
+
+    # approve_mutation via router (real caller mutation_id preserved)
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/approve_mutation",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "mutation_id": "mut-real-999",
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["mutation_id"] == "mut-real-999"
+    assert res_data["details"]["decision"] == "approved"
+
+    # reject_mutation via router with nested payload
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/reject_mutation",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "payload": {
+                "mutation_id": "mut-real-888",
+                "reason": "Exceeded risk boundary",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["mutation_id"] == "mut-real-888"
+    assert res_data["details"]["decision"] == "rejected"
+    assert res_data["details"]["reason"] == "Exceeded risk boundary"
+
+    # approve_mutation without mutation_id raises 422
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/approve_mutation",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+        },
+    )
+    assert resp.status_code == 422
+    assert "mutation_id is required" in resp.json()["detail"]
+
+    # stop via router transitions to stopped
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/stop",
+        json={"actor_id": "act-1"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["program_status"] == "stopped"
+
+    # resume_program on stopped program raises 409
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/resume_program",
+        json={"actor_id": "act-1"},
+    )
+    assert resp.status_code == 409
+    assert "cannot resume stopped program" in resp.json()["detail"].lower()
+
+    # Router idempotency key handling via Idempotency-Key HTTP header
+    resp_p2 = client.post("/api/evolution/programs", json={"name": "Idemp Header Test", "actor_id": "act-1"})
+    pid2 = resp_p2.json()["program_id"]
+    client.post(f"/api/evolution/programs/{pid2}/actions/submit_evolution_review", json={"actor_id": "act-1"})
+    client.post(f"/api/evolution/programs/{pid2}/actions/approve_program", json={"actor_id": "appr-1", "actor_role": "approver"})
+
+    # 1. Initial execution with Idempotency-Key header
+    resp_idem1 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/pause_program",
+        json={"actor_id": "act-1"},
+        headers={"Idempotency-Key": "header-idem-123"},
+    )
+    assert resp_idem1.status_code == 200
+    assert resp_idem1.json()["idempotent_replay"] is False
+    assert resp_idem1.json()["program_status"] == "paused"
+
+    # 2. Idempotent replay with matching Idempotency-Key header returns 200 with idempotent_replay=True
+    resp_idem2 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/pause_program",
+        json={"actor_id": "act-1"},
+        headers={"Idempotency-Key": "header-idem-123"},
+    )
+    assert resp_idem2.status_code == 200
+    assert resp_idem2.json()["idempotent_replay"] is True
+    assert resp_idem2.json()["receipt_id"] == resp_idem1.json()["receipt_id"]
+
+    # 3. Divergent replay with same Idempotency-Key header raises 409 conflict
+    resp_divergent = client.post(
+        f"/api/evolution/programs/{pid2}/actions/pause_program",
+        json={"actor_id": "act-divergent"},
+        headers={"Idempotency-Key": "header-idem-123"},
+    )
+    assert resp_divergent.status_code == 409
+
+    # 4. Fallback: idempotency_key in body when header is absent
+    resp_body_idem1 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/create_constraint",
+        json={"actor_id": "act-1", "idempotency_key": "body-idem-456", "name": "cst_test", "value": 10},
+    )
+    assert resp_body_idem1.status_code == 200
+    assert resp_body_idem1.json()["idempotent_replay"] is False
+
+    resp_body_idem2 = client.post(
+        f"/api/evolution/programs/{pid2}/actions/create_constraint",
+        json={"actor_id": "act-1", "idempotency_key": "body-idem-456", "name": "cst_test", "value": 10},
+    )
+    assert resp_body_idem2.status_code == 200
+    assert resp_body_idem2.json()["idempotent_replay"] is True
+
+
 class TestJsonProgramStore:
     """Runs unconditionally against the JSON dev backend."""
 
@@ -195,11 +618,17 @@ class TestJsonProgramStore:
     def test_scenarios(self, tmp_path: Path) -> None:
         _run_scenarios(self._make_store_factory(tmp_path))
 
+    def test_action_scenarios(self, tmp_path: Path) -> None:
+        _run_action_scenarios(self._make_store_factory(tmp_path))
+
     def test_concurrent_same_key_create(self, tmp_path: Path) -> None:
         _run_concurrent_same_key_create(self._make_store_factory(tmp_path))
 
     def test_restart_recovery(self, tmp_path: Path) -> None:
         _run_restart_recovery(self._make_store_factory(tmp_path))
+
+    def test_router_program_actions(self, tmp_path: Path) -> None:
+        _run_router_actions(self._make_store_factory(tmp_path))
 
 
 def _postgres_dsn() -> str:
@@ -249,3 +678,54 @@ class TestPostgresProgramStore:
 
     def test_restart_recovery(self, pg_store_factory) -> None:
         _run_restart_recovery(pg_store_factory)
+
+
+@pytest.mark.anyio
+async def test_evolution_client_execute_program_action():
+    from services.evolution.client import EvolutionClient
+
+    captured_requests = []
+
+    class DummyResponse:
+        def __init__(self, status_code, json_data=None):
+            self.status_code = status_code
+            self._json_data = json_data or {}
+            self.text = ""
+
+        def json(self):
+            return self._json_data
+
+    class MockHttpClient:
+        async def post(self, url, json, headers):
+            captured_requests.append({"url": url, "json": json, "headers": headers})
+            return DummyResponse(200, {"receipt_id": "rcpt-1", "status": "active", "program_status": "active"})
+
+    client = EvolutionClient(
+        base_url="http://evolution-test:8093",
+        auth_token="secret-token-123",
+        tenant_id="tenant-test-1",
+        async_client=MockHttpClient(),
+    )
+
+    result = await client.execute_program_action(
+        "evp-123",
+        "approve_program",
+        actor_id="admin-1",
+        actor_role="approver",
+        expected_revision=3,
+        idempotency_key="idemp-key-xyz",
+        payload={"note": "Approval note"},
+    )
+
+    assert result["receipt_id"] == "rcpt-1"
+    assert len(captured_requests) == 1
+    req = captured_requests[0]
+    assert req["url"] == "http://evolution-test:8093/api/evolution/programs/evp-123/actions/approve_program"
+    assert req["headers"]["X-Tenant-Id"] == "tenant-test-1"
+    assert req["headers"]["Authorization"] == "Bearer secret-token-123"
+    assert req["headers"]["X-Idempotency-Key"] == "idemp-key-xyz"
+    assert req["json"]["actor_id"] == "admin-1"
+    assert req["json"]["actor_role"] == "approver"
+    assert req["json"]["expected_revision"] == 3
+    assert req["json"]["note"] == "Approval note"
+

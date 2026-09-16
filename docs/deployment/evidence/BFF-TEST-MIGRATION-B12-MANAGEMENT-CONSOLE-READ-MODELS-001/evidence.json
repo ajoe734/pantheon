@@ -1,0 +1,163 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+  "group": "B12_management_console_read_models",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "08294e46a70cdc62fd6eb782bb6a9df509b065dd",
+  "delivery_state": "ready_for_independent_review",
+  "summary": "Decoupled 7 of 9 B12_management_console_read_models test files from services/control-plane/bff/main.py via existing production domain routers (management_read_models.router, control_loops.router, incidents.router, governance.router, research.router, console_gap.route_policies, console_gap.workflows_hooks, jobs.router) and the already-decoupled rebalance_authority_test_support.py fixture, with 0 net main.py imports across the batch and only 1 sys.path mutation (test_console_data_ooda_projection.py, scoped to importing the unrelated standalone scripts/project_ooda_to_bff_surfaces.py script, not main.py). Retained composition imports for 2 files (test_mgmt_ooda_004_bff_routes.py, test_management_read_budget.py) whose assertions are fundamentally about behavior/private helpers that still live only in main.py and are not yet extracted into the router/service modules, matching the RETAINED_COMPOSITION precedent from BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001. test_management_read_models_router.py additionally retains 2 sys.path mutations and 2 dynamic importlib.import_module calls scoped strictly inside its pre-existing _import_main_for_inventory() helper, whose sole purpose (3 AST/route-ownership tests) is diffing the extracted router module against main.py itself -- that is the test's function, not an incomplete decouple. 83 of 92 tests pass; the remaining 9 failures are pre-existing production/test drift verified identical on the unmodified originals (git-stash isolated and re-run individually) and are unrelated to this wiring migration -- one such original failure (test_downstream_probe_failures_stay_on_downstream_health_surface) is fixed as a side effect of more correct dependency injection.",
+  "source_artifacts": [
+    "services/control-plane/bff/test_current_twelve_owner_truth.py",
+    "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py",
+    "services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py",
+    "services/control-plane/bff/tests/test_bff_b3_management_evidence.py",
+    "services/control-plane/bff/tests/test_console_data_incidents_reviews.py",
+    "services/control-plane/bff/tests/test_console_data_ooda_projection.py",
+    "services/control-plane/bff/tests/test_console_data_route_workflows_projection.py",
+    "services/control-plane/bff/tests/test_management_read_budget.py",
+    "services/control-plane/bff/tests/test_management_read_models_router.py"
+  ],
+  "ast_and_inventory_verification": {
+    "ast_scan_command": "python3 -c \"import ast, json, pathlib, hashlib; files=['services/control-plane/bff/test_current_twelve_owner_truth.py','services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py','services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py','services/control-plane/bff/tests/test_bff_b3_management_evidence.py','services/control-plane/bff/tests/test_console_data_incidents_reviews.py','services/control-plane/bff/tests/test_console_data_ooda_projection.py','services/control-plane/bff/tests/test_console_data_route_workflows_projection.py','services/control-plane/bff/tests/test_management_read_budget.py','services/control-plane/bff/tests/test_management_read_models_router.py']; print({f: {'main_imports': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if (isinstance(n, ast.Import) and any(a.name.split('.')[-1]=='main' for a in n.names)) or (isinstance(n, ast.ImportFrom) and n.module and (n.module.split('.')[-1]=='main' or any(a.name=='main' for a in n.names)))], 'sys_path_mutations': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('insert','append') and getattr(getattr(n.func.value, 'value', None), 'id', None)=='sys'], 'dynamic_import_calls': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if isinstance(n, ast.Call) and ((isinstance(n.func, ast.Attribute) and n.func.attr=='import_module') or (isinstance(n.func, ast.Name) and n.func.id=='__import__'))]} for f in files})\"",
+    "sys_path_mutations_count": 3,
+    "dynamic_import_calls_count": 2,
+    "decoupled_main_importers_count": 7,
+    "blocked_main_importers_count": 2,
+    "architecture_invariant_check": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 1,
+      "passed": 7,
+      "failed": 1,
+      "note": "1 pre-existing failure in test_every_entry_has_valid_layer_and_disposition caused by deleted legacy file tests/test_actions_to_commands_adapter.py (same pre-existing failure documented in BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001/evidence.json). No regressions introduced by B12."
+    }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_current_twelve_owner_truth.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 18,
+      "tests_failed": 2,
+      "sha256": "d55ef3310e56f2bddd67a00d3a23bde2d52b0d026f1db4c3dc37e54b9a11bfd1",
+      "bytes": 32137,
+      "lines": 711,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.control_loops.router.create_control_loops_router mounted on a fresh FastAPI() with register_error_handlers; loop_truth imported directly from services.control_plane.bff.management_read_models.loop_truth; downstream_health_monitor injected as a router constructor kwarg instead of monkeypatching a main.py module global; identity via services.control_plane.bff.auth.policy (extract_identity/require_read_role/require_operator_role/bff_error), the same production wiring main.py itself uses.",
+      "test_failure_disposition": "2 pre-existing failures (test_positive_runtime_observations_respect_catalog_controller_admission, test_composite_overlay_per_persona_ooda_rejects_direct_controller_record) verified identical on the unmodified bff_main-coupled original via git-stash isolation; unrelated to this wiring change. One originally-failing test (test_downstream_probe_failures_stay_on_downstream_health_surface) now passes because constructor-time DI of downstream_health_monitor propagates correctly, unlike patch.object(bff_main, ...) against a closure-captured main.py reference."
+    },
+    "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 6,
+      "tests_failed": 0,
+      "sha256": "02f9b5fa69434e381ea27afd60ef89ff1d52e2b38d0bd9fc6713c215e5a4b021",
+      "bytes": 10456,
+      "lines": 240,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "production_wiring": "Package-qualified `from services.control_plane.bff import main as bff_main` (sys.path hack removed); routes under test (/bff/runtimes/{id}/ooda, /bff/strategies/{id}/ooda, /bff/evolution-programs/{id}/ooda) are reachable only via runtime/router.py's create_runtime_router(), whose RuntimeRouterService has no fallback defaults -- every one of ~30 dependencies is assembled only as closures inside main.py (main.py:19614-19658). Reimplementing that composition graph in a test file would duplicate production wiring rather than reuse it, matching the RETAINED_COMPOSITION precedent from B04."
+    },
+    "services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 2,
+      "tests_failed": 5,
+      "sha256": "66602a450c18aa345c0bbf19b226ee8e918a888a0b151dd8c6e6e14710785697",
+      "bytes": 8726,
+      "lines": 222,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.control_loops.router.create_control_loops_router(read_surface=store) mounted on a fresh FastAPI(); /bff/v5/control-room is self-contained in ControlLoopsService.control_room()/_ooda_status().",
+      "test_failure_disposition": "5 pre-existing failures verified identical on the unmodified bff_main-coupled original via git-stash isolation. The live /bff/v5/control-room route (owned solely by control_loops/router.py) returns a simpler ooda_status shape (no per-stage `stages` dict, no `surface_key` in meta) than this test expects. A richer implementation (_build_ooda_control_room_status_card, main.py:18844) exists but is dead code for this HTTP route -- its only real caller is assistant/source_collectors.py's internal AI-assistant data collector, not the registered FastAPI endpoint. Router/service and this contract test have drifted apart from main.py; not caused by this migration. Worth a follow-up corrective task."
+    },
+    "services/control-plane/bff/tests/test_bff_b3_management_evidence.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 7,
+      "tests_failed": 0,
+      "sha256": "ab7efcc71b3248a42369c525d179df6f3c87de7e4abc24250627db94507fd1d0",
+      "bytes": 24391,
+      "lines": 580,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "/bff/management/evidence via management_read_models.router.create_management_router(read_surface=store); /api/v1/knowledge/evidence/{ref_id} via services.control_plane.bff.research.router.create_research_router(read_surface=store, ...) reusing management_read_models.router's own default identity/error helpers; register_error_handlers attached for matching 401 envelope shape."
+    },
+    "services/control-plane/bff/tests/test_console_data_incidents_reviews.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 1,
+      "tests_failed": 0,
+      "sha256": "d5bae5df0836a198a7252c195e61cc4e6ef0841cad37808dee8ec8d5ff4e0433",
+      "bytes": 4456,
+      "lines": 103,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "/bff/incidents via incidents.router.create_incident_router(read_surface=ports); /bff/reviews via governance.router.create_governance_router(read_surface=ports); both mounted on one fresh FastAPI() using each router's own internal defaults."
+    },
+    "services/control-plane/bff/tests/test_console_data_ooda_projection.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "sha256": "286e77a8d79ca1dcd8e94441059b4fad8de98a89fa922fec691667bb09cd0983",
+      "bytes": 4528,
+      "lines": 104,
+      "main_imports": 0,
+      "sys_path_mutations": 1,
+      "production_wiring": "/bff/ooda/packets[/...] via control_loops.router.create_control_loops_router(read_surface=ports). The 1 retained sys.path.insert(str(SCRIPTS_ROOT)) is unrelated to main.py -- it bare-imports the standalone scripts/project_ooda_to_bff_surfaces.py module."
+    },
+    "services/control-plane/bff/tests/test_console_data_route_workflows_projection.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 1,
+      "tests_failed": 0,
+      "sha256": "6067392ffb5cd6dc59cb53c7738f4e479c08f16dfa2e9c0201eb09839b5bc48c",
+      "bytes": 8463,
+      "lines": 217,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "/bff/route-policies via console_gap.route_policies.create_route_policies_router; /bff/workflows and /bff/hooks via console_gap.workflows_hooks.create_workflows_hooks_router; /bff/jobs via jobs.router.create_jobs_router with its required page_slice/dataset_surface_status/read_surface_meta/raise_if_read_surface_unavailable/bff_error/resolve_final_idempotency_key callables supplied as small local test-only lambdas, matching the existing repo precedent in tests/test_overlay_retirement.py."
+    },
+    "services/control-plane/bff/tests/test_management_read_budget.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 2,
+      "tests_failed": 2,
+      "sha256": "1b289393a5874774b5fd1956854d02a297ed00dabb9000cc3f8b987322ed4ab2",
+      "bytes": 7422,
+      "lines": 187,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "production_wiring": "Package-qualified `from services.control_plane.bff import main as bff_main` and `from services.control_plane.bff.tests.rebalance_authority_test_support import create_market_persona_projection_test_double` (sys.path hack removed). Every assertion targets main.py-only private helpers (_build_operator_alerts_payload, _build_operator_health_status_payload, _build_management_cockpit_payload, _persona_fleet_slim_list_payload, _pm12_performance_attribution_sources, _management_data_sources_read_timeout_seconds) that are absent from management_read_models/router.py and service.py (grepped, confirmed absent); RETAINED_COMPOSITION matches the B04 precedent.",
+      "test_failure_disposition": "2 pre-existing failures (test_cockpit_reuses_alert_and_health_composition, test_operations_read_model_never_expands_full_persona_fleet) verified identical on the unmodified bff_main-coupled original via git-stash isolation: bff_main._persona_fleet_slim_list_payload and bff_main._build_operator_health_status_payload no longer exist as attributes on the main module (AttributeError) -- already deleted/renamed during a prior extraction whose logic now lives as ManagementService.get_management_cockpit/get_operator_health_status, but this test file was never updated to match. Worth a follow-up corrective task."
+    },
+    "services/control-plane/bff/tests/test_management_read_models_router.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 43,
+      "tests_failed": 0,
+      "sha256": "7b501ca3dc8c2bb8cccc28f51d58939ca3941f0ecb847992f3c0f611bc04c71e",
+      "bytes": 88380,
+      "lines": 2006,
+      "main_imports": 0,
+      "sys_path_mutations": 2,
+      "dynamic_import_calls": 2,
+      "production_wiring": "Converted bare-module `from management_read_models.router import ...` / `from management_read_models.service import ManagementService` / `from ports import ...` (previously reached via a module-level sys.path.insert) to package-qualified `services.control_plane.bff.management_read_models.*` imports; the module-level sys.path hack for those imports is removed. The 2 remaining sys.path.insert calls and 2 importlib.import_module calls are scoped strictly inside the pre-existing _import_main_for_inventory() helper, used only by the 3 AST/route-ownership tests whose explicit purpose is diffing the extracted router module against main.py (test_ast_route_inventory_proves_single_owner_across_assembly_handoff and related) -- that is the test's function, not an incomplete decouple."
+    }
+  },
+  "verification_commands": {
+    "batch_run": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/tests/test_console_data_ooda_projection.py services/control-plane/bff/tests/test_console_data_route_workflows_projection.py services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_management_read_models_router.py",
+    "batch_result": "83 passed, 9 failed in 62.76s",
+    "baseline_regression_check": "git stash push -u -- <affected files>, restoring unmodified bff_main-coupled originals, then re-ran pytest per-file to confirm each of the 9 failures pre-exists identically on the original file (10 failures against unmodified files across the 3 affected files, including 1 that this migration's DI fix resolves), then git stash apply + git stash drop to restore edits.",
+    "changed_files": [
+      "services/control-plane/bff/test_current_twelve_owner_truth.py",
+      "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py",
+      "services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py",
+      "services/control-plane/bff/tests/test_bff_b3_management_evidence.py",
+      "services/control-plane/bff/tests/test_console_data_incidents_reviews.py",
+      "services/control-plane/bff/tests/test_console_data_ooda_projection.py",
+      "services/control-plane/bff/tests/test_console_data_route_workflows_projection.py",
+      "services/control-plane/bff/tests/test_management_read_budget.py",
+      "services/control-plane/bff/tests/test_management_read_models_router.py",
+      "docs/deployment/evidence/BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001/evidence.json"
+    ]
+  },
+  "residuals_for_follow_up": [
+    "test_mgmt_ooda_004_bff_routes.py remains RETAINED_COMPOSITION pending a runtime/router.py RuntimeRouterService default-wiring extraction that would let this file build the router without duplicating main.py's ~30-dependency closure assembly.",
+    "test_management_read_budget.py remains RETAINED_COMPOSITION pending extraction of _build_operator_alerts_payload/_build_operator_health_status_payload/_build_management_cockpit_payload/_persona_fleet_slim_list_payload/_pm12_performance_attribution_sources/_management_data_sources_read_timeout_seconds out of main.py; 2 of its assertions already reference main.py attributes that were already deleted/renamed during a prior unrelated extraction and need a corrective test update independent of this migration.",
+    "test_mgmt_ooda_005_control_room_card.py has 5 pre-existing failures showing services.control_plane.bff.control_loops.router's /bff/v5/control-room has drifted from this contract test's expected 5-stage-card shape; the richer implementation exists in main.py as dead code (main.py:18844) reachable only from an unrelated AI-assistant data collector, not the live route."
+  ]
+}

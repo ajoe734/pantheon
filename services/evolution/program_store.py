@@ -106,6 +106,7 @@ class ProgramStore(Protocol):
         request_fingerprint: Any,
         base_snapshot: Dict[str, Any],
         mutate: Mutator,
+        namespace: str = "patch_program_name",
     ) -> Tuple[Dict[str, Any], bool]:
         ...
 
@@ -207,10 +208,11 @@ class PostgresProgramStore:
         request_fingerprint: Any,
         base_snapshot: Dict[str, Any],
         mutate: Mutator,
+        namespace: str = "patch_program_name",
     ) -> Tuple[Dict[str, Any], bool]:
         request_digest = _request_digest({"request": request_fingerprint})
         scoped_key = (
-            receipt_key("patch_program_name", tenant_id, actor_id, idempotency_key)
+            receipt_key(namespace, tenant_id, actor_id, idempotency_key)
             if idempotency_key
             else None
         )
@@ -434,10 +436,11 @@ class JsonProgramStore:
         request_fingerprint: Any,
         base_snapshot: Dict[str, Any],
         mutate: Mutator,
+        namespace: str = "patch_program_name",
     ) -> Tuple[Dict[str, Any], bool]:
         request_digest = _request_digest({"request": request_fingerprint})
         scoped_key = (
-            receipt_key("patch_program_name", tenant_id, actor_id, idempotency_key)
+            receipt_key(namespace, tenant_id, actor_id, idempotency_key)
             if idempotency_key
             else None
         )
