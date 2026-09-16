@@ -435,8 +435,8 @@ def test_reconcile_route_reports_degraded_owner_dependency(
     assert created.status_code == 201, created.text
     persona_id = created.json()["data"]["id"]
     monkeypatch.setattr(
-        personas_service_mod,
-        "_get_json",
+        route_harness.transport,
+        "get",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("deployment unavailable")
         ),

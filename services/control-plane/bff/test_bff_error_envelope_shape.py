@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 from uuid import UUID
 
+from fastapi import Header, Request
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    _PACK_D_D21_ERROR_BEHAVIOR,
+    extract_identity,
+)
+from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.core.errors import _pack_d_direct_error_response
 from services.control_plane.bff.models import ErrorCode
 
 
@@ -39,40 +46,42 @@ PACK_D_D21_ERROR_CODES = [
     "REQUEST_TOO_LARGE",
 ]
 
-
-def _install_error_envelope_test_routes() -> None:
-    if getattr(bff_main.app.state, "error_envelope_test_routes_installed", False):
-        return
-
-    @bff_main.app.get("/__test/error-envelope/request-validation")
-    async def _request_validation_probe(limit: int):
-        return {"limit": limit}
-
-    @bff_main.app.get("/__test/error-envelope/value-error")
-    async def _value_error_probe():
-        raise ValueError("Synthetic invalid request")
-
-    @bff_main.app.get("/__test/error-envelope/generic-500")
-    async def _generic_500_probe():
-        raise RuntimeError("Synthetic server failure")
-
-    @bff_main.app.get("/__test/error-envelope/direct-json-response")
-    async def _direct_json_response_probe():
-        return bff_main._pack_d_direct_error_response(
-            status_code=503,
-            code="DEPENDENCY_UNAVAILABLE",
-            message="Synthetic direct response failure",
-            details={"reason": "SYNTHETIC_DIRECT_RESPONSE"},
-        )
-
-    bff_main.app.state.error_envelope_test_routes_installed = True
+_APP = build_bff_app()
 
 
-_install_error_envelope_test_routes()
+@_APP.get("/bff/me")
+async def _me_probe(authorization: Optional[str] = Header(None)):
+    extract_identity(authorization)
+    return {"status": "ok"}
+
+
+@_APP.get("/__test/error-envelope/request-validation")
+async def _request_validation_probe(limit: int):
+    return {"limit": limit}
+
+
+@_APP.get("/__test/error-envelope/value-error")
+async def _value_error_probe():
+    raise ValueError("Synthetic invalid request")
+
+
+@_APP.get("/__test/error-envelope/generic-500")
+async def _generic_500_probe():
+    raise RuntimeError("Synthetic server failure")
+
+
+@_APP.get("/__test/error-envelope/direct-json-response")
+async def _direct_json_response_probe():
+    return _pack_d_direct_error_response(
+        status_code=503,
+        code="DEPENDENCY_UNAVAILABLE",
+        message="Synthetic direct response failure",
+        details={"reason": "SYNTHETIC_DIRECT_RESPONSE"},
+    )
 
 
 def _client() -> TestClient:
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    return TestClient(_APP, raise_server_exceptions=False)
 
 
 def _assert_error_envelope(
@@ -108,7 +117,7 @@ def test_error_code_enum_matches_pack_d_d21_allowlist() -> None:
 
 
 def test_error_behavior_matrix_covers_pack_d_d21_allowlist() -> None:
-    behavior = bff_main._PACK_D_D21_ERROR_BEHAVIOR
+    behavior = _PACK_D_D21_ERROR_BEHAVIOR
 
     assert list(behavior.keys()) == PACK_D_D21_ERROR_CODES
     for flags in behavior.values():

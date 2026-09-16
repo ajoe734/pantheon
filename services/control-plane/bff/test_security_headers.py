@@ -21,9 +21,17 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 os.environ.setdefault("PANTHEON_BFF_CORS_ORIGINS", "https://fe.example.com")
 
 from fastapi.testclient import TestClient  # noqa: E402
-from services.control_plane.bff import main as bff_main  # noqa: E402
+from services.control_plane.bff.core.app_factory import build_bff_app  # noqa: E402
 
-CLIENT = TestClient(bff_main.app)
+app = build_bff_app()
+
+
+@app.get("/bff/me")
+async def _me():
+    return {"status": "ok"}
+
+
+CLIENT = TestClient(app)
 HEADERS = {"Authorization": "Bearer op-sec:operator,admin,reviewer:mfa"}
 EXPECTED = {
     "x-content-type-options": "nosniff",
