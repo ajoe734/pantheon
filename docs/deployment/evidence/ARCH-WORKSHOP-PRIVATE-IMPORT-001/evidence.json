@@ -84,7 +84,6 @@
     "services/control-plane/bff/agora/research/routes/common.py",
     "services/control-plane/bff/agora/strategy_workshop/events.py",
     "services/control-plane/bff/agora/strategy_workshop/readiness.py",
-    "services/control-plane/bff/agora/strategy_workshop/router.py",
     "services/control-plane/bff/agora/trading_room/routes/common.py",
     "docs/deployment/evidence/ARCH-WORKSHOP-PRIVATE-IMPORT-001/evidence.json"
   ],

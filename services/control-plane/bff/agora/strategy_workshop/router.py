@@ -62,10 +62,7 @@ from .events import (  # noqa: F401  (back-compat re-export -- see AG-BE-SW-004 
     _ws_utc_now,
 )
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations  # noqa: F401
-from .readiness import (  # noqa: F401
-    _build_readiness_assessment,
-    build_readiness_assessment,
-)
+from .readiness import build_readiness_assessment as _build_readiness_assessment  # noqa: F401
 from .reconstruction import StrategyReconstructionResult, reconstruct_strategy_from_events  # noqa: F401
 from .routes.execution import build_execution_router
 from .routes.session import build_session_router
