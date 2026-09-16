@@ -256,6 +256,29 @@ class ResearchRouteContext:
             )
         return getattr(port, name)
 
+    def call_mutation_port(self, port: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Call a research-experiment mutation (create/cancel) that is
+        deliberately NOT exposed on ``ReadSurfacePorts`` itself (see
+        ``tests/test_read_surface_caller_migration.py``
+        ``RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE``).
+
+        ``ReadSurfacePorts.research_knowledge_source`` is excluded from the
+        test-time ``_active_delegate`` forwarding mechanism main.py installs
+        when a test reassigns ``bff_main.read_store`` (that mechanism only
+        forwards attributes that are *not* one of the fixed sub-port names —
+        see ``ports/read_surface_ports.py``'s ``__getattribute__``). Reaching
+        straight through ``port.research_knowledge_source`` would therefore
+        silently use the *original* app-startup sub-port instead of a test's
+        swapped-in double. Follow ``_active_delegate`` explicitly first, so
+        both production (`_active_delegate` is ``None``) and test doubles
+        (which may themselves already *be* the research-knowledge-source
+        port, or may hold one under ``.research_knowledge_source``) resolve
+        to the same object a caller actually configured.
+        """
+        target = getattr(port, "_active_delegate", None) or port
+        rks = getattr(target, "research_knowledge_source", target)
+        return self.call_port(rks, name, *args, **kwargs)
+
     def call_port(self, port: Any, name: str, *args: Any, **kwargs: Any) -> Any:
         method = self.port_method(port, name)
         try:

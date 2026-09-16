@@ -203,6 +203,7 @@ from .ports import (
     create_persona_registry_write_owner,
     create_read_surface_ports,
 )
+from .ports.job_read import JobSourceUnavailableError
 from .settings_store import SettingsStore
 from .persona_provisioning import (
     ProvisioningConflict,
@@ -17997,8 +17998,17 @@ async def _sse_stream(
     subscribers: list[asyncio.Queue],
     last_event_id: Optional[str] = None,
     channel: Optional[str] = None,
+    event_filter: Optional[Callable[[dict], bool]] = None,
 ) -> AsyncGenerator[str, None]:
-    """Async generator that yields SSE-formatted events."""
+    """Async generator that yields SSE-formatted events.
+
+    ``event_filter``, when provided, restricts both the replayed history and
+    the live stream to events for which it returns True — e.g. the per-job
+    ``GET /bff/sse/jobs/{jobId}/progress`` subscription filters server-side by
+    ``jobId`` so a client subscribed to job A never receives job B's events
+    (BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001; previously this was
+    documented as "client-side only").
+    """
     q: asyncio.Queue = asyncio.Queue(maxsize=1000)
     subscribers.append(q)
     try:
@@ -18009,12 +18019,16 @@ async def _sse_stream(
             else _replay_from(buffer, last_event_id)
         )
         for evt in replayed:
+            if event_filter is not None and isinstance(evt, dict) and not event_filter(evt):
+                continue
             yield _sse_format(evt)
 
         # Then stream new events as they arrive
         while True:
             try:
                 evt = await asyncio.wait_for(q.get(), timeout=30.0)
+                if event_filter is not None and isinstance(evt, dict) and not event_filter(evt):
+                    continue
                 yield _sse_format(evt)
             except asyncio.TimeoutError:
                 # Send a comment to keep the connection alive
@@ -18029,6 +18043,7 @@ def _handle_sse_stream(
     subscribers: list[asyncio.Queue],
     last_event_id: Optional[str],
     extra_headers: Optional[Dict[str, str]] = None,
+    event_filter: Optional[Callable[[dict], bool]] = None,
 ) -> StreamingResponse:
     """Helper to create a StreamingResponse with replay error handling."""
     try:
@@ -18063,7 +18078,7 @@ def _handle_sse_stream(
         headers.update(extra_headers)
 
     return StreamingResponse(
-        _sse_stream(buffer, subscribers, last_event_id, channel),
+        _sse_stream(buffer, subscribers, last_event_id, channel, event_filter=event_filter),
         media_type="text/event-stream",
         headers=headers,
     )
@@ -18449,7 +18464,19 @@ def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> O
             return "composed_market_persona_defaults"
     return None
 def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
-    return read_store.get_job_bff(job_id)
+    """Best-effort job lookup for the assistant context pack.
+
+    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: ``get_job_bff`` now raises
+    ``JobSourceUnavailableError`` when the specific job's owning source is
+    unreachable/unconfigured. The assistant context pack is a best-effort
+    aggregation across many sources (see ``assistant/source_collectors.py``)
+    and must degrade that one source rather than fail the whole snapshot, so
+    this treats "source unavailable" the same as "not found" here.
+    """
+    try:
+        return read_store.get_job_bff(job_id)
+    except JobSourceUnavailableError:
+        return None
 def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
     jobs = read_store.list_jobs_bff()
     if status:
