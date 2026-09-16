@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,12 +9,22 @@ from typing import Iterator, Optional
 
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+# BFF-TEST-MIGRATION-B12: RETAINED_COMPOSITION. This file exercises
+# /bff/runtimes/{id}/ooda, /bff/strategies/{id}/ooda, and
+# /bff/evolution-programs/{id}/ooda together with /bff/ooda/packets. The
+# first three routes are only reachable via runtime/router.py's
+# create_runtime_router(), whose RuntimeRouterService has NO fallback
+# defaults -- every dependency (e.g. _ooda_packet_list_payload,
+# _require_ooda_packet_routes_enabled, _dataset_surface_status,
+# _page_slice, ~25 others) must be supplied by the composition root and is
+# currently only assembled as closures inside main.py (see
+# main.py:19614-19659). Reimplementing that dependency graph in a test file
+# would duplicate production wiring rather than reuse it, so this file
+# continues to exercise the assembled `main.app` until those closures are
+# extracted into an injectable module.
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-ooda:operator,reviewer,admin:mfa"}

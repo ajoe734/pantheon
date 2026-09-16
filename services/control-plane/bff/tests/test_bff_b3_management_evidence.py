@@ -9,18 +9,39 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator, Optional
 from contextlib import contextmanager
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.management_read_models.router import (
+    _default_bff_error,
+    _default_extract_identity,
+    _default_require_read_role,
+    create_management_router,
+)
+from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
 
-import main as bff_main
-from ports import create_read_surface_ports
+
+def _mounted_client(store: Any) -> TestClient:
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_management_router(read_surface=store))
+    app.include_router(
+        create_research_router(
+            read_surface=store,
+            extract_identity=_default_extract_identity,
+            require_read_role=_default_require_read_role,
+            bff_error=_default_bff_error,
+            utc_now=lambda: "2026-05-23T09:00:00Z",
+        )
+    )
+    return TestClient(app)
 
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-b3:admin"}
@@ -167,13 +188,10 @@ def _evidence_client() -> Iterator[TestClient]:
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
         os.environ.pop("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON", None)
         os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
-        original_store = bff_main.read_store
         try:
-            bff_main.read_store = _EvidenceRefsTestStore()
-            with TestClient(bff_main.app) as client:
+            with _mounted_client(_EvidenceRefsTestStore()) as client:
                 yield client
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -258,13 +276,10 @@ def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
     os.environ.pop("PANTHEON_BFF_EVIDENCE_REF_STORE", None)
     os.environ["PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"] = str(verifier_path)
     os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
-    original_store = bff_main.read_store
     try:
-        bff_main.read_store = create_read_surface_ports()
-        with TestClient(bff_main.app) as client:
+        with _mounted_client(create_read_surface_ports()) as client:
             yield client
     finally:
-        bff_main.read_store = original_store
         for key, value in tracked_env.items():
             if value is None:
                 os.environ.pop(key, None)
