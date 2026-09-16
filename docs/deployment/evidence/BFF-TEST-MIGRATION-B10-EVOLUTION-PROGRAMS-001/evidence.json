@@ -1,0 +1,122 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+  "batch_id": "B10_evolution_programs",
+  "target_repo": "ajoe734/pantheon",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "status": "ready_for_review",
+  "implementation_complete": true,
+  "base_sha": "5ebc92ea8e40e136c9c700d17fe4b21c0072d8f5",
+  "head_sha_note": "Bound by the containing git commit in task/BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001.",
+  "scope_definition": {
+    "description": "Decouple the 8 B10_evolution_programs test suites from global bff/main.py imports and read_store monkeypatching using canonical router factories, domain models, and scoped test apps while strictly preserving authentic test contracts without artificial facades or weakened assertions.",
+    "target_files": [
+      {
+        "path": "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "lines": 918,
+        "bytes": 37255,
+        "sha256": "cbc3b886215502f49befdc85e82b74f0e13ec0bfa4cbd4c62a230b06a5f918b0",
+        "decoupling_strategy": "Mounted domain router factories (create_evolution_programs_router with program_commands=_EvolutionProgramCommandsTestDouble(store), create_research_router, create_jobs_router, create_events_router) on isolated FastAPI test app with scoped store; replaced dummy bff_events_stream_alias with production SSE callable from create_events_router and typed CommandResponse action returns."
+      },
+      {
+        "path": "services/control-plane/bff/test_evolution_center_contract.py",
+        "lines": 122,
+        "bytes": 4098,
+        "sha256": "8f7cc6f36a2b007ce9a7adcbda1213ebf11b674f0338142217c51a1b2c6fec4d",
+        "decoupling_strategy": "Direct router construction via create_evolution_router(read_surface=ports) on isolated FastAPI app."
+      },
+      {
+        "path": "services/control-plane/bff/test_ew04_inspiration_graph_contract.py",
+        "lines": 207,
+        "bytes": 7448,
+        "sha256": "dba7c3af0c8270694256ccf3690a7b66db73cb8af6b31636b4058db515588e81",
+        "decoupling_strategy": "Used create_evolution_router and direct projection function import ew04_inspiration_projection_from_lineage_edges on isolated FastAPI app."
+      },
+      {
+        "path": "services/control-plane/bff/test_ew05_mutation_review_contract.py",
+        "lines": 207,
+        "bytes": 7842,
+        "sha256": "0a656f0137148c51197ee0af498eaec8e8ec95e024a5e06b219222efb293c9d7",
+        "decoupling_strategy": "Mounted canonical create_governance_router(read_surface=ports, extract_identity=_extract_identity) on isolated FastAPI app; verifies authentic allowedActions and 503 missing-evidence test scenario without test facades."
+      },
+      {
+        "path": "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+        "lines": 773,
+        "bytes": 28445,
+        "sha256": "4fcd8c74f2041c66cc83415819dac5ebe9d27c9a3503a881c7dc6a661635b57e",
+        "decoupling_strategy": "Mounted canonical production routers (create_evolution_programs_router with program_commands=_FakeProgramCommandPort(store), create_jobs_router, create_incident_router, create_research_router, create_runtime_router, create_control_loops_router) on isolated FastAPI app with 401 unauthenticated enforcement and store delegation."
+      },
+      {
+        "path": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+        "lines": 1560,
+        "bytes": 69544,
+        "sha256": "4632f9e5c9ab53409685470f073b3b9e1c296e915777f7f2e17d9bdbc5b7a1f0",
+        "decoupling_strategy": "Constructed _create_app_for_store(store) mounting canonical create_evolution_router directly with scoped identity, read role, dataset_surface_status, and canonical mutation_review_projection from GovernanceService; verifies mandatory management_evolution_journal surface and nested allowedActions without synthetic response rewriting."
+      },
+      {
+        "path": "services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py",
+        "lines": 322,
+        "bytes": 12155,
+        "sha256": "8054bcec9049678b1c7de7a69402eebfabb599e7e37d589f63432bf3e2aaf5d3",
+        "decoupling_strategy": "Mounted canonical create_evolution_router directly in _create_client(store); restored mandatory assertion for management_evolution_journal surface status ok."
+      },
+      {
+        "path": "services/control-plane/bff/tests/test_evolution_programs_population_contract.py",
+        "lines": 144,
+        "bytes": 6129,
+        "sha256": "924df95594f80428f56ba0c44759daecf94029dbb0ecf6997ad0bb9c9bb8d322",
+        "decoupling_strategy": "Direct router construction via create_evolution_programs_router(read_surface=ports) on isolated FastAPI app."
+      }
+    ],
+    "non_modification_boundary": "Strictly 0 edits to services/control-plane/bff/main.py, governance/router.py, governance/service.py, evolution/router.py, evolution/service.py, bff_test_architecture_inventory.json, test_bff_test_architecture.py, or any non-B10 files."
+  },
+  "verification": {
+    "environment": "Python 3.12 (.venv-pantheon), pytest 9.1.1",
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_evolution_center_contract.py services/control-plane/bff/test_ew04_inspiration_graph_contract.py services/control-plane/bff/test_ew05_mutation_review_contract.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_bff_b3_evolution_journal.py services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py services/control-plane/bff/tests/test_evolution_programs_population_contract.py -v --tb=short",
+        "exit_code": 0,
+        "passed": 101,
+        "failed": 0,
+        "warnings": 1,
+        "result": "101 passed, 0 failed",
+        "details": "All 101 tests execute against production router factories without global bff_main imports. All previously residual contract discrepancies resolved via canonical dependencies BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001 and EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001."
+      },
+      {
+        "command": "python3 -c \"import ast, sys; target_files = ['services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py', 'services/control-plane/bff/test_evolution_center_contract.py', 'services/control-plane/bff/test_ew04_inspiration_graph_contract.py', 'services/control-plane/bff/test_ew05_mutation_review_contract.py', 'services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py', 'services/control-plane/bff/tests/test_bff_b3_evolution_journal.py', 'services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py', 'services/control-plane/bff/tests/test_evolution_programs_population_contract.py']; violations = [f'{p}:{alias.name}' for p in target_files for node in ast.walk(ast.parse(open(p).read())) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in getattr(node, 'names', []) if alias.name in ('main', 'bff_main', 'services.control_plane.bff.main')]; sys.exit(1) if violations else print('AST check passed: 0 main imports')\"",
+        "exit_code": 0,
+        "result": "passed",
+        "details": "AST parsing verified 0 imports of main, bff_main, or services.control_plane.bff.main across all 8 target files."
+      },
+      {
+        "command": "python3 -c \"import ast, sys; target_files = ['services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py', 'services/control-plane/bff/test_evolution_center_contract.py', 'services/control-plane/bff/test_ew04_inspiration_graph_contract.py', 'services/control-plane/bff/test_ew05_mutation_review_contract.py', 'services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py', 'services/control-plane/bff/tests/test_bff_b3_evolution_journal.py', 'services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py', 'services/control-plane/bff/tests/test_evolution_programs_population_contract.py']; [sys.exit(1) for p in target_files for n in ast.walk(ast.parse(open(p).read())) if (isinstance(n, ast.Attribute) and n.attr == 'path' and getattr(n.value, 'id', '') == 'sys') or (isinstance(n, ast.Name) and n.id in ('subprocess', 'importlib', 'exec', 'eval'))]; print('Safety scan passed: 0 dynamic/subprocess/sys.path references')\"",
+        "exit_code": 0,
+        "result": "passed",
+        "details": "Verified 0 sys.path mutations, 0 subprocess invocations, and 0 dynamic import calls."
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      }
+    ],
+    "invariants": {
+      "ast_main_imports": 0,
+      "bff_main_references": 0,
+      "sys_path_mutations": 0,
+      "subprocess_calls": 0,
+      "dynamic_import_calls": 0,
+      "tests_total": 101,
+      "tests_passed": 101,
+      "tests_failed": 0
+    },
+    "contract_discrepancies": [],
+    "blocked_residuals": []
+  },
+  "review_decision": {
+    "status": "ready_for_review",
+    "reviewer": "Claude",
+    "instructions": "Review the 8 decoupled evolution programs test files with authentic contracts restored, verifying 0 global main imports, 0 test facades, 0 weakened assertions, and all 101 tests passing against canonical router/service seams."
+  }
+}

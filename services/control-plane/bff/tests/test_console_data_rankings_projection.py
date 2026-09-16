@@ -8,21 +8,203 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Dict, Iterator, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.management_read_models.ranking_router import (
+    create_ranking_formulas_router,
+    create_rankings_long_tail_router,
+)
+from services.control_plane.bff.models import utc_now as _utc_now
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.strategies.routes.common import default_page_slice
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
+
+
+# --- Local mirrors of bff/main.py's read-surface staleness/meta helpers ---
+# These are simple functions in main.py that close over its module-level
+# `read_store` global; reproduced here (parameterized on an explicit store)
+# so tests can construct the real ranking routers without importing main.py.
+
+
+def _read_surface_state() -> str:
+    return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
+
+
+def _meta_staleness() -> Optional[Dict[str, Any]]:
+    state = _read_surface_state()
+    if state == "fresh":
+        return None
+    return {"served_from": "cache", "last_known_at": _utc_now()}
+
+
+def _surface_status() -> Dict[str, Any]:
+    state = _read_surface_state()
+    if state == "fresh":
+        return {"status": "ok"}
+    if state in {"degraded", "stale"}:
+        return {"status": "degraded", "staleness": _meta_staleness()}
+    if state == "unavailable":
+        return {"status": "unavailable", "staleness": _meta_staleness()}
+    return {"status": "ok"}
+
+
+def _surface_degradation_reason(
+    surface: Dict[str, Any],
+    *,
+    degraded_reason: str,
+    unavailable_reason: str,
+) -> Optional[str]:
+    status = surface.get("status")
+    if status == "ok":
+        return None
+    if status == "unavailable":
+        return unavailable_reason
+    if surface.get("message"):
+        return str(surface["message"])
+    if surface.get("note"):
+        return str(surface["note"])
+    return degraded_reason
+
+
+def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
+    meta: Dict[str, Any] = {"snapshot_at": snapshot_at}
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    return meta
+
+
+def _make_dataset_surface_status(get_read_store):
+    def _dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: Optional[str] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        surface = dict(_surface_status())
+        source = source or get_read_store().dataset_source(dataset)
+        surface["source"] = source
+
+        if source == "local_snapshot":
+            if surface.get("status") == "ok":
+                surface["status"] = "degraded"
+            surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+            surface["staleness"] = {
+                "served_from": "local_snapshot",
+                "last_known_at": snapshot_at or _utc_now(),
+            }
+        elif source == "missing":
+            surface["status"] = "unavailable"
+            surface.setdefault(
+                "staleness",
+                {"served_from": "unverifiable", "last_known_at": snapshot_at or _utc_now()},
+            )
+
+        if has_data is False:
+            if surface.get("status") == "ok":
+                surface["status"] = "unavailable"
+            if missing_message:
+                surface["message"] = missing_message
+            surface.setdefault(
+                "staleness",
+                {"served_from": "unverifiable", "last_known_at": snapshot_at or _utc_now()},
+            )
+
+        return surface
+
+    return _dataset_surface_status
+
+
+def _make_read_surface_meta(get_read_store):
+    dataset_surface_status = _make_dataset_surface_status(get_read_store)
+
+    def _read_surface_meta(
+        dataset: str,
+        surface_key: str,
+        *,
+        snapshot_at: Optional[str] = None,
+        total: Optional[int] = None,
+        surface: Optional[Dict[str, Any]] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+        degraded_reason: Optional[str] = None,
+        unavailable_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        snapshot_at = snapshot_at or _utc_now()
+        surface = surface or dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            has_data=has_data,
+            missing_message=missing_message,
+        )
+        meta: Dict[str, Any] = {
+            "snapshot_at": snapshot_at,
+            "surfaces": {surface_key: surface},
+        }
+        if total is not None:
+            meta["total"] = total
+        staleness = _meta_staleness()
+        if staleness is not None:
+            meta["staleness"] = staleness
+        label = surface_key.replace("_", " ")
+        reason = _surface_degradation_reason(
+            surface,
+            degraded_reason=degraded_reason or f"{label} is degraded and may be stale.",
+            unavailable_reason=unavailable_reason or f"{label} is currently unavailable.",
+        )
+        if reason is not None:
+            meta["degradation"] = {"reason": reason}
+        return meta
+
+    return _read_surface_meta
+
+
+def _build_app(read_store) -> FastAPI:
+    app = FastAPI()
+    app.state.read_store = read_store
+
+    def _get_read_store():
+        return app.state.read_store
+
+    app.include_router(
+        create_ranking_formulas_router(
+            get_read_store=_get_read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            snapshot_meta=_snapshot_meta,
+        )
+    )
+    app.include_router(
+        create_rankings_long_tail_router(
+            get_read_store=_get_read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            page_slice=default_page_slice,
+            read_surface_meta=_make_read_surface_meta(_get_read_store),
+        )
+    )
+    return app
 
 _ENV_TO_FILE = {
     "PANTHEON_BFF_RANKING_STORE": "rankings.json",
@@ -95,7 +277,6 @@ _RANKING_FIXTURE: dict[str, dict] = {
 
 @contextmanager
 def _projected_store_client() -> Iterator[TestClient]:
-    original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _ENV_TO_FILE}
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -115,10 +296,8 @@ def _projected_store_client() -> Iterator[TestClient]:
                 },
             )
             ports.dataset_source = lambda _dataset: "service_store"
-            bff_main.read_store = ports
-            yield TestClient(bff_main.app)
+            yield TestClient(_build_app(ports))
         finally:
-            bff_main.read_store = original_store
             for env_name, value in original_env.items():
                 if value is None:
                     os.environ.pop(env_name, None)
@@ -177,7 +356,6 @@ def test_console_data_ranking_not_found_returns_404() -> None:
 
 
 def test_console_data_rankings_without_store_returns_empty_ok() -> None:
-    original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _ENV_TO_FILE}
     with tempfile.TemporaryDirectory() as td:
         try:
@@ -185,13 +363,11 @@ def test_console_data_rankings_without_store_returns_empty_ok() -> None:
                 os.environ[env_name] = ""
             ports = create_in_memory_read_surface_ports()
             ports.dataset_source = lambda _dataset: "service_store"
-            bff_main.read_store = ports
-            client = TestClient(bff_main.app)
+            client = TestClient(_build_app(ports))
 
             resp_r = client.get("/bff/rankings", headers=HEADERS)
             resp_f = client.get("/bff/ranking-formulas", headers=HEADERS)
         finally:
-            bff_main.read_store = original_store
             for env_name, value in original_env.items():
                 if value is None:
                     os.environ.pop(env_name, None)

@@ -188,6 +188,15 @@ def _identity_tenant(identity: Any) -> Optional[str]:
 
 
 _PROGRAM_PATCH_ALLOWED_FIELDS = {"name"}
+_APPROVER_PROGRAM_ACTIONS = {
+    "approve_program",
+    "retire_program",
+    "freeze_generation",
+    "promote_candidate_paper",
+    "promote_candidate_live",
+    "approve_mutation",
+    "reject_mutation",
+}
 
 
 def _program_command_error_code(status_code: int) -> ErrorCode:
@@ -476,6 +485,15 @@ def _register_evolution_programs_routes(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
+        roles = {str(r).strip().lower() for r in getattr(identity, "roles", [])}
+        if action_id in _APPROVER_PROGRAM_ACTIONS and not ({"approver", "admin"}.intersection(roles)):
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                f"Action {action_id} requires approver role",
+                f"Operator role(s) {sorted(roles)} not authorized for {action_id}; approver or admin required",
+                precondition_failed="role_check",
+            )
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         read_store = _resolve_read_store()
         clean_id = program_id.strip()

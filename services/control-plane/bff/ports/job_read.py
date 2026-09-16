@@ -35,6 +35,17 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+try:
+    from services.control_plane.bff.jobs.projection import (
+        calculate_job_allowed_actions,
+        project_job as _project_job_canonical,
+    )
+except (ImportError, ValueError):
+    from ..jobs.projection import (
+        calculate_job_allowed_actions,
+        project_job as _project_job_canonical,
+    )
+
 log = logging.getLogger(__name__)
 
 
@@ -181,34 +192,7 @@ def _normalize_status(raw: Any) -> str:
 
 
 def _project_job(spec: JobSourceSpec, native_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
-    job_id = f"{spec.prefix}{native_id}"
-    status = _normalize_status(record.get("status") or record.get("state"))
-    return {
-        "job_id": job_id,
-        "id": job_id,
-        "native_id": native_id,
-        "source": spec.name,
-        "job_type": spec.name,
-        "status": status,
-        "created_at": record.get("created_at") or record.get("queued_at") or record.get("dispatched_at"),
-        "updated_at": record.get("updated_at") or record.get("completed_at"),
-        "started_at": record.get("started_at"),
-        "completed_at": record.get("completed_at"),
-        "progress": record.get("progress"),
-        "detail": record,
-        "logs": record.get("logs") if isinstance(record.get("logs"), list) else None,
-        # U10A read-plumbing scope (research-jobs.md §3): no source in this
-        # composition has a real, verified cancellation/retry/archive/promote
-        # backend today; every action fails closed via JobCommandAdapter.
-        # Advertising affordances here that unconditionally 400/503 on submit
-        # would mislead the UI, so every source's allowedActions are false.
-        "allowedActions": {
-            "canCancel": False,
-            "canRetry": False,
-            "canArchive": False,
-            "canPromote": False,
-        },
-    }
+    return _project_job_canonical(spec, native_id, record)
 
 
 @dataclass

@@ -36,6 +36,7 @@ class ProgramStatus(str, Enum):
     UNDER_REVIEW = "under_review"
     COMPLETED = "completed"
     RETIRED = "retired"
+    STOPPED = "stopped"
 
 
 @dataclass
@@ -43,11 +44,9 @@ class EvolutionProgram:
     """Program aggregate: trusted tenant + program_id, durable revision.
 
     ``legacy_params`` preserves any pre-existing stored params for audit
-    only; U8A never executes or interprets it (see decision §3: "U8A must
-    inventory any stored legacy params and preserve them for audit before
-    typed migration; unknown executable config cannot be silently
-    activated"). ``run_ids``/``candidate_ids`` are placeholders — real
-    membership linkage is out of scope for U8A and is owned by U8B/dispatch.
+    only. Real lifecycle controls, state transitions, steering (constraints,
+    fitness formulas, mutation rules), generation freeze records, and
+    promotions are owned by U8B.
     """
 
     program_id: str
@@ -62,6 +61,13 @@ class EvolutionProgram:
     run_ids: List[str] = dataclass_field(default_factory=list)
     candidate_ids: List[str] = dataclass_field(default_factory=list)
     updated_by: Optional[str] = None
+    is_frozen: bool = False
+    freeze_records: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    constraints: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    fitness_formulas: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    mutation_rules: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    promotions: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    action_receipts: List[Dict[str, Any]] = dataclass_field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -77,6 +83,13 @@ class EvolutionProgram:
             "run_ids": list(self.run_ids or []),
             "candidate_ids": list(self.candidate_ids or []),
             "updated_by": self.updated_by,
+            "is_frozen": bool(self.is_frozen),
+            "freeze_records": list(self.freeze_records or []),
+            "constraints": list(self.constraints or []),
+            "fitness_formulas": list(self.fitness_formulas or []),
+            "mutation_rules": list(self.mutation_rules or []),
+            "promotions": list(self.promotions or []),
+            "action_receipts": list(self.action_receipts or []),
         }
 
     @classmethod
@@ -95,7 +108,52 @@ class EvolutionProgram:
             run_ids=list(data.get("run_ids") or []),
             candidate_ids=list(data.get("candidate_ids") or []),
             updated_by=data.get("updated_by"),
+            is_frozen=bool(data.get("is_frozen", False)),
+            freeze_records=list(data.get("freeze_records") or []),
+            constraints=list(data.get("constraints") or []),
+            fitness_formulas=list(data.get("fitness_formulas") or []),
+            mutation_rules=list(data.get("mutation_rules") or []),
+            promotions=list(data.get("promotions") or []),
+            action_receipts=list(data.get("action_receipts") or []),
         )
+
+
+class ProgramActionRequest(BaseModel):
+    model_config = {"extra": "allow"}
+
+    actor_id: str
+    actor_role: str = "operator"
+    expected_revision: Optional[int] = None
+    tenant_id: Optional[str] = None
+    reason: Optional[str] = None
+    note: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+    candidate_id: Optional[str] = None
+    run_id: Optional[str] = None
+    artifact_id: Optional[str] = None
+    artifact_version: Optional[str] = None
+    artifact_digest: Optional[str] = None
+    approval_id: Optional[str] = None
+    decision_id: Optional[str] = None
+    mutation_id: Optional[str] = None
+    generation_id: Optional[Any] = None
+    idempotency_key: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
+
+class ProgramActionReceiptOut(BaseModel):
+    receipt_id: str
+    program_id: str
+    action_id: str
+    status: str
+    executed_at: str
+    actor_id: str
+    actor_role: str
+    prior_status: str
+    new_status: str
+    revision: int
+    readback: Dict[str, Any]
+    details: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
