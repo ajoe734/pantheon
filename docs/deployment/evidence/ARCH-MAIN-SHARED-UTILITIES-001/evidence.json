@@ -1,0 +1,114 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "ARCH-MAIN-SHARED-UTILITIES-001",
+  "worker": "Claude",
+  "reviewer": "Antigravity",
+  "phase": "classification",
+  "governing_spec": {
+    "document": "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md",
+    "section": "附錄 B: main.py 未分類函式的二階分類",
+    "predecessor_evidence": "docs/deployment/evidence/BFF-AUDIT-ADMISSION-PERSONA-DUPLICATE-CORRECTIVE-001/evidence.json",
+    "base_commit": "dev@46022edc9"
+  },
+  "summary": {
+    "status": "partial_delivery_classification_only",
+    "total_helpers_in_scope": 49,
+    "reverified_duplication": "confirmed: all 49 names still have a top-level definition in BOTH services/control-plane/bff/main.py AND services/control-plane/bff/personas/service.py at current dev head; predecessor task's category-4 deferral is still accurate",
+    "code_migration_performed": false,
+    "reason_no_migration_this_delivery": "Every one of the 49 helpers already has a *second*, independently-maintained implementation body in personas/service.py (not a stub or forwarding wrapper). For at least 12 of them the predecessor task's own divergent-adjudication record documents a real behavioral difference (global command_store/read_store access in main.py vs port-injected _get_active_command_store()/_get_active_read_store() in personas/service.py, or a differing return signature such as _project_persona_fleet_item's Tuple[Dict, List[Dict]] in main.py vs Dict in personas/service.py). Collapsing these into one canonical body requires the same behavior-by-behavior adjudication discipline the predecessor task used for its 19 divergent cases (acceptance criterion: \"對每個行為差異提出證據說明刪除的一份不會造成回歸\"), which is nontrivial for command/read-store port-injection semantics and cannot be done safely as a mechanical merge inside a single dispatch window. Attempting it without that evidence would be exactly the kind of rule-based shortcut the acceptance criteria forbid.",
+    "contract_gap": "No path under services/control-plane/bff other than main.py, personas/service.py, and auth/policy.py is declared in this task's artifacts. 37 of the 49 helpers (Promotion Review / Human Inbox / PM12 League + generic cross-domain utility groups below) do not belong to the persona domain and cannot be legitimately folded into personas/service.py; they need a new shared-owner module path. Per docs/operations task-closeout-finalization.md and scripts/ai_status.py:5653 (\"Only Human/Ops can revise task artifact contracts\"), and per artifact-contract being restricted to todo/blocked tasks, this worker cannot self-authorize the new path(s) while in_progress. This delivery therefore stops at classification and files a blocker requesting the contract revision."
+  },
+  "reclassification_49": {
+    "note": "Supersedes the predecessor task's flat 'Category 4 (Main Domain & Cross-Domain Utilities / Promotion Review / PM12 League)' label (which was a single boilerplate bucket) with three semantically distinct groups, consistent with REBASELINE Appendix B's instruction that cross-domain shared tools must not be folded into a single domain owner.",
+    "group_A_promotion_review_human_inbox_pm12": {
+      "member_count": 33,
+      "description": "A cohesive Promotion Review / Human Inbox / PM12 League bounded context. These functions call each other extensively (e.g. _human_inbox_decision_projection_from_record -> _human_inbox_decision_recommendation_id -> _promotion_review_clean_id / _promotion_review_target_id / _promotion_review_revision_recommendation_id / _promotion_review_revision_id). This is governance/human-gate domain logic, not persona domain and not a generic utility; it does not fit personas/service.py or auth/policy.py.",
+      "proposed_owner": "new module, e.g. services/control-plane/bff/promotion_review/service.py (directory does not yet exist; services/control-plane/bff/governance/service.py and services/control-plane/bff/command_adapters/service.py are existing sibling domain-service modules with the same shape and are the closest precedent for the target module layout)",
+      "members": [
+        "_foundation_audit_for_command_record",
+        "_human_inbox_decision_projection_from_record",
+        "_human_inbox_decision_recommendation_id",
+        "_human_inbox_sanitize_promotion_snapshot",
+        "_latest_promotion_review_command",
+        "_latest_promotion_review_submission",
+        "_list_governance_audit_events",
+        "_materialize_terminal_persona_provisioning_ledger",
+        "_pm12_add_recommendation_action",
+        "_pm12_current_quarter_id",
+        "_pm12_iso_z",
+        "_pm12_quarter_window",
+        "_pm12_quarterly_recommendation_item",
+        "_pm12_recommendation_action_ids",
+        "_pm12_resolve_quarterly_recommendation_submit_params",
+        "_promotion_review_clean_id",
+        "_promotion_review_decision_projection",
+        "_promotion_review_quarter_from_id",
+        "_promotion_review_record_revision_id",
+        "_promotion_review_revision_id",
+        "_promotion_review_revision_recommendation_id",
+        "_promotion_review_stage_path",
+        "_promotion_review_submission_projection",
+        "_promotion_review_target_id",
+        "_raise_if_promotion_review_direct_mutation_requested",
+        "_request_dry_run_requested",
+        "_sem_command_response",
+        "_strategy_persona_action_command",
+        "_strategy_persona_idempotency_check",
+        "_submitted_promotion_review_record_from_command",
+        "_submitted_promotion_review_records",
+        "_validate_quarterly_ranking_recommendation_submit",
+        "_deprecated_bff_path_response"
+      ]
+    },
+    "group_B_persona_fleet_projection": {
+      "member_count": 6,
+      "description": "Conceptually persona domain (fleet health/lifecycle projection), but the predecessor task deliberately kept these in main.py because personas/service.py already holds an independently-evolved second implementation under the same name with a real behavioral or signature difference (documented in predecessor evidence.json divergent_adjudication_19). Folding these requires per-function adjudication of which body is canonical, not a blind move.",
+      "proposed_owner": "services/control-plane/bff/personas/service.py (already a declared artifact of this task -- no contract revision needed for this group, but the merge itself is nontrivial and out of scope for this delivery)",
+      "members": [
+        "_is_persona_lifecycle_operational",
+        "_persona_fleet_runtime_matches",
+        "_project_persona_dto",
+        "_project_persona_fleet_health",
+        "_project_persona_fleet_item",
+        "_read_store_fixture_records"
+      ],
+      "known_divergences": [
+        {"name": "_project_persona_fleet_item", "divergence": "main.py returns Tuple[Dict[str, Any], List[Dict[str, Any]]] consumed positionally by main.py's _project_persona_fleet_health; personas/service.py's own copy returns Dict[str, Any] only for its domain router."},
+        {"name": "_project_persona_dto", "divergence": "main.py calls persona_service.overlay_source_health_truth (via the imported service object); personas/service.py's own copy calls the module-local _overlay_source_health_truth directly."},
+        {"name": "_persona_fleet_runtime_matches", "divergence": "marked DIVERGENT in predecessor audit_matrix_82; predecessor task did not need to adjudicate it because both copies stayed in place under category-4 deferral."}
+      ]
+    },
+    "group_C_generic_cross_domain_utility": {
+      "member_count": 10,
+      "description": "Stateless, side-effect-free helpers (float coercion, nested-dict lookup, record sorting/merging, generic param resolution) with no domain semantics. These are the closest fit to REBASELINE Appendix B's '通用工具/型別轉換/聚合' buckets and must not be folded into either persona or promotion-review domain modules.",
+      "proposed_owner": "new module, e.g. services/control-plane/bff/shared/cross_domain_utils.py (or fold into the same new module as Group A if Human/Ops prefers a single new path over two)",
+      "members": [
+        "_management_as_float",
+        "_management_first_float",
+        "_management_nested_value",
+        "_management_telemetry_rollup",
+        "_merge_registry_records",
+        "_ppl_alloc_009_paper_environment_guard",
+        "_project_final_command_response",
+        "_resolve_param",
+        "_sort_records_latest_first",
+        "_surface_degradation_reason"
+      ]
+    }
+  },
+  "verification_performed": {
+    "duplication_reverification": "grep -n '^def <name>(\\|^async def <name>(' services/control-plane/bff/main.py services/control-plane/bff/personas/service.py for all 49 names; all 49 confirmed present as top-level defs in both files at dev@46022edc9-derived task worktree head",
+    "pre_existing_owner_search": "grep -rl for all 49 names across services/control-plane/bff excluding main.py and personas/service.py; no third-party canonical implementation found (only local test fixtures re-defining the same name for isolated AST-exec tests, e.g. tests/test_strategy_ranking_router.py, test_bff_read_cutoff_wave4_contract.py)",
+    "ast_isolation_test_dependency": "test_bff_pm12_persona_league.py, test_bff_persona_provisioning_baseline_500.py, test_mgmt_read_001_persona_fleet_owner_observations.py, and test_persona_provisioning_read_surface_mutation.py all ast.parse() main.py directly and re-exec extracted top-level ast.FunctionDef nodes by name for isolated testing without importing the full FastAPI app graph. Any future move of these functions out of main.py must update these tests to parse the new owner file instead; this is a mechanical but required follow-on step, not a blocker by itself."
+  },
+  "contract_split": {
+    "governing_acceptance_criterion": "\"若無法於單一交付完成全部 49 個須以正式 contract 修訂切分並明確列出已完成與未完成清單；不得部分完成卻標記為 completed\"",
+    "delivered_this_pass": "classification and duplication re-verification only (0 of 49 helpers migrated; 0 lines removed from main.py or personas/service.py)",
+    "deferred_helpers_count": 49,
+    "deferred_reason": "blocked on Human/Ops artifact-contract revision (new shared-owner module path(s) for groups A and C above) plus the behavioral-adjudication work described in group B above",
+    "requested_artifact_additions": [
+      "services/control-plane/bff/promotion_review/service.py (group A, 33 helpers)",
+      "services/control-plane/bff/shared/cross_domain_utils.py (group C, 10 helpers)"
+    ]
+  }
+}
