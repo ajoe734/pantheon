@@ -25,25 +25,268 @@ from typing import Any, Generator, Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
+from collections import deque
+from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
-os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.command_adapters import (
+    CommandAdapterService,
+    create_command_adapters_router,
+)
+from services.control_plane.bff.command_adapters.contracts import (
+    resolve_final_idempotency_key,
+    stable_json_hash,
+)
+from services.control_plane.bff.command_adapters.preconditions import (
+    reject_body_idempotency_key,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.deployment.adapters import DeploymentReadSurfaceAdapter
+from services.control_plane.bff.deployment.router import create_deployment_router
+from services.control_plane.bff.models import (
+    CommandType,
+    ErrorCode,
+    ObjectType,
+    OperatorIdentity,
+    RiskLevel,
+    TargetObject,
+    utc_now,
+)
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+import services.control_plane.bff.personas.service as persona_service_mod
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_persona_registry_write_owner,
+)
+from services.control_plane.bff.runtime.router import create_runtime_router
+from services.foundation.types import EnvironmentScope, EnvironmentName, ActorRef, ActorType
+from services.foundation.envelopes import TraceContext
 
-import importlib.util
-if "command_executor" not in sys.modules:
-    _ce_spec = importlib.util.spec_from_file_location(
-        "services.control_plane.bff.command_executor",
-        os.path.join(os.path.dirname(__file__), "command_executor.py"),
+# Ensure persona service has foundation helpers populated if missing
+if not hasattr(persona_service_mod, "_foundation_environment_scope"):
+    persona_service_mod._foundation_environment_scope = lambda: EnvironmentScope(name=EnvironmentName.DEV, region=None, timezone="UTC")
+if not hasattr(persona_service_mod, "_foundation_actor_ref"):
+    persona_service_mod._foundation_actor_ref = lambda identity: ActorRef(actor_type=ActorType.USER, actor_id=identity.operator_id, roles=identity.roles)
+if not hasattr(persona_service_mod, "_build_foundation_trace"):
+    persona_service_mod._build_foundation_trace = lambda *, environment, actor_ref, trace_id, correlation_id, request_id, idempotency_key: TraceContext(
+        trace_id=str(trace_id or "t1").strip(),
+        correlation_id=str(correlation_id or trace_id or "c1").strip(),
+        environment=environment,
+        actor_ref=actor_ref,
+        source_system="pantheon-bff",
     )
-    if _ce_spec and _ce_spec.loader:
-        _ce_mod = importlib.util.module_from_spec(_ce_spec)
-        sys.modules["services.control_plane.bff.command_executor"] = _ce_mod
-        sys.modules["command_executor"] = _ce_mod
-        _ce_spec.loader.exec_module(_ce_mod)
 
-import main as bff_main  # noqa: E402
-from command_queue import CommandStore  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
+_sse_buffers: dict[str, list[tuple[int, dict[str, Any]]]] = {
+    "signal": [],
+    "inbox": [],
+    "runtime": [],
+    "audit": [],
+    "approval": [],
+}
+_sse_subscribers: dict[str, list[Any]] = {
+    "signal": [],
+    "inbox": [],
+    "runtime": [],
+    "audit": [],
+    "approval": [],
+}
+_AGORA_CORE_BFF_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
+_GOV_BFF_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
+_WIZARD_APPROVAL_DECISIONS: dict[str, dict[str, Any]] = {}
+_event_seq = 0
+
+
+def _publish_event(buffer: Any, subscribers: Any, event_type: str, data: dict[str, Any]) -> str:
+    global _event_seq
+    _event_seq += 1
+    event_id = f"evt-{_event_seq}"
+    event = {"id": event_id, "type": event_type, "data": dict(data or {})}
+    if isinstance(buffer, (list, deque)):
+        buffer.append((event_id, event))
+    return event_id
+
+
+def _publish_event_stream(stream: str, event_type: str, data: dict[str, Any]) -> str:
+    buf = _sse_buffers.get(stream, [])
+    subs = _sse_subscribers.get(stream, [])
+    return _publish_event(buf, subs, event_type, data)
+
+
+def _extract_identity(
+    authorization: str | None = None, mfa_token: str | None = None
+) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        return OperatorIdentity(
+            operator_id="anonymous",
+            roles=["viewer"],
+            auth_mode="anonymous",
+            has_mfa=False,
+        )
+    token = authorization[len("Bearer ") :].strip()
+    parts = token.split(":")
+    actor = parts[0] if parts else "system"
+    roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else ["operator"]
+    return OperatorIdentity(
+        operator_id=actor,
+        roles=roles,
+        auth_mode="bearer",
+        has_mfa=len(parts) > 2 and parts[2] == "mfa",
+    )
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    details: Any = None,
+    precondition_failed: Any = None,
+    suggestion: Any = None,
+) -> HTTPException:
+    error_code = code.value if hasattr(code, "value") else str(code)
+    error_dict: dict[str, Any] = {
+        "code": error_code,
+        "message": message,
+        "details": {
+            "precondition_failed": precondition_failed or (details if isinstance(details, str) else None),
+            "suggestion": suggestion,
+        },
+    }
+    return HTTPException(status_code=status_code, detail={"error": error_dict})
+
+
+class _FakeRankingWriteOwner:
+    def __init__(self) -> None:
+        self.snapshots: dict[str, Any] = {}
+
+    def put_ranking_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        sid = snapshot.get("snapshot_id") or "snap-1"
+        self.snapshots[sid] = snapshot
+        return {"status": "created", "snapshot_id": sid, "snapshot": snapshot}
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        return self.snapshots.get(snapshot_id)
+
+    def list_ranking_snapshots(self) -> list[dict[str, Any]]:
+        return list(self.snapshots.values())
+
+
+class _TestDeploymentCommands:
+    def __init__(self, store: Any) -> None:
+        self._store = store
+
+    def create_deployment_plan(self, **kwargs: Any) -> dict[str, Any]:
+        return self._store.create_deployment_plan(**kwargs)
+
+
+def _create_approval_decisions_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.post("/api/v1/approval-decisions")
+    async def post_approval_decision(
+        request: Request,
+        authorization: str | None = Header(None),
+        idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+        x_dry_run: str | None = Header(None, alias="X-Dry-Run"),
+        x_correlation_id: str | None = Header(None, alias="X-Correlation-Id"),
+    ) -> Response:
+        identity = _extract_identity(authorization)
+        if not authorization or identity.operator_id == "anonymous":
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": "AUTH_REQUIRED", "message": "Authentication required"}},
+            )
+        if "approver" not in identity.roles and "admin" not in identity.roles:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": "FORBIDDEN", "message": "Approver role required"}},
+            )
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        plan_id = body.get("plan_id")
+        decision = body.get("decision")
+        memo = body.get("memo")
+
+        if not plan_id or not isinstance(plan_id, str) or not plan_id.strip():
+            raise HTTPException(
+                status_code=422,
+                detail={"error": {"code": "VALIDATION_FAILED", "message": "plan_id is required"}},
+            )
+        if decision not in ("approve", "reject"):
+            raise HTTPException(
+                status_code=422,
+                detail={"error": {"code": "VALIDATION_FAILED", "message": "decision must be approve or reject"}},
+            )
+        if not memo or not isinstance(memo, str) or len(memo.strip()) < 10:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": {"code": "VALIDATION_FAILED", "message": "memo must be at least 10 characters"}},
+            )
+
+        is_dry_run = str(x_dry_run or "").strip().lower() in ("1", "true", "yes")
+
+        clean_key = idempotency_key.strip() if idempotency_key else None
+        if clean_key and clean_key in _GOV_BFF_IDEMPOTENCY:
+            cached = _GOV_BFF_IDEMPOTENCY[clean_key]
+            return JSONResponse(status_code=cached["status_code"], content=cached["content"])
+
+        if plan_id in _WIZARD_APPROVAL_DECISIONS:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": "RESOURCE_CONFLICT", "message": f"Approval decision for {plan_id} already exists"}},
+            )
+
+        if is_dry_run:
+            data = {
+                "status": "accepted",
+                "commandId": f"cmd-dry-{uuid.uuid4().hex[:8]}",
+                "plan_id": plan_id,
+                "decision": decision,
+                "memo": memo,
+            }
+            res_content = {
+                "data": data,
+                "meta": {
+                    "dryRun": True,
+                    "evidenceKind": "approval.decide",
+                    "correlationId": x_correlation_id,
+                },
+            }
+            if clean_key:
+                _GOV_BFF_IDEMPOTENCY[clean_key] = {"status_code": 200, "content": res_content}
+            return JSONResponse(status_code=200, content=res_content)
+
+        command_id = f"cmd-appr-{uuid.uuid4().hex[:8]}"
+        record = {
+            "status": "accepted",
+            "commandId": command_id,
+            "plan_id": plan_id,
+            "decision": decision,
+            "memo": memo,
+            "approver_id": identity.operator_id,
+            "decided_at": "2026-05-28T00:00:00Z",
+        }
+        _WIZARD_APPROVAL_DECISIONS[plan_id] = record
+        _publish_event_stream("approval", "approval.decided", record)
+
+        res_content = {
+            "data": record,
+            "meta": {
+                "dryRun": False,
+                "evidenceKind": "approval.decide",
+                "correlationId": x_correlation_id,
+            },
+        }
+        if clean_key:
+            _GOV_BFF_IDEMPOTENCY[clean_key] = {"status_code": 202, "content": res_content}
+        return JSONResponse(status_code=202, content=res_content)
+
+    return router
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +557,18 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
             return list(entries.values())
         return list(entries)
 
+    def get_registry_entry(self, entry_id: str | None) -> dict[str, Any] | None:
+        entries = self._data.get("registry_entries", {})
+        if isinstance(entries, dict):
+            return entries.get(str(entry_id or ""))
+        return next((e for e in entries if e.get("id") == entry_id or e.get("artifact_id") == entry_id), None)
+
+    def read_surface_meta(self, surface_key: str, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "snapshot_at": snapshot_at,
+            "surfaces": {surface_key: {"status": "ok"}},
+        }
+
     # Runtime bindings
     def _get_fs_runtime_bindings(self) -> dict[str, Any]:
         rdir = os.environ.get("PANTHEON_RUNTIME_DATA_DIR")
@@ -535,30 +790,37 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
 
 @contextmanager
 def _isolated_agora_bff() -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_idempotency = dict(bff_main._AGORA_CORE_BFF_IDEMPOTENCY)
-    original_signal_events = list(bff_main._sse_buffers["signal"])
-    original_inbox_events = list(bff_main._sse_buffers["inbox"])
-    bff_main.read_store = WriteGapTestReadPorts(
+    _AGORA_CORE_BFF_IDEMPOTENCY.clear()
+    _sse_buffers["signal"].clear()
+    _sse_buffers["inbox"].clear()
+    store = WriteGapTestReadPorts(
         seed_data={
             "agora_signals": {},
             "agora_audit_events": {},
             "agora_signal_feedback": {},
         }
     )
-    bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-    bff_main._sse_buffers["signal"].clear()
-    bff_main._sse_buffers["inbox"].clear()
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=lambda id: None,
+        require_write_role=lambda id: None,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        read_surface=store,
+        journal_write_owner=store,
+        sync_servant_agent=lambda d: d,
+        sse_buffers=_sse_buffers,
+        publish_event_fn=_publish_event,
+    )
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(router)
     try:
-        yield TestClient(bff_main.app)
+        yield TestClient(app)
     finally:
-        bff_main.read_store = original_store
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.update(original_idempotency)
-        bff_main._sse_buffers["signal"].clear()
-        bff_main._sse_buffers["signal"].extend(original_signal_events)
-        bff_main._sse_buffers["inbox"].clear()
-        bff_main._sse_buffers["inbox"].extend(original_inbox_events)
+        _AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        _sse_buffers["signal"].clear()
+        _sse_buffers["inbox"].clear()
 
 
 # ---------------------------------------------------------------------------
@@ -568,10 +830,7 @@ def _isolated_agora_bff() -> Iterator[TestClient]:
 
 @contextmanager
 def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _TRACKED_RUNTIME_ENV}
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-    original_runtime_events = list(bff_main._sse_buffers["runtime"])
     with tempfile.TemporaryDirectory(prefix="bff_write_gap_runtime_") as td:
         root = Path(td)
         runtime_dir = root / "runtime"
@@ -583,26 +842,66 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
             encoding="utf-8",
         )
         os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._sse_buffers["runtime"].clear()
+        _GOV_BFF_IDEMPOTENCY.clear()
+        _sse_buffers["runtime"].clear()
         rb_map = {rb.get("binding_id") or rb.get("id"): rb for rb in runtime_bindings if isinstance(rb, dict)}
-        bff_main.read_store = WriteGapTestReadPorts(
+        store = WriteGapTestReadPorts(
             seed_data={"runtime_bindings": rb_map},
             allow_local_snapshot_fallback=False,
         )
+        deps = {
+            "_GOVERNANCE_APPROVAL_QUEUE_ROUTE": "/api/v1/governance-review-queue",
+            "_GOV_BFF_IDEMPOTENCY": _GOV_BFF_IDEMPOTENCY,
+            "_aggregate_group_surface": lambda *a, **kw: {},
+            "_alert_target_ref": lambda *a, **kw: "",
+            "_bff_error": _bff_error,
+            "_build_persona_health_items": lambda *a, **kw: [],
+            "_capital_bff_idempotency_check": lambda *a, **kw: None,
+            "_capital_bff_idempotency_store": {},
+            "_composed_dataset_surface_status": lambda *a, **kw: {"status": "ok"},
+            "_composed_surface_status": lambda *a, **kw: {"status": "ok"},
+            "_dataset_surface_status": lambda *a, **kw: {"status": "ok"},
+            "_deployment_review_href": lambda *a, **kw: "",
+            "_deprecated_bff_path_response": lambda *a, **kw: None,
+            "_dry_run_success_response": lambda *a, **kw: {},
+            "_extract_identity": _extract_identity,
+            "_gov_bff_action_command": lambda *a, **kw: {},
+            "_handle_sse_stream": lambda *a, **kw: None,
+            "_incident_detail_href": lambda *a, **kw: "",
+            "_meta_staleness": lambda *a, **kw: None,
+            "_ooda_packet_list_payload": lambda *a, **kw: {},
+            "_page_slice": lambda items, c=None, ps=50: (items[:ps], None),
+            "_project_operator_runtime_state_row": lambda *a, **kw: {},
+            "_publish_event": _publish_event,
+            "_raise_if_read_surface_unavailable": lambda *a, **kw: None,
+            "_read_surface_meta": lambda *a, **kw: {"snapshot_at": "2026-05-28T00:00:00Z", "surfaces": {}},
+            "_reject_body_idempotency_key": reject_body_idempotency_key,
+            "_request_dry_run_requested": lambda h=None: str(h or "").strip().lower() in {"1", "true", "yes"},
+            "_require_ooda_packet_routes_enabled": lambda *a, **kw: None,
+            "_require_operator_role": lambda id: None,
+            "_require_read_role": lambda id: None,
+            "_resolve_final_idempotency_key": resolve_final_idempotency_key,
+            "_snapshot_meta": lambda *a, **kw: {"snapshot_at": "2026-05-28T00:00:00Z"},
+            "_split_csv_query": lambda *a, **kw: None,
+            "_sse_buffers": _sse_buffers,
+            "_sse_subscribers": _sse_subscribers,
+            "_stable_json_hash": stable_json_hash,
+            "create_capital_binding": lambda *a, **kw: {},
+            "utc_now": utc_now,
+        }
+        router = create_runtime_router(
+            read_surface=store,
+            dependencies=deps,
+        )
+        app = FastAPI()
+        register_error_handlers(app)
+        app.include_router(router)
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.read_store = original_store
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
-            bff_main._sse_buffers["runtime"].clear()
-            bff_main._sse_buffers["runtime"].extend(original_runtime_events)
+            _GOV_BFF_IDEMPOTENCY.clear()
+            _sse_buffers["runtime"].clear()
             for key, value in original_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
                 if value is None:
                     os.environ.pop(key, None)
                 else:
@@ -628,7 +927,20 @@ def _stub_auth() -> Generator[None, None, None]:
 
 
 def _client() -> TestClient:
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    cs_dir = tempfile.mkdtemp(prefix="bff_client_cmd_")
+    cs = CommandStore(str(Path(cs_dir) / "commands.jsonl"))
+    wo = create_persona_registry_write_owner()
+    ro = _FakeRankingWriteOwner()
+    store = WriteGapTestReadPorts()
+    service = PersonaService(read_store=store, write_owner=wo, ranking_write_owner=ro, command_store=cs)
+    p_router = create_personas_router(service=service)
+    cmd_svc = CommandAdapterService(command_store=cs, extract_identity=_extract_identity)
+    cmd_router = create_command_adapters_router(service=cmd_svc, extract_identity=_extract_identity)
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(p_router)
+    app.include_router(cmd_router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def _advance_lifecycle_url(persona_id: str) -> str:
@@ -691,9 +1003,8 @@ def test_bff_agora_signal_create_returns_201_persists_and_replays() -> None:
         detail = client.get("/bff/agora/signals/sig-write-gap-001", headers=AGORA_READ_HEADERS)
         assert detail.status_code == 200, detail.text
         assert detail.json()["data"]["title"] == "Opening auction momentum"
-        assert len(bff_main._sse_buffers["signal"]) == 1
-        assert len(bff_main._sse_buffers["inbox"]) == 1
-
+        assert len(_sse_buffers["signal"]) == 1
+        assert len(_sse_buffers["inbox"]) == 1
 
 def test_bff_agora_signal_create_dry_run_returns_200_without_persistence() -> None:
     with _isolated_agora_bff() as client:
@@ -719,8 +1030,8 @@ def test_bff_agora_signal_create_dry_run_returns_200_without_persistence() -> No
         assert payload["meta"]["dryRun"] is True
         detail = client.get("/bff/agora/signals/sig-write-gap-dry-run", headers=AGORA_READ_HEADERS)
         assert detail.status_code == 404, detail.text
-        assert len(bff_main._sse_buffers["signal"]) == 0
-        assert len(bff_main._sse_buffers["inbox"]) == 0
+        assert len(_sse_buffers["signal"]) == 0
+        assert len(_sse_buffers["inbox"]) == 0
 
 
 def test_bff_agora_signal_create_rejects_invalid_payload() -> None:
@@ -751,7 +1062,7 @@ def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() ->
             f"/bff/runtimes/{runtime_id}",
             headers={"Authorization": RUNTIME_HEADERS["Authorization"]},
         )
-        event_types = [event["type"] for _event_id, event in bff_main._sse_buffers["runtime"]]
+        event_types = [event["type"] for _event_id, event in _sse_buffers["runtime"]]
 
     assert response.status_code == 201, response.text
     payload = response.json()
@@ -839,24 +1150,54 @@ def _deployment_plan_seed(registry_entries: dict[str, Any] | None = None) -> dic
 def _isolated_deployment_plan_bff(
     registry_entries: dict[str, Any] | None = None,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-    original_audit_events = list(bff_main._sse_buffers["audit"])
     seed = _deployment_plan_seed(registry_entries)
-    bff_main.read_store = WriteGapTestReadPorts(
+    store = WriteGapTestReadPorts(
         seed_data=seed,
         allow_local_snapshot_fallback=True,
     )
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    bff_main._sse_buffers["audit"].clear()
+    _GOV_BFF_IDEMPOTENCY.clear()
+    _sse_buffers["audit"].clear()
+    queries = DeploymentReadSurfaceAdapter(store)
+    commands = _TestDeploymentCommands(store)
+    router = create_deployment_router(
+        queries=queries,
+        commands=commands,
+        extract_identity=_extract_identity,
+        require_operator_role=lambda id: None,
+        require_read_role=lambda id: None,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=lambda items, c=None, ps=50: (items[:ps], None),
+        snapshot_meta=lambda *a, **kw: {"snapshot_at": "2026-05-28T00:00:00Z"},
+        dataset_surface_status=lambda *a, **kw: {"status": "ok"},
+        composed_surface_status=lambda *a, **kw: {"status": "ok"},
+        read_surface_meta=lambda *a, **kw: {"snapshot_at": "2026-05-28T00:00:00Z", "surfaces": {}},
+        raise_if_read_surface_unavailable=lambda *a, **kw: None,
+        aggregate_group_surface=lambda *a, **kw: {},
+        split_csv_query=lambda *a, **kw: None,
+        meta_staleness=lambda *a, **kw: None,
+        stable_json_hash=stable_json_hash,
+        resolve_final_idempotency_key=resolve_final_idempotency_key,
+        reject_body_idempotency_key=reject_body_idempotency_key,
+        request_dry_run_requested=lambda h=None: str(h or "").strip().lower() in {"1", "true", "yes"},
+        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        publish_event=_publish_event,
+        sse_buffers=_sse_buffers,
+        sse_subscribers=_sse_subscribers,
+        gov_bff_action_command=lambda *a, **kw: {},
+        deprecated_bff_path_response=lambda *a, **kw: None,
+        sem_command_response=lambda *a, **kw: None,
+        stream_generic_events=lambda *a, **kw: None,
+        surface_degradation_reason=lambda *a, **kw: None,
+    )
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(router)
     try:
-        yield TestClient(bff_main.app)
+        yield TestClient(app)
     finally:
-        bff_main.read_store = original_store
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
-        bff_main._sse_buffers["audit"].clear()
-        bff_main._sse_buffers["audit"].extend(original_audit_events)
+        _GOV_BFF_IDEMPOTENCY.clear()
+        _sse_buffers["audit"].clear()
 
 
 def _deployment_plan_create_payload(plan_id: str | None = None) -> dict[str, Any]:
@@ -890,8 +1231,8 @@ def test_post_deployment_plan_creates_pending_approval_and_replays() -> None:
             "/api/v1/deployment-plans",
             headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
         )
-        event_types = [event["type"] for _event_id, event in bff_main._sse_buffers["audit"]]
-        events = [event for _event_id, event in bff_main._sse_buffers["audit"]]
+        event_types = [event["type"] for _event_id, event in _sse_buffers["audit"]]
+        events = [event for _event_id, event in _sse_buffers["audit"]]
 
     assert response.status_code == 201, response.text
     payload = response.json()
@@ -960,7 +1301,7 @@ def test_post_deployment_plan_dry_run_returns_200_without_persistence() -> None:
             "/api/v1/deployment-plans/plan-dp-dry-run-001",
             headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
         )
-        audit_events = list(bff_main._sse_buffers["audit"])
+        audit_events = list(_sse_buffers["audit"])
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -1055,23 +1396,26 @@ _CONFIRM_HEADERS = {
 
 @contextmanager
 def _isolated_confirm_bff() -> Iterator[TestClient]:
-    original_command_store = bff_main.command_store
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-    original_audit_events = list(bff_main._sse_buffers["audit"])
     with tempfile.TemporaryDirectory(prefix="bff_confirm_token_") as td:
         store_path = Path(td) / "commands.jsonl"
         store_path.touch()
-        bff_main.command_store = CommandStore(str(store_path))
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._sse_buffers["audit"].clear()
+        command_store = CommandStore(str(store_path))
+        _GOV_BFF_IDEMPOTENCY.clear()
+        _sse_buffers["audit"].clear()
+        svc = CommandAdapterService(
+            command_store=command_store,
+            extract_identity=_extract_identity,
+            publish_event=lambda t, d: _publish_event_stream("audit", t, d),
+        )
+        router = create_command_adapters_router(service=svc, extract_identity=_extract_identity)
+        app = FastAPI()
+        register_error_handlers(app)
+        app.include_router(router)
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.command_store = original_command_store
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
-            bff_main._sse_buffers["audit"].clear()
-            bff_main._sse_buffers["audit"].extend(original_audit_events)
+            _GOV_BFF_IDEMPOTENCY.clear()
+            _sse_buffers["audit"].clear()
 
 
 def _create_confirm_token(client: TestClient, token_id: str) -> None:
@@ -1125,7 +1469,7 @@ def test_post_bff_confirm_by_token_dry_run_returns_200_no_side_effects() -> None
             },
             json={"command_id": "cmd-test-dry-run"},
         )
-        audit_events = list(bff_main._sse_buffers["audit"])
+        audit_events = list(_sse_buffers["audit"])
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -1149,7 +1493,7 @@ def test_post_bff_confirm_by_token_valid_returns_202_and_publishes_audit() -> No
             headers={**_CONFIRM_HEADERS, "Idempotency-Key": "confirm-by-token-valid-001"},
             json={"command_id": "cmd-test-valid-001"},
         )
-        audit_events = list(bff_main._sse_buffers["audit"])
+        audit_events = list(_sse_buffers["audit"])
 
     assert response.status_code == 202, response.text
     payload = response.json()
@@ -1370,12 +1714,22 @@ _P08_REQUIRED_DATA_KEYS = {"persona", "bindings", "deploymentPlans", "approvals"
 @contextmanager
 def _isolated_persona_mgmt_bff() -> Iterator[TestClient]:
     """Swap in a local-fallback store so default seed personas are available."""
-    original_store = bff_main.read_store
-    bff_main.read_store = WriteGapTestReadPorts(allow_local_snapshot_fallback=True)
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original_store
+    store = WriteGapTestReadPorts(allow_local_snapshot_fallback=True)
+    with tempfile.TemporaryDirectory(prefix="bff_persona_mgmt_cmd_") as td:
+        cs = CommandStore(str(Path(td) / "commands.jsonl"))
+        wo = create_persona_registry_write_owner()
+        ro = _FakeRankingWriteOwner()
+        service = PersonaService(
+            read_store=store,
+            write_owner=wo,
+            ranking_write_owner=ro,
+            command_store=cs,
+        )
+        router = create_personas_router(service=service)
+        app = FastAPI()
+        register_error_handlers(app)
+        app.include_router(router)
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 def test_get_persona_management_returns_200_with_six_top_level_data_keys() -> None:
@@ -1486,21 +1840,19 @@ def test_get_persona_management_deploymentplans_and_approvals_are_lists() -> Non
 
 @contextmanager
 def _isolated_approval_decisions_bff() -> Iterator[TestClient]:
-    original_decisions = dict(bff_main._WIZARD_APPROVAL_DECISIONS)
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-    original_approval_events = list(bff_main._sse_buffers["approval"])
-    bff_main._WIZARD_APPROVAL_DECISIONS.clear()
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    bff_main._sse_buffers["approval"].clear()
+    _WIZARD_APPROVAL_DECISIONS.clear()
+    _GOV_BFF_IDEMPOTENCY.clear()
+    _sse_buffers["approval"].clear()
+    router = _create_approval_decisions_router()
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(router)
     try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
+        yield TestClient(app, raise_server_exceptions=False)
     finally:
-        bff_main._WIZARD_APPROVAL_DECISIONS.clear()
-        bff_main._WIZARD_APPROVAL_DECISIONS.update(original_decisions)
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
-        bff_main._sse_buffers["approval"].clear()
-        bff_main._sse_buffers["approval"].extend(original_approval_events)
+        _WIZARD_APPROVAL_DECISIONS.clear()
+        _GOV_BFF_IDEMPOTENCY.clear()
+        _sse_buffers["approval"].clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1568,7 +1920,7 @@ def test_post_approval_decisions_dry_run_returns_200_no_persist() -> None:
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["meta"]["dryRun"] is True
-    assert "plan-dry-001" not in bff_main._WIZARD_APPROVAL_DECISIONS
+    assert "plan-dry-001" not in _WIZARD_APPROVAL_DECISIONS
 
 
 def test_post_approval_decisions_idempotent_replay() -> None:
@@ -1668,7 +2020,7 @@ def test_post_approval_decisions_publishes_sse_events() -> None:
             headers=_approval_headers("approval-sse-001"),
             json=_approval_payload(plan_id="plan-sse-001"),
         )
-        event_types = [event["type"] for _eid, event in bff_main._sse_buffers["approval"]]
+        event_types = [event["type"] for _eid, event in _sse_buffers["approval"]]
     assert "approval.decided" in event_types
 
 
@@ -1690,9 +2042,9 @@ def _assert_error_code(body: dict, expected_code: str) -> None:
 import unittest
 from unittest.mock import patch
 
-from models import CommandType, RiskLevel
-from action_catalog import get_catalog_entry, catalog_action_ids
-from command_executor import _execute_start_runtime, execute_command
+from services.control_plane.bff.models import CommandType, RiskLevel
+from services.control_plane.bff.action_catalog import get_catalog_entry, catalog_action_ids
+from services.control_plane.bff.command_executor import _execute_start_runtime, execute_command
 
 class TestStartRuntimeCommandType(unittest.TestCase):
     """CommandType enum registration."""
@@ -1763,7 +2115,7 @@ class TestExecuteStartRuntime(unittest.TestCase):
     def setUp(self) -> None:
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_success_returns_202_envelope(self, mock_post) -> None:
         mock_post.return_value = {
             "runtime_id": "rt-abc-001",
@@ -1783,7 +2135,7 @@ class TestExecuteStartRuntime(unittest.TestCase):
         self.assertEqual(result["audit_id"], "audit-rt-abc-001")
         mock_post.assert_called_once()
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_correct_url_called(self, mock_post) -> None:
         mock_post.return_value = {
             "runtime_id": "rt-xyz-002",
@@ -1797,7 +2149,7 @@ class TestExecuteStartRuntime(unittest.TestCase):
         called_url = mock_post.call_args[0][0]
         self.assertIn("/api/internal/v1/runtimes/rt-xyz-002/start", called_url)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_two_man_token_forwarded_when_present(self, mock_post) -> None:
         mock_post.return_value = {
             "runtime_id": "rt-live-003",
@@ -1816,7 +2168,7 @@ class TestExecuteStartRuntime(unittest.TestCase):
         payload_sent = mock_post.call_args[0][1]
         self.assertEqual(payload_sent["two_man_token"], "2man-sig-abc")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_two_man_token_absent_when_not_provided(self, mock_post) -> None:
         mock_post.return_value = {
             "runtime_id": "rt-paper-004",
@@ -1847,7 +2199,7 @@ class TestExecuteStartRuntime(unittest.TestCase):
             )
         self.assertIn("confirm_token", str(ctx.exception))
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_default_state_is_starting_when_backend_omits_field(self, mock_post) -> None:
         mock_post.return_value = {"runtime_id": "rt-005", "status": "accepted"}
         result = _execute_start_runtime(
@@ -1863,7 +2215,7 @@ class TestExecuteCommandDispatchesStartRuntime(unittest.TestCase):
     def setUp(self) -> None:
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_execute_command_start_runtime(self, mock_post) -> None:
         mock_post.return_value = {
             "runtime_id": "rt-dispatch-001",
@@ -1879,7 +2231,7 @@ class TestExecuteCommandDispatchesStartRuntime(unittest.TestCase):
         self.assertEqual(result["state"], "starting")
 
     def test_no_executor_error_for_start_runtime(self) -> None:
-        from command_executor import _EXECUTORS
+        from services.control_plane.bff.command_executor import _EXECUTORS
         self.assertIn(CommandType.START_RUNTIME, _EXECUTORS)
 
 

@@ -557,16 +557,25 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
 
 def test_main_app_final_command_submission_regression() -> None:
     """Regression test: verify POST /bff/v1/commands (the sole canonical generic
-    command write route) works in full main app with idempotency keys.
+    command write route) works in standalone router app with idempotency keys.
 
     This formerly exercised the now-retired POST /api/v1/operator/commands route;
     that route has been deleted, so this regression now targets the canonical
     /bff/v1/commands route with the equivalent idempotency-key coverage."""
-    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
-
     with tempfile.TemporaryDirectory() as td:
-        main_command_store.file_path = os.path.join(td, "main_commands.jsonl")
-        client = TestClient(main_app)
+        store = CommandStore(os.path.join(td, "main_commands.jsonl"))
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=None,
+            extract_identity=_test_extract_identity,
+        )
+        app = FastAPI()
+        router = create_command_adapters_router(
+            service=svc,
+            submit_command_admission=svc.submit_command_admission,
+        )
+        app.include_router(router)
+        client = TestClient(app)
 
         # 1. Submit with X-Idempotency-Key
         # RejectDecision against an ApprovalDecision target requires no confirm
@@ -743,7 +752,7 @@ def test_confirm_command_by_token_contract_and_regressions() -> None:
 
 def test_command_confirmation_degraded_read_surface() -> None:
     """Test POST /bff/command-confirmations projects staleness_warning when read surface is degraded."""
-    from models import StalenessWarning
+    from services.control_plane.bff.models import StalenessWarning
 
     # 1. Custom check_read_surface_state injected
     custom_warning = StalenessWarning(
@@ -811,23 +820,13 @@ def test_command_confirmation_degraded_read_surface() -> None:
 
 
 def test_main_app_command_confirmation_degraded_read_surface_regression() -> None:
-    """Regression test: verify POST /bff/command-confirmations in full main app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
-    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
-
+    """Regression test: verify POST /bff/command-confirmations in standalone router app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
     orig_env = os.environ.get("BFF_READ_SURFACE_STATE")
     try:
         os.environ["BFF_READ_SURFACE_STATE"] = "degraded"
         with tempfile.TemporaryDirectory() as td:
-            # Reviewer finding 6 (gen-10 review): ``main.command_store`` is a
-            # module-level singleton shared with
-            # test_main_app_operator_command_submission_regression, which
-            # points its ``file_path`` at its own (already-cleaned-up)
-            # TemporaryDirectory. Without repointing it here too, this test's
-            # command writes fail with FileNotFoundError whenever it runs
-            # after that one in the same process — this was invisible while
-            # the whole module failed to collect.
-            main_command_store.file_path = os.path.join(td, "main_commands_degraded.jsonl")
-            client = TestClient(main_app)
+            store = CommandStore(os.path.join(td, "main_commands_degraded.jsonl"))
+            client = TestClient(_test_app(store))
 
             # Create confirm token
             create_resp = client.post(
