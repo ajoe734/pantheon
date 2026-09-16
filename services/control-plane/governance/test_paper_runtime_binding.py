@@ -130,6 +130,20 @@ def test_packet_mutation_catches_failures() -> None:
     check("lean-platform target is rejected", any("lean-platform" in error for error in errors), str(errors))
 
 
+def test_runtime_binding_imports_canonical_consolidated_module() -> None:
+    print("\n[6] RuntimeBinding resolves to the consolidated services.runtime_manager module")
+    from services.runtime_manager.runtime_binding import (
+        RuntimeBinding as CanonicalRuntimeBinding,
+    )
+
+    check(
+        "RuntimeBinding is the canonical services.runtime_manager.runtime_binding class "
+        "(not a dynamically loaded shadow module from the pre-consolidation "
+        "services/execution/runtime-manager/ path, which no longer exists)",
+        RuntimeBinding is CanonicalRuntimeBinding,
+    )
+
+
 def test_evidence_packet_write() -> None:
     print("\n[5] Evidence packet write")
     packet = build_evidence_packet(generated_at="2026-05-15T16:45:00Z")
@@ -155,6 +169,7 @@ def main() -> int:
     test_bootstrap_request_and_runtime_context_match_binding()
     test_evidence_packet_links_and_safety()
     test_packet_mutation_catches_failures()
+    test_runtime_binding_imports_canonical_consolidated_module()
     test_evidence_packet_write()
 
     print(f"\n=== Results: {PASS} PASS, {FAIL} FAIL ===")

@@ -28,7 +28,6 @@ Or import the factory from another module:
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import sys
 from dataclasses import dataclass
@@ -81,12 +80,6 @@ RUNTIME_BINDING_EFFECTIVE_AT = "2026-05-15T16:44:00Z"
 BOOTSTRAP_REQUEST_ID = "runtime-bootstrap-paper-mgmt-004"
 TRACE_ID = "03829d25-2c9f-44f0-981e-56a94d8ff004"
 
-_RUNTIME_BINDING_MODULE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "execution"
-    / "runtime-manager"
-    / "runtime_binding.py"
-)
 _EVIDENCE_PATH = (
     _ROOT
     / "support"
@@ -101,24 +94,12 @@ _DEPLOYMENT_PLAN_EVIDENCE_PATH = (
 )
 
 
-def _load_runtime_binding_module():
-    spec = importlib.util.spec_from_file_location(
-        "pantheon_runtime_manager_runtime_binding",
-        _RUNTIME_BINDING_MODULE_PATH,
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load RuntimeBinding module at {_RUNTIME_BINDING_MODULE_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("pantheon_runtime_manager_runtime_binding", module)
-    spec.loader.exec_module(module)
-    return module
-
-
-_runtime_binding_module = _load_runtime_binding_module()
-RuntimeBinding = _runtime_binding_module.RuntimeBinding
-RuntimeBindingStatus = _runtime_binding_module.RuntimeBindingStatus
-RuntimeBindingError = _runtime_binding_module.RuntimeBindingError
-validate_binding = _runtime_binding_module.validate_binding
+from services.runtime_manager.runtime_binding import (  # noqa: E402
+    RuntimeBinding,
+    RuntimeBindingError,
+    RuntimeBindingStatus,
+    validate_binding,
+)
 
 
 @dataclass(frozen=True)
