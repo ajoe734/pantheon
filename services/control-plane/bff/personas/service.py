@@ -10706,9 +10706,9 @@ def _ppl_alloc_009_paper_environment_guard() -> None:
     if (
         env_name != "dev"
         or _bff_auth_mode() != "strict"
-        or _bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
-        or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
-        or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
+        or bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
+        or bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+        or bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
     ):
         raise _bff_error(
             403,

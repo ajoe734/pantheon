@@ -55,7 +55,7 @@
     "no_forwarding_wrappers_or_shims": {
       "status": "satisfied",
       "rule": "Deleted functions must not leave forwarding wrappers or shims in deleting files",
-      "details": "All 22 persona domain functions deleted from main.py were directly imported from .personas.service; _bool_from_env wrapper was excised and callers repointed directly to auth_policy.bool_from_env."
+      "details": "All 22 persona domain functions deleted from main.py were directly imported from .personas.service; _bool_from_env wrapper was excised and callers repointed directly to auth_policy.bool_from_env in main.py and bool_from_env in personas/service.py."
     },
     "single_ownership": {
       "status": "satisfied",
@@ -66,7 +66,7 @@
     {
       "name": "_bool_from_env",
       "nature": "main.py wrapped auth_policy.bool_from_env; personas/service.py had a standalone bool parsing helper.",
-      "adjudication": "Deleted both shims. Repointed all call sites directly to services/control-plane/bff/auth/policy.py:bool_from_env.",
+      "adjudication": "Deleted both shims. Repointed all call sites directly to services/control-plane/bff/auth/policy.py:bool_from_env (auth_policy.bool_from_env in main.py, bool_from_env in personas/service.py).",
       "retaining_owner": "services/control-plane/bff/auth/policy.py"
     },
     {
@@ -1235,8 +1235,21 @@
     },
     "full_suite_post_split_verification": {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_no_undefined_call_symbols.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
-      "result": "84 passed, 1 skipped, 4 warnings in 49.18s (100% pass rate).",
-      "date": "2026-09-16T15:25:25Z"
+      "result": "84 passed, 1 skipped, 4 warnings in 53.03s (100% pass rate).",
+      "date": "2026-09-16T16:19:12Z"
+    },
+    "paper_environment_guard_verification": {
+      "rejection_finding": "personas/service.py:10709-10711 inside _ppl_alloc_009_paper_environment_guard called deleted _bool_from_env name, risking NameError on strict dev auth with broker/canary flags.",
+      "remediation": "Repointed _ppl_alloc_009_paper_environment_guard lines 10709-10711 to imported bool_from_env (matching auth/policy.py:bool_from_env single ownership).",
+      "branch_verification": [
+        "dev strict with broker/canary disabled: passes without error",
+        "PANTHEON_BFF_AUTH_STUB=true: raises 403 PRECONDITION_FAILED",
+        "PANTHEON_LIVE_BROKER_ENABLED=true: raises 403 PRECONDITION_FAILED",
+        "PANTHEON_CANARY_EXECUTION_ENABLED=true: raises 403 PRECONDITION_FAILED",
+        "PANTHEON_ENV=prod: raises 403 PRECONDITION_FAILED",
+        "PANTHEON_BFF_AUTH_MODE=permissive: raises 403 PRECONDITION_FAILED"
+      ],
+      "ast_sweep": "Verified zero unimported deleted helpers and zero calls to _bool_from_env in personas/service.py and main.py."
     }
   },
   "formal_contract_split": {
