@@ -38,6 +38,7 @@
     "services/control-plane/bff/governance/router.py",
     "services/control-plane/bff/governance/service.py",
     "services/control-plane/bff/ports/ooda_management.py",
+    "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
     "docs/deployment/evidence/BFF-GOVERNANCE-APPROVAL-QUEUE-FILTER-CORRECTIVE-001/evidence.json"
   ],
   "document_proof": {
@@ -52,6 +53,10 @@
     "services/control-plane/bff/ports/ooda_management.py": {
       "sha256": "67f525e141e1bf6c8f1edbe6ddd32351311de2ac8840a4a40252159a2105e5a6",
       "bytes": 36069
+    },
+    "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py": {
+      "sha256": "fb271adc08da8a41c567d0036b9ffe53541c61dfec406343a9aa0acdbd0106e0",
+      "bytes": 22438
     }
   },
   "static_type_check": {
@@ -68,21 +73,23 @@
     {
       "command": "/tmp/gov-approval-venv/bin/pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
       "exit_code": 0,
-      "result": "9 passed, 87 warnings in 12.89s. Includes TestGovernanceApprovalQueueSurfaceWithProjectedStore::test_queue_returns_pending_when_store_wired (previously failing with 500) and test_pkt006_approval_queue_filters_and_pagination_follow_contract."
+      "result": "18 passed, 87 warnings in 31.58s. Includes 2 tests from test_pkt006 and 16 tests from test_bff_approvals_surface_contract.py."
     },
     {
-      "command": "python3 end-to-end router filtering test suite under real composition root (TestClient)",
+      "command": "/tmp/gov-approval-venv/bin/pytest services/control-plane/bff/tests/test_bff_approvals_surface_contract.py::TestGovernanceApprovalQueueSurfaceWithProjectedStore -v",
       "exit_code": 0,
+      "result": "10 passed in 14.88s. All real-port and real-router regression tests passed without test-local lambdas.",
       "test_cases": [
-        {"scenario": "1. No filter", "status": 200, "items": ["apv-consdata-001"]},
-        {"scenario": "2. decision_state=proposed", "status": 200, "items": ["apv-consdata-001"]},
-        {"scenario": "3. state=proposed (alias)", "status": 200, "items": ["apv-consdata-001"]},
-        {"scenario": "4. decision_state=decided", "status": 200, "items": []},
-        {"scenario": "5. risk_level=medium", "status": 200, "items": ["apv-consdata-001"]},
-        {"scenario": "6. risk_level=high (empty set)", "status": 200, "items": []},
-        {"scenario": "7. decision_type=registry_entry", "status": 200, "items": ["apv-consdata-001"]},
-        {"scenario": "8. decision_type=nonexistent (empty set)", "status": 200, "items": []},
-        {"scenario": "9. empty store", "status": 200, "items": []}
+        {"test_name": "test_queue_returns_pending_when_store_wired", "status": 200, "result": "PASSED"},
+        {"test_name": "test_evidence_json_nine_filter_scenarios (scenarios 1-9 landed as repeatable pytest)", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_decision_state_and_csv", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_state_alias_backward_compatible", "status": 200, "result": "PASSED"},
+        {"test_name": "test_decision_state_takes_precedence_over_state_alias", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_risk_level_and_csv", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_decision_type_and_csv", "status": 200, "result": "PASSED"},
+        {"test_name": "test_combined_multi_criteria_filters", "status": 200, "result": "PASSED"},
+        {"test_name": "test_healthy_empty_set_structure", "status": 200, "result": "PASSED"},
+        {"test_name": "test_terminal_decisions_never_surfaced_in_queue", "status": 200, "result": "PASSED"}
       ]
     }
   ]

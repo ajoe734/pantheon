@@ -13,6 +13,7 @@ Stub dispatch (dev safety): no live broker orders, no capital allocation.
 from __future__ import annotations
 
 import os
+from typing import Any, Dict, List
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -34,7 +35,7 @@ OPERATOR_HEADERS = {"Authorization": "Bearer op-dev:operator"}
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_PENDING_APPROVAL = {
+_PENDING_APPROVAL: Dict[str, Any] = {
     "decision_id": "apv-consdata-001",
     "target_type": "registry_entry",
     "target_id": "reg-consdata-model-v1",
@@ -56,7 +57,7 @@ _PENDING_APPROVAL = {
     "metadata": None,
 }
 
-_DECIDED_APPROVAL = {
+_DECIDED_APPROVAL: Dict[str, Any] = {
     "decision_id": "apv-consdata-002",
     "target_type": "registry_entry",
     "target_id": "reg-consdata-model-v2",
@@ -77,6 +78,81 @@ _DECIDED_APPROVAL = {
     "persona_id": None,
     "metadata": None,
 }
+
+_PLAN_APPROVAL_UNDER_REVIEW: Dict[str, Any] = {
+    "decision_id": "apv-filter-002",
+    "target_type": "DeploymentPlan",
+    "target_id": "plan-filter-002",
+    "target_version": "v1",
+    "decision": None,
+    "decision_state": "under_review",
+    "actor_role": None,
+    "actor_id": "planner-01",
+    "rationale": "High-risk deployment plan under review",
+    "created_at": "2026-06-15T11:00:00Z",
+    "decided_at": None,
+    "conditions": [],
+    "risk_level": "high",
+    "evidence_refs": [],
+    "superseded_by": None,
+    "expires_at": None,
+    "capital_pool_id": "pool-dev-01",
+    "persona_id": None,
+    "metadata": None,
+}
+
+_BINDING_APPROVAL_PENDING: Dict[str, Any] = {
+    "decision_id": "apv-filter-003",
+    "target_type": "PersonaBinding",
+    "target_id": "binding-filter-003",
+    "target_version": "v1",
+    "decision": None,
+    "decision_state": "pending",
+    "actor_role": None,
+    "actor_id": "persona-ops",
+    "rationale": "Low-risk persona binding pending",
+    "created_at": "2026-06-15T12:00:00Z",
+    "decided_at": None,
+    "conditions": [],
+    "risk_level": "low",
+    "evidence_refs": [],
+    "superseded_by": None,
+    "expires_at": None,
+    "capital_pool_id": "pool-dev-02",
+    "persona_id": "persona-01",
+    "metadata": None,
+}
+
+_KILLSWITCH_APPROVAL_REVIEWED: Dict[str, Any] = {
+    "decision_id": "apv-filter-004",
+    "target_type": "KillSwitch",
+    "target_id": "ks-filter-004",
+    "target_version": "v1",
+    "decision": None,
+    "decision_state": "reviewed",
+    "actor_role": None,
+    "actor_id": "risk-lead",
+    "rationale": "Critical kill-switch request reviewed",
+    "created_at": "2026-06-15T13:00:00Z",
+    "decided_at": None,
+    "conditions": [],
+    "risk_level": "critical",
+    "evidence_refs": [],
+    "superseded_by": None,
+    "expires_at": None,
+    "capital_pool_id": "pool-dev-01",
+    "persona_id": None,
+    "metadata": None,
+}
+
+_HETEROGENEOUS_APPROVAL_DECISIONS: List[Dict[str, Any]] = [
+    _PENDING_APPROVAL,
+    _PLAN_APPROVAL_UNDER_REVIEW,
+    _BINDING_APPROVAL_PENDING,
+    _KILLSWITCH_APPROVAL_REVIEWED,
+    _DECIDED_APPROVAL,
+]
+
 
 
 def _client_for(store: ReadSurfacePorts) -> TestClient:
@@ -178,6 +254,221 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
         body = resp.json()
         ids = [item.get("decision_id") for item in (body.get("items") or [])]
         assert "apv-consdata-001" in ids, f"pending approval not in queue: {body}"
+
+    def test_evidence_json_nine_filter_scenarios(self) -> None:
+        """Verifies the 9 end-to-end filter scenarios recorded in evidence.json
+        under the real router and authentic in-memory ports (no test-local lambdas)."""
+        store_with_item = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
+        )
+        client_with_item = _client_for(store_with_item)
+
+        store_empty = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": []}
+        )
+        client_empty = _client_for(store_empty)
+
+        scenarios = [
+            ("1. No filter", client_with_item, {}, ["apv-consdata-001"]),
+            ("2. decision_state=proposed", client_with_item, {"decision_state": "proposed"}, ["apv-consdata-001"]),
+            ("3. state=proposed (alias)", client_with_item, {"state": "proposed"}, ["apv-consdata-001"]),
+            ("4. decision_state=decided", client_with_item, {"decision_state": "decided"}, []),
+            ("5. risk_level=medium", client_with_item, {"risk_level": "medium"}, ["apv-consdata-001"]),
+            ("6. risk_level=high (empty set)", client_with_item, {"risk_level": "high"}, []),
+            ("7. decision_type=registry_entry", client_with_item, {"decision_type": "registry_entry"}, ["apv-consdata-001"]),
+            ("8. decision_type=nonexistent (empty set)", client_with_item, {"decision_type": "nonexistent"}, []),
+            ("9. empty store", client_empty, {}, []),
+        ]
+
+        for name, client, params, expected_ids in scenarios:
+            resp = client.get(self.ROUTE, params=params, headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, f"Scenario '{name}' returned {resp.status_code}: {resp.text}"
+            body = resp.json()
+            ids = [item.get("decision_id") for item in (body.get("items") or [])]
+            assert ids == expected_ids, f"Scenario '{name}' expected {expected_ids} but got {ids}"
+            assert "meta" in body, f"Scenario '{name}' missing meta"
+            assert "page_info" in body, f"Scenario '{name}' missing page_info"
+
+    def test_filter_by_decision_state_and_csv(self) -> None:
+        """Filter by decision_state accepts single values and comma-separated lists."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        for state, expected in [
+            ("proposed", ["apv-consdata-001"]),
+            ("under_review", ["apv-filter-002"]),
+            ("pending", ["apv-filter-003"]),
+            ("reviewed", ["apv-filter-004"]),
+            ("proposed,pending", ["apv-consdata-001", "apv-filter-003"]),
+            ("under_review,reviewed", ["apv-filter-002", "apv-filter-004"]),
+        ]:
+            resp = client.get(self.ROUTE, params={"decision_state": state}, headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            ids = [item.get("decision_id") for item in (body.get("items") or [])]
+            assert sorted(ids) == sorted(expected), f"Filtering decision_state={state} expected {expected} got {ids}"
+
+    def test_filter_by_state_alias_backward_compatible(self) -> None:
+        """Filter by legacy state alias resolves correctly across router, service, and port."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        for state, expected in [
+            ("proposed", ["apv-consdata-001"]),
+            ("under_review", ["apv-filter-002"]),
+            ("pending", ["apv-filter-003"]),
+            ("reviewed", ["apv-filter-004"]),
+            ("proposed,reviewed", ["apv-consdata-001", "apv-filter-004"]),
+        ]:
+            resp = client.get(self.ROUTE, params={"state": state}, headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            ids = [item.get("decision_id") for item in (body.get("items") or [])]
+            assert sorted(ids) == sorted(expected), f"Filtering state={state} expected {expected} got {ids}"
+
+    def test_decision_state_takes_precedence_over_state_alias(self) -> None:
+        """When both decision_state and state query parameters are passed, decision_state wins."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+        resp = client.get(
+            self.ROUTE,
+            params={"decision_state": "proposed", "state": "under_review"},
+            headers=ADMIN_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        ids = [item.get("decision_id") for item in (body.get("items") or [])]
+        assert ids == ["apv-consdata-001"], f"expected decision_state to override state alias, got {ids}"
+
+    def test_filter_by_risk_level_and_csv(self) -> None:
+        """Filter by risk_level accepts single values and comma-separated lists."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        for risk, expected in [
+            ("medium", ["apv-consdata-001"]),
+            ("high", ["apv-filter-002"]),
+            ("low", ["apv-filter-003"]),
+            ("critical", ["apv-filter-004"]),
+            ("low,critical", ["apv-filter-003", "apv-filter-004"]),
+            ("medium,high", ["apv-consdata-001", "apv-filter-002"]),
+        ]:
+            resp = client.get(self.ROUTE, params={"risk_level": risk}, headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            ids = [item.get("decision_id") for item in (body.get("items") or [])]
+            assert sorted(ids) == sorted(expected), f"Filtering risk_level={risk} expected {expected} got {ids}"
+
+    def test_filter_by_decision_type_and_csv(self) -> None:
+        """Filter by decision_type accepts single values and comma-separated lists."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        for dtype, expected in [
+            ("registry_entry", ["apv-consdata-001"]),
+            ("DeploymentPlan", ["apv-filter-002"]),
+            ("PersonaBinding", ["apv-filter-003"]),
+            ("KillSwitch", ["apv-filter-004"]),
+            ("DeploymentPlan,PersonaBinding", ["apv-filter-002", "apv-filter-003"]),
+            ("registry_entry,KillSwitch", ["apv-consdata-001", "apv-filter-004"]),
+        ]:
+            resp = client.get(self.ROUTE, params={"decision_type": dtype}, headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            ids = [item.get("decision_id") for item in (body.get("items") or [])]
+            assert sorted(ids) == sorted(expected), f"Filtering decision_type={dtype} expected {expected} got {ids}"
+
+    def test_combined_multi_criteria_filters(self) -> None:
+        """Cross-dimensional filters combine conjunctively (AND logic)."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        # Match all three criteria
+        resp = client.get(
+            self.ROUTE,
+            params={
+                "decision_type": "DeploymentPlan",
+                "risk_level": "high",
+                "decision_state": "under_review",
+            },
+            headers=ADMIN_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        ids = [item.get("decision_id") for item in (body.get("items") or [])]
+        assert ids == ["apv-filter-002"]
+
+        # Mismatch on risk_level
+        resp = client.get(
+            self.ROUTE,
+            params={
+                "decision_type": "DeploymentPlan",
+                "risk_level": "low",
+                "decision_state": "under_review",
+            },
+            headers=ADMIN_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body.get("items") == []
+
+    def test_healthy_empty_set_structure(self) -> None:
+        """A healthy empty set produces HTTP 200 with standard pagination and metadata,
+        and is never shaped like an error or exception."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        resp = client.get(
+            self.ROUTE,
+            params={"decision_type": "NoSuchType", "risk_level": "none"},
+            headers=ADMIN_HEADERS,
+        )
+        assert resp.status_code == 200, f"expected 200 for empty set, got {resp.status_code}: {resp.text}"
+        body = resp.json()
+        assert body["items"] == []
+        assert body["page_info"]["next_page_token"] is None
+        assert body["page_info"]["page_size"] == 20
+        surfaces = body["meta"]["surfaces"]
+        assert surfaces["approval_queue"]["status"] == "ok"
+        assert surfaces["allowedActions"]["status"] == "ok"
+        assert surfaces["allowedActions"]["available"] is True
+
+    def test_terminal_decisions_never_surfaced_in_queue(self) -> None:
+        """Decided, approved, or rejected items are terminal and must never appear
+        in the approval queue regardless of filter arguments."""
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": _HETEROGENEOUS_APPROVAL_DECISIONS}
+        )
+        client = _client_for(store)
+
+        # Unfiltered query
+        resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        ids = [item.get("decision_id") for item in (body.get("items") or [])]
+        assert "apv-consdata-002" not in ids, f"decided approval leaked into queue: {ids}"
+
+        # Query targeting decided item's risk_level
+        resp = client.get(self.ROUTE, params={"risk_level": "low"}, headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        ids = [item.get("decision_id") for item in (body.get("items") or [])]
+        assert "apv-consdata-002" not in ids, f"decided approval leaked into filtered queue: {ids}"
+        assert ids == ["apv-filter-003"]
 
 
 # ---------------------------------------------------------------------------
