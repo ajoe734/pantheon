@@ -1,22 +1,116 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    bff_me_tenant_payload,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.models import utc_now as _utc_now
+from services.control_plane.bff.ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
+from services.control_plane.bff.strategies.router import create_strategies_router
 from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeed,
     StrategySpecSeedStatus,
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+
+
+def _stable_json_hash(payload: Dict[str, Any]) -> str:
+    """Mirrors bff/main.py::_stable_json_hash (sha256 of canonical JSON)."""
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _resolve_final_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+) -> str:
+    """Mirrors bff/main.py::_resolve_final_idempotency_key."""
+    canonical = str(idempotency_key or "").strip()
+    if canonical:
+        return canonical
+    alias = str(x_idempotency_key or "").strip()
+    if alias:
+        return alias
+    raise bff_error(
+        400,
+        ErrorCode.VALIDATION_FAILED,
+        "Idempotency-Key is required for operator commands",
+        (
+            "Final contract routes require a non-empty Idempotency-Key header; "
+            "X-Idempotency-Key is accepted as a temporary compatibility alias"
+        ),
+        precondition_failed="idempotency_key",
+        suggestion="Retry with Idempotency-Key set to a stable client retry key",
+    )
+
+
+def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    """Mirrors bff/main.py::_reject_body_idempotency_key."""
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            f"{body_key} must not appear in the request body",
+            (
+                "Final contract routes require idempotency via the Idempotency-Key header, "
+                "not the request body"
+            ),
+            precondition_failed="body_idempotency_key",
+            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
+        )
+
+
+def _build_app(read_store) -> FastAPI:
+    def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        return list(read_store.list_personas() or [])
+
+    seed_review_idempotency: Dict[str, Any] = {}
+    persona_idempotency: Dict[str, Any] = {}
+
+    app = FastAPI()
+    app.include_router(
+        create_strategies_router(
+            read_surface=read_store,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            reject_body_idempotency_key=_reject_body_idempotency_key,
+            resolve_final_idempotency_key=_resolve_final_idempotency_key,
+            stable_json_hash=_stable_json_hash,
+            bff_me_tenant_payload=bff_me_tenant_payload,
+            list_persona_records=_list_persona_records,
+            strategy_seed_review_idempotency_store=seed_review_idempotency,
+            strategy_persona_idempotency_store=persona_idempotency,
+        )
+    )
+    # Exposed so tests can simulate cache eviction (durable-store idempotency replay)
+    # without reaching into shared module-level state.
+    app.state.strategy_seed_review_idempotency = seed_review_idempotency
+    app.state.strategy_persona_idempotency = persona_idempotency
+    return app
 
 
 class _StubPersonaRegistryStore:
@@ -146,7 +240,6 @@ def _review_client():
     tracked_env = {
         "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
     }
-    original_store = bff_main.read_store
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         seed_store_path = root / "strategy_seeds.jsonl"
@@ -172,7 +265,7 @@ def _review_client():
                 "risk_level": "medium",
             },
         )
-        bff_main.read_store = create_in_memory_read_surface_ports(
+        read_store = create_in_memory_read_surface_ports(
             persona_capital_runtime_kwargs={"personas": [persona]},
             persona_training_kwargs={
                 "persona_port": PersonaRegistryReadsPort(
@@ -180,15 +273,10 @@ def _review_client():
                 ),
             },
         )
-        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_app(read_store))
         try:
             yield client, seed_store_path
         finally:
-            bff_main.read_store = original_store
-            bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -258,7 +346,7 @@ def test_strategy_seed_review_accept_convert_and_idempotent_replay() -> None:
         assert replay.status_code == 202, replay.text
         assert replay.json()["meta"]["idempotency"]["replayed"] is True
 
-        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+        client.app.state.strategy_seed_review_idempotency.clear()
         durable_replay = client.post(
             f"/bff/management/strategy-seeds/{SEED_ID}/review",
             json={"action": "accept", "reason": "Enough governed evidence."},
@@ -268,7 +356,7 @@ def test_strategy_seed_review_accept_convert_and_idempotent_replay() -> None:
         assert durable_replay.json()["data"]["status"] == "accepted"
         assert durable_replay.json()["meta"]["idempotency"]["replayed"] is True
 
-        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+        client.app.state.strategy_seed_review_idempotency.clear()
         conflict = client.post(
             f"/bff/management/strategy-seeds/{SEED_ID}/review",
             json={"action": "accept", "reason": "Different payload."},
@@ -437,7 +525,6 @@ def _ids006_client():
     tracked_env = {
         "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
     }
-    original_store = bff_main.read_store
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         seed_store_path = root / "strategy_seeds.jsonl"
@@ -447,16 +534,11 @@ def _ids006_client():
         store.save(_risk_seed(RISK_SEED_ID))
         store.save(_negative_seed(NEGATIVE_SEED_ID))
 
-        bff_main.read_store = create_in_memory_read_surface_ports()
-        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        client = TestClient(bff_main.app)
+        read_store = create_in_memory_read_surface_ports()
+        client = TestClient(_build_app(read_store))
         try:
             yield client, seed_store_path
         finally:
-            bff_main.read_store = original_store
-            bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
-            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,10 +19,8 @@ from typing import Any, Dict, Iterator, List
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports, create_read_surface_ports
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_read_surface_ports
 
 OPERATOR_AUTH = "Bearer consol-skills-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
