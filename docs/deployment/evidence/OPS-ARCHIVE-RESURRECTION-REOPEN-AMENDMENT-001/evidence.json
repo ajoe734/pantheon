@@ -1,0 +1,113 @@
+{
+  "schema_version": "pantheon.ops-archive-resurrection-reopen-amendment.v1",
+  "task": {
+    "id": "OPS-ARCHIVE-RESURRECTION-REOPEN-AMENDMENT-001",
+    "title": "Accept zero-delivery reopen in stale archive resurrection",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "base_branch": "dev",
+    "base_sha": "1bad1e9045b019e7227a7958de2512110786903d",
+    "task_branch": "task/OPS-ARCHIVE-RESURRECTION-REOPEN-AMENDMENT-001"
+  },
+  "acceptance_clauses_audit": {
+    "clause_1_baseline_reproduction": {
+      "status": "satisfied",
+      "detail": "Reproduced current fail-closed baseline behavior against live PPL-ALLOC-007 canonical row: unamended verifier (git show 1bad1e904:scripts/ai_status.py) raises 'RuntimeError: Cannot reconcile stale resurrected task: intervening reopen event detected: PPL-ALLOC-007' due to intervening reopen event at 2026-09-14T14:14:12Z. Stored diagnostic and exception recorded as baseline evidence."
+    },
+    "clause_2_single_case_widening": {
+      "status": "satisfied",
+      "detail": "Widened verify_stale_archive_resurrection_proof in scripts/ai_status.py by exactly one case: authenticated local operator reopen (Human/Ops with operator_mode: local_human_ops and authenticated event_id against payload digest) followed by zero delivery and no review invalidation stays eligible. Pre-reopen events must be notes, reassignments, or imports. Post-reopen events must be allowed runtime/worker coordination events (wake_queued, worker_worktree_allocated, worker_started, worker_governance_lease_preserved, worker_lost_lease, worker_lost_lease_recovery_held, worker_lost_lease_recovery_pending, worker_promotion_continuation_pending, blocker, note, task_reassigned) with strictly zero delivery/commit fields. Active task must have no delivery_binding, no review_file, and unchanged branch. Generation transitions across reopen are validated to preserve owner and reviewer continuity."
+    },
+    "clause_3_unchanged_fences": {
+      "status": "satisfied",
+      "detail": "All other fences remain intact and verified: raw archive byte SHA256 binding (cf95cc79c44a027f42046f83572029d07563a207fa1cc66a4685b755f7ce4c78 for PPL-ALLOC-007), scope comparison (spec hash, acceptance criteria, artifacts), delivery comparison (commit, repository), review comparison and active task flags, transaction-time CAS revalidation, and runtime/lease/queue fencing."
+    },
+    "clause_4_zero_effect_negatives": {
+      "status": "satisfied",
+      "detail": "Proved 6 zero-effect negatives through real CLI invocations in scripts/test_ai_status.py: (1) test_negative_zero_delivery_reopen_with_new_commit: rejects post-reopen commit activity; (2) test_negative_zero_delivery_reopen_with_changed_delivery: rejects changed delivery / delivery binding; (3) test_negative_zero_delivery_reopen_with_invalidated_review: rejects review bridge rejection; (4) test_negative_zero_delivery_reopen_with_altered_scope: rejects altered acceptance criteria; (5) test_negative_zero_delivery_reopen_unauthorized_actor: rejects non-Human/Ops or non-local_human_ops reopen actor; (6) test_negative_zero_delivery_reopen_unauthenticated_id: rejects forged/tampered event_id. All CLI runs exit non-zero and leave active row, archive snapshot, and terminal facts untouched."
+    },
+    "clause_5_positive_path_process_proof": {
+      "status": "satisfied",
+      "detail": "Proved positive path in test_positive_archive_resurrection_zero_delivery_reopen using genuine isolated CLI and TaskStore and outbox fixture with git ancestry: show returns eligible diagnostic with proof_kind 'stale_role_recovery_archive_resurrection'; reconcile_merged_done exits 0; recover exits 0; stale row retires to terminal done; generation-1 archive bytes and terminal fact preserved; dependent task unblocked; no worker launch occurs."
+    },
+    "clause_6_manifest_and_no_live_reconciliation_hold": {
+      "status": "satisfied",
+      "detail": "Recorded exact commands, exit codes, and test counts in this task evidence manifest. Governed boundary strictly maintained: source and isolated-test scope only; no live reconciliation of PPL-ALLOC-007 was performed under this task; no archive rewrite; no generation reset. Read-only live verification proves PPL-ALLOC-007 is now eligible for stale role recovery (proof_kind: 'stale_role_recovery_archive_resurrection') under amended contract without touching or mutating live state."
+    }
+  },
+  "diagnostics": {
+    "ppl_alloc_007_baseline": {
+      "task_id": "PPL-ALLOC-007",
+      "archive_generation": 1,
+      "active_generation": 4,
+      "eligible": false,
+      "unamended_exception": "RuntimeError: Cannot reconcile stale resurrected task: intervening reopen event detected: PPL-ALLOC-007"
+    },
+    "ppl_alloc_007_amended_read_only": {
+      "task_id": "PPL-ALLOC-007",
+      "archive_generation": 1,
+      "active_generation": 4,
+      "eligible": true,
+      "reason": "eligible_for_stale_role_recovery",
+      "proof_kind": "stale_role_recovery_archive_resurrection",
+      "reopen_event_id": "ai-status-event-e327b1a503667523aba0c54255ec3fec3fca15163cf2a2d0264857f1753128be",
+      "archive_file_sha256": "cf95cc79c44a027f42046f83572029d07563a207fa1cc66a4685b755f7ce4c78",
+      "delivery_commit": "c62c0e8b9a49643c42f67614c542578afb233e84",
+      "delivery_repository": "ajoe734/execute-plans",
+      "hold_preserved": true,
+      "detail": "Read-only inspection only. Live PPL-ALLOC-007 row was NOT reconciled or retired under this task."
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "name": "zero_delivery_reopen_suite",
+        "command": "AI_NAME=Antigravity2 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k \"zero_delivery_reopen\"",
+        "passed": 7,
+        "subtests_passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "7 passed, 505 deselected in 42.14s"
+      },
+      {
+        "name": "resurrection_suite",
+        "command": "AI_NAME=Antigravity2 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k \"resurrection\"",
+        "passed": 43,
+        "subtests_passed": 41,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "43 passed, 469 deselected, 41 subtests passed in 254.83s (0:04:14)"
+      },
+      {
+        "name": "related_full_suites",
+        "command": "AI_NAME=Antigravity2 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py scripts/test_seed_task_state_v2.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
+        "passed": 332,
+        "subtests_passed": 59,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "332 passed, 59 subtests passed in 92.90s (0:01:32)"
+      }
+    ],
+    "totals": {
+      "passed": 382,
+      "subtests_passed": 100,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "not_claimed": [
+    "Live PPL-ALLOC-007 retirement or reconciliation (deferred to Human/Ops post-merge)",
+    "Live PPL-ALLOC-009 execution or resolution",
+    "Privileged execution authorization grant",
+    "Production runtime or capital-affecting changes"
+  ],
+  "qualification_handoff": {
+    "source_acceptance": "pending independent exact-head review by Codex, required checks, and dev merge",
+    "qualified_tooling_runtime": "pending coordinator-owned promotion through existing qualified runtime workflow after source acceptance",
+    "coordinator_next": "Promote accepted source to qualified runtime; execute local Human/Ops reconcile_merged_done PPL-ALLOC-007 using the existing operator command to retire the stale row and unblock PPL-ALLOC-009"
+  }
+}
