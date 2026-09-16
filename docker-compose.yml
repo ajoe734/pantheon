@@ -2060,6 +2060,13 @@ services:
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
       EVOLUTION_STORE_DSN: ${EVOLUTION_STORE_DSN:-}
+      # U8A: Evolution Program owner store (create/list/get/PATCH(name)).
+      # Same env-var-driven backend selection idiom as EVOLUTION_STORE_*
+      # above / REGISTRY_STORE_BACKEND / CAPITAL_STORE_BACKEND elsewhere in
+      # this file — json (dev default) or postgres, DSN falls back to
+      # DATABASE_URL when unset.
+      EVOLUTION_PROGRAM_STORE_BACKEND: ${EVOLUTION_PROGRAM_STORE_BACKEND:-json}
+      EVOLUTION_PROGRAM_STORE_DSN: ${EVOLUTION_PROGRAM_STORE_DSN:-}
       # Evolution write/read authority is tenant-bound even in the default dev
       # compose topology. Production deployments must override this local-only
       # shared credential; missing or mismatched credentials fail closed.
