@@ -562,28 +562,17 @@ def test_main_app_final_command_submission_regression() -> None:
     This formerly exercised the now-retired POST /api/v1/operator/commands route;
     that route has been deleted, so this regression now targets the canonical
     /bff/v1/commands route with the equivalent idempotency-key coverage."""
-    from services.control_plane.bff.models import CommandReceiptStatus, CommandRoutingPath, CommandSubmissionResponse
-    import uuid
-
-    def _admission_stub(*, payload: Dict[str, Any], **kwargs: Any) -> CommandSubmissionResponse:
-        cmd_id = f"cmd-{uuid.uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        return CommandSubmissionResponse(
-            receipt_id=cmd_id,
-            command=payload.get("command", ""),
-            status=CommandReceiptStatus.ACCEPTED,
-            accepted_at=now,
-            routing_path=CommandRoutingPath.DIRECT,
-        )
-
     with tempfile.TemporaryDirectory() as td:
         store = CommandStore(os.path.join(td, "main_commands.jsonl"))
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=None,
+            extract_identity=_test_extract_identity,
+        )
         app = FastAPI()
         router = create_command_adapters_router(
-            get_command_store=lambda: store,
-            get_read_store=lambda: None,
-            submit_command_admission=_admission_stub,
-            extract_identity=_test_extract_identity,
+            service=svc,
+            submit_command_admission=svc.submit_command_admission,
         )
         app.include_router(router)
         client = TestClient(app)
