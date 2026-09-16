@@ -1,0 +1,129 @@
+{
+  "task": "EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+  "planning_unit": "U8A",
+  "base_commit": "9a837bba054dd98045c68f1681b03e3947649d0b",
+  "worktree": "/tmp/pantheon-worker-worktrees/pantheon/evo-program-owner-contract-corrective-001",
+  "branch": "task/EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001",
+  "scope_disclaimer": [
+    "U8A ONLY: this task implements the durable Program CRUD data contract (create / list / get / metadata-PATCH(name)) with real Postgres persistence (or the JSON dev backend when EVOLUTION_PROGRAM_STORE_BACKEND=json, the default), revision + idempotency-receipt atomicity, and tenant isolation.",
+    "U8A does NOT implement real lifecycle actions: submit_evolution_review, approve_program, pause_program, resume_program, complete_program, retire_program, stop, freeze_generation, promote_candidate_paper/live, approve_mutation/reject_mutation all remain fail-closed / honestly reported unavailable (HTTP 422 via ActionUnavailableError from EvolutionCommandAdapter._execute_program_action). These are U8B's obligation.",
+    "The prior fabrication of program_id='prog-001' and status='executed'/'active' for ANY program action has been removed; no program action fabricates an ID, status, or success outcome anywhere in the touched files.",
+    "No hosted, production, or live-trading change was made. No real Postgres database was reachable in this execution environment (TEST_DATABASE_URL unset, no listening postgres on localhost:5432) — Postgres-backed tests are gated with pytest.importorskip/skip and were visibly SKIPPED, not silently omitted or claimed passing.",
+    "This decision's local results are informational engineering evidence, not an operator acceptance or DB-live-acceptance claim."
+  ],
+  "changed_paths": {
+    "modified": [
+      "docker-compose.control.yml",
+      "docker-compose.yml",
+      "services/control-plane/bff/command_adapters/evolution_adapter.py",
+      "services/control-plane/bff/evolution/router.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+      "services/control-plane/bff/test_idempotency_concurrency_guard.py",
+      "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+      "services/evolution/client.py",
+      "services/evolution/main.py",
+      "services/evolution/models.py",
+      "services/control-plane/bff/evolution/test_router.py",
+      "services/control-plane/bff/tests/test_evolution_router.py"
+    ],
+    "new": [
+      "docs/deployment/evidence/EVO-PROGRAM-OWNER-CONTRACT-CORRECTIVE-001/evidence.json",
+      "services/control-plane/bff/ports/evolution_program_commands.py",
+      "services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+      "services/evolution/program_router.py",
+      "services/evolution/program_service.py",
+      "services/evolution/program_store.py",
+      "services/evolution/test_program_owner.py"
+    ],
+    "in_exact_scope_list_but_unchanged_after_verification": [
+      "services/control-plane/bff/ports/persona_capital_runtime.py — EvolutionProjectionPort verified already read-only (list/get/runs/candidates only), no write methods to remove.",
+      "services/control-plane/bff/ports/read_surface_ports.py — verified it never had create_evolution_program/patch_evolution_program methods; already read-only, left as-is.",
+      "services/control-plane/bff/tests/test_evolution_programs_population_contract.py — read-only (list/get) contract test, unaffected by the write-path changes; passes unmodified.",
+      "services/evolution/dispatch_outbox.py — not touched; not genuinely required for the Program CRUD data contract.",
+      "services/evolution/dispatch_worker.py — not touched; not genuinely required for the Program CRUD data contract."
+    ]
+  },
+  "out_of_scope_collateral_fixed": {
+    "note": "These two test files are not in the task's exact-scope list, but were live consumers of the router.py write-path contract this task changed (create/patch now route through the typed program_commands port instead of read_store methods that never existed on the real ReadSurfacePorts; one canonical 6-arg submit_program_action signature, no TypeError-guessing retry). Their pre-existing fakes hard-coded exactly the anti-pattern this task removed (a fake read-store carrying create_evolution_program/patch_evolution_program, and a 5-arg submit_program_action stub), so leaving them broken would have left a real consumer of the changed contract out of date at head. This was authorized as a minimal, mechanical follow-up to the router.py contract change itself, not independent new scope: no assertion was weakened, every test still verifies the same real behavior it verified before (name persisted durably, PATCH whitelist enforcement, action dispatch through the injected callable, router factory backward-compat) via the corrected contract wiring.",
+    "files": [
+      "services/control-plane/bff/evolution/test_router.py",
+      "services/control-plane/bff/tests/test_evolution_router.py"
+    ],
+    "changes": [
+      "services/control-plane/bff/evolution/test_router.py: _FakeReadStore's create_evolution_program/patch_evolution_program methods removed (replaced with a read-only seed() helper); added a _FakeProgramCommandPort double (create_program/patch_program_name) wired into create_evolution_programs_router via program_commands=; test_patch_updates_whitelisted_fields_only now asserts the real PATCH contract (only name + revision accepted, status/unexpected_field rejected 422, name persists via the command port); submit_program_action fakes updated to the canonical 6-arg signature (entity_type, entity_id, action_id, resolved_key, identity, payload).",
+      "services/control-plane/bff/tests/test_evolution_router.py: _MockReadStore's create_evolution_program/patch_evolution_program methods removed (replaced with a read-only seed_evolution_program() helper); added the same-shaped _FakeProgramCommandPort double, defaulted into _build_test_client's program_commands= kwarg and explicitly wired into test_evolution_programs_router_factory_compatibility's direct create_evolution_programs_router() call."
+    ],
+    "result": "17 passed (both files), 0 failed -- see test_commands below for the exact run."
+  },
+  "test_commands": [
+    {
+      "command": "$PANTHEON_PY -m pytest -q services/evolution/test_program_owner.py services/evolution/test_compose_activation.py services/evolution/test_l12_evo_001_process_recovery.py services/evolution/tests/test_postmortem_evolution_decision_e2e.py services/control-plane/bff/tests/test_evolution_program_owner_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_idempotency_concurrency_guard.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_evolution_programs_population_contract.py",
+      "env": {
+        "RANKING_STORE_DSN": "postgresql://test:test@localhost:5432/test (unused fixture credential, DB not actually reached — RANKING_STORE_BOOTSTRAP=0)",
+        "RANKING_STORE_BOOTSTRAP": "0"
+      },
+      "exit_code": 0,
+      "result": "103 passed, 3 skipped",
+      "skipped_detail": "3 skipped == services/evolution/test_program_owner.py::TestPostgresProgramStore's 3 tests (test_scenarios, test_concurrent_same_key_create, test_restart_recovery), each skipped with explicit reason 'TEST_DATABASE_URL is required for real Postgres program-owner proof' — no live Postgres was reachable in this environment (verified: nc -zv localhost 5432 -> connection refused, TEST_DATABASE_URL unset)."
+    },
+    {
+      "command": "$PANTHEON_PY -m pytest -q services/evolution/test_program_owner.py",
+      "exit_code": 0,
+      "result": "3 passed, 3 skipped",
+      "note": "JSON-backend scenario matrix (create/list/get/patch happy path, 20-concurrent-same-key create -> exactly one program, divergent-replay 409, stale-revision PATCH 409 with no partial write, restart/crash simulation via a fresh store instance, missing/foreign-tenant non-disclosing not-found) all pass against the real production JsonProgramStore/ProgramService code. Postgres-backend equivalents skip cleanly (see above)."
+    },
+    {
+      "command": "$PANTHEON_PY -m pytest -q services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+      "exit_code": 0,
+      "result": "21 passed",
+      "note": "422 on PATCH unsupported fields, 409 on stale-revision PATCH, create rejects client-supplied status/actor override, and all 12 canonical program actions (submit_evolution_review, approve_program, pause_program, resume_program, complete_program, retire_program, stop, freeze_generation, promote_candidate_paper, promote_candidate_live, approve_mutation, reject_mutation) assert ActionUnavailableError with no fabricated prog-001/executed/active, exercised directly against the real production EvolutionCommandAdapter."
+    },
+    {
+      "command": "$PANTHEON_PY -m py_compile services/evolution/program_router.py services/evolution/program_service.py services/evolution/program_store.py services/evolution/models.py services/evolution/client.py services/evolution/main.py services/control-plane/bff/evolution/router.py services/control-plane/bff/command_adapters/evolution_adapter.py services/control-plane/bff/ports/evolution_program_commands.py services/control-plane/bff/main.py",
+      "exit_code": 0,
+      "result": "compiles cleanly"
+    },
+    {
+      "command": "$PANTHEON_PY -c \"import services.control_plane.bff.main as m\" (with RANKING_STORE_DSN/RANKING_STORE_BOOTSTRAP stubbed)",
+      "exit_code": 0,
+      "result": "full BFF app imports and wires the new program_commands port cleanly"
+    },
+    {
+      "command": "$PANTHEON_PY -c \"import services.evolution.main as m\"",
+      "exit_code": 0,
+      "result": "full Evolution service app imports and wires the new program_router/program_service/program_store cleanly"
+    },
+    {
+      "command": "$PANTHEON_PY -m pytest -q services/control-plane/bff/evolution/test_router.py services/control-plane/bff/tests/test_evolution_router.py",
+      "exit_code": 0,
+      "result": "17 passed, 0 failed",
+      "note": "Fixed as a mechanical follow-up to the router.py contract change — see out_of_scope_collateral_fixed above. (Superseded an earlier run in this same task showing 13 passed, 4 failed before these two files' fakes were updated to the new program_commands-port contract.)"
+    },
+    {
+      "command": "$PANTHEON_PY -m pytest -q services/evolution/test_program_owner.py services/control-plane/bff/tests/test_evolution_program_owner_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_idempotency_concurrency_guard.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_evolution_programs_population_contract.py services/evolution/test_compose_activation.py services/evolution/test_l12_evo_001_process_recovery.py services/evolution/tests/test_postmortem_evolution_decision_e2e.py services/control-plane/bff/evolution/test_router.py services/control-plane/bff/tests/test_evolution_router.py",
+      "exit_code": 0,
+      "result": "120 passed, 3 skipped, 0 failed",
+      "note": "Final full aggregate run of the task's exact-scope test list plus the two previously-out-of-scope collateral files, all in one command, after fixing test_router.py and test_evolution_router.py. The 3 skipped are the same TestPostgresProgramStore tests noted above (no live Postgres reachable in this environment); nothing else skipped or failed."
+    },
+    {
+      "command": "docker compose -f docker-compose.yml config (dry-run interpolation check)",
+      "exit_code": 0,
+      "result": "EVOLUTION_PROGRAM_STORE_BACKEND=json / EVOLUTION_PROGRAM_STORE_DSN=\"\" resolve correctly for the evolution service"
+    },
+    {
+      "command": "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=x PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL=http://x PANTHEON_PERSONA_SERVICE_TOKEN=x docker compose -f docker-compose.control.yml config (dry-run interpolation check; the three vars are unrelated pre-existing required vars for other services in this compose file)",
+      "exit_code": 0,
+      "result": "EVOLUTION_PROGRAM_STORE_BACKEND=postgres / EVOLUTION_PROGRAM_STORE_DSN=\"\" resolve correctly for the evolution service"
+    }
+  ],
+  "environment_notes": {
+    "python_interpreter": "provisioned via scripts/dev/provision_python_distribution.py with PANTHEON_DEPENDENCY_PYTHON=/tmp/gov-approval-venv/bin/python3 (a preexisting venv on this host with fastapi/pytest/psycopg/httpx already installed); the bare /usr/bin/python3 on this host has none of these packages, matching the documented provisioning fallback path in AI_COLLABORATION_GUIDE.md.",
+    "postgres_availability": "No live PostgreSQL reachable in this execution environment (checked via `nc -zv localhost 5432` -> connection refused; TEST_DATABASE_URL unset). All Postgres-specific atomicity/concurrency assertions in test_program_owner.py::TestPostgresProgramStore are implemented and gated behind TEST_DATABASE_URL exactly like services/registry/test_owner_durability.py's convention, but were not actually run against a real database in this environment — they were visibly SKIPPED (3 skipped), never silently omitted or reported as passing."
+  },
+  "no_fabrication_verification": {
+    "prog_001_grep": "grep -rn 'prog-001' across services/control-plane/bff/command_adapters/evolution_adapter.py, services/control-plane/bff/evolution/router.py, services/evolution/ finds only one hit: a docstring comment in evolution_adapter.py explaining the removed fabrication, no executable code path produces it.",
+    "type_error_retry_removed": "services/control-plane/bff/evolution/router.py's evolution_program_action handler now calls submit_program_action with exactly one canonical 6-argument signature; the prior try/except TypeError double-submission-risk retry with a 5-argument fallback has been deleted.",
+    "read_surface_writes_removed": "services/control-plane/bff/evolution/router.py's create_evolution_program/patch_evolution_program handlers no longer call getattr(read_store, 'create_evolution_program'/'patch_evolution_program', ...); they call the new typed program_commands port (services/control-plane/bff/ports/evolution_program_commands.py), which calls services/evolution/client.py's create_program/patch_program methods against the Evolution service's owner API."
+  }
+}
