@@ -1,22 +1,103 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, Optional
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    bff_me_tenant_payload,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.models import utc_now as _utc_now
+from services.control_plane.bff.strategies.router import create_strategies_router
 from services.research.store import ResearchOrchestratorStore
 from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeed,
     StrategySpecSeedStatus,
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+
+
+def _stable_json_hash(payload: Dict[str, Any]) -> str:
+    """Mirrors bff/main.py::_stable_json_hash (sha256 of canonical JSON)."""
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _resolve_final_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+) -> str:
+    """Mirrors bff/main.py::_resolve_final_idempotency_key."""
+    canonical = str(idempotency_key or "").strip()
+    if canonical:
+        return canonical
+    alias = str(x_idempotency_key or "").strip()
+    if alias:
+        return alias
+    raise bff_error(
+        400,
+        ErrorCode.VALIDATION_FAILED,
+        "Idempotency-Key is required for operator commands",
+        (
+            "Final contract routes require a non-empty Idempotency-Key header; "
+            "X-Idempotency-Key is accepted as a temporary compatibility alias"
+        ),
+        precondition_failed="idempotency_key",
+        suggestion="Retry with Idempotency-Key set to a stable client retry key",
+    )
+
+
+def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    """Mirrors bff/main.py::_reject_body_idempotency_key."""
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            f"{body_key} must not appear in the request body",
+            (
+                "Final contract routes require idempotency via the Idempotency-Key header, "
+                "not the request body"
+            ),
+            precondition_failed="body_idempotency_key",
+            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
+        )
+
+
+def _build_app() -> FastAPI:
+    app = FastAPI()
+    app.include_router(
+        create_strategies_router(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=_utc_now,
+            reject_body_idempotency_key=_reject_body_idempotency_key,
+            resolve_final_idempotency_key=_resolve_final_idempotency_key,
+            stable_json_hash=_stable_json_hash,
+            bff_me_tenant_payload=bff_me_tenant_payload,
+            strategy_seed_replication_idempotency_store={},
+        )
+    )
+    return app
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer seed-op:operator"}
@@ -76,12 +157,10 @@ def _client_with_seed(status: StrategySpecSeedStatus | str):
         os.environ["STRATEGY_SEED_STORE_PATH"] = str(seed_store_path)
         os.environ["RESEARCH_ORCHESTRATOR_DATA_DIR"] = str(research_dir)
         StrategySpecSeedStore(path=seed_store_path).save(_seed(status))
-        bff_main._STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY.clear()
-        client = TestClient(bff_main.app)
+        client = TestClient(_build_app())
         try:
             yield client, seed_store_path, research_dir
         finally:
-            bff_main._STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY.clear()
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

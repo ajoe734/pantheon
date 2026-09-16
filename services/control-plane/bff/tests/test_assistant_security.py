@@ -11,17 +11,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
-BFF_DIR = os.path.dirname(os.path.dirname(__file__))
-if BFF_DIR not in sys.path:
-    sys.path.insert(0, BFF_DIR)
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
-import assistant.control_mode as control_mode_module  # noqa: E402
-from assistant.control_mode import ControlModeStore  # noqa: E402
-from assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
-from assistant.routes import create_assistant_router  # noqa: E402
-from assistant.tool_contracts import (  # noqa: E402
+from services.control_plane.bff.assistant import control_mode as control_mode_module
+from services.control_plane.bff.assistant.command_idempotency import CommandIdempotencyStore
+from services.control_plane.bff.assistant.context_composer import (
+    AssistantCollectedSource,
+    compose_context_pack,
+)
+from services.control_plane.bff.assistant.control_mode import ControlModeStore
+from services.control_plane.bff.assistant.routes import create_assistant_router
+from services.control_plane.bff.assistant.tool_contracts import (
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
     ToolRbacError,
@@ -30,6 +31,8 @@ from assistant.tool_contracts import (  # noqa: E402
     preview_tool,
     validate_tool,
 )
+from services.control_plane.bff.auth.policy import bff_error
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-kernel:operator"}
@@ -52,6 +55,19 @@ class _AssistantSecurityIdentity:
             "capabilities": capabilities or [],
             "tenant_ids": tenant_ids or ["pantheon-dev"],
         }
+
+
+def _attach_error_handler(app: FastAPI) -> None:
+    @app.exception_handler(StarletteHTTPException)
+    async def _handler(request, exc):
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail, headers=exc.headers)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(detail)}},
+            headers=exc.headers,
+        )
 
 
 def _control_mode_client(
@@ -78,7 +94,7 @@ def _control_mode_client(
         build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
-        bff_error=bff_main._bff_error,
+        bff_error=bff_error,
         control_mode_store=store,
         provider_list=provider_list,
         provider_register=provider_register,
@@ -87,7 +103,7 @@ def _control_mode_client(
         provider_reauth_code=provider_reauth_code,
     )
     app = FastAPI()
-    app.add_exception_handler(bff_main.StarletteHTTPException, bff_main._bff_http_exception_handler)
+    _attach_error_handler(app)
     app.include_router(product_router)
     return TestClient(app, raise_server_exceptions=True)
 
@@ -136,9 +152,34 @@ def _seed_store(path: str = ""):
 
 
 def _client_with_seeded_store(tmp_path):
-    original = bff_main.read_store
-    bff_main.read_store = _seed_store(str(tmp_path / "read_surfaces.json"))
-    return TestClient(bff_main.app), original
+    seeded_store = _seed_store(str(tmp_path / "read_surfaces.json"))
+
+    def _collect_source(source_id, request, snapshot_at, identity=None):
+        if source_id == "job_logs":
+            job = seeded_store.get_job("job_sec")
+            logs = job.get("logs", []) if job else []
+            return AssistantCollectedSource(
+                source_id="job_logs",
+                href="/bff/jobs/job_sec/logs",
+                payload={"job_id": "job_sec", "logs": logs},
+            )
+        return None
+
+    app = FastAPI()
+    _attach_error_handler(app)
+    router = create_assistant_router(
+        build_context_pack=lambda session_id, req, actor: compose_context_pack(
+            session_id=session_id,
+            request=req,
+            actor=actor,
+            collect_source=_collect_source,
+        ),
+        extract_identity=lambda _auth: _AssistantSecurityIdentity(),
+        require_read_role=lambda _id: None,
+        bff_error=bff_error,
+    )
+    app.include_router(router)
+    return TestClient(app), None
 
 
 def test_context_pack_redacts_secrets_embedded_in_prompt_injection_logs(tmp_path, monkeypatch) -> None:
@@ -194,7 +235,7 @@ def test_context_pack_redacts_secrets_embedded_in_prompt_injection_logs(tmp_path
             assert marker in rendered
         assert data["redaction"]["redacted_fields"] >= 6
     finally:
-        bff_main.read_store = original
+        pass
 
 
 def test_context_pack_omits_env_and_provider_session_sources(tmp_path, monkeypatch) -> None:
@@ -243,7 +284,7 @@ def test_context_pack_omits_env_and_provider_session_sources(tmp_path, monkeypat
         assert data["internal_debug"]["sanitized_logs"] == []
         assert data["internal_debug"].get("repo_status") is None
     finally:
-        bff_main.read_store = original
+        pass
 
 
 def test_control_mode_activation_requires_kernel_capability(monkeypatch) -> None:
@@ -1151,8 +1192,8 @@ def test_execute_medium_risk_requires_confirmation() -> None:
 
 def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt(monkeypatch) -> None:
     """PersonaAction with reason and confirmed=True produces an admitted receipt with confirmation_marker."""
-    from models import CommandStatus
-    import command_executor
+    from services.control_plane.bff.models import CommandStatus
+    from services.control_plane.bff import command_executor
     monkeypatch.setattr(
         command_executor,
         "execute_command_with_status",
@@ -1208,9 +1249,22 @@ def test_allowlist_does_not_contain_critical_actions() -> None:
 
 # ---- HTTP route tests -------------------------------------------------------
 
+def _make_tool_test_app() -> FastAPI:
+    app = FastAPI()
+    _attach_error_handler(app)
+    router = create_assistant_router(
+        build_context_pack=lambda *args, **kwargs: None,
+        extract_identity=lambda _auth: _AssistantSecurityIdentity(roles=["operator"]),
+        require_read_role=lambda _id: None,
+        bff_error=bff_error,
+    )
+    app.include_router(router)
+    return app
+
+
 def test_tool_preview_route_denies_non_allowlisted(tmp_path) -> None:
     """HTTP preview endpoint returns 403 for non-allowlisted action."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/preview",
         json={"action_id": "ActivateKillSwitch"},
@@ -1221,7 +1275,7 @@ def test_tool_preview_route_denies_non_allowlisted(tmp_path) -> None:
 
 def test_tool_preview_route_returns_descriptor_for_allowlisted(tmp_path) -> None:
     """HTTP preview endpoint returns descriptor for allowlisted action."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/preview",
         json={"action_id": "AuditExport"},
@@ -1238,7 +1292,7 @@ def test_tool_preview_route_returns_descriptor_for_allowlisted(tmp_path) -> None
 
 def test_tool_validate_route_returns_validation_result(tmp_path) -> None:
     """HTTP validate endpoint returns ok for valid low-risk tool request."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/validate",
         json={"action_id": "AuditExport"},
@@ -1253,7 +1307,7 @@ def test_tool_validate_route_returns_validation_result(tmp_path) -> None:
 
 def test_tool_execute_route_returns_receipt_for_low_risk(tmp_path) -> None:
     """HTTP execute endpoint returns a receipt for a low-risk tool execution."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
         json={"action_id": "AuditExport", "entity_type": "AuditExport", "params": {}},
@@ -1272,7 +1326,7 @@ def test_tool_execute_route_returns_receipt_for_low_risk(tmp_path) -> None:
 
 def test_tool_execute_route_denies_non_allowlisted(tmp_path) -> None:
     """HTTP execute endpoint returns 403 for non-allowlisted action."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
         json={"action_id": "HardRollback", "entity_type": "Rollback", "params": {}},
@@ -1283,7 +1337,7 @@ def test_tool_execute_route_denies_non_allowlisted(tmp_path) -> None:
 
 def test_tool_execute_route_requires_reason_for_medium_risk(tmp_path) -> None:
     """HTTP execute endpoint returns 422 when reason is absent for medium-risk action."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
         json={
@@ -1303,7 +1357,7 @@ def test_tool_execute_route_string_false_does_not_bypass_medium_risk_gate(tmp_pa
     bool('false') == True in Python, so the route must use `is True` not
     bool() when extracting confirmed from the JSON payload.
     """
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
         json={
@@ -1324,7 +1378,7 @@ def test_tool_execute_route_integer_one_does_not_bypass_medium_risk_gate(tmp_pat
 
     bool(1) == True but the route requires the literal JSON boolean true.
     """
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
         json={
@@ -1383,7 +1437,7 @@ def test_execute_governed_tool_direct_integer_one_does_not_bypass_medium_risk_ga
 
 def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> None:
     """Only the explicit JSON boolean true passes the medium-risk confirmation gate."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
         json={
@@ -1409,7 +1463,7 @@ def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> No
 
 def test_epic_deny_first_empty_allowlist_returns_403() -> None:
     """EPIC deny-first: non-allowlisted action_id is always denied with 403."""
-    client = TestClient(bff_main.app)
+    client = TestClient(_make_tool_test_app())
     for action_id in ("ActivateKillSwitch", "LiquidateAll", "HardRollback", "StartRuntime"):
         resp = client.post(
             "/bff/assistant/tools/execute",
@@ -1449,7 +1503,7 @@ def test_epic_one_audit_entry_per_execute_invoke() -> None:
     assert receipt.receipt_id.startswith("asst-receipt-")
     assert receipt.executed_at
 
-    from assistant.tool_contracts import tool_receipt_to_dict
+    from services.control_plane.bff.assistant.tool_contracts import tool_receipt_to_dict
     d = tool_receipt_to_dict(receipt)
     assert d["source"] == "assistant_tool_contract"
     assert d["trace_id"] == "epic-audit-trace-001"
@@ -1464,7 +1518,7 @@ def test_epic_provider_credentials_not_in_receipt(monkeypatch) -> None:
         actor_id="op-001",
         actor_roles=["operator"],
     )
-    from assistant.tool_contracts import tool_receipt_to_dict
+    from services.control_plane.bff.assistant.tool_contracts import tool_receipt_to_dict
     rendered = repr(tool_receipt_to_dict(receipt))
     for forbidden in (
         "access_token",

@@ -15,8 +15,6 @@ Covers:
 
 from __future__ import annotations
 
-import os
-import sys
 import tempfile
 import uuid
 from typing import Any, Dict, List, Optional
@@ -25,10 +23,11 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from source_management_client import SourceManagementClient, SourceManagementClientError
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.source_management_client import (
+    SourceManagementClient,
+    SourceManagementClientError,
+)
 
 
 OPERATOR_HEADERS = {

@@ -15,14 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
-
-import main as bff_main  # noqa: E402
-
+from fastapi import FastAPI
+from services.control_plane.bff.evolution.router import create_evolution_programs_router
 from services.evolution.program_service import ProgramService  # noqa: E402
 from services.evolution.program_store import JsonProgramStore  # noqa: E402
 
@@ -74,11 +68,13 @@ def test_concurrent_same_key_creates_single_resource(tmp_path: Path) -> None:
 
     store = JsonProgramStore(tmp_path / "programs.json")
     service = ProgramService(store)
-    original_program_commands = bff_main._evolution_program_commands
-    bff_main._evolution_program_commands = _DirectProgramCommandPort(service)
+    port = _DirectProgramCommandPort(service)
+    router = create_evolution_programs_router(program_commands=port)
+    app = FastAPI()
+    app.include_router(router)
 
     async def run():
-        transport = httpx.ASGITransport(app=bff_main.app)
+        transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             tasks = [
                 c.post("/bff/evolution-programs", headers=HEADERS, json={"name": "conc"})
@@ -86,10 +82,7 @@ def test_concurrent_same_key_creates_single_resource(tmp_path: Path) -> None:
             ]
             return await asyncio.gather(*tasks)
 
-    try:
-        responses = asyncio.run(run())
-    finally:
-        bff_main._evolution_program_commands = original_program_commands
+    responses = asyncio.run(run())
     assert all(r.status_code == 201 for r in responses), [r.status_code for r in responses]
     ids = {(r.json().get("program_id") or r.json().get("id")) for r in responses}
     assert len(ids) == 1, f"idempotency double-create: {len(ids)} distinct ids {ids}"

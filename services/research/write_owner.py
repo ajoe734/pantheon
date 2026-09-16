@@ -49,34 +49,48 @@ class ResearchWriteOwner:
     """Authoritative durable write owner for the Research domain."""
 
     _RW04_CANCELABLE_STATUSES = frozenset({"queued", "running"})
+    _RW04_RETRYABLE_STATUSES = frozenset({"failed", "canceled", "invalidated"})
+    _RW04_ARCHIVABLE_STATUSES = frozenset({"completed", "failed", "canceled", "invalidated"})
+    _RW04_INVALIDATABLE_STATUSES = frozenset({"completed", "failed"})
 
     def __init__(
         self,
         *,
-        dsn: str,
+        dsn: Optional[str] = None,
         schema: str = "research",
         bootstrap: bool = True,
         tickets_table: Optional[str] = None,
         experiments_table: Optional[str] = None,
         notes_table: Optional[str] = None,
+        tickets_store: Optional[Any] = None,
+        experiments_store: Optional[Any] = None,
+        notes_store: Optional[Any] = None,
     ) -> None:
+        if tickets_store is not None and experiments_store is not None and notes_store is not None:
+            self.dsn = dsn or ""
+            self.schema = schema
+            self._tickets_store = tickets_store
+            self._experiments_store = experiments_store
+            self._notes_store = notes_store
+            return
+
         if not dsn:
             raise ValueError("Postgres DSN is required for ResearchWriteOwner")
         self.dsn = dsn
         self.schema = schema.strip() or "research"
-        self._tickets_store = PostgresJsonOwnerStore(
+        self._tickets_store = tickets_store or PostgresJsonOwnerStore(
             dsn=dsn,
             table=tickets_table or f"{self.schema}.research_tickets",
             owner_service="research-svc",
             bootstrap=bootstrap,
         )
-        self._experiments_store = PostgresJsonOwnerStore(
+        self._experiments_store = experiments_store or PostgresJsonOwnerStore(
             dsn=dsn,
             table=experiments_table or f"{self.schema}.research_experiments",
             owner_service="research-svc",
             bootstrap=bootstrap,
         )
-        self._notes_store = PostgresJsonOwnerStore(
+        self._notes_store = notes_store or PostgresJsonOwnerStore(
             dsn=dsn,
             table=notes_table or f"{self.schema}.research_notes",
             owner_service="research-svc",
@@ -277,6 +291,17 @@ class ResearchWriteOwner:
         return str(status or "").strip().lower() in cls._RW04_CANCELABLE_STATUSES
 
     @classmethod
+    def _rw04_allowed_actions(cls, exp: Dict[str, Any]) -> Dict[str, bool]:
+        status = str(exp.get("status") or "").strip().lower()
+        is_archived = bool(exp.get("is_archived", False))
+        return {
+            "canCancel": status in cls._RW04_CANCELABLE_STATUSES,
+            "canRetry": status in cls._RW04_RETRYABLE_STATUSES,
+            "canArchive": (status in cls._RW04_ARCHIVABLE_STATUSES) and not is_archived,
+            "canInvalidate": status in cls._RW04_INVALIDATABLE_STATUSES,
+        }
+
+    @classmethod
     def _project_experiment_summary(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
         status = str(exp.get("status") or "")
         strategy_selector = exp.get("strategy_selector") or {}
@@ -290,12 +315,20 @@ class ResearchWriteOwner:
             "experiment_id": exp.get("experiment_id"),
             "ticket_id": exp.get("ticket_id"),
             "experiment_name": exp.get("experiment_name"),
+            "attempt_number": exp.get("attempt_number", 1),
+            "parent_experiment_id": exp.get("parent_experiment_id"),
+            "root_experiment_id": exp.get("root_experiment_id"),
+            "is_archived": bool(exp.get("is_archived", False)),
+            "archived_at": exp.get("archived_at"),
+            "invalidated_at": exp.get("invalidated_at"),
+            "invalidated_reason": exp.get("invalidated_reason"),
             "status": status,
             "stage": exp.get("stage"),
             "framework": exp.get("framework") or run_config.get("backend"),
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
+            "cancellation_fence": exp.get("cancellation_fence"),
             "strategy_id": strategy_id,
             "linked_strategy_id": strategy_id,
             "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
@@ -303,7 +336,7 @@ class ResearchWriteOwner:
             "artifact_ids": list(exp.get("artifact_ids") or []),
             "registry_admission_status": exp.get("registry_admission_status"),
             "can_deploy": bool(exp.get("can_deploy", True)),
-            "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
+            "allowedActions": cls._rw04_allowed_actions(exp),
         }
 
     @classmethod
@@ -319,11 +352,19 @@ class ResearchWriteOwner:
             "experiment_id": exp.get("experiment_id"),
             "ticket_id": exp.get("ticket_id"),
             "experiment_name": exp.get("experiment_name"),
+            "attempt_number": exp.get("attempt_number", 1),
+            "parent_experiment_id": exp.get("parent_experiment_id"),
+            "root_experiment_id": exp.get("root_experiment_id"),
+            "is_archived": bool(exp.get("is_archived", False)),
+            "archived_at": exp.get("archived_at"),
+            "invalidated_at": exp.get("invalidated_at"),
+            "invalidated_reason": exp.get("invalidated_reason"),
             "status": status,
             "stage": exp.get("stage"),
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
+            "cancellation_fence": exp.get("cancellation_fence"),
             "progress": {
                 "percent": progress.get("percent"),
                 "phase": progress.get("phase"),
@@ -369,7 +410,7 @@ class ResearchWriteOwner:
                 "reason_code": failure.get("reason_code"),
                 "message": failure.get("message"),
             },
-            "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
+            "allowedActions": cls._rw04_allowed_actions(exp),
         }
 
     def create_research_experiment(
@@ -419,7 +460,7 @@ class ResearchWriteOwner:
             "validation_warnings": [],
             "artifact_ids": [],
             "failure": {"reason_code": None, "message": None},
-            "allowedActions": {"canCancel": True},
+            "allowedActions": {"canCancel": True, "canRetry": False, "canArchive": False, "canInvalidate": False},
         }
 
         if clean_ticket_id:
@@ -432,6 +473,7 @@ class ResearchWriteOwner:
                     ticket["updated_at"] = timestamp
                     self._tickets_store.put(clean_ticket_id, ticket)
 
+        record["allowedActions"] = self._rw04_allowed_actions(record)
         self._experiments_store.put(exp_id, record)
         return self._project_experiment_detail(record)
 
@@ -440,6 +482,8 @@ class ResearchWriteOwner:
         experiment_id: str,
         *,
         completed_at: Optional[str] = None,
+        reason: Optional[str] = None,
+        actor_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         exp = self._experiments_store.get(str(experiment_id))
         if exp is None or not isinstance(exp, dict):
@@ -451,7 +495,127 @@ class ResearchWriteOwner:
         timestamp = completed_at or _utc_now_rfc3339()
         exp["status"] = "canceled"
         exp["completed_at"] = timestamp
-        exp["allowedActions"] = {"canCancel": False}
+        exp["cancellation_fence"] = timestamp
+        if reason:
+            exp["cancellation_reason"] = reason
+        if actor_id:
+            exp["canceled_by"] = actor_id
+        exp["updated_at"] = timestamp
+        exp["allowedActions"] = self._rw04_allowed_actions(exp)
+        self._experiments_store.put(experiment_id, exp)
+        return self._project_experiment_detail(exp)
+
+    def retry_research_experiment(
+        self,
+        experiment_id: str,
+        *,
+        actor_id: Optional[str] = None,
+        requested_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        exp = self._experiments_store.get(str(experiment_id))
+        if exp is None or not isinstance(exp, dict):
+            return None
+        status = str(exp.get("status") or "").strip().lower()
+        if status not in self._RW04_RETRYABLE_STATUSES:
+            return None
+
+        timestamp = requested_at or _utc_now_rfc3339()
+        attempt_number = int(exp.get("attempt_number") or 1) + 1
+        parent_id = exp["experiment_id"]
+        root_id = exp.get("root_experiment_id") or parent_id
+
+        existing_experiments = self._experiments_store.list_all()
+        date_prefix = timestamp[:10].replace("-", "")
+        idx = len(existing_experiments) + 1
+        new_exp_id = f"exp-{date_prefix}-{idx:03d}"
+        existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
+        while new_exp_id in existing_ids:
+            idx += 1
+            new_exp_id = f"exp-{date_prefix}-{idx:03d}"
+
+        new_record: Dict[str, Any] = {
+            "experiment_id": new_exp_id,
+            "ticket_id": exp.get("ticket_id", ""),
+            "experiment_name": f"{exp.get('experiment_name', '')} (retry #{attempt_number})",
+            "attempt_number": attempt_number,
+            "parent_experiment_id": parent_id,
+            "root_experiment_id": root_id,
+            "status": "queued",
+            "stage": exp.get("stage") or "backtest",
+            "queued_at": timestamp,
+            "started_at": None,
+            "completed_at": None,
+            "progress": {"percent": None, "phase": None, "message": None},
+            "strategy_selector": json.loads(json.dumps(exp.get("strategy_selector") or {})),
+            "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
+            "run_config": json.loads(json.dumps(exp.get("run_config") or {})),
+            "launch_context": json.loads(json.dumps(exp.get("launch_context") or {})),
+            "validation_warnings": [],
+            "artifact_ids": [],
+            "failure": {"reason_code": None, "message": None},
+            "created_by": actor_id or exp.get("created_by"),
+            "idempotency_key": idempotency_key,
+        }
+        new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
+
+        ticket_id = exp.get("ticket_id")
+        if ticket_id:
+            ticket = self._tickets_store.get(ticket_id)
+            if ticket and isinstance(ticket, dict):
+                linked = list(ticket.get("linked_experiments") or [])
+                if new_exp_id not in linked:
+                    linked.append(new_exp_id)
+                    ticket["linked_experiments"] = linked
+                    ticket["updated_at"] = timestamp
+                    self._tickets_store.put(ticket_id, ticket)
+
+        self._experiments_store.put(new_exp_id, new_record)
+        return self._project_experiment_detail(new_record)
+
+    def archive_research_experiment(
+        self,
+        experiment_id: str,
+        *,
+        actor_id: Optional[str] = None,
+        archived_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        exp = self._experiments_store.get(str(experiment_id))
+        if exp is None or not isinstance(exp, dict):
+            return None
+        status = str(exp.get("status") or "").strip().lower()
+        if status not in self._RW04_ARCHIVABLE_STATUSES:
+            return None
+        timestamp = archived_at or _utc_now_rfc3339()
+        exp["is_archived"] = True
+        exp["archived_at"] = timestamp
+        exp["archived_by"] = actor_id
+        exp["updated_at"] = timestamp
+        exp["allowedActions"] = self._rw04_allowed_actions(exp)
+        self._experiments_store.put(experiment_id, exp)
+        return self._project_experiment_detail(exp)
+
+    def invalidate_research_experiment(
+        self,
+        experiment_id: str,
+        *,
+        reason: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        invalidated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        exp = self._experiments_store.get(str(experiment_id))
+        if exp is None or not isinstance(exp, dict):
+            return None
+        status = str(exp.get("status") or "").strip().lower()
+        if status in {"invalidated", "canceled"}:
+            return None
+        timestamp = invalidated_at or _utc_now_rfc3339()
+        exp["status"] = "invalidated"
+        exp["invalidated_at"] = timestamp
+        exp["invalidated_reason"] = reason or "Invalidated by operator"
+        exp["invalidated_by"] = actor_id
+        exp["updated_at"] = timestamp
+        exp["allowedActions"] = self._rw04_allowed_actions(exp)
         self._experiments_store.put(experiment_id, exp)
         return self._project_experiment_detail(exp)
 
@@ -466,8 +630,11 @@ class ResearchWriteOwner:
         *,
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
+        include_archived: bool = False,
     ) -> List[Dict[str, Any]]:
         experiments = self._experiments_store.list_all()
+        if not include_archived:
+            experiments = [e for e in experiments if not bool(e.get("is_archived", False))]
         if ticket_id:
             clean_tid = str(ticket_id).strip()
             experiments = [e for e in experiments if str(e.get("ticket_id") or "").strip() == clean_tid]

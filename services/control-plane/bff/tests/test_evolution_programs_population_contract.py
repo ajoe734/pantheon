@@ -11,15 +11,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.evolution.router import create_evolution_programs_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 AUTH = "Bearer op-dev:admin:mfa"
 HEADERS = {"Authorization": AUTH}
@@ -57,15 +55,21 @@ def _client_with_evolution_programs_store(td: str) -> TestClient:
         json.dump({"evo-vslice-1": EVO_VSLICE_1}, f)
 
     os.environ["PANTHEON_BFF_EVOLUTION_PROGRAM_STORE"] = store_path
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    ports = create_in_memory_read_surface_ports(
         persona_capital_runtime_kwargs={"evolution_programs": [EVO_VSLICE_1]}
     )
-    return TestClient(bff_main.app)
+    app = FastAPI()
+    app.include_router(
+        create_evolution_programs_router(
+            read_surface=ports,
+            snapshot_meta=lambda snap: {"snapshot_at": snap, "surface": {"status": "available"}},
+        )
+    )
+    return TestClient(app)
 
 
 def test_evolution_programs_count_gt_zero() -> None:
     """After wiring the store, /bff/evolution-programs must return count > 0."""
-    original_store = bff_main.read_store
     original_env = os.environ.get("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE")
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -76,7 +80,6 @@ def test_evolution_programs_count_gt_zero() -> None:
             items = body.get("data") or body.get("items") or []
             assert len(items) > 0, f"Expected count>0 but got {len(items)} items"
     finally:
-        bff_main.read_store = original_store
         if original_env is None:
             os.environ.pop("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE", None)
         else:
@@ -85,7 +88,6 @@ def test_evolution_programs_count_gt_zero() -> None:
 
 def test_evolution_programs_surface_status_not_unavailable() -> None:
     """After wiring the store, surface status must not be unavailable."""
-    original_store = bff_main.read_store
     original_env = os.environ.get("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE")
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -98,7 +100,6 @@ def test_evolution_programs_surface_status_not_unavailable() -> None:
             status = surface.get("status") or meta.get("surface_status") or ""
             assert status != "unavailable", f"Surface status must not be unavailable, got: {status!r}"
     finally:
-        bff_main.read_store = original_store
         if original_env is None:
             os.environ.pop("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE", None)
         else:
@@ -107,7 +108,6 @@ def test_evolution_programs_surface_status_not_unavailable() -> None:
 
 def test_evolution_programs_evo_vslice_1_detail() -> None:
     """After wiring the store, evo-vslice-1 detail must return 200."""
-    original_store = bff_main.read_store
     original_env = os.environ.get("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE")
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -119,7 +119,6 @@ def test_evolution_programs_evo_vslice_1_detail() -> None:
             assert (data.get("program_id") or data.get("id")) == "evo-vslice-1"
             assert data.get("action_type") == "retrain"
     finally:
-        bff_main.read_store = original_store
         if original_env is None:
             os.environ.pop("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE", None)
         else:
@@ -128,7 +127,6 @@ def test_evolution_programs_evo_vslice_1_detail() -> None:
 
 def test_evolution_programs_projection_shape() -> None:
     """Projected evo-vslice-1 record has all required BFF fields."""
-    original_store = bff_main.read_store
     original_env = os.environ.get("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE")
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -140,7 +138,6 @@ def test_evolution_programs_projection_shape() -> None:
                 assert field in data, f"Missing field: {field}"
             assert data["status"] == "active"
     finally:
-        bff_main.read_store = original_store
         if original_env is None:
             os.environ.pop("PANTHEON_BFF_EVOLUTION_PROGRAM_STORE", None)
         else:

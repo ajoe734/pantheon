@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-GOVERNANCE-APPROVAL-QUEUE-FILTER-CORRECTIVE-001",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "93d8f4353bb34a9f9c39e541aed722ae36a05934",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude"
+  },
+  "summary": "Align filter parameter names across router, service, and port for GET /api/v1/operator/governance/approval-queue, resolving unconditional HTTP 500 error caused by keyword argument mismatch ('states' vs 'decision_states').",
+  "root_cause_analysis": {
+    "router": "services/control-plane/bff/governance/router.py called _service().list_approval_queue(states=split_csv(state), ...) passing 'states' instead of 'decision_states'.",
+    "service": "services/control-plane/bff/governance/service.py defined list_approval_queue(self, **filters: Any) with unconstrained kwargs forwarding blindly to self._call('list_approval_queue_items', default=[], **filters).",
+    "port": "services/control-plane/bff/ports/ooda_management.py defined ManagementReviewQueuePort.list_approval_queue_items with signature accepting only decision_states=, raising TypeError: list_approval_queue_items() got an unexpected keyword argument 'states'.",
+    "contract_revision": "Human/Ops repair at 2026-09-16T11:46:30Z formally authorized services/control-plane/bff/tests/test_bff_approvals_surface_contract.py into the task artifact contract to satisfy acceptance criterion 4 (regression test through real router and real port)."
+  },
+  "before_vs_after": {
+    "before": {
+      "http_status": 500,
+      "exception": "TypeError: list_approval_queue_items() got an unexpected keyword argument 'states'",
+      "behavior": "Calling GET /api/v1/operator/governance/approval-queue under real composition root unconditionally raised TypeError in ManagementReviewQueuePort.list_approval_queue_items and returned HTTP 500 Internal Server Error (uncovered during B05 migration in TestGovernanceApprovalQueueSurfaceWithProjectedStore::test_queue_returns_pending_when_store_wired)."
+    },
+    "after": {
+      "http_status": 200,
+      "exception": null,
+      "behavior": "GET /api/v1/operator/governance/approval-queue returns HTTP 200 OK. Parameter alignment is unified on decision_states across router, service, and port. Backward compatibility for legacy 'state' query parameter is supported via resolved_state alias. Filtering by decision_type, risk_level, decision_state, and state works accurately. Healthy empty sets return 200 OK with items: [], clearly distinguishable from errors."
+    }
+  },
+  "alignment_architecture": {
+    "single_parameter_name": "decision_states (with decision_types, risk_levels)",
+    "router": "router.list_governance_approval_queue supports decision_state query parameter (primary) and state query parameter (backward-compatible alias). Resolves resolved_state and passes decision_states=split_csv(resolved_state) to service. Also populates surfaces['allowedActions'] for governance_approval_queue matching contract expectations.",
+    "service": "GovernanceService.list_approval_queue uses explicit typed named parameters (*, decision_types=None, risk_levels=None, decision_states=None) constrained against ApprovalQueueReaderPort(Protocol). No parameter translation/renaming in service layer.",
+    "port": "ManagementReviewQueuePort.list_approval_queue_items accepts decision_states: Optional[List[str]] = None, and states: Optional[List[str]] = None for backward compatibility, resolving effective_states = decision_states if decision_states is not None else states. ManagementApprovalQueueReaderPort(Protocol) defines the canonical read contract."
+  },
+  "changed_files": [
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/governance/service.py",
+    "services/control-plane/bff/ports/ooda_management.py",
+    "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+    "docs/deployment/evidence/BFF-GOVERNANCE-APPROVAL-QUEUE-FILTER-CORRECTIVE-001/evidence.json"
+  ],
+  "document_proof": {
+    "services/control-plane/bff/governance/router.py": {
+      "sha256": "9533f614dfbdade3627b1ade7a87a34f6d959db797b18dbe3d413fdc87741060",
+      "bytes": 47761
+    },
+    "services/control-plane/bff/governance/service.py": {
+      "sha256": "433556310408bbf985f50b9b0b77924493114d362de5c8972d1a9b2fde1c374e",
+      "bytes": 63042
+    },
+    "services/control-plane/bff/ports/ooda_management.py": {
+      "sha256": "67f525e141e1bf6c8f1edbe6ddd32351311de2ac8840a4a40252159a2105e5a6",
+      "bytes": 36069
+    },
+    "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py": {
+      "sha256": "fb271adc08da8a41c567d0036b9ffe53541c61dfec406343a9aa0acdbd0106e0",
+      "bytes": 22438
+    }
+  },
+  "static_type_check": {
+    "protocols": [
+      "services/control-plane/bff/governance/service.py::ApprovalQueueReaderPort",
+      "services/control-plane/bff/ports/ooda_management.py::ManagementApprovalQueueReaderPort"
+    ],
+    "verification_command": ".venv-pantheon/bin/python3 -m mypy --follow-imports=silent services/control-plane/bff/ports/ooda_management.py",
+    "exit_code": 0,
+    "output": "Success: no issues found in 1 source file",
+    "runtime_signature_verification": "GovernanceService.list_approval_queue parameters: ['self', 'decision_types', 'risk_levels', 'decision_states']. Passing invalid keyword arguments (such as 'states=') is caught at runtime with TypeError: GovernanceService.list_approval_queue() got an unexpected keyword argument 'states' and at static analysis by type checkers."
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+      "exit_code": 0,
+      "result": "18 passed, 87 warnings in 31.58s. Includes 2 tests from test_pkt006 and 16 tests from test_bff_approvals_surface_contract.py."
+    },
+    {
+      "command": "/tmp/gov-approval-venv/bin/pytest services/control-plane/bff/tests/test_bff_approvals_surface_contract.py::TestGovernanceApprovalQueueSurfaceWithProjectedStore -v",
+      "exit_code": 0,
+      "result": "10 passed in 14.88s. All real-port and real-router regression tests passed without test-local lambdas.",
+      "test_cases": [
+        {"test_name": "test_queue_returns_pending_when_store_wired", "status": 200, "result": "PASSED"},
+        {"test_name": "test_evidence_json_nine_filter_scenarios (scenarios 1-9 landed as repeatable pytest)", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_decision_state_and_csv", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_state_alias_backward_compatible", "status": 200, "result": "PASSED"},
+        {"test_name": "test_decision_state_takes_precedence_over_state_alias", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_risk_level_and_csv", "status": 200, "result": "PASSED"},
+        {"test_name": "test_filter_by_decision_type_and_csv", "status": 200, "result": "PASSED"},
+        {"test_name": "test_combined_multi_criteria_filters", "status": 200, "result": "PASSED"},
+        {"test_name": "test_healthy_empty_set_structure", "status": 200, "result": "PASSED"},
+        {"test_name": "test_terminal_decisions_never_surfaced_in_queue", "status": 200, "result": "PASSED"}
+      ]
+    }
+  ]
+}

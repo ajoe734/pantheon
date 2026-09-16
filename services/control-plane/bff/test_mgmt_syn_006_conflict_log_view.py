@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,12 +9,8 @@ from typing import Iterator, Optional
 
 from fastapi.testclient import TestClient
 
-
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
-
-import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-syn:operator,reviewer,admin:mfa"}
