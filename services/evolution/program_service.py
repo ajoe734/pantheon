@@ -360,6 +360,10 @@ class ProgramService:
                 }
 
             elif clean_action == "resume_program":
+                if base_status == ProgramStatus.STOPPED.value:
+                    raise ProgramConflictError(
+                        "Cannot resume stopped program; stop cancelled nonterminal runs and cannot be reversed by resume (D1)"
+                    )
                 if base_status != ProgramStatus.PAUSED.value:
                     raise ProgramConflictError(
                         f"Cannot resume program in status {base_status!r}; must be 'paused'"
@@ -376,25 +380,28 @@ class ProgramService:
                     raise ProgramConflictError(
                         f"Cannot complete program in status {base_status!r}; must be 'active'"
                     )
-                active_runs = payload.get("active_runs") or payload.get("unresolved_runs") or []
-                if active_runs or int(payload.get("active_runs_count") or 0) > 0:
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                active_runs = payload.get("active_runs") or sub.get("active_runs") or payload.get("unresolved_runs") or sub.get("unresolved_runs") or []
+                active_count = int(payload.get("active_runs_count") or sub.get("active_runs_count") or 0)
+                if active_runs or active_count > 0:
                     raise ProgramConflictError(
                         "Cannot complete program with unresolved active runs; all runs must reach terminal status"
                     )
                 target_status = ProgramStatus.COMPLETED.value
                 details = {
-                    "completion_evidence": payload.get("completion_evidence") or "All runs reached terminal outcomes",
+                    "completion_evidence": payload.get("completion_evidence") or sub.get("completion_evidence") or "All runs reached terminal outcomes",
                     "note": note or "Program marked completed with terminal evidence",
                 }
 
             elif clean_action == "retire_program":
-                if base_status != ProgramStatus.COMPLETED.value:
+                if base_status not in (ProgramStatus.COMPLETED.value, ProgramStatus.STOPPED.value):
                     raise ProgramConflictError(
-                        f"Cannot retire program in status {base_status!r}; must be 'completed'"
+                        f"Cannot retire program in status {base_status!r}; must be 'completed' or 'stopped'"
                     )
                 target_status = ProgramStatus.RETIRED.value
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
                 details = {
-                    "retirement_audit_ref": payload.get("retirement_audit_ref") or f"ret-{uuid.uuid4().hex[:12]}",
+                    "retirement_audit_ref": payload.get("retirement_audit_ref") or sub.get("retirement_audit_ref") or f"ret-{uuid.uuid4().hex[:12]}",
                     "terminal": True,
                     "note": note or "Program retired; terminal state, no strategy or runtime bindings altered",
                 }
@@ -404,45 +411,59 @@ class ProgramService:
                     raise ProgramConflictError(
                         f"Cannot stop program in status {base_status!r}; must be 'active' or 'paused'"
                     )
-                target_status = ProgramStatus.PAUSED.value
+                target_status = ProgramStatus.STOPPED.value
                 details = {
                     "cancelled_runs": True,
                     "note": note or "All nonterminal runs cancelled immediately (D1)",
                 }
 
             elif clean_action == "freeze_generation":
-                generation_id = payload.get("generation_id") or payload.get("id") or f"gen-{uuid.uuid4().hex[:8]}"
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                generation_id = payload.get("generation_id") or sub.get("generation_id") or payload.get("id") or sub.get("id") or f"gen-{uuid.uuid4().hex[:8]}"
                 details = {
                     "generation_id": generation_id,
                     "frozen_at": now,
                     "frozen_by": clean_actor,
-                    "reason": payload.get("reason") or note or "Generation frozen (D2)",
+                    "reason": payload.get("reason") or sub.get("reason") or note or "Generation frozen (D2)",
                 }
 
             elif clean_action == "unfreeze_generation":
-                generation_id = payload.get("generation_id") or payload.get("id") or f"gen-{uuid.uuid4().hex[:8]}"
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                generation_id = payload.get("generation_id") or sub.get("generation_id") or payload.get("id") or sub.get("id") or f"gen-{uuid.uuid4().hex[:8]}"
                 details = {
                     "generation_id": generation_id,
                     "unfrozen_at": now,
                     "unfrozen_by": clean_actor,
-                    "reason": payload.get("reason") or note or "Generation unfrozen (D2)",
+                    "reason": payload.get("reason") or sub.get("reason") or note or "Generation unfrozen (D2)",
                 }
 
             elif clean_action == "promote_candidate_paper":
                 if bool(base.get("is_frozen")):
                     raise ProgramConflictError("Cannot promote candidate while generation is frozen (D2)")
-                candidate_id = str(payload.get("candidate_id") or "").strip()
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                candidate_id = str(payload.get("candidate_id") or sub.get("candidate_id") or "").strip()
                 if not candidate_id:
                     raise ProgramValidationError("candidate_id is required for candidate promotion")
+                run_id = str(payload.get("run_id") or sub.get("run_id") or "").strip() or None
+                artifact_id = str(payload.get("artifact_id") or sub.get("artifact_id") or "").strip() or None
+                artifact_version = str(payload.get("artifact_version") or sub.get("artifact_version") or "").strip() or None
+                artifact_digest = str(
+                    payload.get("artifact_digest")
+                    or sub.get("artifact_digest")
+                    or payload.get("digest")
+                    or sub.get("digest")
+                    or ""
+                ).strip() or None
+                approval_id = str(payload.get("approval_id") or sub.get("approval_id") or "").strip() or None
                 details = {
                     "promotion_id": f"prm-{uuid.uuid4().hex[:8]}",
                     "stage": "paper",
                     "candidate_id": candidate_id,
-                    "run_id": str(payload.get("run_id") or "").strip() or None,
-                    "artifact_id": str(payload.get("artifact_id") or "").strip() or None,
-                    "artifact_version": str(payload.get("artifact_version") or "").strip() or None,
-                    "artifact_digest": str(payload.get("artifact_digest") or payload.get("digest") or "").strip() or None,
-                    "approval_id": str(payload.get("approval_id") or "").strip() or None,
+                    "run_id": run_id,
+                    "artifact_id": artifact_id,
+                    "artifact_version": artifact_version,
+                    "artifact_digest": artifact_digest,
+                    "approval_id": approval_id,
                     "promoted_at": now,
                     "promoted_by": clean_actor,
                 }
@@ -450,18 +471,30 @@ class ProgramService:
             elif clean_action == "promote_candidate_live":
                 if bool(base.get("is_frozen")):
                     raise ProgramConflictError("Cannot promote candidate while generation is frozen (D2)")
-                candidate_id = str(payload.get("candidate_id") or "").strip()
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                candidate_id = str(payload.get("candidate_id") or sub.get("candidate_id") or "").strip()
                 if not candidate_id:
                     raise ProgramValidationError("candidate_id is required for candidate promotion")
+                run_id = str(payload.get("run_id") or sub.get("run_id") or "").strip() or None
+                artifact_id = str(payload.get("artifact_id") or sub.get("artifact_id") or "").strip() or None
+                artifact_version = str(payload.get("artifact_version") or sub.get("artifact_version") or "").strip() or None
+                artifact_digest = str(
+                    payload.get("artifact_digest")
+                    or sub.get("artifact_digest")
+                    or payload.get("digest")
+                    or sub.get("digest")
+                    or ""
+                ).strip() or None
+                approval_id = str(payload.get("approval_id") or sub.get("approval_id") or "").strip() or None
                 details = {
                     "promotion_id": f"prm-{uuid.uuid4().hex[:8]}",
                     "stage": "live",
                     "candidate_id": candidate_id,
-                    "run_id": str(payload.get("run_id") or "").strip() or None,
-                    "artifact_id": str(payload.get("artifact_id") or "").strip() or None,
-                    "artifact_version": str(payload.get("artifact_version") or "").strip() or None,
-                    "artifact_digest": str(payload.get("artifact_digest") or payload.get("digest") or "").strip() or None,
-                    "approval_id": str(payload.get("approval_id") or "").strip() or None,
+                    "run_id": run_id,
+                    "artifact_id": artifact_id,
+                    "artifact_version": artifact_version,
+                    "artifact_digest": artifact_digest,
+                    "approval_id": approval_id,
                     "promoted_at": now,
                     "promoted_by": clean_actor,
                     "capital_authority": "none",
@@ -472,7 +505,16 @@ class ProgramService:
             elif clean_action == "approve_mutation":
                 if bool(base.get("is_frozen")):
                     raise ProgramConflictError("Cannot approve mutation while generation is frozen (D2)")
-                mutation_id = payload.get("mutation_id") or payload.get("decision_id") or f"mut-{uuid.uuid4().hex[:8]}"
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                mutation_id = str(
+                    payload.get("mutation_id")
+                    or sub.get("mutation_id")
+                    or payload.get("decision_id")
+                    or sub.get("decision_id")
+                    or ""
+                ).strip()
+                if not mutation_id:
+                    raise ProgramValidationError("mutation_id is required for approve_mutation")
                 details = {
                     "mutation_id": mutation_id,
                     "decision": "approved",
@@ -481,44 +523,57 @@ class ProgramService:
                 }
 
             elif clean_action == "reject_mutation":
-                mutation_id = payload.get("mutation_id") or payload.get("decision_id") or f"mut-{uuid.uuid4().hex[:8]}"
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                mutation_id = str(
+                    payload.get("mutation_id")
+                    or sub.get("mutation_id")
+                    or payload.get("decision_id")
+                    or sub.get("decision_id")
+                    or ""
+                ).strip()
+                if not mutation_id:
+                    raise ProgramValidationError("mutation_id is required for reject_mutation")
+                reason = payload.get("reason") or sub.get("reason") or "Mutation rejected by approver"
                 details = {
                     "mutation_id": mutation_id,
                     "decision": "rejected",
                     "rejected_at": now,
                     "rejected_by": clean_actor,
-                    "reason": payload.get("reason") or "Mutation rejected by approver",
+                    "reason": reason,
                 }
 
             elif clean_action == "create_constraint":
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
                 details = {
-                    "id": payload.get("id") or f"cst-{uuid.uuid4().hex[:8]}",
-                    "name": str(payload.get("name") or ""),
-                    "scope": str(payload.get("scope") or "global"),
-                    "operator": str(payload.get("operator") or "<="),
-                    "value": payload.get("value"),
-                    "penalty_weight": payload.get("penalty_weight", 1.0),
-                    "enabled": bool(payload.get("enabled", True)),
+                    "id": payload.get("id") or sub.get("id") or f"cst-{uuid.uuid4().hex[:8]}",
+                    "name": str(payload.get("name") or sub.get("name") or ""),
+                    "scope": str(payload.get("scope") or sub.get("scope") or "global"),
+                    "operator": str(payload.get("operator") or sub.get("operator") or "<="),
+                    "value": payload.get("value") if payload.get("value") is not None else sub.get("value"),
+                    "penalty_weight": payload.get("penalty_weight", sub.get("penalty_weight", 1.0)),
+                    "enabled": bool(payload.get("enabled", sub.get("enabled", True))),
                     "created_at": now,
                 }
 
             elif clean_action == "create_fitness_formula":
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
                 details = {
-                    "id": payload.get("id") or f"fit-{uuid.uuid4().hex[:8]}",
-                    "expression": str(payload.get("expression") or ""),
-                    "metrics": list(payload.get("metrics") or []),
-                    "applied_scope": str(payload.get("applied_scope") or "generation"),
+                    "id": payload.get("id") or sub.get("id") or f"fit-{uuid.uuid4().hex[:8]}",
+                    "expression": str(payload.get("expression") or sub.get("expression") or ""),
+                    "metrics": list(payload.get("metrics") or sub.get("metrics") or []),
+                    "applied_scope": str(payload.get("applied_scope") or sub.get("applied_scope") or "generation"),
                     "created_at": now,
                 }
 
             elif clean_action == "create_mutation_rule":
+                sub = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
                 details = {
-                    "id": payload.get("id") or f"mutr-{uuid.uuid4().hex[:8]}",
-                    "scope": str(payload.get("scope") or "all"),
-                    "expression": str(payload.get("expression") or ""),
-                    "rate": float(payload.get("rate") or 0.05),
-                    "risk": str(payload.get("risk") or "low"),
-                    "enabled": bool(payload.get("enabled", True)),
+                    "id": payload.get("id") or sub.get("id") or f"mutr-{uuid.uuid4().hex[:8]}",
+                    "scope": str(payload.get("scope") or sub.get("scope") or "all"),
+                    "expression": str(payload.get("expression") or sub.get("expression") or ""),
+                    "rate": float(payload.get("rate") if payload.get("rate") is not None else sub.get("rate", 0.05)),
+                    "risk": str(payload.get("risk") or sub.get("risk") or "low"),
+                    "enabled": bool(payload.get("enabled", sub.get("enabled", True))),
                     "created_at": now,
                 }
 

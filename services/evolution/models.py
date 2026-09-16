@@ -36,6 +36,7 @@ class ProgramStatus(str, Enum):
     UNDER_REVIEW = "under_review"
     COMPLETED = "completed"
     RETIRED = "retired"
+    STOPPED = "stopped"
 
 
 @dataclass
@@ -118,6 +119,8 @@ class EvolutionProgram:
 
 
 class ProgramActionRequest(BaseModel):
+    model_config = {"extra": "allow"}
+
     actor_id: str
     actor_role: str = "operator"
     expected_revision: Optional[int] = None
@@ -134,6 +137,7 @@ class ProgramActionRequest(BaseModel):
     decision_id: Optional[str] = None
     mutation_id: Optional[str] = None
     generation_id: Optional[Any] = None
+    payload: Optional[Dict[str, Any]] = None
 
 
 class ProgramActionReceiptOut(BaseModel):

@@ -229,12 +229,43 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
                 downstream_status=422,
             ) from exc
 
-        payload = {
-            "actor_id": params.get("actor_id") or "operator",
-            "actor_role": params.get("actor_role") or "operator",
-            "note": params.get("note") or params.get("rationale") or f"Operator {clean_action}",
-            "payload": params.get("payload") or {},
+        sub_payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
+        actor_id = params.get("actor_id") or sub_payload.get("actor_id") or "operator"
+        actor_role = params.get("actor_role") or sub_payload.get("actor_role") or "operator"
+        note = params.get("note") or params.get("rationale") or sub_payload.get("note") or f"Operator {clean_action}"
+
+        payload: Dict[str, Any] = {
+            "actor_id": actor_id,
+            "actor_role": actor_role,
+            "note": note,
         }
+        for field in (
+            "candidate_id",
+            "run_id",
+            "mutation_id",
+            "decision_id",
+            "artifact_id",
+            "artifact_version",
+            "approval_id",
+            "generation_id",
+            "reason",
+            "expected_revision",
+            "params",
+        ):
+            val = params.get(field) if params.get(field) is not None else sub_payload.get(field)
+            if val is not None:
+                payload[field] = val
+
+        digest = (
+            params.get("artifact_digest")
+            or sub_payload.get("artifact_digest")
+            or params.get("digest")
+            or sub_payload.get("digest")
+        )
+        if digest is not None:
+            payload["artifact_digest"] = digest
+
+        payload["payload"] = sub_payload
         if "idempotency_key" in params:
             payload["idempotency_key"] = params["idempotency_key"]
 

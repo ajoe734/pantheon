@@ -359,3 +359,136 @@ def test_router_returns_404_for_nonexistent_program() -> None:
 
     resp = client.post("/bff/evolution-programs/evp-missing/actions/pause_program", json={})
     assert resp.status_code == 404
+
+
+def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
+    from urllib.parse import urlparse
+    from services.evolution.program_store import JsonProgramStore
+    from services.evolution.program_service import ProgramService
+    from services.evolution.program_router import create_program_router
+
+    store = JsonProgramStore(tmp_path / "programs.json")
+    service = ProgramService(store)
+    backend_app = FastAPI()
+    backend_app.include_router(
+        create_program_router(
+            service=service,
+            current_tenant=lambda: "tenant-e2e",
+            authorize_request_tenant=lambda t: t or "tenant-e2e",
+        )
+    )
+    backend_client = TestClient(backend_app)
+
+    def dispatch_to_backend(url: str, method: str = "POST", payload: Optional[Dict[str, Any]] = None, **kwargs):
+        parsed = urlparse(url)
+        path = parsed.path
+        if method.upper() == "POST":
+            resp = backend_client.post(path, json=payload, headers={"X-Tenant-Id": "tenant-e2e"})
+        else:
+            resp = backend_client.get(path, headers={"X-Tenant-Id": "tenant-e2e"})
+
+        if resp.status_code >= 400:
+            err_detail = resp.json().get("detail", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+            error_body = json.dumps({"detail": err_detail}).encode("utf-8")
+            raise urllib.error.HTTPError(
+                url=url,
+                code=resp.status_code,
+                msg=getattr(resp, "reason_phrase", "Error"),
+                hdrs={},
+                fp=MagicMock(read=lambda: error_body),
+            )
+        return resp.json()
+
+    adapter = EvolutionCommandAdapter()
+
+    # 1. Create a program and approve it to active
+    p_init, _ = service.create_program(tenant_id="tenant-e2e", actor_id="admin-1", name="E2E Program")
+    pid = p_init["program_id"]
+    service.execute_action(tenant_id="tenant-e2e", actor_id="admin-1", program_id=pid, action_id="submit_evolution_review")
+    service.execute_action(tenant_id="tenant-e2e", actor_id="admin-1", actor_role="approver", program_id=pid, action_id="approve_program")
+
+    with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://evolution-backend"}):
+        with patch(
+            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            side_effect=dispatch_to_backend,
+        ):
+            # Test 1: promote_candidate_paper through adapter to real router (flat fields parsed cleanly)
+            receipt_paper = adapter.execute(
+                command_id="cmd-promote-paper",
+                command_type="EvolutionProgramAction",
+                params={
+                    "action_id": "promote_candidate_paper",
+                    "program_id": pid,
+                    "actor_id": "approver-e2e",
+                    "actor_role": "approver",
+                    "candidate_id": "cand-e2e-001",
+                    "run_id": "run-e2e-001",
+                    "artifact_id": "art-e2e-001",
+                    "artifact_version": "v1.0.0",
+                },
+            )
+            assert receipt_paper["status"] == "active"
+            assert receipt_paper["live_capital_side_effects"] is False
+            details_paper = receipt_paper["domain_receipt"]["details"]
+            assert details_paper["candidate_id"] == "cand-e2e-001"
+            assert details_paper["run_id"] == "run-e2e-001"
+            assert details_paper["artifact_id"] == "art-e2e-001"
+            assert details_paper["stage"] == "paper"
+
+            # Test 2: approve_mutation through adapter to real router (real mutation_id preserved!)
+            receipt_mutation = adapter.execute(
+                command_id="cmd-approve-mut",
+                command_type="EvolutionProgramAction",
+                params={
+                    "action_id": "approve_mutation",
+                    "program_id": pid,
+                    "actor_id": "approver-e2e",
+                    "actor_role": "approver",
+                    "mutation_id": "mut-real-explicit-12345",
+                },
+            )
+            assert receipt_mutation["status"] == "active"
+            details_mut = receipt_mutation["domain_receipt"]["details"]
+            assert details_mut["mutation_id"] == "mut-real-explicit-12345"
+            assert details_mut["decision"] == "approved"
+
+            # Test 3: approve_mutation without mutation_id fails with 422 validation error
+            with pytest.raises(ActionUnavailableError) as exc_info:
+                adapter.execute(
+                    command_id="cmd-approve-mut-missing",
+                    command_type="EvolutionProgramAction",
+                    params={
+                        "action_id": "approve_mutation",
+                        "program_id": pid,
+                        "actor_id": "approver-e2e",
+                        "actor_role": "approver",
+                    },
+                )
+            assert exc_info.value.downstream_status == 422
+            assert "mutation_id is required" in str(exc_info.value)
+
+            # Test 4: stop transitions to stopped
+            receipt_stop = adapter.execute(
+                command_id="cmd-stop-e2e",
+                command_type="EvolutionProgramAction",
+                params={
+                    "action_id": "stop",
+                    "program_id": pid,
+                    "actor_id": "op-e2e",
+                },
+            )
+            assert receipt_stop["status"] == "stopped"
+
+            # Test 5: resume_program on stopped program fails with 409 conflict
+            with pytest.raises(ActionUnavailableError) as exc_info:
+                adapter.execute(
+                    command_id="cmd-resume-stopped",
+                    command_type="EvolutionProgramAction",
+                    params={
+                        "action_id": "resume_program",
+                        "program_id": pid,
+                        "actor_id": "op-e2e",
+                    },
+                )
+            assert exc_info.value.downstream_status == 409
+            assert "cannot resume stopped program" in str(exc_info.value).lower()

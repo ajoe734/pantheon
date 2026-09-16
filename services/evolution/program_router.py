@@ -188,6 +188,11 @@ def create_program_router(
         tenant_id = _resolve_tenant(req_body.tenant_id)
         key = _idempotency_key(idempotency_key, x_idempotency_key)
         payload = req_body.model_dump(exclude_unset=True)
+        nested = payload.get("payload")
+        if isinstance(nested, dict):
+            for k, v in nested.items():
+                if k not in payload or payload[k] is None:
+                    payload[k] = v
         try:
             result, _replayed = service.execute_action(
                 tenant_id=tenant_id,

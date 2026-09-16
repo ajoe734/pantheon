@@ -237,19 +237,40 @@ def _run_action_scenarios(make_store) -> None:
     assert res["program_status"] == "active"
     assert res["program"]["status"] == "active"
 
-    # 6. active -> stop -> paused (D1)
-    res, _ = service.execute_action(
-        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
+    # 6. Stop and resume semantics (D1: stop cancels nonterminal runs -> stopped; resume refuses to reverse stop)
+    p_stop, _ = service.create_program(tenant_id="tenant-act", actor_id="actor-act", name="Stop Test Program")
+    pid_stop = p_stop["program_id"]
+    service.execute_action(tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop, action_id="submit_evolution_review")
+    service.execute_action(tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid_stop, action_id="approve_program")
+
+    res_stop, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop,
         action_id="stop", note="Emergency stop",
     )
-    assert res["program_status"] == "paused"
-    assert res["program"]["status"] == "paused"
+    assert res_stop["program_status"] == "stopped"
+    assert res_stop["program"]["status"] == "stopped"
 
-    # Resume back to active
-    service.execute_action(
-        tenant_id="tenant-act", actor_id="actor-act", program_id=pid,
-        action_id="resume_program",
+    # resume_program refuses to reverse a stop
+    with pytest.raises(ProgramConflictError) as exc_info:
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop,
+            action_id="resume_program",
+        )
+    assert "cannot resume stopped program" in str(exc_info.value).lower()
+
+    # pause_program refuses on stopped
+    with pytest.raises(ProgramConflictError):
+        service.execute_action(
+            tenant_id="tenant-act", actor_id="actor-act", program_id=pid_stop,
+            action_id="pause_program",
+        )
+
+    # retire_program succeeds on stopped
+    res_retire_stop, _ = service.execute_action(
+        tenant_id="tenant-act", actor_id="approver-1", actor_role="approver", program_id=pid_stop,
+        action_id="retire_program",
     )
+    assert res_retire_stop["program_status"] == "retired"
 
     # 7. Freeze & Unfreeze generation (D2)
     res, _ = service.execute_action(
@@ -436,6 +457,102 @@ def _run_router_actions(make_store) -> None:
     # Not found for unknown program
     resp = client.post("/api/evolution/programs/non-existent/actions/pause_program", json={"actor_id": "act-1"})
     assert resp.status_code == 404
+
+    # Promotion via router (flat schema)
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/promote_candidate_paper",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "candidate_id": "cand-router-1",
+            "run_id": "run-router-1",
+            "artifact_id": "art-router-1",
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["candidate_id"] == "cand-router-1"
+    assert res_data["details"]["run_id"] == "run-router-1"
+    assert res_data["details"]["artifact_id"] == "art-router-1"
+    assert res_data["details"]["stage"] == "paper"
+
+    # Promotion via router with nested payload (BFF compatibility)
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/promote_candidate_live",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "payload": {
+                "candidate_id": "cand-router-live",
+                "run_id": "run-router-live",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["candidate_id"] == "cand-router-live"
+    assert res_data["details"]["run_id"] == "run-router-live"
+    assert res_data["details"]["stage"] == "live"
+    assert res_data["details"]["capital_authority"] == "none"
+
+    # approve_mutation via router (real caller mutation_id preserved)
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/approve_mutation",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "mutation_id": "mut-real-999",
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["mutation_id"] == "mut-real-999"
+    assert res_data["details"]["decision"] == "approved"
+
+    # reject_mutation via router with nested payload
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/reject_mutation",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+            "payload": {
+                "mutation_id": "mut-real-888",
+                "reason": "Exceeded risk boundary",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["details"]["mutation_id"] == "mut-real-888"
+    assert res_data["details"]["decision"] == "rejected"
+    assert res_data["details"]["reason"] == "Exceeded risk boundary"
+
+    # approve_mutation without mutation_id raises 422
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/approve_mutation",
+        json={
+            "actor_id": "appr-1",
+            "actor_role": "approver",
+        },
+    )
+    assert resp.status_code == 422
+    assert "mutation_id is required" in resp.json()["detail"]
+
+    # stop via router transitions to stopped
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/stop",
+        json={"actor_id": "act-1"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["program_status"] == "stopped"
+
+    # resume_program on stopped program raises 409
+    resp = client.post(
+        f"/api/evolution/programs/{pid}/actions/resume_program",
+        json={"actor_id": "act-1"},
+    )
+    assert resp.status_code == 409
+    assert "cannot resume stopped program" in resp.json()["detail"].lower()
 
 
 class TestJsonProgramStore:
