@@ -8,21 +8,14 @@ from contextlib import contextmanager
 from typing import Iterator
 from unittest import mock
 
-from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.dirname(__file__))
-
 import json
 from pathlib import Path
 from typing import Any, Iterator
-from unittest import mock
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
@@ -70,6 +63,12 @@ class DetailSmokeATestReadPorts(ReadSurfacePorts):
 
     def dataset_source(self, dataset: str) -> str:
         return "local_snapshot" if self._allow_fallback else "missing"
+
+    def list_paper_runtime_monitoring_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def get_paper_runtime_monitoring_session(self, session_id: str | None = None, **kwargs: Any) -> dict[str, Any] | None:
+        return None
 
     def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
         src = self.dataset_source(dataset)

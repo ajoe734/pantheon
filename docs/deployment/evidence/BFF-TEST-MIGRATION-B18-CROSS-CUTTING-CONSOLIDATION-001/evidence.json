@@ -1,0 +1,205 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001",
+  "group": "B18_cross_cutting_consolidation",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "08294e46a70cdc62fd6eb782bb6a9df509b065dd",
+  "delivery_state": "ready_for_independent_review",
+  "summary": "Decoupled 4 test suites across B18_cross_cutting_consolidation (test_bff_alpha_factory_contract.py, test_bff_b2_003_capabilities.py, test_bff_b3_human_inbox.py, test_bff_emergency_containment.py) via modular domain routers and ports with 0 main imports and 0 sys.path mutations; removed all sys.path mutations from the 10 retained composition test files (test_bff_consol_008_fixture_pack_a.py, test_bff_consol_009_fixture_pack_b.py, test_bff_consol_010_fixture_pack_c.py, test_bff_consol_016_detail_smoke_a.py, test_bff_consol_017_detail_smoke_b.py, test_bff_b3_trading_pulse.py, test_bff_b6_003_nl_high_risk_refusal.py, test_bff_consol_skills_mcp_registry_contract.py, test_bff_path_dedupe.py, test_overlay_retirement.py) with canonical package imports; zero sys.path mutations across all 14 files; all 141 tests pass (1 skipped as expected baseline).",
+  "source_artifacts": [
+    "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+    "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+    "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+    "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+    "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+    "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py",
+    "services/control-plane/bff/tests/test_bff_b2_003_capabilities.py",
+    "services/control-plane/bff/tests/test_bff_b3_human_inbox.py",
+    "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+    "services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py",
+    "services/control-plane/bff/tests/test_bff_emergency_containment.py",
+    "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+    "services/control-plane/bff/tests/test_overlay_retirement.py"
+  ],
+  "ast_and_inventory_verification": {
+    "ast_scan_command": "python3 -c \"import ast, pathlib; b18=['services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py','services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py','services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py','services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py','services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py','services/control-plane/bff/tests/test_bff_alpha_factory_contract.py','services/control-plane/bff/tests/test_bff_b2_003_capabilities.py','services/control-plane/bff/tests/test_bff_b3_human_inbox.py','services/control-plane/bff/tests/test_bff_b3_trading_pulse.py','services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py','services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py','services/control-plane/bff/tests/test_bff_emergency_containment.py','services/control-plane/bff/tests/test_bff_path_dedupe.py','services/control-plane/bff/tests/test_overlay_retirement.py']; print({f: {'main_imports': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if (isinstance(n, ast.Import) and any('main' in a.name for a in n.names)) or (isinstance(n, ast.ImportFrom) and n.module and ('main' in n.module or any(a.name=='main' for a in n.names)))], 'sys_path_mutations': [n.lineno for n in ast.walk(ast.parse(pathlib.Path(f).read_text())) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ('insert','append','extend') and getattr(getattr(n.func.value, 'value', None), 'id', None)=='sys']} for f in b18})\"",
+    "sys_path_mutations_count": 0,
+    "decoupled_main_importers_count": 4,
+    "retained_composition_count": 10,
+    "architecture_invariant_check": {
+      "command": "/tmp/psd-bff-composition-venv/bin/pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 1,
+      "passed": 7,
+      "failed": 1,
+      "note": "1 pre-existing failure in test_every_entry_has_valid_layer_and_disposition caused by deleted legacy file tests/test_actions_to_commands_adapter.py (retired on dev in commit 26d8a35a91). No regressions introduced by B18."
+    }
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 4,
+      "sha256": "91f498499fc2edbf8edf4843cbaedbf49679f1e0b3afbb51a229baeed723fe75",
+      "bytes": 13836,
+      "lines": 301,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Exercises composite read facade endpoints (/bff/dashboard/summary, /bff/live-pulse, /bff/strategy/registry/summary, /bff/command-center/summary) against full bff_main assembly. sys.path mutation removed in favor of canonical package import. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 11,
+      "sha256": "cc0e96010ca5f679d0627bd68755e3d78e76b04ec381fc65599ff7d8d66977b8",
+      "bytes": 14505,
+      "lines": 303,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Exercises composite facade endpoints (/bff/operator/home, /bff/trading-pulse/summary, /bff/system/info, /bff/system/clock) against bff_main assembly. sys.path mutation removed in favor of canonical package import. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 6,
+      "sha256": "7988003f9422f76501cae631000ca8ddb636bb59d5772dcceb6de2c54d1474ca",
+      "bytes": 15705,
+      "lines": 371,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Exercises composite market and governance views (/bff/market/runtime/state, /bff/market/read-policy, /bff/governance/summary, /bff/lineage/summary) against bff_main assembly. sys.path mutation removed in favor of canonical package import. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 2,
+      "sha256": "b764555511c78735c84a11ace0656a9c3b4deb2c90242ad13e1f84e0c6519909",
+      "bytes": 19429,
+      "lines": 431,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Detail smoke tests spanning personas, strategies, and governance incidents against composite bff_main. sys.path mutation removed and clean canonical package imports configured. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 2,
+      "sha256": "b3d38a772f599ece434f14191bf47bfbd493ce7953b77611713ce7911e37eb99",
+      "bytes": 13688,
+      "lines": 297,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Detail smoke tests spanning command center, system nodes, and jobs against composite bff_main. sys.path mutation removed and clean canonical package imports configured. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 4,
+      "sha256": "64f1e7d7bbea06e571f0272ca3a749ddc9c9f1b04e5dae25b14083f728cc270a",
+      "bytes": 5131,
+      "lines": 155,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.research.alpha_factory.router.create_alpha_factory_router mounted on isolated FastAPI app with in-memory service double"
+    },
+    "services/control-plane/bff/tests/test_bff_b2_003_capabilities.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 23,
+      "sha256": "f7b5fba13c7e32301e61b512db88812af8e6f2fe8769264a0530bc3881ebb1eb",
+      "bytes": 14793,
+      "lines": 391,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.integrations.router.create_integrations_router and services.control_plane.bff.ranking_formulas.router.create_ranking_formulas_router mounted on isolated FastAPI app with _TestReadSurfacePorts and auth policies"
+    },
+    "services/control-plane/bff/tests/test_bff_b3_human_inbox.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 5,
+      "sha256": "b6df4520978f43a1bc390af5e5357ff06f3235ccc78f1b921179a8aa10205c0b",
+      "bytes": 19628,
+      "lines": 445,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.management.router.create_management_router mounted on isolated FastAPI app with _HumanInboxService(ManagementService), register_error_handlers, and auth extractors"
+    },
+    "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 5,
+      "sha256": "83785a906d7f103456854a85771f2df018b9022b6c330e126853e55e986c9952",
+      "bytes": 19362,
+      "lines": 445,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Validates /bff/trading-pulse/summary and /bff/trading-pulse/history composite projection against bff_main assembly. sys.path mutation removed in favor of canonical package import. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 7,
+      "sha256": "0da0201052bc2cb8bdc337e52c872714e865ac45b31d1d42fd6b0f6316aec5bb",
+      "bytes": 7776,
+      "lines": 199,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "bff_management_nl_ask is implemented strictly in services/control-plane/bff/main.py:16094 (core/app_factory.py has only a 503-stub placeholder). sys.path mutation removed in favor of canonical package import. Retained composition import pending upstream seam task BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001."
+    },
+    "services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 16,
+      "sha256": "fdf620d046b355995a7b0a9ed01f8490b1348a6640c73e634efe79dbaa3291fe",
+      "bytes": 15181,
+      "lines": 383,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Validates store-wired /bff/skills, /bff/tools, /bff/mcp-servers, /bff/mcp-tools contracts against bff_main.app and bff_main.read_store. sys.path mutation removed in favor of canonical package import. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/tests/test_bff_emergency_containment.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 30,
+      "sha256": "5d3add795c53f5155ebe88401ec8619e48d242d0deda02b040659f0c01b26957",
+      "bytes": 31632,
+      "lines": 816,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "production_wiring": "services.control_plane.bff.command_adapters.router.create_command_adapters_router mounted on isolated FastAPI app with CommandStore, register_error_handlers, auth extraction, and containment guard callbacks"
+    },
+    "services/control-plane/bff/tests/test_bff_path_dedupe.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 4,
+      "sha256": "9504f06ed2b855e0eec70e10805e2af1ab1420581f54cdaa9f735018bf06ef78",
+      "bytes": 5652,
+      "lines": 158,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Tests URL path normalization and deduplication across full bff_main.app route registry. sys.path mutation removed in favor of canonical package import. Retained composition pending final composite BFF app assembly cutover."
+    },
+    "services/control-plane/bff/tests/test_overlay_retirement.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 22,
+      "sha256": "b9b827517f358033b518727f825060700c2528946da362a7c6c65c1c301eb456",
+      "bytes": 23629,
+      "lines": 532,
+      "main_imports": 1,
+      "sys_path_mutations": 0,
+      "blocking_seam": "Inherently inspects and verifies process-local product state overlay retirement in services/control-plane/bff/main.py directly (verifying absence of _PERSONA_BFF_OVERLAY, _STRATEGY_BFF_OVERLAY, etc. in main.__dict__, multi-replica durability, and fail-closed behavior). Zero sys.path mutations; canonical package import."
+    }
+  },
+  "upstream_seam_requirements": [
+    {
+      "seam_task_id": "BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py"
+      ],
+      "scope": "Extract bff_management_nl_ask and high-risk refusal policy from main.py:16094 into modular management router."
+    },
+    {
+      "seam_task_id": "BFF-COMPOSITION-ASSEMBLY-CUTOVER-001",
+      "affected_tests": [
+        "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+        "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+        "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+        "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+        "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+        "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+        "services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py",
+        "services/control-plane/bff/tests/test_bff_path_dedupe.py"
+      ],
+      "scope": "Migrate composite app fixture packs and smoke tests to modular build_bff_app composition once full route and port assembly cutover is complete."
+    }
+  ]
+}
