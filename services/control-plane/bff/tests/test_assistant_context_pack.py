@@ -4,13 +4,88 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.assistant.context_composer import compose_context_pack
+from services.control_plane.bff.assistant.routes import create_assistant_router
+from services.control_plane.bff.assistant.source_collectors import (
+    AssistantSourceCollectorDeps,
+    collect_assistant_context_source,
+)
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity_stub,
+    require_read_role,
+)
+from services.control_plane.bff.models import utc_now
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-kernel:operator"}
+
+
+def _read_surface_state() -> str:
+    return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
+
+
+def _surface_status() -> Dict[str, Any]:
+    state = _read_surface_state()
+    if state == "fresh":
+        return {"status": "ok"}
+    if state in {"degraded", "stale"}:
+        return {
+            "status": "degraded",
+            "staleness": {"served_from": "cache", "last_known_at": utc_now()},
+        }
+    if state == "unavailable":
+        return {
+            "status": "unavailable",
+            "staleness": {"served_from": "cache", "last_known_at": utc_now()},
+        }
+    return {"status": "ok"}
+
+
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface = dict(_surface_status())
+    source = source or "typed_store"
+    surface["source"] = source
+    if source == "missing":
+        surface["status"] = "unavailable"
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+        )
+    if has_data is False:
+        if surface.get("status") == "ok":
+            surface["status"] = "unavailable"
+    return surface
+
+
+def _filter_tenant_records(records: List[Dict[str, Any]], tenant_id: Optional[str]) -> List[Dict[str, Any]]:
+    clean = str(tenant_id or "").strip()
+    if not clean:
+        return list(records)
+    kept = []
+    for record in records:
+        record_tenant = str(record.get("tenant_id") or "").strip()
+        if not record_tenant or record_tenant in {"*", clean}:
+            kept.append(record)
+    return kept
+
+
+class _FakePersonaService:
+    def build_persona_health_items(self, snapshot_at: str) -> List[Dict[str, Any]]:
+        return []
 
 
 def _seed_store(path: str = ""):
@@ -94,10 +169,56 @@ def _seed_store(path: str = ""):
 
 
 def _client_with_seeded_store(tmp_path, monkeypatch):
-    monkeypatch.setattr(bff_main, "_REPO_ROOT", REPO_ROOT, raising=False)
     store = _seed_store(str(tmp_path / "read_surfaces.json"))
-    monkeypatch.setattr(bff_main, "read_store", store)
-    return TestClient(bff_main.app, raise_server_exceptions=False), None
+    deps = AssistantSourceCollectorDeps(
+        read_store=store,
+        list_governance_audit_events=lambda **kw: store.list_governance_audit_events(**kw),
+        filter_tenant_records_fn=_filter_tenant_records,
+        dataset_surface_status=_dataset_surface_status,
+        generic_path_collector=lambda path: None,
+        persona_service=_FakePersonaService(),
+        build_operator_alerts_payload=lambda snap: {"items": [], "meta": {}},
+        repo_root=lambda: REPO_ROOT,
+    )
+
+    def _collect_source(source_id: str, request: Any, snapshot_at: str, identity: Any = None):
+        return collect_assistant_context_source(
+            source_id,
+            request,
+            snapshot_at,
+            identity,
+            deps=deps,
+        )
+
+    def _build_context_pack(session_id: str, request: Any, identity: Any) -> Any:
+        return compose_context_pack(
+            session_id=session_id,
+            request=request,
+            actor=identity,
+            collect_source=_collect_source,
+        )
+
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+        )
+
+    app.include_router(
+        create_assistant_router(
+            build_context_pack=_build_context_pack,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False), None
 
 
 
