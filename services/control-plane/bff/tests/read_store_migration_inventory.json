@@ -3490,7 +3490,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "DefaultResearchKnowledgeSourcePort.list_research_experiments (delegates to ResearchWriteOwner.list_research_experiments, Postgres research.research_experiments) -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "get_experiment_bff",
@@ -3507,7 +3508,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "DefaultResearchKnowledgeSourcePort.get_research_experiment (delegates to ResearchWriteOwner.get_research_experiment) -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "create_experiment_bff",
@@ -3524,7 +3526,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "DefaultResearchKnowledgeSourcePort.create_research_experiment (delegates to ResearchWriteOwner.create_research_experiment; in-memory _experiments dict DELETED) -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "_project_experiment_bff",
@@ -3540,7 +3543,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "ResearchWriteOwner._project_experiment_summary/_project_experiment_detail (services/research/write_owner.py); the port-local in-memory projector of the same name was DELETED -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "get_experiment_logs",
@@ -3557,7 +3561,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "ReadSurfacePorts.get_experiment_logs (real method, no hasattr/getattr probing; returns [] only when the experiment genuinely has no run logs yet) -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "get_experiment_metrics",
@@ -3574,7 +3579,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "ReadSurfacePorts.get_experiment_metrics (real method, no hasattr/getattr probing) -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "get_experiment_artifacts",
@@ -3591,7 +3597,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "ReadSurfacePorts.get_experiment_artifacts (real method; resolves experiment.artifact_ids via the existing RW-05 research_knowledge_source.get_research_artifact) -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "list_jobs_bff",
@@ -3607,7 +3614,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-005",
       "target_disposition": "MERGE",
-      "target_owner": "ServiceBackedReadAdapter delegate"
+      "target_owner": "ServiceBackedReadAdapter delegate",
+      "u10a_resolution": "ports/job_read.py::JobReadPort.list_jobs_bff -- typed read composition across the six qualified job sources by job-<source>-* prefix; NEVER calls list_research_tickets -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "get_job_bff",
@@ -3624,7 +3632,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-005",
       "target_disposition": "MERGE",
-      "target_owner": "ServiceBackedReadAdapter delegate"
+      "target_owner": "ServiceBackedReadAdapter delegate",
+      "u10a_resolution": "ports/job_read.py::JobReadPort.get_job_bff -- dispatches by job_id prefix to the owning domain source; raises JobSourceUnavailableError (mapped to 503) instead of falling back to get_research_ticket -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "get_job_logs_bff",
@@ -3638,7 +3647,8 @@
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
       "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_owner": "ReadSurfaceStore temporary migration seam",
+      "u10a_resolution": "ports/job_read.py::JobReadPort.get_job_logs_bff -- BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001"
     },
     {
       "method": "list_events_bff",

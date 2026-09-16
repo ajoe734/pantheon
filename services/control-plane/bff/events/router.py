@@ -187,6 +187,7 @@ async def _default_sse_stream(
     subscribers: list,
     last_event_id: Optional[str],
     channel: str,
+    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
 ) -> AsyncGenerator[str, None]:
     q: asyncio.Queue = asyncio.Queue()
     subscribers.append(q)
@@ -196,11 +197,13 @@ async def _default_sse_stream(
             try:
                 event = await asyncio.wait_for(q.get(), timeout=15.0)
                 if isinstance(event, dict):
+                    if event_filter is not None and not event_filter(event):
+                        continue
                     event_id = event.get("id", "")
                     event_type = event.get("type", "message")
                     data_str = json.dumps(event, ensure_ascii=False)
                     yield f"id: {event_id}\nevent: {event_type}\ndata: {data_str}\n\n"
-                else:
+                elif event_filter is None:
                     yield f"data: {str(event)}\n\n"
             except asyncio.TimeoutError:
                 yield ": heartbeat\n\n"
@@ -215,6 +218,7 @@ def _default_handle_sse_stream(
     subscribers: Any,
     last_event_id: Optional[str],
     extra_headers: Optional[Dict[str, str]] = None,
+    event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
 ) -> StreamingResponse:
     headers = {
         "Cache-Control": "no-cache",
@@ -229,7 +233,7 @@ def _default_handle_sse_stream(
     buf = buffer if isinstance(buffer, deque) else deque()
     subs = subscribers if isinstance(subscribers, list) else []
     return StreamingResponse(
-        _default_sse_stream(buf, subs, last_event_id, channel),
+        _default_sse_stream(buf, subs, last_event_id, channel, event_filter=event_filter),
         media_type="text/event-stream",
         headers=headers,
     )
@@ -292,6 +296,7 @@ def create_events_router(
         channel: str,
         last_event_id: Optional[str],
         authorization: Optional[str],
+        event_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
     ) -> StreamingResponse:
         if channel not in _active_sse_channels:
             raise _err(
@@ -306,13 +311,25 @@ def create_events_router(
         if resolve_session_kind is not None:
             extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
         if handle_sse_stream is not None:
-            return handle_sse_stream(
-                channel,
-                _buffers[channel],
-                _subscribers[channel],
-                last_event_id,
-                extra_headers=extra_headers or None,
-            )
+            try:
+                return handle_sse_stream(
+                    channel,
+                    _buffers[channel],
+                    _subscribers[channel],
+                    last_event_id,
+                    extra_headers=extra_headers or None,
+                    event_filter=event_filter,
+                )
+            except TypeError:
+                # Backward compatibility for an injected handle_sse_stream
+                # callable that predates the event_filter kwarg.
+                return handle_sse_stream(
+                    channel,
+                    _buffers[channel],
+                    _subscribers[channel],
+                    last_event_id,
+                    extra_headers=extra_headers or None,
+                )
         return _event_stream.stream_response(
             channel,
             last_event_id,
@@ -514,8 +531,34 @@ def create_events_router(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
     ) -> StreamingResponse:
-        """Subscription is channel-based; job filtering remains client-side."""
-        return _stream_channel("tool", last_event_id, authorization)
+        """Subscription is channel-based AND server-side filtered by jobId.
+
+        BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: previously this
+        stream only carried a channel-level subscription and relied entirely
+        on the client to discard events for other jobs. It now also filters
+        every replayed and live event on the ``tool`` channel so a client
+        subscribed to job A never receives job B's events, matching the
+        conventions of the ``incidentId``-aware sibling route.
+        """
+        clean_job_id = str(jobId or "").strip()
+
+        def _matches_job(event: Dict[str, Any]) -> bool:
+            candidate_ids = {
+                str(event.get("job_id") or "").strip(),
+                str(event.get("jobId") or "").strip(),
+            }
+            data = event.get("data")
+            if isinstance(data, dict):
+                candidate_ids.add(str(data.get("job_id") or "").strip())
+                candidate_ids.add(str(data.get("jobId") or "").strip())
+            payload = event.get("payload")
+            if isinstance(payload, dict):
+                candidate_ids.add(str(payload.get("job_id") or "").strip())
+                candidate_ids.add(str(payload.get("jobId") or "").strip())
+            candidate_ids.discard("")
+            return clean_job_id in candidate_ids
+
+        return _stream_channel("tool", last_event_id, authorization, event_filter=_matches_job)
 
     @router.get("/bff/sse/alerts")
     async def bff_sse_alerts_alias(

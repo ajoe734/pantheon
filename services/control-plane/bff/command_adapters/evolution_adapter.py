@@ -25,6 +25,14 @@ log = logging.getLogger(__name__)
 class EvolutionCommandAdapter(DomainCommandAdapter):
     """Adapter for Evolution proposals, mutations, experiments, and jobs."""
 
+    # BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: ExperimentAction and
+    # JobAction are deliberately NOT handled here anymore. They previously
+    # routed into `_execute_experiment_or_job`, which fabricated a fake
+    # status="executed" receipt with zero real domain effects. Experiment and
+    # Job actions now route exclusively to `ExperimentCommandAdapter` and
+    # `JobCommandAdapter` (registered ahead of this adapter in registry.py),
+    # which either perform a real owner mutation or fail closed with
+    # `ActionUnavailableError` — never a synthetic success.
     _HANDLED_COMMANDS = {
         "EvolutionProgramAction",
         "ApproveEvolutionDecision",
@@ -33,8 +41,6 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         "RejectMutation",
         "ReviewMutation",
         "ExecuteMutation",
-        "ExperimentAction",
-        "JobAction",
     }
 
     _HANDLED_ENTITIES = {
@@ -42,10 +48,6 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         "evolution-decision",
         "evolutionprogram",
         "evolution-program",
-        "experiment",
-        "researchexperiment",
-        "research-experiment",
-        "job",
     }
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
@@ -70,8 +72,6 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             return self._execute_proposal_execute(command_id, entity_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "EvolutionProgramAction":
             return self._execute_program_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ExperimentAction", "JobAction"}:
-            return self._execute_experiment_or_job(command_id, entity_id, command_type, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
                 f"Evolution action {action_id!r} on {entity_id!r} is not supported.",
@@ -192,28 +192,4 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             suggestion="No program lifecycle action is available yet; this obligation remains open pending U8B.",
             retryable=False,
             downstream_status=422,
-        )
-
-    def _execute_experiment_or_job(
-        self,
-        command_id: str,
-        entity_id: str,
-        command_type: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_type = "Experiment" if command_type == "ExperimentAction" else "Job"
-        target_id = entity_id or f"{target_type.lower()}-001"
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type=target_type,
-            entity_id=target_id,
-            action_id=action_id,
-            status="executed",
-            dispatch_path=f"research_{target_type.lower()}_authority",
-            domain_receipt={"id": target_id, "action": action_id, "success": True},
-            authoritative_readback={"id": target_id, "status": "completed"},
-            extra={"id": target_id},
         )
