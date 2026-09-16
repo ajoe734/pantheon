@@ -68,7 +68,7 @@ def test_performance_suggestion_producer_creates_durable_suggestion():
         # Verify projection service integrates suggestions
         svc = PerformanceProjectionService(
             suggestion_store=store,
-            get_trade_journey_store=lambda: None,
+            get_projection_reader=lambda: None,
             utc_now=_utc_now,
         )
         proj = svc.project(

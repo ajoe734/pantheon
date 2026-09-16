@@ -8,9 +8,11 @@ the sole entrypoint that used to be a local-overlay mutation method on
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Dict
 
 from services.rankings.store import (
+    RankingConflictError,
     RankingSnapshotRecord,
     RankingWriteStore,
     build_rankings_store,
@@ -34,7 +36,21 @@ class RankingSnapshotWriteOwnerPort:
             evidence_assertion_digests=record.get("evidence_assertion_digests") or {},
             created_at=str(record.get("created_at", "")),
         )
-        created = self._store.create_ranking_snapshot(snapshot)
+        try:
+            created = self._store.create_ranking_snapshot(snapshot)
+        except RankingConflictError:
+            # Ranking GETs recompute content-addressed snapshots with today's
+            # request time. An existing snapshot keeps its original creation
+            # time; every other field must still match. Reading the immutable
+            # winner also handles two simultaneous first requests without a
+            # local cache, overwrite, or weaker owner-store conflict policy.
+            existing = self._store.get_ranking_snapshot(snapshot.ranking_snapshot_id)
+            if existing is None:
+                raise
+            replay = replace(snapshot, created_at=existing.created_at)
+            if replay.to_canonical_dict() != existing.to_canonical_dict():
+                raise
+            created = existing
         return created.to_canonical_dict()
 
 

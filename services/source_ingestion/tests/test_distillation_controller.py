@@ -297,3 +297,108 @@ def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> 
     assert res["status"] == "success"
     assert res["actual"]["synced_count"] == 0
     assert res["actual"]["skipped_immutable_count"] == 1
+
+
+def test_distillation_registry_http_client_authorization_and_rotation(tmp_path, monkeypatch) -> None:
+    from services.source_ingestion.distillation_controller import (
+        _get_registry_entry,
+        _register_strategy_spec_if_absent,
+    )
+    from unittest.mock import MagicMock
+
+    token_file = tmp_path / "distillation_token"
+    token_file.write_text("token-v1\n", encoding="utf-8")
+    token_file.chmod(0o600)
+
+    monkeypatch.setenv("DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("DISTILLATION_REGISTRY_SERVICE_TOKEN", "stale-env-token")
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=5):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'{"entry": {"registry_id": "test-id"}}'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. GET request with token-v1
+    res1 = _get_registry_entry("http://registry:8087", "test-id")
+    assert res1 == {"entry": {"registry_id": "test-id"}}
+    req1 = captured_requests[-1]
+    assert req1.get_method() == "GET"
+    assert req1.get_header("Authorization") == "Bearer token-v1"
+    assert req1.full_url == "http://registry:8087/api/registry/strategy-specs/test-id"
+
+    # 2. POST request with token-v1
+    res2 = _register_strategy_spec_if_absent("http://registry:8087", {"registry_id": "test-id"})
+    assert res2 == {"entry": {"registry_id": "test-id"}}
+    req2 = captured_requests[-1]
+    assert req2.get_method() == "POST"
+    assert req2.get_header("Authorization") == "Bearer token-v1"
+    assert req2.get_header("Content-type") == "application/json"
+    assert req2.full_url == "http://registry:8087/api/registry/strategy-specs"
+
+    # 3. Rotate token in file: next call sees rotated token immediately
+    token_file.write_text("token-v2\n", encoding="utf-8")
+
+    _get_registry_entry("http://registry:8087", "test-id")
+    req3 = captured_requests[-1]
+    assert req3.get_header("Authorization") == "Bearer token-v2"
+
+    _register_strategy_spec_if_absent("http://registry:8087", {"registry_id": "test-id"})
+    req4 = captured_requests[-1]
+    assert req4.get_header("Authorization") == "Bearer token-v2"
+
+
+def test_distillation_registry_http_client_missing_blank_and_file_error(tmp_path, monkeypatch) -> None:
+    from services.source_ingestion.distillation_controller import (
+        _get_registry_entry,
+        _register_strategy_spec_if_absent,
+    )
+    from unittest.mock import MagicMock
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=5):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'{"entry": {"registry_id": "test-id"}}'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. Missing / unconfigured: preserves unauthenticated test/local behavior
+    monkeypatch.delenv("DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("DISTILLATION_REGISTRY_SERVICE_TOKEN", raising=False)
+
+    _get_registry_entry("http://registry:8087", "test-id")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    _register_strategy_spec_if_absent("http://registry:8087", {"registry_id": "test-id"})
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 2. Blank env token: no header
+    monkeypatch.setenv("DISTILLATION_REGISTRY_SERVICE_TOKEN", "   ")
+    _get_registry_entry("http://registry:8087", "test-id")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 3. File error: raises RuntimeError and does not log credentials
+    bad_token_file = tmp_path / "bad_token"
+    bad_token_file.write_text("secret-value", encoding="utf-8")
+    bad_token_file.chmod(0o644)  # Unsafe permission
+
+    monkeypatch.setenv("DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE", str(bad_token_file))
+
+    with pytest.raises(RuntimeError) as exc_info_get:
+        _get_registry_entry("http://registry:8087", "test-id")
+    assert "Configured service credential unavailable" in str(exc_info_get.value)
+    assert "secret-value" not in str(exc_info_get.value)
+
+    with pytest.raises(RuntimeError) as exc_info_post:
+        _register_strategy_spec_if_absent("http://registry:8087", {"registry_id": "test-id"})
+    assert "Configured service credential unavailable" in str(exc_info_post.value)
+    assert "secret-value" not in str(exc_info_post.value)

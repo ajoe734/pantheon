@@ -175,3 +175,50 @@ def test_old_full_owner_downgrade_is_blocked_but_exact_bff_restore_is_allowed(tm
                             env={**os.environ, "PANTHEON_DEPLOY_COMPONENT": component},
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == expected, result.stderr
+
+
+def test_distillation_and_alpha_replication_worker_rotation_and_revocation(tmp_path) -> None:
+    env = configured()
+    refresh_files(tmp_path, env, now=NOW)
+
+    distill_file = tmp_path / "strategy-distillation-worker" / "DISTILLATION_REGISTRY_SERVICE_TOKEN"
+    alpha_file = tmp_path / "alpha-replication-worker" / "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN"
+
+    assert distill_file.exists() and distill_file.stat().st_mode & 0o777 == 0o600
+    assert alpha_file.exists() and alpha_file.stat().st_mode & 0o777 == 0o600
+
+    token_distill_1 = configured_service_token("DISTILLATION_REGISTRY_SERVICE_TOKEN", {"DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE": str(distill_file)})
+    token_alpha_1 = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", {"ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE": str(alpha_file)})
+
+    claims_distill = verify(token_distill_1)
+    assert claims_distill["sub"] == "pantheon-dev-distillation-registry-writer"
+    assert claims_distill["roles"] == ["registry-writer"]
+    assert claims_distill["scope"] == "pantheon:dev-owner-write"
+    assert claims_distill["tenant_id"] == "tenant-dev"
+
+    claims_alpha = verify(token_alpha_1)
+    assert claims_alpha["sub"] == "pantheon-dev-alpha-replication-registry-reader"
+    assert claims_alpha["roles"] == ["registry-reader"]
+    assert claims_alpha["scope"] == "pantheon:dev-owner-read"
+    assert claims_alpha["tenant_id"] == "tenant-dev"
+
+    # Rotation: refresh writes new credentials with next timestamp
+    refresh_files(tmp_path, env, now=NOW + REFRESH_SECONDS)
+    token_distill_2 = configured_service_token("DISTILLATION_REGISTRY_SERVICE_TOKEN", {"DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE": str(distill_file)})
+    token_alpha_2 = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", {"ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE": str(alpha_file)})
+
+    assert token_distill_2 != token_distill_1
+    assert token_alpha_2 != token_alpha_1
+
+    # Revocation removes credential files and fails closed
+    revoked_env = {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"}
+    revoke_files(tmp_path, revoked_env)
+
+    assert not distill_file.exists()
+    assert not alpha_file.exists()
+
+    with pytest.raises(RuntimeError):
+        configured_service_token("DISTILLATION_REGISTRY_SERVICE_TOKEN", {"DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE": str(distill_file)})
+
+    with pytest.raises(RuntimeError):
+        configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", {"ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE": str(alpha_file)})

@@ -1,0 +1,2645 @@
+{
+  "consumer_migration": {
+    "acceptance_universe_preserved": {
+      "b14_full_run_files": 11,
+      "batch_completion_claimed": false,
+      "partition_files": 184
+    },
+    "admission_authority": "authorized Human/Ops governed artifact/dependency-contract operations with fresh complete-row CAS; supervisor dispatch only after complete readback",
+    "b15_successor": {
+      "historical_artifacts": [],
+      "historical_partition_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+      "historical_status": "done",
+      "historical_terminal_outcome": "superseded",
+      "live_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+      "parent": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+      "required_prerequisite": "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
+      "source": "governed show readback, 2026-09-10; historical partition retained for provenance only"
+    },
+    "canonical_graph_readback": {
+      "active_rows": 69,
+      "archive_terminal_leaves": {
+        "TJ-E2E-001": {
+          "sha256": "cfacf9b8127441564e2f899000b3d5ff70a5c779235485748d20dbc1d0cb5bda",
+          "status": "done"
+        },
+        "TJ-E2E-002": {
+          "sha256": "b7d20f86e98ea7f729f22632ba61583cf827dd264ea575bba7cbcf15dd059b7e",
+          "status": "done"
+        },
+        "TJ-E2E-003": {
+          "sha256": "6985a626e59aff504501f6cb284d85be2bf827e65c2e82c747f8cc9281475c90",
+          "status": "done"
+        },
+        "TJ-E2E-004": {
+          "sha256": "f230c4de1116f22ea2cf8d9498a1ca2bc86408a18a1f6eb4ef4e6bf27ed6de8a",
+          "status": "done"
+        },
+        "TJ-E2E-005": {
+          "sha256": "b17dbf8bb77c59641a60f71024aa6cfdda3538e2fda0ab5a899c37f30feea68c",
+          "status": "done"
+        },
+        "TJ-E2E-006": {
+          "sha256": "e0e82d9f0235363e68ae1ab1428c2ffe428b3aabf36e0a3c5e1ae25d91cd7326",
+          "status": "done"
+        },
+        "TJ-E2E-007": {
+          "sha256": "4e39d67d21b04c954667135285688c9001e1044aaffcd3b06c56719bc00d29d6",
+          "status": "done"
+        },
+        "TJ-E2E-008": {
+          "sha256": "e42501c1d9e72670aca14e5299e4a9f9204211a13e2c331f6c52db8877cf3f78",
+          "status": "done"
+        },
+        "TJ-E2E-009": {
+          "sha256": "c9046a0ebd67d1572071eb34b54e127e08da6ca4e9413ccca9c73368286906be",
+          "status": "done"
+        },
+        "TJ-E2E-010": {
+          "sha256": "56292b24bc139a30395cdeaedd68763f56858fc2d53b57cb0d8dbeb03f27a47d",
+          "status": "done"
+        },
+        "TJ-E2E-011": {
+          "sha256": "1ec7dc0eea843e78d7bf91d19a418e53b12490a920f704baca6068ed0d3c7f92",
+          "status": "done"
+        }
+      },
+      "consumer_rows": {
+        "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001": {
+          "artifacts": [
+            "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+            "services/control-plane/bff/test_bff_approvals_decide_contract.py",
+            "services/control-plane/bff/test_bff_promotion_review_governance.py",
+            "services/control-plane/bff/test_governance_command_submission.py",
+            "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+            "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+            "services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
+            "docs/deployment/evidence/BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001/evidence.json"
+          ],
+          "depends_on": [
+            "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+            "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001",
+            "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001"
+          ],
+          "status": "blocked"
+        },
+        "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001": {
+          "artifacts": [
+            "services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
+            "services/control-plane/bff/test_bff_strategy_persona_contract.py",
+            "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py",
+            "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+            "services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py",
+            "services/control-plane/bff/test_persona_league_detail_not_found.py",
+            "services/control-plane/bff/test_persona_live_integration.py",
+            "services/control-plane/bff/test_persona_provisioning_readback.py",
+            "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py",
+            "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+            "services/control-plane/bff/tests/test_bff_b3_persona_intent.py",
+            "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py",
+            "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+            "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+            "services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py",
+            "services/control-plane/bff/tests/test_persona_owner_transport_contract.py",
+            "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py",
+            "docs/deployment/evidence/BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001/evidence.json"
+          ],
+          "depends_on": [
+            "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+          ],
+          "status": "in_progress"
+        },
+        "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001": {
+          "artifacts": [
+            "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+            "services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+            "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+            "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py",
+            "services/control-plane/bff/test_loop_health_read_model_contract.py",
+            "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+            "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+            "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+            "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+            "services/control-plane/bff/test_v5_interventions.py",
+            "services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py",
+            "docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json"
+          ],
+          "depends_on": [
+            "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+          ],
+          "status": "blocked"
+        },
+        "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001": {
+          "artifacts": [
+            "services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
+            "services/control-plane/bff/test_ptj_004_trade_journal.py",
+            "services/control-plane/bff/test_srclive_overlay_contract.py",
+            "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+            "docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001/evidence.json"
+          ],
+          "depends_on": [
+            "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+            "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001"
+          ],
+          "status": "todo"
+        }
+      },
+      "current_graph": {
+        "AGORA-CHAIN-001": [],
+        "AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001": [],
+        "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001": [],
+        "BFF-COMPOSITION-001": [],
+        "BFF-CW-POLICY-OWNER-CORRECTIVE-002": [],
+        "BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001": [],
+        "BFF-DEADCODE-001": [],
+        "BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001": [],
+        "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-MANAGEMENT-SESSION-ROUTE-HARNESS-CORRECTIVE-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-PACKAGE-001": [],
+        "BFF-PACKAGE-BOUNDARY-CORRECTIVE-PREREQUISITE-001": [],
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001": [
+          "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+          "MGMT-READ-001",
+          "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+        ],
+        "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001": [],
+        "BFF-ROUTER-STRUCT-001": [],
+        "BFF-ROUTER-USECASE-CORRECTIVE-001": [
+          "BFF-ROUTER-STRUCT-001",
+          "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
+        ],
+        "BFF-TEST-ARCH-001": [],
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001": [
+          "BFF-TEST-ARCH-001",
+          "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+          "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+          "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+          "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+          "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+          "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+          "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+          "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+          "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+          "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+          "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+          "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+          "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+          "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+          "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+          "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
+          "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+          "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+          "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+          "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+        ],
+        "BFF-TEST-MIGRATION-B01-AGORA-CORE-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001",
+          "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001"
+        ],
+        "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+        ],
+        "BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+        ],
+        "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+        ],
+        "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+        ],
+        "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001",
+          "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001"
+        ],
+        "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+        ],
+        "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+        ],
+        "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001": [],
+        "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001": [],
+        "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001"
+        ],
+        "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+        ],
+        "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001": [
+          "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+          "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+        ],
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001": [],
+        "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001": [],
+        "CRON-GOVERNANCE-IMPORT-001": [],
+        "DEV-DELIVERY-001": [
+          "FE-STRICTLIVE-001",
+          "PLAN-ADMIT-001",
+          "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+        ],
+        "DEV-DEPLOY-PREFLIGHT-20260905": [],
+        "DEV-EMPTY-HOST-BOOTSTRAP-001": [],
+        "DEV-LOOP8-9-PROBE-20260905": [],
+        "DEV-PAPER-BASELINE-RETRY-20260905": [],
+        "DEV-PERSONA-AUTHORITY-20260905": [],
+        "DEV-PROBE-TENANT-PREFLIGHT-20260905": [],
+        "DEV-RELEASE-HOSTED-001": [
+          "DEV-DELIVERY-001",
+          "STRUCT-RETIRE-001",
+          "FE-EXACT-PAIR-PROTOCOL-001"
+        ],
+        "DEV502-ACCEPTANCE-HOLD-001": [
+          "DEV502-STOP-001"
+        ],
+        "DEV502-CAPTURE-001": [],
+        "DEV502-FAILPATH-001": [],
+        "DEV502-FAILPATH-AUDIT-ATOMICITY-CORRECTIVE-001": [
+          "DEV502-FAILPATH-001"
+        ],
+        "DEV502-FIX-001": [
+          "DEV502-TRACE-001",
+          "OVERLAY-RETIRE-001",
+          "BFF-ROUTER-USECASE-CORRECTIVE-001",
+          "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+          "SIMPLIFY-BFF-RESIDUAL-001"
+        ],
+        "DEV502-OBSERVE-001": [
+          "DEV502-FIX-001"
+        ],
+        "DEV502-STOP-001": [
+          "DEV502-OBSERVE-001"
+        ],
+        "DEV502-TRACE-001": [
+          "DEV502-FAILPATH-001"
+        ],
+        "DOC-FIRST-RELEASE-PLAN-DELIVERY-001": [],
+        "DOMAIN-WRITERS-001": [],
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001": [
+          "DOMAIN-WRITERS-001",
+          "BFF-ROUTER-USECASE-CORRECTIVE-001",
+          "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+          "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+        ],
+        "ENV-STAGING-PROD-PLAN-001": [],
+        "FE-DEP-CLOSURE-001": [],
+        "FE-EXACT-PAIR-PROTOCOL-001": [
+          "PLAN-ADMIT-001",
+          "FE-DEP-CLOSURE-001"
+        ],
+        "FE-QUERY-CACHE-001": [
+          "FE-STRICTLIVE-001",
+          "FE-EXACT-PAIR-PROTOCOL-001",
+          "FE-DEP-CLOSURE-001",
+          "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001"
+        ],
+        "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001": [
+          "FE-STRICTLIVE-001",
+          "FE-EXACT-PAIR-PROTOCOL-001"
+        ],
+        "FE-STRICTLIVE-001": [],
+        "FE-TOOLCHAIN-BASELINE-001": [
+          "FE-DEP-CLOSURE-001",
+          "FE-QUERY-CACHE-001"
+        ],
+        "FE-UI-DEPS-BASELINE-001": [
+          "FE-TOOLCHAIN-BASELINE-001"
+        ],
+        "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001": [],
+        "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001": [],
+        "INTEGRATION-UNBLOCK-BFF-AUTH-SESSION-SEAM-PREREQUISITE-001-CI-RED-CB9BCD7066A5": [],
+        "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9": [],
+        "INTEGRATION-UNBLOCK-GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001-CI-RED-3E4C0D14BE0E": [],
+        "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MER-45DD4DFF1AB9": [],
+        "INTEGRATION-UNBLOCK-OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001-CI-RED-3349EC1E1646": [],
+        "INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-MISSING-PR-396684243EB9": [],
+        "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001": [],
+        "JOURNAL-OWNER-001": [],
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001": [
+          "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+          "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+          "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+          "BFF-ROUTER-USECASE-CORRECTIVE-001"
+        ],
+        "L12-HOSTED-001": [
+          "DEV-RELEASE-HOSTED-001",
+          "LOOP-TRUTH-001"
+        ],
+        "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001": [
+          "LOOP-TRUTH-001",
+          "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+          "SIMPLIFY-EXTRACTION-001",
+          "OSS-RESEARCH-FOOTPRINT-001"
+        ],
+        "LOOP-TRUTH-001": [],
+        "MGMT-AGORA-E2E-001": [
+          "DEV-RELEASE-HOSTED-001",
+          "MGMT-READ-001",
+          "AGORA-CHAIN-001"
+        ],
+        "MGMT-GAP-001": [],
+        "MGMT-GAP-002": [
+          "MGMT-GAP-003"
+        ],
+        "MGMT-GAP-003": [],
+        "MGMT-READ-001": [],
+        "OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001": [],
+        "OPS-ARCHIVE-RESURRECTION-CONTRACT-001": [],
+        "OPS-AUTO-INTEGRATOR-CRON-BINDING-001": [],
+        "OPS-AUTO-INTEGRATOR-CRON-RECOVERY-001": [],
+        "OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001": [],
+        "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001": [],
+        "OPS-AUTO-WORKER-READINESS-SEMANTICS-DOC-001": [],
+        "OPS-CI-SMOKE-ACCEPTANCE-TIMEOUT-001": [],
+        "OPS-CI-WORKER-SANDBOX-PREREQUISITE-001": [],
+        "OPS-COMMIT-IDENTITY-001": [],
+        "OPS-DEPENDENCY-CONTRACT-001": [],
+        "OPS-DEPENDENCY-CONTRACT-INACTIVE-WORKSPACE-001": [],
+        "OPS-DEPENDENCY-RECOVERY-SETTLEMENT-001": [],
+        "OPS-DISPATCH-CLOSEOUT-CONSISTENCY-001": [],
+        "OPS-EXECUTION-MFA-ISSUER-001": [],
+        "OPS-EXECUTION-SCOPE-RESUME-001": [],
+        "OPS-FE-REVIEW-PROOF-001": [],
+        "OPS-FLEET-CAP-CONTRACT-001": [],
+        "OPS-FLEET-CAP-RECOVERY-EVIDENCE-001": [],
+        "OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902": [],
+        "OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001": [],
+        "OPS-INTEGRATION-FINALIZE-PREREQUISITE-001": [],
+        "OPS-LEGACY-REVIEW-RETIRE-001": [],
+        "OPS-MERGED-ARCHIVE-RECONCILIATION-PREREQUISITE-001": [],
+        "OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001": [],
+        "OPS-REVERT-SHARED-ACCOUNTS-20260906": [],
+        "OPS-REVIEW-ARTIFACT-SCOPE-GATE-001": [],
+        "OPS-REVIEW-AUDIT-EVENT-ORDER-PREREQUISITE-001": [],
+        "OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001": [],
+        "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001": [],
+        "OPS-REVIEW-PROOF-001": [],
+        "OPS-REVIEW-REQUEUE-SEEN-RECOVERY-001": [],
+        "OPS-SHARED-LLM-ACCOUNTS-20260906": [],
+        "OPS-STATUS-COMMAND-STORE-BINDING-FAILCLOSED-20260902": [],
+        "OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001": [
+          "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+          "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001"
+        ],
+        "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001": [],
+        "OPS-SUPERVISOR-PROMOTION-PORTABLE-001": [],
+        "OPS-SUPERVISOR-PROMOTION-PORTABLE-002": [],
+        "OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001": [],
+        "OPS-SUPERVISOR-TRANSIENT-FALLBACK-CAPACITY-CORRECTIVE-001": [
+          "OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001"
+        ],
+        "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001": [
+          "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001"
+        ],
+        "OPS-TJ-ARCHIVE-COLLISION-FENCE-ACTIVATION-001": [],
+        "OPS-TJ-ARCHIVE-COLLISION-RECONCILIATION-001": [],
+        "OPS-WORKER-FOREGROUND-VALIDATION-PREREQUISITE-001": [],
+        "OPS-WORKER-GIT-AUTH-DELIVERY-001": [],
+        "OPS-WORKER-IMPLEMENTATION-FALLBACK-POLICY-001": [],
+        "OPS-WORKER-MOUNTS-001": [],
+        "OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001": [],
+        "OSS-CORE-BASELINE-001": [
+          "OSS-COVERAGE-PLAN-001",
+          "SIMPLIFY-BFF-RESIDUAL-001",
+          "SIMPLIFY-OPENCLAW-001",
+          "SIMPLIFY-RETRIEVAL-MEMORY-001",
+          "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+        ],
+        "OSS-COVERAGE-PLAN-001": [],
+        "OSS-EXECUTION-BASELINE-001": [
+          "OSS-COVERAGE-PLAN-001",
+          "STRUCT-RETIRE-001"
+        ],
+        "OSS-INFRA-CHOICE-001": [],
+        "OSS-INFRA-PROFILES-001": [
+          "OSS-CORE-BASELINE-001",
+          "OSS-TOOLING-BASELINE-001",
+          "OSS-RESEARCH-BASELINE-001",
+          "OSS-EXECUTION-BASELINE-001",
+          "OSS-INFRA-CHOICE-001",
+          "DEV-DELIVERY-001",
+          "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+          "SIMPLIFY-RETRIEVAL-MEMORY-001",
+          "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+        ],
+        "OSS-OBJECT-STORE-CUTOVER-001": [
+          "OSS-INFRA-PROFILES-001",
+          "OSS-INFRA-CHOICE-001"
+        ],
+        "OSS-RESEARCH-BASELINE-001": [
+          "OSS-COVERAGE-PLAN-001",
+          "OSS-RESEARCH-FOOTPRINT-001"
+        ],
+        "OSS-RESEARCH-FOOTPRINT-001": [
+          "OSS-COVERAGE-PLAN-001",
+          "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+          "SIMPLIFY-EXTRACTION-001"
+        ],
+        "OSS-TOOLING-BASELINE-001": [],
+        "OVERLAY-RETIRE-001": [],
+        "PLAN-ADMIT-001": [],
+        "PPL-ALLOC-002": [],
+        "PPL-ALLOC-003": [],
+        "PPL-ALLOC-004": [],
+        "PPL-ALLOC-005": [],
+        "PPL-ALLOC-006": [],
+        "PPL-ALLOC-007": [
+          "PPL-ALLOC-003",
+          "PPL-ALLOC-006"
+        ],
+        "PPL-ALLOC-008": [],
+        "PPL-ALLOC-009": [
+          "PPL-ALLOC-002",
+          "PPL-ALLOC-003",
+          "PPL-ALLOC-004",
+          "PPL-ALLOC-005",
+          "PPL-ALLOC-006",
+          "PPL-ALLOC-007",
+          "PPL-ALLOC-008"
+        ],
+        "PSD-BFF-COMPOSITION-001": [],
+        "PSD-BFF-VERIFY-001": [],
+        "PSD-EGRESS-CONNECTORS-001": [],
+        "PSD-EGRESS-VERIFY-001": [],
+        "PSD-INTEGRATION-RECONCILE-001": [],
+        "PSD-RUNTIME-RECOVERY-001": [],
+        "PSD-RUNTIME-VERIFY-001": [],
+        "PSD-SQLITE-FAMILY-001": [],
+        "PSD-SQLITE-VERIFY-001": [],
+        "PSD-TELEMETRY-AUTH-001": [],
+        "PSD-TELEMETRY-VERIFY-001": [],
+        "PSD-TUNNEL-CONTROL-001": [],
+        "REGISTRY-STRATEGY-DURABILITY-PREREQUISITE-001": [],
+        "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001": [],
+        "S5-JOURNEYS-001": [
+          "S5-PAIR-001",
+          "S5-LOOPS-001"
+        ],
+        "S5-LOOPS-001": [
+          "S5-PAIR-001"
+        ],
+        "S5-PAIR-001": [
+          "DEV502-STOP-001",
+          "DEV-DELIVERY-001"
+        ],
+        "S5-PROVENANCE-001": [
+          "S5-LOOPS-001"
+        ],
+        "S5-REPORT-001": [
+          "S5-PAIR-001",
+          "S5-LOOPS-001",
+          "S5-PROVENANCE-001",
+          "S5-JOURNEYS-001",
+          "S5-ROLLBACK-001"
+        ],
+        "S5-ROLLBACK-001": [
+          "S5-PAIR-001",
+          "S5-JOURNEYS-001"
+        ],
+        "SIMPLIFY-BFF-RESIDUAL-001": [
+          "STRUCT-RETIRE-001"
+        ],
+        "SIMPLIFY-EXTRACTION-001": [
+          "SIMPLIFY-OPENCLAW-001",
+          "AGORA-CHAIN-001",
+          "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001"
+        ],
+        "SIMPLIFY-OPENCLAW-001": [],
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001": [],
+        "SIMPLIFY-RETRIEVAL-MEMORY-001": [],
+        "STRUCT-OWNERSHIP-001": [],
+        "STRUCT-RETIRE-001": [
+          "DOC-FIRST-RELEASE-PLAN-DELIVERY-001",
+          "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+          "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
+          "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+          "DEV-DELIVERY-001",
+          "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+          "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+          "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001"
+        ],
+        "SUP-BROKER-TASKSTORE-BINDING-001": [],
+        "SUP-DASHBOARD-TASKSTATE-BINDING-001": [],
+        "SYS-SIMPLIFY-AUDIT-20260906": [],
+        "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001": [
+          "OSS-OBJECT-STORE-CUTOVER-001",
+          "OSS-TOOLING-BASELINE-001",
+          "FE-UI-DEPS-BASELINE-001",
+          "SIMPLIFY-BFF-RESIDUAL-001",
+          "SIMPLIFY-EXTRACTION-001",
+          "SIMPLIFY-RETRIEVAL-MEMORY-001",
+          "SIMPLIFY-OPENCLAW-001",
+          "OPS-LEGACY-REVIEW-RETIRE-001",
+          "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+        ],
+        "TJ-E2E-001": [],
+        "TJ-E2E-002": [],
+        "TJ-E2E-003": [],
+        "TJ-E2E-004": [],
+        "TJ-E2E-005": [],
+        "TJ-E2E-006": [],
+        "TJ-E2E-007": [],
+        "TJ-E2E-008": [],
+        "TJ-E2E-009": [],
+        "TJ-E2E-010": [],
+        "TJ-E2E-011": [],
+        "TJ-E2E-012": [
+          "TJ-E2E-001",
+          "TJ-E2E-002",
+          "TJ-E2E-003",
+          "TJ-E2E-004",
+          "TJ-E2E-005",
+          "TJ-E2E-006",
+          "TJ-E2E-007",
+          "TJ-E2E-008",
+          "TJ-E2E-009",
+          "TJ-E2E-010",
+          "TJ-E2E-011"
+        ]
+      },
+      "current_graph_acyclic": true,
+      "event_count": 8639,
+      "last_event_sha256": "8a13f0ce3665fc3042e800ed0db68a07820958c04e1aba3865d71f491271ace5",
+      "proposed_graph_acyclic": true,
+      "proposed_nodes": 202,
+      "state_sha256": "784dd2d7c83d54d86cf70875f0466084858b715dcf5141175eb256d9c407ce1c",
+      "terminal_facts": 119,
+      "unresolved_admission_role": "ROLE:accepted-B03-source-seam"
+    },
+    "contract_changes_applied": false,
+    "focused_full_file_batches": [
+      [
+        "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "services/control-plane/bff/test_srclive_overlay_contract.py"
+      ],
+      [
+        "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "services/control-plane/bff/test_bff_promotion_review_governance.py"
+      ]
+    ],
+    "graph_limit": "Complete active canonical graph plus terminal fact/archive leaves audited observationally using supervisor command runtime. Proposed overlay preserves every current edge. B03 role unresolved: conditional DAG check only, not source admission; resolve actual row and recheck entire graph at dispatch.",
+    "no_reverse_dependency": [
+      "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001",
+      "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+      "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+      "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+      "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+      "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+      "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001"
+    ],
+    "obsolete_finmind_assertion_mapping": {
+      "absent_symbols": [
+        "_live_source_health_by_connector",
+        "_overlay_live_finmind_health"
+      ],
+      "all_green_state": "live_readback_ok",
+      "no_truth": "preserve original unavailable provider and state",
+      "provider_status": "retain read_ok for live FinMind",
+      "requirements": "record baseline failures and independently review assertion correspondence; no skip/xfail, lost coverage, legacy wrappers or product DTO changes",
+      "row_count": "source.row_count_last_run and source.rowCountLastRun == 8"
+    },
+    "partition_path": "docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json",
+    "partition_sha256": "7d5ab6fbfd5d7ff30bf3767dd4adcf23be0f8c192d07c92b6f8832cec9ebc230",
+    "proposed_dependency_graph": {
+      "AGORA-CHAIN-001": [],
+      "AGORA-PROVENANCE-CLOSURE-PREREQUISITE-001": [],
+      "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001": [],
+      "BFF-COMPOSITION-001": [],
+      "BFF-CW-POLICY-OWNER-CORRECTIVE-002": [],
+      "BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001": [],
+      "BFF-DEADCODE-001": [],
+      "BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001": [],
+      "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001",
+        "ROLE:accepted-B03-source-seam"
+      ],
+      "BFF-MANAGEMENT-SESSION-ROUTE-HARNESS-CORRECTIVE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-PACKAGE-001": [],
+      "BFF-PACKAGE-BOUNDARY-CORRECTIVE-PREREQUISITE-001": [],
+      "BFF-READ-OWNER-WIRING-CORRECTIVE-001": [
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "MGMT-READ-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001": [],
+      "BFF-ROUTER-STRUCT-001": [],
+      "BFF-ROUTER-USECASE-CORRECTIVE-001": [
+        "BFF-ROUTER-STRUCT-001",
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001"
+      ],
+      "BFF-TEST-ARCH-001": [],
+      "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001": [
+        "BFF-TEST-ARCH-001",
+        "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+        "BFF-AUTH-SESSION-SEAM-PREREQUISITE-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B01-AGORA-CORE-001",
+        "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001",
+        "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001",
+        "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+        "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+        "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001",
+        "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001",
+        "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001",
+        "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001",
+        "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+        "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001",
+        "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001",
+        "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001"
+      ],
+      "BFF-TEST-MIGRATION-B01-AGORA-CORE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B02-ASK-ASSISTANT-WORKSHOP-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B03-AUTH-SESSION-JWKS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001": [
+        "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001",
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B05-JOURNAL-CONTEXT-RESOLVER-SEAM-DECISION-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B06-AUDIT-ADMISSION-PROJECTION-SEAM-DECISION-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001",
+        "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001"
+      ],
+      "BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B11-MANAGEMENT-ASSISTANT-OPS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001": [],
+      "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001": [],
+      "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001": [
+        "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001",
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B15-WHOLE-APP-ALLOWLIST-CONTRACT-CORRECTIVE-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001"
+      ],
+      "BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001": [
+        "BFF-TEST-MIGRATION-REPARTITION-PLAN-001",
+        "BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001"
+      ],
+      "BFF-TEST-MIGRATION-REPARTITION-PLAN-001": [],
+      "BFF-TEST-MIGRATION-SHARED-FOUNDATION-CONTRACT-CORRECTIVE-001": [],
+      "CRON-GOVERNANCE-IMPORT-001": [],
+      "DEV-DELIVERY-001": [
+        "FE-STRICTLIVE-001",
+        "PLAN-ADMIT-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "DEV-DEPLOY-PREFLIGHT-20260905": [],
+      "DEV-EMPTY-HOST-BOOTSTRAP-001": [],
+      "DEV-LOOP8-9-PROBE-20260905": [],
+      "DEV-PAPER-BASELINE-RETRY-20260905": [],
+      "DEV-PERSONA-AUTHORITY-20260905": [],
+      "DEV-PROBE-TENANT-PREFLIGHT-20260905": [],
+      "DEV-RELEASE-HOSTED-001": [
+        "DEV-DELIVERY-001",
+        "STRUCT-RETIRE-001",
+        "FE-EXACT-PAIR-PROTOCOL-001"
+      ],
+      "DEV502-ACCEPTANCE-HOLD-001": [
+        "DEV502-STOP-001"
+      ],
+      "DEV502-CAPTURE-001": [],
+      "DEV502-FAILPATH-001": [],
+      "DEV502-FAILPATH-AUDIT-ATOMICITY-CORRECTIVE-001": [
+        "DEV502-FAILPATH-001"
+      ],
+      "DEV502-FIX-001": [
+        "DEV502-TRACE-001",
+        "OVERLAY-RETIRE-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001"
+      ],
+      "DEV502-OBSERVE-001": [
+        "DEV502-FIX-001"
+      ],
+      "DEV502-STOP-001": [
+        "DEV502-OBSERVE-001"
+      ],
+      "DEV502-TRACE-001": [
+        "DEV502-FAILPATH-001"
+      ],
+      "DOC-FIRST-RELEASE-PLAN-DELIVERY-001": [],
+      "DOMAIN-WRITERS-001": [],
+      "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001": [
+        "DOMAIN-WRITERS-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+        "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001"
+      ],
+      "ENV-STAGING-PROD-PLAN-001": [],
+      "FE-DEP-CLOSURE-001": [],
+      "FE-EXACT-PAIR-PROTOCOL-001": [
+        "PLAN-ADMIT-001",
+        "FE-DEP-CLOSURE-001"
+      ],
+      "FE-QUERY-CACHE-001": [
+        "FE-STRICTLIVE-001",
+        "FE-EXACT-PAIR-PROTOCOL-001",
+        "FE-DEP-CLOSURE-001",
+        "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001"
+      ],
+      "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001": [
+        "FE-STRICTLIVE-001",
+        "FE-EXACT-PAIR-PROTOCOL-001"
+      ],
+      "FE-STRICTLIVE-001": [],
+      "FE-TOOLCHAIN-BASELINE-001": [
+        "FE-DEP-CLOSURE-001",
+        "FE-QUERY-CACHE-001"
+      ],
+      "FE-UI-DEPS-BASELINE-001": [
+        "FE-TOOLCHAIN-BASELINE-001"
+      ],
+      "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001": [],
+      "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001": [],
+      "INTEGRATION-UNBLOCK-BFF-AUTH-SESSION-SEAM-PREREQUISITE-001-CI-RED-CB9BCD7066A5": [],
+      "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9": [],
+      "INTEGRATION-UNBLOCK-GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001-CI-RED-3E4C0D14BE0E": [],
+      "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MER-45DD4DFF1AB9": [],
+      "INTEGRATION-UNBLOCK-OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001-CI-RED-3349EC1E1646": [],
+      "INTEGRATION-UNBLOCK-OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001-MISSING-PR-396684243EB9": [],
+      "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001": [],
+      "JOURNAL-OWNER-001": [],
+      "JOURNAL-RUNTIME-CONTRACT-CORRECTIVE-001": [
+        "JOURNAL-CONSUMER-ISOLATION-CORRECTIVE-001",
+        "GOVERNANCE-JSON-ISOLATION-CORRECTIVE-001",
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "BFF-ROUTER-USECASE-CORRECTIVE-001"
+      ],
+      "L12-HOSTED-001": [
+        "DEV-RELEASE-HOSTED-001",
+        "LOOP-TRUTH-001"
+      ],
+      "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001": [
+        "LOOP-TRUTH-001",
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001",
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "LOOP-TRUTH-001": [],
+      "MGMT-AGORA-E2E-001": [
+        "DEV-RELEASE-HOSTED-001",
+        "MGMT-READ-001",
+        "AGORA-CHAIN-001"
+      ],
+      "MGMT-GAP-001": [],
+      "MGMT-GAP-002": [
+        "MGMT-GAP-003"
+      ],
+      "MGMT-GAP-003": [],
+      "MGMT-READ-001": [],
+      "OPS-AGY-PROVIDER-ERROR-OBSERVABILITY-001": [],
+      "OPS-ARCHIVE-RESURRECTION-CONTRACT-001": [],
+      "OPS-AUTO-INTEGRATOR-CRON-BINDING-001": [],
+      "OPS-AUTO-INTEGRATOR-CRON-RECOVERY-001": [],
+      "OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001": [],
+      "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001": [],
+      "OPS-AUTO-WORKER-READINESS-SEMANTICS-DOC-001": [],
+      "OPS-CI-SMOKE-ACCEPTANCE-TIMEOUT-001": [],
+      "OPS-CI-WORKER-SANDBOX-PREREQUISITE-001": [],
+      "OPS-COMMIT-IDENTITY-001": [],
+      "OPS-DEPENDENCY-CONTRACT-001": [],
+      "OPS-DEPENDENCY-CONTRACT-INACTIVE-WORKSPACE-001": [],
+      "OPS-DEPENDENCY-RECOVERY-SETTLEMENT-001": [],
+      "OPS-DISPATCH-CLOSEOUT-CONSISTENCY-001": [],
+      "OPS-EXECUTION-MFA-ISSUER-001": [],
+      "OPS-EXECUTION-SCOPE-RESUME-001": [],
+      "OPS-FE-REVIEW-PROOF-001": [],
+      "OPS-FLEET-CAP-CONTRACT-001": [],
+      "OPS-FLEET-CAP-RECOVERY-EVIDENCE-001": [],
+      "OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902": [],
+      "OPS-INTEGRATION-FINALIZE-MULTIREPO-GATE-REGRESSION-001": [],
+      "OPS-INTEGRATION-FINALIZE-PREREQUISITE-001": [],
+      "OPS-LEGACY-REVIEW-RETIRE-001": [],
+      "OPS-MERGED-ARCHIVE-RECONCILIATION-PREREQUISITE-001": [],
+      "OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001": [],
+      "OPS-REVERT-SHARED-ACCOUNTS-20260906": [],
+      "OPS-REVIEW-ARTIFACT-SCOPE-GATE-001": [],
+      "OPS-REVIEW-AUDIT-EVENT-ORDER-PREREQUISITE-001": [],
+      "OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001": [],
+      "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001": [],
+      "OPS-REVIEW-PROOF-001": [],
+      "OPS-REVIEW-REQUEUE-SEEN-RECOVERY-001": [],
+      "OPS-SHARED-LLM-ACCOUNTS-20260906": [],
+      "OPS-STATUS-COMMAND-STORE-BINDING-FAILCLOSED-20260902": [],
+      "OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001": [
+        "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001",
+        "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001"
+      ],
+      "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001": [],
+      "OPS-SUPERVISOR-PROMOTION-PORTABLE-001": [],
+      "OPS-SUPERVISOR-PROMOTION-PORTABLE-002": [],
+      "OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001": [],
+      "OPS-SUPERVISOR-TRANSIENT-FALLBACK-CAPACITY-CORRECTIVE-001": [
+        "OPS-SUPERVISOR-BLOCKER-TRANSITION-CORRECTIVE-001"
+      ],
+      "OPS-SUPERVISOR-WORKER-IDENTITY-CORRECTIVE-001": [
+        "OPS-SUPERVISOR-PROMOTION-DRAIN-FENCE-001"
+      ],
+      "OPS-TJ-ARCHIVE-COLLISION-FENCE-ACTIVATION-001": [],
+      "OPS-TJ-ARCHIVE-COLLISION-RECONCILIATION-001": [],
+      "OPS-WORKER-FOREGROUND-VALIDATION-PREREQUISITE-001": [],
+      "OPS-WORKER-GIT-AUTH-DELIVERY-001": [],
+      "OPS-WORKER-IMPLEMENTATION-FALLBACK-POLICY-001": [],
+      "OPS-WORKER-MOUNTS-001": [],
+      "OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001": [],
+      "OSS-CORE-BASELINE-001": [
+        "OSS-COVERAGE-PLAN-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-OPENCLAW-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+      ],
+      "OSS-COVERAGE-PLAN-001": [],
+      "OSS-EXECUTION-BASELINE-001": [
+        "OSS-COVERAGE-PLAN-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "OSS-INFRA-CHOICE-001": [],
+      "OSS-INFRA-PROFILES-001": [
+        "OSS-CORE-BASELINE-001",
+        "OSS-TOOLING-BASELINE-001",
+        "OSS-RESEARCH-BASELINE-001",
+        "OSS-EXECUTION-BASELINE-001",
+        "OSS-INFRA-CHOICE-001",
+        "DEV-DELIVERY-001",
+        "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+      ],
+      "OSS-OBJECT-STORE-CUTOVER-001": [
+        "OSS-INFRA-PROFILES-001",
+        "OSS-INFRA-CHOICE-001"
+      ],
+      "OSS-RESEARCH-BASELINE-001": [
+        "OSS-COVERAGE-PLAN-001",
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "OSS-RESEARCH-FOOTPRINT-001": [
+        "OSS-COVERAGE-PLAN-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001"
+      ],
+      "OSS-TOOLING-BASELINE-001": [],
+      "OVERLAY-RETIRE-001": [],
+      "PLAN-ADMIT-001": [],
+      "PPL-ALLOC-002": [],
+      "PPL-ALLOC-003": [],
+      "PPL-ALLOC-004": [],
+      "PPL-ALLOC-005": [],
+      "PPL-ALLOC-006": [],
+      "PPL-ALLOC-007": [
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-006"
+      ],
+      "PPL-ALLOC-008": [],
+      "PPL-ALLOC-009": [
+        "PPL-ALLOC-002",
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-004",
+        "PPL-ALLOC-005",
+        "PPL-ALLOC-006",
+        "PPL-ALLOC-007",
+        "PPL-ALLOC-008"
+      ],
+      "PSD-BFF-COMPOSITION-001": [],
+      "PSD-BFF-VERIFY-001": [],
+      "PSD-EGRESS-CONNECTORS-001": [],
+      "PSD-EGRESS-VERIFY-001": [],
+      "PSD-INTEGRATION-RECONCILE-001": [],
+      "PSD-RUNTIME-RECOVERY-001": [],
+      "PSD-RUNTIME-VERIFY-001": [],
+      "PSD-SQLITE-FAMILY-001": [],
+      "PSD-SQLITE-VERIFY-001": [],
+      "PSD-TELEMETRY-AUTH-001": [],
+      "PSD-TELEMETRY-VERIFY-001": [],
+      "PSD-TUNNEL-CONTROL-001": [],
+      "REGISTRY-STRATEGY-DURABILITY-PREREQUISITE-001": [],
+      "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001": [],
+      "ROLE:accepted-B03-source-seam": [],
+      "S5-JOURNEYS-001": [
+        "S5-PAIR-001",
+        "S5-LOOPS-001"
+      ],
+      "S5-LOOPS-001": [
+        "S5-PAIR-001"
+      ],
+      "S5-PAIR-001": [
+        "DEV502-STOP-001",
+        "DEV-DELIVERY-001"
+      ],
+      "S5-PROVENANCE-001": [
+        "S5-LOOPS-001"
+      ],
+      "S5-REPORT-001": [
+        "S5-PAIR-001",
+        "S5-LOOPS-001",
+        "S5-PROVENANCE-001",
+        "S5-JOURNEYS-001",
+        "S5-ROLLBACK-001"
+      ],
+      "S5-ROLLBACK-001": [
+        "S5-PAIR-001",
+        "S5-JOURNEYS-001"
+      ],
+      "SIMPLIFY-BFF-RESIDUAL-001": [
+        "STRUCT-RETIRE-001"
+      ],
+      "SIMPLIFY-EXTRACTION-001": [
+        "SIMPLIFY-OPENCLAW-001",
+        "AGORA-CHAIN-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001"
+      ],
+      "SIMPLIFY-OPENCLAW-001": [],
+      "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001": [],
+      "SIMPLIFY-RETRIEVAL-MEMORY-001": [],
+      "STRUCT-OWNERSHIP-001": [],
+      "STRUCT-RETIRE-001": [
+        "DOC-FIRST-RELEASE-PLAN-DELIVERY-001",
+        "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+        "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "DEV-DELIVERY-001",
+        "BFF-READ-OWNER-WIRING-CORRECTIVE-001",
+        "LOOP-RECEIPT-INTEGRATION-CORRECTIVE-001",
+        "FE-RUNTIME-TYPE-CLOSURE-CORRECTIVE-001"
+      ],
+      "SUP-BROKER-TASKSTORE-BINDING-001": [],
+      "SUP-DASHBOARD-TASKSTATE-BINDING-001": [],
+      "SYS-SIMPLIFY-AUDIT-20260906": [],
+      "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001": [
+        "OSS-OBJECT-STORE-CUTOVER-001",
+        "OSS-TOOLING-BASELINE-001",
+        "FE-UI-DEPS-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-EXTRACTION-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-OPENCLAW-001",
+        "OPS-LEGACY-REVIEW-RETIRE-001",
+        "SIMPLIFY-RETRIEVAL-ACCEPTANCE-CLOSURE-001"
+      ],
+      "TJ-E2E-001": [],
+      "TJ-E2E-002": [],
+      "TJ-E2E-003": [],
+      "TJ-E2E-004": [],
+      "TJ-E2E-005": [],
+      "TJ-E2E-006": [],
+      "TJ-E2E-007": [],
+      "TJ-E2E-008": [],
+      "TJ-E2E-009": [],
+      "TJ-E2E-010": [],
+      "TJ-E2E-011": [],
+      "TJ-E2E-012": [
+        "TJ-E2E-001",
+        "TJ-E2E-002",
+        "TJ-E2E-003",
+        "TJ-E2E-004",
+        "TJ-E2E-005",
+        "TJ-E2E-006",
+        "TJ-E2E-007",
+        "TJ-E2E-008",
+        "TJ-E2E-009",
+        "TJ-E2E-010",
+        "TJ-E2E-011"
+      ]
+    },
+    "read_only_composition_consumer": "services/control-plane/bff/tests/test_bff_main_composition.py; export allowlist strings are not patches/imports; must pass unchanged",
+    "sequence": [
+      "finish existing overlapping writers or obtain governed handback",
+      "remove five paths from overlapping grants, then add exact paths to seam; no partial admission",
+      "Preserve all canonical prerequisites, including B15 remainder whole-app prerequisite; add seam edge to live B05/B07/B14/B15 remainder and B05 journal corrective; validate complete graph.",
+      "single exact-head PR contains projection extraction and five bounded consumer edits; full-file and focused suites pass",
+      "After exact seam merge, canonical done and released leases, preserve terminal seam artifacts; restore only eligible todo/blocked live destinations using fresh CAS/conflict checks; read back and rebase consumers."
+    ],
+    "strategy": "atomic source and bounded consumer edits after explicit temporary artifact transfers",
+    "terminal_contract_policy": {
+      "mutable_states": [
+        "todo",
+        "blocked"
+      ],
+      "restore_preconditions": [
+        "exact reviewed merge",
+        "canonical done readback",
+        "released seam leases",
+        "live destination in todo/blocked without terminal fact",
+        "fresh complete-row CAS and conflict checks"
+      ],
+      "seam_after_done": "immutable; no artifact removals",
+      "superseded_b15_target_for_operations": false
+    },
+    "transfers": [
+      {
+        "change": "canonical delta import and real instance health builder with explicit empty read fixture",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "transfer_from_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001"
+      },
+      {
+        "change": "replace main loader patch and overlay call with registry/snapshot-backed instance in source-to-health drill",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "transfer_from_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001"
+      },
+      {
+        "change": "replace all five main loader patches and overlay calls with registry/snapshot-backed instance",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001",
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "transfer_from_task": "BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-REMAINDER-001"
+      },
+      {
+        "change": "replace source-truth patches and calls; map two absent FinMind helper tests to current DTO with reviewed assertion correspondence",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "transfer_from_task": "BFF-TEST-MIGRATION-B07-PERSONA-PROVISIONING-001"
+      },
+      {
+        "change": "replace forbidden main loader patch with two observable read-port counters, zero-call assertions, and positive fixture control",
+        "merge_timing": "same exact-head source-seam PR as symbol removal",
+        "partition_task": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "path": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "restore_to_task": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001",
+        "temporary_owner_task": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+        "transfer_from_task": "BFF-TEST-MIGRATION-B05-GOVERNANCE-APPROVALS-001"
+      }
+    ]
+  },
+  "decision": {
+    "cache_owner": "one cache per explicit PersonaService instance; same instance shared by app persona and runtime consumers",
+    "canonical_module": "services/control-plane/bff/personas/service.py",
+    "delta_owner": "personas.service._trading_performance_delta",
+    "dependency_direction": [
+      "main -> personas.service -> supplied read ports",
+      "main -> runtime.router via the same PersonaService bound method"
+    ],
+    "health_builder_owner": "PersonaService.build_persona_health_items (future method)",
+    "instance_owner": "PersonaService",
+    "overlay_owner": "PersonaService.overlay_source_health_truth (future method)",
+    "rejected": [
+      "runtime-only extraction",
+      "third wrapper or projection module",
+      "duplicate cache mechanism",
+      "reverse import of main",
+      "fake projection callback as migration proof"
+    ]
+  },
+  "decision_document_sha256": "f545c494aa4cd70648caf4c1e78e4a387d6d558db097894128f3091e3852056b",
+  "decision_status": "proposed_for_independent_exact_head_review",
+  "future_packet": {
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/personas/test_health_projection.py",
+      "services/control-plane/bff/personas/test_health_projection_wiring.py",
+      "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001/evidence.json",
+      "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+      "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+      "services/control-plane/bff/test_srclive_overlay_contract.py",
+      "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+      "services/control-plane/bff/test_bff_promotion_review_governance.py"
+    ],
+    "consumer_task": "BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001",
+    "id": "BFF-LOOPS-PAPER-V5-PROJECTION-SEAM-CORRECTIVE-001",
+    "materialized": false,
+    "merge_target": "dev",
+    "owner": "Codex",
+    "prerequisites": [
+      "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001",
+      "accepted B03 CORS/JWKS/MFA source-seam task; resolve canonical ID at admission"
+    ],
+    "reviewer": "Antigravity",
+    "specification": "docs/operations/bff-test-migration-b14-loops-paper-v5-projection-ownership.md",
+    "target_repo": "pantheon"
+  },
+  "limits": [
+    "Static AST audit and documentary validation only; no product pytest or hosted tests executed.",
+    "Future packet is proposed, not an admitted source grant.",
+    "Five projection consumers must migrate atomically in the future seam under explicit temporary grants; remaining batch work follows only after grants are restored.",
+    "Independent review, required checks, merge and canonical done are pending; their authority is the frozen canonical binding and GitHub readback, not this pre-review record."
+  ],
+  "no_legacy_main_gate": {
+    "baseline_is_product_pass": false,
+    "baseline_violations": {
+      "services/control-plane/bff/main.py": [
+        [
+          9595,
+          "_overlay_source_health_truth"
+        ],
+        [
+          19957,
+          "_trading_performance_delta"
+        ],
+        [
+          19961,
+          "_SOURCE_HEALTH_OVERLAY_CACHE"
+        ],
+        [
+          19962,
+          "_SOURCE_HEALTH_OVERLAY_TTL"
+        ],
+        [
+          19963,
+          "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+        ],
+        [
+          19983,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          19985,
+          "_SOURCE_HEALTH_OVERLAY_CACHE"
+        ],
+        [
+          19986,
+          "_SOURCE_HEALTH_OVERLAY_CACHE"
+        ],
+        [
+          19986,
+          "_SOURCE_HEALTH_OVERLAY_TTL"
+        ],
+        [
+          20018,
+          "_SOURCE_HEALTH_OVERLAY_CACHE"
+        ],
+        [
+          20019,
+          "_SOURCE_HEALTH_OVERLAY_CACHE"
+        ],
+        [
+          20020,
+          "_SOURCE_HEALTH_OVERLAY_CACHE"
+        ],
+        [
+          20026,
+          "_connector_candidates_for_provider"
+        ],
+        [
+          20033,
+          "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+        ],
+        [
+          20035,
+          "_source_failure_reason"
+        ],
+        [
+          20049,
+          "_provider_status_from_truth"
+        ],
+        [
+          20058,
+          "_source_truth_projection"
+        ],
+        [
+          20065,
+          "_provider_status_from_truth"
+        ],
+        [
+          20078,
+          "_source_failure_reason"
+        ],
+        [
+          20123,
+          "_select_source_truth"
+        ],
+        [
+          20132,
+          "_source_health_bindings_from_requirements"
+        ],
+        [
+          20145,
+          "_select_source_truth"
+        ],
+        [
+          20162,
+          "_source_truth_projection"
+        ],
+        [
+          20168,
+          "_data_source_ok_tone"
+        ],
+        [
+          20171,
+          "_upgrade_all_green_data_source_state"
+        ],
+        [
+          20175,
+          "_data_source_ok_tone"
+        ],
+        [
+          20177,
+          "_data_source_ok_tone"
+        ],
+        [
+          20186,
+          "_overlay_source_health_truth"
+        ],
+        [
+          20194,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          20207,
+          "_select_source_truth"
+        ],
+        [
+          20208,
+          "_connector_candidates_for_provider"
+        ],
+        [
+          20212,
+          "_source_truth_projection"
+        ],
+        [
+          20250,
+          "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+        ],
+        [
+          20253,
+          "_source_health_bindings_from_requirements"
+        ],
+        [
+          20266,
+          "_upgrade_all_green_data_source_state"
+        ],
+        [
+          20468,
+          "_build_persona_health_items"
+        ],
+        [
+          20637,
+          "_overlay_source_health_truth"
+        ],
+        [
+          20769,
+          "_trading_performance_delta"
+        ],
+        [
+          20770,
+          "_trading_performance_delta"
+        ],
+        [
+          21169,
+          "_build_persona_health_items"
+        ],
+        [
+          22069,
+          "_build_persona_health_items"
+        ]
+      ],
+      "services/control-plane/bff/test_bff_promotion_review_governance.py": [
+        [
+          924,
+          "_source_ingest_truth_by_connector"
+        ]
+      ],
+      "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py": [
+        [
+          190,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          209,
+          "_overlay_source_health_truth"
+        ]
+      ],
+      "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py": [
+        [
+          3,
+          "_build_persona_health_items"
+        ],
+        [
+          3,
+          "_trading_performance_delta"
+        ],
+        [
+          7,
+          "_trading_performance_delta"
+        ],
+        [
+          11,
+          "_build_persona_health_items"
+        ]
+      ],
+      "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py": [
+        [
+          1105,
+          "_live_source_health_by_connector"
+        ],
+        [
+          1108,
+          "_overlay_live_finmind_health"
+        ],
+        [
+          1118,
+          "_live_source_health_by_connector"
+        ],
+        [
+          1119,
+          "_overlay_live_finmind_health"
+        ],
+        [
+          1151,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          1201,
+          "_overlay_source_health_truth"
+        ],
+        [
+          1250,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          1283,
+          "_overlay_source_health_truth"
+        ],
+        [
+          1322,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          1343,
+          "_overlay_source_health_truth"
+        ],
+        [
+          1372,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          1407,
+          "_overlay_source_health_truth"
+        ],
+        [
+          1423,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          1445,
+          "_overlay_source_health_truth"
+        ]
+      ],
+      "services/control-plane/bff/test_srclive_overlay_contract.py": [
+        [
+          60,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          68,
+          "_overlay_source_health_truth"
+        ],
+        [
+          99,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          106,
+          "_overlay_source_health_truth"
+        ],
+        [
+          136,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          138,
+          "_overlay_source_health_truth"
+        ],
+        [
+          180,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          191,
+          "_overlay_source_health_truth"
+        ],
+        [
+          210,
+          "_source_ingest_truth_by_connector"
+        ],
+        [
+          214,
+          "_overlay_source_health_truth"
+        ]
+      ]
+    },
+    "controls": "17 retired names x 6 forbidden forms x 2 contexts, plus canonical positive cases",
+    "future_required_test": "test_no_legacy_main_projection_surface",
+    "main_old_name_aliases_allowed": false,
+    "reproduction": "B14_NO_LEGACY block; copy into future personas/test_health_projection_wiring.py"
+  },
+  "owner": "Codex",
+  "recorded_at": "2026-09-10T08:57:57.536014+00:00",
+  "reviewer": "Antigravity",
+  "revision_reason": "Second P1 reopen: live B15 successor and full canonical prerequisites; immutable terminal artifact contracts; executable no-legacy-main gate and no compatibility aliases.",
+  "schema_version": "pantheon.bff.projection-ownership-decision.v1",
+  "scope": {
+    "b14_migration_delivered": false,
+    "changed_files": [
+      "docs/operations/bff-test-migration-b14-loops-paper-v5-projection-ownership.md",
+      "docs/deployment/evidence/BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001/evidence.json"
+    ],
+    "deployed": false,
+    "production_changed": false
+  },
+  "source_audit": {
+    "builder_free_names": [
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "Any"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "Dict"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "List"
+      },
+      {
+        "main_line": 19877,
+        "persona_line": 13676,
+        "port_normalized_equal": true,
+        "symbol": "_as_float"
+      },
+      {
+        "main_line": 19884,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "_first_binding_for_persona"
+      },
+      {
+        "main_line": 6167,
+        "persona_line": 10517,
+        "port_normalized_equal": true,
+        "symbol": "_management_avg"
+      },
+      {
+        "main_line": 9797,
+        "persona_line": 11078,
+        "port_normalized_equal": true,
+        "symbol": "_management_first_float"
+      },
+      {
+        "main_line": 19945,
+        "persona_line": 13698,
+        "port_normalized_equal": true,
+        "symbol": "_management_fleet_autonomy"
+      },
+      {
+        "main_line": 19934,
+        "persona_line": 13684,
+        "port_normalized_equal": true,
+        "symbol": "_management_fleet_ooda_label"
+      },
+      {
+        "main_line": 9812,
+        "persona_line": 11088,
+        "port_normalized_equal": true,
+        "symbol": "_management_telemetry_rollup"
+      },
+      {
+        "main_line": 20186,
+        "persona_line": 13973,
+        "port_normalized_equal": true,
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "main_line": 20863,
+        "persona_line": 7015,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_active_incidents_for_row"
+      },
+      {
+        "main_line": 20902,
+        "persona_line": 7175,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_capital_mode"
+      },
+      {
+        "main_line": 20322,
+        "persona_line": 6800,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_context_defaults_by_market"
+      },
+      {
+        "main_line": 20349,
+        "persona_line": 6830,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_context_overlay"
+      },
+      {
+        "main_line": 20923,
+        "persona_line": 7199,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_live_capital_pool_id"
+      },
+      {
+        "main_line": 20384,
+        "persona_line": 6877,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_mutation_projection"
+      },
+      {
+        "main_line": 21007,
+        "persona_line": 7292,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_paper_ledger"
+      },
+      {
+        "main_line": 20951,
+        "persona_line": 7230,
+        "port_normalized_equal": true,
+        "symbol": "_persona_fleet_paper_ledger_id"
+      },
+      {
+        "main_line": 19918,
+        "persona_line": 6731,
+        "port_normalized_equal": true,
+        "symbol": "_persona_health_status"
+      },
+      {
+        "main_line": 19882,
+        "persona_line": 6726,
+        "port_normalized_equal": true,
+        "symbol": "_persona_id"
+      },
+      {
+        "main_line": 9626,
+        "persona_line": 2141,
+        "port_normalized_equal": true,
+        "symbol": "_routed_strategies_for_persona"
+      },
+      {
+        "main_line": 19905,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "_runtime_for_pool"
+      },
+      {
+        "main_line": 19957,
+        "persona_line": 13713,
+        "port_normalized_equal": true,
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "json"
+      },
+      {
+        "main_line": null,
+        "persona_line": null,
+        "port_normalized_equal": null,
+        "symbol": "read_store"
+      }
+    ],
+    "duplicate_constants": [
+      {
+        "equal": true,
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE",
+        "value": {
+          "at": 0.0,
+          "by_connector": null
+        }
+      },
+      {
+        "equal": true,
+        "symbol": "_SOURCE_HEALTH_OVERLAY_TTL",
+        "value": 60.0
+      },
+      {
+        "equal": true,
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES",
+        "value": {
+          "alphavantage": [
+            "us-alpha-vantage-daily-ohlcv"
+          ],
+          "coingecko": [
+            "crypto-coingecko-spot"
+          ],
+          "finmind": [
+            "tw-finmind-datasets",
+            "tw-finmind-broker-daily-report",
+            "tw-finmind-broker-bulk-parquet"
+          ],
+          "finra": [
+            "us-finra-short-sale"
+          ],
+          "fred": [
+            "us-fred-macro"
+          ],
+          "mops": [
+            "tw-mops-official-disclosures"
+          ],
+          "polygon": [
+            "us-polygon-daily-ohlcv"
+          ],
+          "sec_edgar": [
+            "us-sec-edgar-filings"
+          ],
+          "stooq": [
+            "us-stooq-daily-ohlcv"
+          ],
+          "tpex": [
+            "tw-twse-tpex-official-market"
+          ],
+          "twse": [
+            "tw-twse-tpex-official-market"
+          ]
+        }
+      }
+    ],
+    "duplicate_functions": [
+      {
+        "body_sha256": [
+          "ad9abf714bb266d9648c6a313a3c8f4beb09b984caa28f4db38c4ccd7101087d",
+          "ad9abf714bb266d9648c6a313a3c8f4beb09b984caa28f4db38c4ccd7101087d"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          19957,
+          19960
+        ],
+        "persona_lines": [
+          13713,
+          13716
+        ],
+        "port_normalized_body_sha256": "ad9abf714bb266d9648c6a313a3c8f4beb09b984caa28f4db38c4ccd7101087d",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "body_sha256": [
+          "b268b4927a5f1bd7bb7ed0950efbcebabc7579792033cdd17969b6d9d06517fd",
+          "e9442adb0c4ceaa946e9dd84a9eeb4599e155fe5a63133270d3788b1ff6f3327"
+        ],
+        "exact_body_equal": false,
+        "main_lines": [
+          19983,
+          20025
+        ],
+        "persona_lines": [
+          13744,
+          13786
+        ],
+        "port_normalized_body_sha256": "b268b4927a5f1bd7bb7ed0950efbcebabc7579792033cdd17969b6d9d06517fd",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "body_sha256": [
+          "7c8c170430de4db172bdb0daff32e90b588901f4cc2f435824360fb6c1621da8",
+          "7c8c170430de4db172bdb0daff32e90b588901f4cc2f435824360fb6c1621da8"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20026,
+          20034
+        ],
+        "persona_lines": [
+          13797,
+          13805
+        ],
+        "port_normalized_body_sha256": "7c8c170430de4db172bdb0daff32e90b588901f4cc2f435824360fb6c1621da8",
+        "symbol": "_connector_candidates_for_provider"
+      },
+      {
+        "body_sha256": [
+          "05f4562ddf8bf4d9a67d969a4aa5987b5e6273c51669934e99fb346bf6a7ec33",
+          "05f4562ddf8bf4d9a67d969a4aa5987b5e6273c51669934e99fb346bf6a7ec33"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20035,
+          20048
+        ],
+        "persona_lines": [
+          13808,
+          13821
+        ],
+        "port_normalized_body_sha256": "05f4562ddf8bf4d9a67d969a4aa5987b5e6273c51669934e99fb346bf6a7ec33",
+        "symbol": "_source_failure_reason"
+      },
+      {
+        "body_sha256": [
+          "c1efa030385f420f6d534308b9dba8143fd1fced7fd1adef3bb84a8e13181111",
+          "c1efa030385f420f6d534308b9dba8143fd1fced7fd1adef3bb84a8e13181111"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20049,
+          20057
+        ],
+        "persona_lines": [
+          13824,
+          13832
+        ],
+        "port_normalized_body_sha256": "c1efa030385f420f6d534308b9dba8143fd1fced7fd1adef3bb84a8e13181111",
+        "symbol": "_provider_status_from_truth"
+      },
+      {
+        "body_sha256": [
+          "a4c1733bc57db34cbdbcc1d4f767949eb30a558590b94d299baae66aebb9db9e",
+          "a4c1733bc57db34cbdbcc1d4f767949eb30a558590b94d299baae66aebb9db9e"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20058,
+          20122
+        ],
+        "persona_lines": [
+          13835,
+          13899
+        ],
+        "port_normalized_body_sha256": "a4c1733bc57db34cbdbcc1d4f767949eb30a558590b94d299baae66aebb9db9e",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "body_sha256": [
+          "48998bd3854ebfa7e460996da3826fc1d2ef8b6347280de98d844b3273464fd7",
+          "48998bd3854ebfa7e460996da3826fc1d2ef8b6347280de98d844b3273464fd7"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20123,
+          20131
+        ],
+        "persona_lines": [
+          13902,
+          13910
+        ],
+        "port_normalized_body_sha256": "48998bd3854ebfa7e460996da3826fc1d2ef8b6347280de98d844b3273464fd7",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "body_sha256": [
+          "efaca5391fbc8ec4e210dab09c3ad1ac784c34336c9444608c5db239dc801200",
+          "efaca5391fbc8ec4e210dab09c3ad1ac784c34336c9444608c5db239dc801200"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20132,
+          20167
+        ],
+        "persona_lines": [
+          13913,
+          13948
+        ],
+        "port_normalized_body_sha256": "efaca5391fbc8ec4e210dab09c3ad1ac784c34336c9444608c5db239dc801200",
+        "symbol": "_source_health_bindings_from_requirements"
+      },
+      {
+        "body_sha256": [
+          "f18862ab3ed1b22535bca5f87226fd8256b1d63b379bf8d55f0f95668857e4c8",
+          "f18862ab3ed1b22535bca5f87226fd8256b1d63b379bf8d55f0f95668857e4c8"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20168,
+          20170
+        ],
+        "persona_lines": [
+          13951,
+          13953
+        ],
+        "port_normalized_body_sha256": "f18862ab3ed1b22535bca5f87226fd8256b1d63b379bf8d55f0f95668857e4c8",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "body_sha256": [
+          "56a95cfa09d812ac8bb8f39257c1cbefada1185975cfde88564af46ec4a0dfac",
+          "56a95cfa09d812ac8bb8f39257c1cbefada1185975cfde88564af46ec4a0dfac"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20171,
+          20185
+        ],
+        "persona_lines": [
+          13956,
+          13970
+        ],
+        "port_normalized_body_sha256": "56a95cfa09d812ac8bb8f39257c1cbefada1185975cfde88564af46ec4a0dfac",
+        "symbol": "_upgrade_all_green_data_source_state"
+      },
+      {
+        "body_sha256": [
+          "c0f151fd026fa4d51e898f0bff65ed82f937af51a9959acf55ddb5f83dd7ff74",
+          "c0f151fd026fa4d51e898f0bff65ed82f937af51a9959acf55ddb5f83dd7ff74"
+        ],
+        "exact_body_equal": true,
+        "main_lines": [
+          20186,
+          20267
+        ],
+        "persona_lines": [
+          13973,
+          14054
+        ],
+        "port_normalized_body_sha256": "c0f151fd026fa4d51e898f0bff65ed82f937af51a9959acf55ddb5f83dd7ff74",
+        "symbol": "_overlay_source_health_truth"
+      }
+    ],
+    "normalization": "ast.dump(Module(function.body), include_attributes=False); separate explicit normalization replaces only zero-argument _get_active_read_store() with read_store",
+    "references": [
+      {
+        "kind": "name_load",
+        "line": 9595,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_project_persona_dto",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 19985,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 19986,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 19986,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_TTL"
+      },
+      {
+        "kind": "name_load",
+        "line": 20018,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 20019,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 20020,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 20033,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_connector_candidates_for_provider",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 20065,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_provider_status_from_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20078,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_source_failure_reason"
+      },
+      {
+        "kind": "name_load",
+        "line": 20145,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20162,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 20175,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 20177,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 20194,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "name_load",
+        "line": 20207,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20208,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_connector_candidates_for_provider"
+      },
+      {
+        "kind": "name_load",
+        "line": 20212,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 20250,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 20253,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_health_bindings_from_requirements"
+      },
+      {
+        "kind": "name_load",
+        "line": 20266,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_upgrade_all_green_data_source_state"
+      },
+      {
+        "kind": "name_load",
+        "line": 20637,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_build_persona_health_items",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 20769,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_build_persona_health_items",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 20770,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_build_persona_health_items",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 21169,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "_sem_final_generic_list_for_path",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 22069,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "<module>",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "name_load",
+        "line": 22069,
+        "path": "services/control-plane/bff/main.py",
+        "scope": "<module>",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "name_load",
+        "line": 2096,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_dto",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 7773,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_fleet_list_row",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 7861,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_fleet_list_row",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 7862,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_project_persona_fleet_list_row",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 13746,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13747,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13747,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_TTL"
+      },
+      {
+        "kind": "name_load",
+        "line": 13779,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13780,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13781,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_ingest_truth_by_connector",
+        "symbol": "_SOURCE_HEALTH_OVERLAY_CACHE"
+      },
+      {
+        "kind": "name_load",
+        "line": 13792,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_live_source_health_by_connector",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "name_load",
+        "line": 13804,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_connector_candidates_for_provider",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 13842,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_provider_status_from_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 13855,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_truth_projection",
+        "symbol": "_source_failure_reason"
+      },
+      {
+        "kind": "name_load",
+        "line": 13926,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 13943,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_source_health_bindings_from_requirements",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 13960,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 13962,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_upgrade_all_green_data_source_state",
+        "symbol": "_data_source_ok_tone"
+      },
+      {
+        "kind": "name_load",
+        "line": 13981,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "name_load",
+        "line": 13994,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_select_source_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 13995,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_connector_candidates_for_provider"
+      },
+      {
+        "kind": "name_load",
+        "line": 13999,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_truth_projection"
+      },
+      {
+        "kind": "name_load",
+        "line": 14037,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_SOURCE_PROVIDER_CONNECTOR_CANDIDATES"
+      },
+      {
+        "kind": "name_load",
+        "line": 14040,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_source_health_bindings_from_requirements"
+      },
+      {
+        "kind": "name_load",
+        "line": 14053,
+        "path": "services/control-plane/bff/personas/service.py",
+        "scope": "_overlay_source_health_truth",
+        "symbol": "_upgrade_all_green_data_source_state"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 44,
+        "path": "services/control-plane/bff/runtime/router.py",
+        "scope": "create_runtime_router",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "name_load",
+        "line": 1229,
+        "path": "services/control-plane/bff/runtime/router.py",
+        "scope": "create_runtime_router.bff_v5_execution_persona_health",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 924,
+        "path": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+        "scope": "test_persona_readiness_uses_two_batched_reads_without_fleet_n_plus_one",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 190,
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "scope": "test_source_health_connector_truth_projects_to_persona_panel",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 209,
+        "path": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py",
+        "scope": "test_source_health_connector_truth_projects_to_persona_panel",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "name_load",
+        "line": 7,
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "scope": "test_trading_performance_delta_is_unavailable_without_return_schema",
+        "symbol": "_trading_performance_delta"
+      },
+      {
+        "kind": "name_load",
+        "line": 11,
+        "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+        "scope": "test_build_persona_health_items_binds_telemetry_and_seed_flags",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1105,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_live_finmind_health_flips_to_read_ok",
+        "symbol": "_live_source_health_by_connector"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1118,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_live_finmind_health_noop_when_unavailable",
+        "symbol": "_live_source_health_by_connector"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1151,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_projects_connector_panel_fields",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1201,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_projects_connector_panel_fields",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1250,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_preserves_credential_unavailable_when_health_degraded",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1283,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_preserves_credential_unavailable_when_health_degraded",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1322,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_upgrades_credential_unavailable_when_health_ok",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1343,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_overlay_upgrades_credential_unavailable_when_health_ok",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1372,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1407,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 1423,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 1445,
+        "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "scope": "test_source_health_truth_overlay_maps_coingecko_provider_to_crypto_connector",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 60,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_all_green_live_overlay_promotes_summary_badge_state",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 68,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_all_green_live_overlay_promotes_summary_badge_state",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 99,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_tw_official_sources_flip_only_from_source_ingest_health",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 106,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_tw_official_sources_flip_only_from_source_ingest_health",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 136,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_missing_source_ingest_health_does_not_fake_green",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 138,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_missing_source_ingest_health_does_not_fake_green",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 180,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavailable",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 191,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavailable",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 210,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_crypto_coingecko_flips_from_source_ingest_health",
+        "symbol": "_source_ingest_truth_by_connector"
+      },
+      {
+        "kind": "attribute",
+        "line": 214,
+        "path": "services/control-plane/bff/test_srclive_overlay_contract.py",
+        "scope": "test_crypto_coingecko_flips_from_source_ingest_health",
+        "symbol": "_overlay_source_health_truth"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 186,
+        "path": "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "scope": "test_zero_unreferenced_dead_functions_in_main_py",
+        "symbol": "_build_persona_health_items"
+      },
+      {
+        "kind": "literal_dependency_or_patch",
+        "line": 187,
+        "path": "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "scope": "test_zero_unreferenced_dead_functions_in_main_py",
+        "symbol": "_trading_performance_delta"
+      }
+    ],
+    "scanned_python_files": 619,
+    "source_files": [
+      {
+        "path": "services/control-plane/bff/main.py",
+        "sha256": "4559d036d7eaddb74332cd8c48fbe7819de827769e70c1dca6de8bb93f97571c"
+      },
+      {
+        "path": "services/control-plane/bff/personas/service.py",
+        "sha256": "79d6a4dbc0d56c815a67cbd2a9d2222a403bdafad3dfc0ebe35b180de2d0560a"
+      },
+      {
+        "path": "services/control-plane/bff/runtime/router.py",
+        "sha256": "7678db04c980e4fd43f6a2320c740b367a7079dd178ff534b5c36622f201de8a"
+      },
+      {
+        "path": "services/control-plane/bff/runtime/service.py",
+        "sha256": "217fcdd9f16df1f2cc405277bd0c5a68a0959b1cc9929fcdcde42572078f448a"
+      }
+    ]
+  },
+  "source_base_sha": "fb142e4f4e9289a984e42e563de16ce58c079b71",
+  "task_id": "BFF-LOOPS-PAPER-V5-PROJECTION-OWNERSHIP-DECISION-001",
+  "validation": [
+    {
+      "command": "python3 /tmp/b14-ownership-audit.py > /tmp/b14-source-audit.json",
+      "exit_code": 0,
+      "reproduction": "Python block between B14_AUDIT_BEGIN and B14_AUDIT_END in the decision document",
+      "result": "619 Python files parsed; 83 references; 10 exact duplicate bodies; one read-port-only difference; three equal-valued constants; complete builder free-name inventory"
+    },
+    {
+      "command": "python3 /tmp/b14-doc-replay.py (extracted verbatim from documented Python block), JSON equality comparison, git diff --name-only origin/dev...HEAD scope comparison",
+      "exit_code": 0,
+      "result": "Embedded audit reproduces source_audit exactly; all 19 reusable builder helpers match after explicit read-port normalization; only two declared artifacts changed."
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+      "exit_code": 0,
+      "result": "Anchor commit 1a4f60b78 has required task/agent/reviewer trailers."
+    },
+    {
+      "command": "git diff --check origin/dev (full task diff, including working tree)",
+      "exit_code": 0,
+      "result": "Removed three Markdown trailing spaces found by the committed-range check; corrected full task diff passes."
+    },
+    {
+      "command": "Execute documented B14_AUDIT and B14_CONSUMER_CHECK Python blocks; compare audit JSON to source_audit; git diff --check origin/dev; python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge; exact two-file scope check",
+      "exit_code": 0,
+      "result": "Source audit unchanged; five transfers exactly cover inventoried test consumers and match accepted batch ownership; preserved partition prerequisites; proposed dependency graph acyclic with no consumer/parent ancestor of seam; 184 total / 11 B14 acceptance files unchanged; document hash and scoped diff valid. Canonical full-graph admission and product suites remain future gates."
+    },
+    {
+      "command": "Execute verbatim B14_AUDIT, B14_CONSUMER_CHECK, B14_NO_LEGACY blocks; AI_NAME=Codex python3 /tmp/b14-graph.py (B14_FULL_GRAPH block); git diff --check",
+      "exit_code": 0,
+      "result": "Source audit exactly reproduced. Five live transfer targets and all current canonical prerequisites preserved; complete 202-node proposed graph acyclic, conditional on unresolved B03 role. 204 negative gate controls plus positive controls pass; current baseline violations 41/4/2/10/14/1 across main and five consumers are recorded, not product passes. Terminal artifact contract remains immutable. Only two declared files changed."
+    }
+  ],
+  "writer_gates": {
+    "authority": "proposed admission constraints; no canonical contracts or leases edited by this task",
+    "b03_pr_gate": [
+      {
+        "headRefOid": "6bc5eb05b3ece7a34854caa8be61d2cfdd1e91fe",
+        "mergedAt": null,
+        "number": 5494,
+        "state": "OPEN",
+        "url": "https://github.com/ajoe734/pantheon/pull/5494"
+      },
+      {
+        "headRefOid": "1d7e471656bc6949b9ed4de53cd6c91ba83b541b",
+        "mergedAt": null,
+        "number": 5517,
+        "state": "CLOSED",
+        "url": "https://github.com/ajoe734/pantheon/pull/5517"
+      },
+      {
+        "headRefOid": "a3513e5ef5274e43d771ea3c75575f0860239177",
+        "mergedAt": null,
+        "number": 5577,
+        "state": "OPEN",
+        "url": "https://github.com/ajoe734/pantheon/pull/5577"
+      },
+      {
+        "headRefOid": "61c537bf39baa78d3ad7412aa3074d8fdbb21a66",
+        "mergedAt": null,
+        "number": 5721,
+        "state": "OPEN",
+        "url": "https://github.com/ajoe734/pantheon/pull/5721"
+      }
+    ],
+    "b03_pr_gate_cleared": false,
+    "required_order": [
+      "existing admitted overlapping writers finish and leases release",
+      "B03 CORS/JWKS/MFA source seam after all four PRs merge or close and fresh artifact preflight",
+      "B14 projection source seam after B03 seam and this decision merge",
+      "B05 journal seam, B06 seam and all other main writers serialized afterwards"
+    ]
+  }
+}

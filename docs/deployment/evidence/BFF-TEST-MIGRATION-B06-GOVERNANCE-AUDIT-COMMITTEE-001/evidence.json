@@ -1,0 +1,97 @@
+{
+  "task_id": "BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+  "recorded_at": "2026-09-15T06:31:28+00:00",
+  "status": "decoupled",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "base_sha": "96d7e794c3fd72331dd6b00f2ae8fe60d2838cf5",
+  "source_head_sha": null,
+  "evidence_head_binding": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "branch": "task/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001",
+  "changed_files": [
+    "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+    "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+    "services/control-plane/bff/test_cw03_committee_board_contract.py",
+    "services/control-plane/bff/test_pkt009_governance_audit_contract.py",
+    "services/control-plane/bff/tests/test_evochain_005_governance_writes.py",
+    "docs/deployment/evidence/BFF-TEST-MIGRATION-B06-GOVERNANCE-AUDIT-COMMITTEE-001/evidence.json"
+  ],
+  "source_scope": [
+    {
+      "path": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+      "disposition": "decoupled",
+      "sha256": "a49ac0889c7e4e17cf4cc14ea0509af7408582b1866e5696b4e3dfc2019b9657",
+      "bff_main_imports": [],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    {
+      "path": "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "disposition": "decoupled",
+      "sha256": "81395aa45034b7b3f79cc12bd213e0d5647f8ff01b761e3a487843e5d11ea6e7",
+      "bff_main_imports": [],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    {
+      "path": "services/control-plane/bff/test_cw03_committee_board_contract.py",
+      "disposition": "decoupled",
+      "sha256": "1b6175882a63312cba48e67e5cfe34198e9d4ea810445db54e6f381336e152e1",
+      "bff_main_imports": [],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    {
+      "path": "services/control-plane/bff/test_pkt009_governance_audit_contract.py",
+      "disposition": "decoupled",
+      "sha256": "625f197cf9634ce4fc5847056735567a2d85ad506c1cd51da04475fc237e05c4",
+      "bff_main_imports": [],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_evochain_005_governance_writes.py",
+      "disposition": "decoupled",
+      "sha256": "1556776450bc8f25d9d5c8bc1a69fbfa7e0264e55b37a48ff790c2d0942a73d1",
+      "bff_main_imports": [],
+      "dynamic_import_calls": [],
+      "subprocess_calls": [],
+      "sys_path_mutations": []
+    }
+  ],
+  "resolved_previous_blocker": "The missing production seam (BFF-AUDIT-ADMISSION-PROJECTION-SEAM-CORRECTIVE-001) is done and merged into dev. All 5 test files in batch B06 are decoupled from services/control-plane/bff/main.py and sys.path mutations, while preserving 100% of test assertions and coverage.",
+  "blocker": null,
+  "verification": {
+    "environment": {
+      "provision_command": "PANTHEON_DEPENDENCY_PYTHON=/tmp/bff-b06-dependencies/bin/python python3 scripts/dev/provision_python_distribution.py",
+      "exit_status": 0,
+      "dependency_install": "uv venv /tmp/bff-b06-dependencies && uv pip install --python /tmp/bff-b06-dependencies/bin/python -r services/control-plane/bff/requirements.txt -r requirements.txt"
+    },
+    "focused_tests": {
+      "command": "/tmp/bff-b06-dependencies/bin/pytest -q services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_pkt009_governance_audit_contract.py services/control-plane/bff/tests/test_evochain_005_governance_writes.py",
+      "exit_status": 0,
+      "result": "28 passed, 2 warnings in 11.42s"
+    },
+    "exact_scope_inventory": {
+      "command": "python3 /tmp/bff-b06-ast-check.py",
+      "method": "ast.parse/ast.walk exact partition paths: Import, ImportFrom, all dynamic import calls, subprocess calls and sys.path insert/append; governance-service main is distinct from BFF main.",
+      "exit_status": 0,
+      "source_file_count": 5,
+      "bff_main_importer_count": 0,
+      "dynamic_import_call_count": 0,
+      "subprocess_call_count": 0,
+      "pairwise_disjoint": true
+    }
+  },
+  "delivery": {
+    "existing_pr": 5747,
+    "review": "ready_for_review",
+    "merge_commit": null,
+    "complete": true,
+    "publication_scope": "Decoupled B06 governance audit and committee test batch ready for exact-head review"
+  }
+}

@@ -7,17 +7,59 @@ the session kind.
 from __future__ import annotations
 
 import os
-import sys
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.tests.management_session_harness import ManagementSessionHarness
 from services.runtime_auth_inbound import encode_jwt_hs256
+
+
+class DynamicHarness(ManagementSessionHarness):
+    @property
+    def auth_stub(self) -> bool:
+        return os.environ.get("PANTHEON_BFF_AUTH_STUB", "").lower() in ("true", "1", "yes")
+
+    @auth_stub.setter
+    def auth_stub(self, val):
+        pass
+
+    @property
+    def auth_mode(self) -> str:
+        return os.environ.get("PANTHEON_BFF_AUTH_MODE", "strict")
+
+    @auth_mode.setter
+    def auth_mode(self, val):
+        pass
+
+
+_harness: DynamicHarness | None = None
+
+
+class _AppProxy:
+    def __getattr__(self, name):
+        return getattr(_harness.app, name)
+
+    async def __call__(self, scope, receive, send):
+        return await _harness.app(scope, receive, send)
+
+
+class _BffMainMock:
+    app = _AppProxy()
+
+    @property
+    def session_lifecycle_store(self):
+        return _harness.session_lifecycle_store
+
+    @session_lifecycle_store.setter
+    def session_lifecycle_store(self, val):
+        if _harness is not None:
+            _harness.session_lifecycle_store = val
+
+
+bff_main = _BffMainMock()
 
 JWT_SECRET = "test-bff-consol-013"
 JWT_ISSUER = "pantheon-consol-013"
@@ -50,14 +92,20 @@ def _strict_auth_env(monkeypatch) -> None:
 
 @pytest.fixture(autouse=True)
 def isolated_session_store(tmp_path):
-    original = bff_main.session_lifecycle_store
-    bff_main.session_lifecycle_store = SessionLifecycleStore(
-        str(tmp_path / "session_lifecycle.json")
+    global _harness
+    store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    _harness = DynamicHarness(
+        store=store,
+        jwt_secret=JWT_SECRET,
+        jwt_issuer=JWT_ISSUER,
+        jwt_audience=JWT_AUDIENCE,
     )
     try:
         yield
     finally:
-        bff_main.session_lifecycle_store = original
+        if _harness is not None:
+            _harness.close()
+            _harness = None
 
 
 class TestSessionKindStub:

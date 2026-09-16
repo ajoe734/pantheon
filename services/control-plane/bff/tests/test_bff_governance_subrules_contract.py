@@ -14,19 +14,34 @@ For each endpoint:
 """
 from __future__ import annotations
 
-import os
-import sys
-import types
+from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.auth.policy import extract_identity, require_read_role
+from services.control_plane.bff.console_gap.consult_rules import create_consult_rules_router
+from services.control_plane.bff.console_gap.memory_governance import create_memory_governance_router
+from services.control_plane.bff.console_gap.permissions import create_permissions_router
+from services.control_plane.bff.console_gap.route_policies import create_route_policies_router
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-gov:operator,reviewer"}
+
+
+def create_subrules_app(get_store) -> FastAPI:
+    """Mount the same 4 console_gap governance sub-rules routers main.py wires,
+    using the ``get_read_store`` callable form so tests can swap the backing
+    store per-request the same way main.py's ``read_store`` reassignment +
+    ``_active_delegate`` proxy lets the composition-root tests do."""
+    app = FastAPI()
+    _kw = dict(get_read_store=get_store, extract_identity=extract_identity, require_read_role=require_read_role)
+    app.include_router(create_permissions_router(**_kw))
+    app.include_router(create_memory_governance_router(**_kw))
+    app.include_router(create_consult_rules_router(**_kw))
+    app.include_router(create_route_policies_router(**_kw))
+    return app
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,57 +93,42 @@ class TestPermissions:
     ROUTE = "/bff/management/permissions"
 
     def test_requires_auth(self) -> None:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = TestClient(create_subrules_app(lambda: _empty_store()), raise_server_exceptions=False)
         assert client.get(self.ROUTE).status_code == 401
 
     def test_empty_store_degraded_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _empty_store()
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "items" not in body
-            assert body["data"]["items"] == []
-            assert body["page_info"]["total"] == 0
-            surface = body["meta"]["surfaces"]["governance_permissions"]
-            assert surface["status"] == "unavailable"
-            assert surface["source"] == "missing"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _empty_store()))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "items" not in body
+        assert body["data"]["items"] == []
+        assert body["page_info"]["total"] == 0
+        surface = body["meta"]["surfaces"]["governance_permissions"]
+        assert surface["status"] == "unavailable"
+        assert surface["source"] == "missing"
 
     def test_seeded_store_ok_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _seeded_store("governance_permissions", [_PERM_RECORD])
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["total"] == 1
-            assert "items" not in body
-            assert body["data"]["items"][0]["permission_id"] == "perm-001"
-            surface = body["meta"]["surfaces"]["governance_permissions"]
-            assert surface["status"] == "ok"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _seeded_store("governance_permissions", [_PERM_RECORD])))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["total"] == 1
+        assert "items" not in body
+        assert body["data"]["items"][0]["permission_id"] == "perm-001"
+        surface = body["meta"]["surfaces"]["governance_permissions"]
+        assert surface["status"] == "ok"
 
     def test_pagination(self) -> None:
         records = [{"permission_id": f"perm-{i}", "action": "trade"} for i in range(5)]
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _seeded_store("governance_permissions", records)
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE + "?page_size=2", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["total"] == 5
-            assert "items" not in body
-            assert len(body["data"]["items"]) == 2
-            assert body["page_info"]["next_page_token"] == "2"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _seeded_store("governance_permissions", records)))
+        resp = client.get(self.ROUTE + "?page_size=2", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["total"] == 5
+        assert "items" not in body
+        assert len(body["data"]["items"]) == 2
+        assert body["page_info"]["next_page_token"] == "2"
 
 
 # ── GET /bff/management/memory-governance ────────────────────────────────────
@@ -137,40 +137,30 @@ class TestMemoryGovernance:
     ROUTE = "/bff/management/memory-governance"
 
     def test_requires_auth(self) -> None:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = TestClient(create_subrules_app(lambda: _empty_store()), raise_server_exceptions=False)
         assert client.get(self.ROUTE).status_code == 401
 
     def test_empty_store_degraded_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _empty_store()
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "items" not in body
-            assert body["data"]["items"] == []
-            surface = body["meta"]["surfaces"]["memory_governance_rules"]
-            assert surface["status"] == "unavailable"
-            assert surface["source"] == "missing"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _empty_store()))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "items" not in body
+        assert body["data"]["items"] == []
+        surface = body["meta"]["surfaces"]["memory_governance_rules"]
+        assert surface["status"] == "unavailable"
+        assert surface["source"] == "missing"
 
     def test_seeded_store_ok_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _seeded_store("memory_governance_rules", [_MEM_GOV_RECORD])
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["total"] == 1
-            assert "items" not in body
-            assert body["data"]["items"][0]["rule_id"] == "mem-001"
-            surface = body["meta"]["surfaces"]["memory_governance_rules"]
-            assert surface["status"] == "ok"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _seeded_store("memory_governance_rules", [_MEM_GOV_RECORD])))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["total"] == 1
+        assert "items" not in body
+        assert body["data"]["items"][0]["rule_id"] == "mem-001"
+        surface = body["meta"]["surfaces"]["memory_governance_rules"]
+        assert surface["status"] == "ok"
 
 
 # ── GET /bff/management/consult-rules ────────────────────────────────────────
@@ -179,40 +169,30 @@ class TestConsultRules:
     ROUTE = "/bff/management/consult-rules"
 
     def test_requires_auth(self) -> None:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = TestClient(create_subrules_app(lambda: _empty_store()), raise_server_exceptions=False)
         assert client.get(self.ROUTE).status_code == 401
 
     def test_empty_store_degraded_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _empty_store()
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "items" not in body
-            assert body["data"]["items"] == []
-            surface = body["meta"]["surfaces"]["consult_rules"]
-            assert surface["status"] == "unavailable"
-            assert surface["source"] == "missing"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _empty_store()))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "items" not in body
+        assert body["data"]["items"] == []
+        surface = body["meta"]["surfaces"]["consult_rules"]
+        assert surface["status"] == "unavailable"
+        assert surface["source"] == "missing"
 
     def test_seeded_store_ok_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _seeded_store("consult_rules", [_CONSULT_RULE_RECORD])
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["total"] == 1
-            assert "items" not in body
-            assert body["data"]["items"][0]["rule_id"] == "cr-001"
-            surface = body["meta"]["surfaces"]["consult_rules"]
-            assert surface["status"] == "ok"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _seeded_store("consult_rules", [_CONSULT_RULE_RECORD])))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["total"] == 1
+        assert "items" not in body
+        assert body["data"]["items"][0]["rule_id"] == "cr-001"
+        surface = body["meta"]["surfaces"]["consult_rules"]
+        assert surface["status"] == "ok"
 
 
 # ── GET /bff/route-policies ──────────────────────────────────────────────────
@@ -221,61 +201,46 @@ class TestRoutePolicies:
     ROUTE = "/bff/route-policies"
 
     def test_requires_auth(self) -> None:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = TestClient(create_subrules_app(lambda: _empty_store()), raise_server_exceptions=False)
         assert client.get(self.ROUTE).status_code == 401
 
     def test_empty_store_degraded_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _empty_store()
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "items" not in body
-            assert body["data"]["items"] == []
-            surface = body["meta"]["surfaces"]["route_policies"]
-            assert surface["status"] == "unavailable"
-            assert surface["source"] == "missing"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _empty_store()))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "items" not in body
+        assert body["data"]["items"] == []
+        surface = body["meta"]["surfaces"]["route_policies"]
+        assert surface["status"] == "unavailable"
+        assert surface["source"] == "missing"
 
     def test_seeded_store_ok_envelope(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _seeded_store("route_policies", [_ROUTE_POLICY_RECORD])
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["page_info"]["total"] == 1
-            assert "items" not in body
-            assert body["data"]["items"][0]["policy_id"] == "rp-001"
-            surface = body["meta"]["surfaces"]["route_policies"]
-            assert surface["status"] == "ok"
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _seeded_store("route_policies", [_ROUTE_POLICY_RECORD])))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["page_info"]["total"] == 1
+        assert "items" not in body
+        assert body["data"]["items"][0]["policy_id"] == "rp-001"
+        surface = body["meta"]["surfaces"]["route_policies"]
+        assert surface["status"] == "ok"
 
     def test_envelope_shape(self) -> None:
-        original = bff_main.read_store
-        try:
-            bff_main.read_store = _empty_store()
-            client = TestClient(bff_main.app)
-            resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200
-            body = resp.json()
-            assert "data" in body
-            assert "items" not in body
-            assert "page_info" in body
-            assert "meta" in body
-            pi = body["page_info"]
-            assert "next_page_token" in pi
-            assert "total" in pi
-            assert "page_size" in pi
-            assert "returned" in pi
-            assert "snapshot_at" in body["meta"]
-            assert "status" in body["meta"]
-            assert "source" in body["meta"]
-            assert "surfaces" in body["meta"]
-        finally:
-            bff_main.read_store = original
+        client = TestClient(create_subrules_app(lambda: _empty_store()))
+        resp = client.get(self.ROUTE, headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+        assert "items" not in body
+        assert "page_info" in body
+        assert "meta" in body
+        pi = body["page_info"]
+        assert "next_page_token" in pi
+        assert "total" in pi
+        assert "page_size" in pi
+        assert "returned" in pi
+        assert "snapshot_at" in body["meta"]
+        assert "status" in body["meta"]
+        assert "source" in body["meta"]
+        assert "surfaces" in body["meta"]

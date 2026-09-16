@@ -632,11 +632,8 @@ def test_concurrent_single_sign_records_aggregate_to_valid_two_man_evidence(
 
 
 @pytest.mark.parametrize(
-    ("route", "idempotency_header"),
-    [
-        ("/bff/v1/commands", "Idempotency-Key"),
-        ("/api/v1/operator/commands", "X-Idempotency-Key"),
-    ],
+    "idempotency_header",
+    ["Idempotency-Key", "X-Idempotency-Key"],
 )
 @pytest.mark.parametrize(
     ("command", "target"),
@@ -647,11 +644,11 @@ def test_concurrent_single_sign_records_aggregate_to_valid_two_man_evidence(
 )
 def test_public_command_admissions_reject_forged_rebalance_evidence(
     tmp_path: Path,
-    route: str,
     idempotency_header: str,
     command: str,
     target: Dict[str, str],
 ) -> None:
+    route = "/bff/v1/commands"
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key=f"rb-proposal-{command}-{idempotency_header}")
         rebalance_id = created.json()["rebalance_id"]
@@ -680,7 +677,7 @@ def test_public_command_admissions_reject_forged_rebalance_evidence(
         assert "server-managed" in forged.text
 
 
-def test_legacy_operator_admission_cannot_bypass_approved_apply_gates(
+def test_final_command_admission_cannot_bypass_approved_apply_gates(
     tmp_path: Path,
 ) -> None:
     with CapitalBffAuthorityHarness(tmp_path) as harness:
@@ -688,7 +685,7 @@ def test_legacy_operator_admission_cannot_bypass_approved_apply_gates(
         rebalance_id = created.json()["rebalance_id"]
         assert harness.client is not None
         bypass = harness.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ApprovedApply",
                 "target": {"type": "Rebalance", "id": rebalance_id},
@@ -708,17 +705,14 @@ def test_legacy_operator_admission_cannot_bypass_approved_apply_gates(
 
 
 @pytest.mark.parametrize(
-    ("route", "idempotency_header"),
-    [
-        ("/bff/v1/commands", "Idempotency-Key"),
-        ("/api/v1/operator/commands", "X-Idempotency-Key"),
-    ],
+    "idempotency_header",
+    ["Idempotency-Key", "X-Idempotency-Key"],
 )
 def test_approved_apply_admissions_reject_params_target_redirect(
     tmp_path: Path,
-    route: str,
     idempotency_header: str,
 ) -> None:
+    route = "/bff/v1/commands"
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key=f"rb-proposal-redirect-{idempotency_header}")
         rebalance_id = created.json()["rebalance_id"]
@@ -744,17 +738,14 @@ def test_approved_apply_admissions_reject_params_target_redirect(
 
 
 @pytest.mark.parametrize(
-    ("route", "idempotency_header"),
-    [
-        ("/bff/v1/commands", "Idempotency-Key"),
-        ("/api/v1/operator/commands", "X-Idempotency-Key"),
-    ],
+    "idempotency_header",
+    ["Idempotency-Key", "X-Idempotency-Key"],
 )
 def test_validated_apply_evidence_overwrites_conflicting_param_aliases(
     tmp_path: Path,
-    route: str,
     idempotency_header: str,
 ) -> None:
+    route = "/bff/v1/commands"
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key=f"rb-proposal-alias-{idempotency_header}")
         rebalance_id = created.json()["rebalance_id"]
@@ -1358,10 +1349,27 @@ def test_action_adapter_rebalance_apply_forwarding(tmp_path: Path) -> None:
             suffix="adapter-apply",
         )
 
-        # Call the action adapter endpoint
+        # Submit the equivalent command envelope the retired
+        # `/bff/actions/rebalance/{id}/apply` adapter route used to build
+        # before forwarding into the shared `/bff/v1/commands` admission path.
         response = harness.client.post(
-            f"/bff/actions/rebalance/{rebalance_id}/apply",
-            json=evidence,
+            "/bff/v1/commands",
+            json={
+                "command": "RebalanceAction",
+                "target": {"type": "Rebalance", "id": rebalance_id},
+                "action": "apply",
+                "params": {
+                    **evidence,
+                    "action_id": "apply",
+                    "actionId": "apply",
+                    "entity_type": "rebalance",
+                    "entityType": "rebalance",
+                    "entity_id": rebalance_id,
+                    "entityId": rebalance_id,
+                    "audit_event": "rebalance.apply",
+                },
+                "audit_context": {"reason": "rebalance.apply"},
+            },
             headers={
                 **apply_headers,
                 "Idempotency-Key": "rb-apply-adapter-apply",
@@ -1396,14 +1404,30 @@ def test_action_adapter_emergency_containment_forwarding(tmp_path: Path) -> None
             persona_id=persona_id,
         )
 
-        # Call the action adapter endpoint for persona emergency containment
+        # Submit the equivalent command envelope the retired
+        # `/bff/actions/persona/{id}/EmergencyContainment` adapter route used
+        # to build before forwarding into the shared `/bff/v1/commands`
+        # admission path.
         response = harness.client.post(
-            f"/bff/actions/persona/{persona_id}/EmergencyContainment",
+            "/bff/v1/commands",
             json={
-                "action": "freeze",
-                "trigger": "hard_risk_breach",
-                "evidence_refs": ["risk-event:42"],
-                "two_man_signature_id": sig_id,
+                "command": "PersonaAction",
+                "target": {"type": "Persona", "id": persona_id},
+                "action": "EmergencyContainment",
+                "params": {
+                    "action": "freeze",
+                    "trigger": "hard_risk_breach",
+                    "evidence_refs": ["risk-event:42"],
+                    "two_man_signature_id": sig_id,
+                    "action_id": "EmergencyContainment",
+                    "actionId": "EmergencyContainment",
+                    "entity_type": "persona",
+                    "entityType": "persona",
+                    "entity_id": persona_id,
+                    "entityId": persona_id,
+                    "audit_event": "persona.EmergencyContainment",
+                },
+                "audit_context": {"reason": "persona.EmergencyContainment"},
             },
             headers={
                 **apply_headers,

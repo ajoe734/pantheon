@@ -79,6 +79,7 @@ class AgoraInteractionWorker:
         research_store: Optional[Any] = None,
         research_dispatcher: Optional[Any] = None,
         dataset_store: Optional[Any] = None,
+        adapter_registry: Optional[Any] = None,
         worker_id: Optional[str] = None,
         lease_duration_seconds: int = 300,
         store: Optional[Any] = None,
@@ -89,18 +90,49 @@ class AgoraInteractionWorker:
         self.client_factory = client_factory
         self.proposal_store = proposal_store
         self.dataset_store = dataset_store or (getattr(research_dispatcher, "dataset_store", None) if research_dispatcher else None)
+        if adapter_registry is None:
+            try:
+                from agora.research.dispatcher import build_authentic_adapter_registry
+            except Exception:
+                try:
+                    from services.control_plane.bff.agora.research.dispatcher import build_authentic_adapter_registry
+                except Exception:
+                    build_authentic_adapter_registry = None
+            if build_authentic_adapter_registry is not None:
+                adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
+                adapter_registry = build_authentic_adapter_registry(
+                    mode=adapter_mode,
+                    allow_missing_endpoints=True,
+                )
+        self.adapter_registry = adapter_registry
+
         if research_dispatcher is None and research_store is not None:
             try:
                 from agora.research.dispatcher import ResearchDispatcher
-                self.research_dispatcher = ResearchDispatcher(store=research_store, dataset_store=self.dataset_store)
+                self.research_dispatcher = ResearchDispatcher(
+                    store=research_store,
+                    adapter_registry=self.adapter_registry,
+                    dataset_store=self.dataset_store,
+                )
             except Exception:
                 try:
                     from services.control_plane.bff.agora.research.dispatcher import ResearchDispatcher
-                    self.research_dispatcher = ResearchDispatcher(store=research_store, dataset_store=self.dataset_store)
+                    self.research_dispatcher = ResearchDispatcher(
+                        store=research_store,
+                        adapter_registry=self.adapter_registry,
+                        dataset_store=self.dataset_store,
+                    )
                 except Exception:
                     self.research_dispatcher = None
         else:
             self.research_dispatcher = research_dispatcher
+            if self.research_dispatcher is not None and self.adapter_registry is not None:
+                current_registry = getattr(self.research_dispatcher, "registry", None)
+                if current_registry is not None and hasattr(current_registry, "_adapters"):
+                    for stage_type, ad in getattr(self.adapter_registry, "_adapters", {}).items():
+                        existing = current_registry._adapters.get(stage_type)
+                        if existing is None or type(existing).__name__ == "DefaultAllowlistedAdapter" or not hasattr(existing, "execution_owner"):
+                            current_registry.register(stage_type, ad)
         self.research_store = research_store or (getattr(self.research_dispatcher, "store", None) if self.research_dispatcher else None)
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_WORKER_ID", f"agora-worker-{uuid.uuid4().hex[:12]}"

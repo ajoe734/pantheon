@@ -26,6 +26,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 from ports import create_in_memory_read_surface_ports
 
+
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
+
+
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6-003:operator"}
 
 
@@ -41,7 +55,6 @@ def _fresh_client(td: str) -> TestClient:
     store.record_agora_audit_event = _record_audit
     store.get_agora_session = lambda session_id: None
     bff_main.read_store = store
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._sse_buffers["ask"].clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
         storage_path="off",
@@ -118,7 +131,6 @@ def test_high_risk_questions_return_typed_403(
             assert details["audit_id"]
         finally:
             bff_main.read_store = original_store
-            bff_main._MGMT_NL_IDEMPOTENCY.clear()
             bff_main._sse_buffers["ask"].clear()
 
 
@@ -139,7 +151,6 @@ def test_read_only_question_still_returns_202() -> None:
             assert body["data"]["question"] == "What is the current PnL?"
         finally:
             bff_main.read_store = original_store
-            bff_main._MGMT_NL_IDEMPOTENCY.clear()
             bff_main._sse_buffers["ask"].clear()
 
 
@@ -168,7 +179,12 @@ def test_refusal_does_not_create_session_idempotency_record_or_sse(monkeypatch) 
 
             assert resp.status_code == 403, resp.text
             assert store.get_agora_session(session_id) is None
-            assert bff_main._MGMT_NL_IDEMPOTENCY == {}
+            # High-risk refusal runs before tenant resolution and durable
+            # command admission, so no reservation is ever created for this
+            # key -- the durable store file must be untouched (or empty).
+            command_store_path = bff_main._mgmt_nl_command_idempotency_store().storage_path
+            if command_store_path.exists():
+                assert json.loads(command_store_path.read_text(encoding="utf-8"))["records"] == {}
             assert list(bff_main._sse_buffers["ask"]) == []
 
             audits = store.audit_events
@@ -181,5 +197,4 @@ def test_refusal_does_not_create_session_idempotency_record_or_sse(monkeypatch) 
         finally:
             monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", original_collect)
             bff_main.read_store = original_store
-            bff_main._MGMT_NL_IDEMPOTENCY.clear()
             bff_main._sse_buffers["ask"].clear()

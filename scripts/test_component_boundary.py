@@ -19,6 +19,21 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertTrue(result["tooling_only"])
         self.assertEqual(result["domains"], ["development_tooling"])
 
+    def test_retired_tooling_issuer_is_not_product_auth(self) -> None:
+        result = component_boundary.classify_paths(self.manifest, [
+            "deploy/execution-grant-issuer/run_server.py",
+            "scripts/request_execution_grant.py",
+            "scripts/test_promote_supervisor_runtime.py",
+            "docs/operations/development-tooling-mfa-retirement.md",
+        ])
+        self.assertTrue(result["tooling_only"])
+        self.assertEqual(result["domains"], ["development_tooling"])
+        mixed = component_boundary.classify_paths(self.manifest, [
+            "deploy/execution-grant-issuer/run_server.py",
+            "services/control-plane/bff/auth/handlers.py",
+        ])
+        self.assertFalse(mixed["tooling_only"])
+
     def test_product_path_selects_product_runtime(self) -> None:
         result = component_boundary.classify_paths(
             self.manifest,
@@ -37,8 +52,19 @@ class ComponentBoundaryTests(unittest.TestCase):
 
     def test_unknown_path_is_reported_without_becoming_product_runtime(self) -> None:
         result = component_boundary.classify_paths(self.manifest, ["README.md"])
-        self.assertTrue(result["tooling_only"])
+        self.assertFalse(result["tooling_only"])
+        self.assertFalse(result["product_touched"])
         self.assertEqual(result["unknown_paths"], ["README.md"])
+
+    def test_unknown_path_prevents_tooling_exemption_even_with_known_tooling(self) -> None:
+        result = component_boundary.classify_paths(
+            self.manifest, [".orchestrator/supervisor.py", "unknown/service.py"],
+        )
+        self.assertTrue(result["development_tooling_touched"])
+        self.assertFalse(result["tooling_only"])
+
+    def test_empty_diff_does_not_prove_tooling_scope(self) -> None:
+        self.assertFalse(component_boundary.classify_paths(self.manifest, [])["tooling_only"])
 
     def test_main_rejects_missing_selectors(self) -> None:
         with self.assertRaises(SystemExit):
@@ -147,7 +173,7 @@ DOMAIN_UNION_CASES: list[tuple[str, list[str], dict[str, bool]]] = [
             "development_tooling_touched": False,
             "product_touched": False,
             "delivery_touched": False,
-            "tooling_only": True,
+            "tooling_only": False,
         },
     ),
     (
@@ -157,7 +183,7 @@ DOMAIN_UNION_CASES: list[tuple[str, list[str], dict[str, bool]]] = [
             "development_tooling_touched": False,
             "product_touched": False,
             "delivery_touched": False,
-            "tooling_only": True,
+            "tooling_only": False,
         },
     ),
     (

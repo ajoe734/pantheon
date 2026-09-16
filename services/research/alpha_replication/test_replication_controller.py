@@ -20,6 +20,7 @@ from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.replication_controller import (
     ReplicationControllerConfig,
     _queue_payload_from_registry_entry,
+    initialize_controller_state,
     run_controller_tick,
 )
 from services.research.experiment_orchestrator.authority import (
@@ -47,6 +48,46 @@ class CaptureLoopWriter:
 
     async def record_failure(self, **payload) -> None:
         self.failures.append(payload)
+
+
+@pytest.mark.parametrize("changed", ["tenant", "environment", "deployment"])
+def test_restart_uses_configured_scope_not_old_health_checkpoint(tmp_path, monkeypatch, changed):
+    store = ControllerStateStore(tmp_path / "controller_state.json")
+    previous = ControllerState(
+        controller_id="old-controller", controller_name="alpha-replication-controller",
+        tenant_id="default" if changed == "tenant" else "tenant-dev",
+        environment="staging-live" if changed == "environment" else "dev",
+        deployment={"git_sha": "old-sha" if changed == "deployment" else "current-sha"},
+        total_ticks=10, desired_state={"strategy_spec_ids": ["old-scope-spec"]},
+    )
+    store.save(previous)
+    # Neither file belongs to controller health; a restart must preserve both.
+    for name in ("replication_admissions.jsonl", "alpha_replication_queue.jsonl"):
+        (tmp_path / name).write_text('{"existing":"unchanged"}\n')
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("GIT_SHA", "current-sha")
+    monkeypatch.setenv("PANTHEON_CONTROLLER_ID", "current-controller")
+    actual = initialize_controller_state(store)
+    assert (actual.tenant_id, actual.environment, actual.deployment["git_sha"]) == ("tenant-dev", "dev", "current-sha")
+    assert actual.controller_id == "current-controller"
+    assert actual.total_ticks == 0 and actual.desired_state == {}
+    assert store.load().to_dict() == actual.to_dict()
+    for name in ("replication_admissions.jsonl", "alpha_replication_queue.jsonl"):
+        assert (tmp_path / name).read_text() == '{"existing":"unchanged"}\n'
+
+
+def test_restart_keeps_same_deployment_checkpoint(tmp_path, monkeypatch):
+    store = ControllerStateStore(tmp_path / "state.json")
+    previous = ControllerState(
+        controller_id="same-controller", controller_name="alpha-replication-controller",
+        tenant_id="tenant-dev", environment="dev", deployment={"git_sha": "same-sha"}, total_ticks=7,
+    )
+    store.save(previous)
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("GIT_SHA", "same-sha")
+    assert initialize_controller_state(store).to_dict() == previous.to_dict()
 
 
 def _state(path: Path, *, tenant_id: str = "tenant-a"):
@@ -388,3 +429,82 @@ def test_controller_registry_failure_is_durable_and_fail_closed(tmp_path) -> Non
     assert "registry unavailable" in str(persisted.last_failure_reason)
     assert authority.tasks == {}
     assert authority.runs == {}
+
+
+def test_alpha_replication_registry_list_authorization_and_rotation(tmp_path, monkeypatch) -> None:
+    from services.research.alpha_replication.replication_controller import _get_approved_specs_for_strategy
+    from unittest.mock import MagicMock
+
+    token_file = tmp_path / "alpha_token"
+    token_file.write_text("token-alpha-1\n", encoding="utf-8")
+    token_file.chmod(0o600)
+
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", "stale-env-token")
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=5):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'[{"entry": {"strategy_spec_id": "spec-1"}}]'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. GET list request with token-alpha-1
+    res1 = _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert res1 == [{"strategy_spec_id": "spec-1"}]
+    req1 = captured_requests[-1]
+    assert req1.get_method() == "GET"
+    assert req1.get_header("Authorization") == "Bearer token-alpha-1"
+    assert req1.full_url == "http://registry:8087/api/registry/strategies/strat-1/strategy-specs?artifact_state=approved"
+
+    # 2. Rotate token in file: next call sees rotated token immediately
+    token_file.write_text("token-alpha-2\n", encoding="utf-8")
+
+    res2 = _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert res2 == [{"strategy_spec_id": "spec-1"}]
+    req2 = captured_requests[-1]
+    assert req2.get_header("Authorization") == "Bearer token-alpha-2"
+
+
+def test_alpha_replication_registry_list_missing_blank_and_file_error(tmp_path, monkeypatch) -> None:
+    from services.research.alpha_replication.replication_controller import _get_approved_specs_for_strategy
+    from unittest.mock import MagicMock
+
+    captured_requests = []
+
+    def fake_urlopen(req, timeout=5):
+        captured_requests.append(req)
+        resp = MagicMock()
+        resp.read.return_value = b'[]'
+        resp.__enter__.return_value = resp
+        return resp
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    # 1. Missing / unconfigured: preserves unauthenticated test/local behavior
+    monkeypatch.delenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", raising=False)
+
+    _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 2. Blank env token: no header
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", "   ")
+    _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert captured_requests[-1].get_header("Authorization") is None
+
+    # 3. File error: raises RuntimeError and does not log credentials
+    bad_token_file = tmp_path / "bad_token"
+    bad_token_file.write_text("secret-token-value", encoding="utf-8")
+    bad_token_file.chmod(0o644)
+
+    monkeypatch.setenv("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE", str(bad_token_file))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
+    assert "Configured service credential unavailable" in str(exc_info.value)
+    assert "secret-token-value" not in str(exc_info.value)

@@ -5,13 +5,154 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-import main as bff_main
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 HEADERS = {"Authorization": "Bearer proposal-user:operator", "Idempotency-Key": "pint-004-create"}
 JWT_SECRET = "pint-010-r2-approval-secret"
 JWT_ISSUER = "pint-010-r2"
 JWT_AUDIENCE = "pantheon-bff"
+
+
+class ReadStoreDouble:
+    def __init__(self):
+        self._get_fn = lambda _id: None
+        self._list_fn = lambda: []
+
+    def get_approval_decision(self, decision_id: str):
+        return self._get_fn(decision_id)
+
+    def list_approval_decisions(self):
+        return self._list_fn()
+
+    @staticmethod
+    def _project_canonical_approval_decision(raw: dict) -> dict:
+        decision_id = raw.get("decision_id") or raw.get("id")
+        target_type = raw.get("target_type") or raw.get("decision_type")
+        target_id = raw.get("target_id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = (
+            raw.get("tenant_id")
+            or raw.get("tenantId")
+            or metadata.get("tenant_id")
+            or metadata.get("tenantId")
+        )
+        owner_user_id = (
+            raw.get("owner_user_id")
+            or raw.get("user_id")
+            or raw.get("userId")
+            or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
+        )
+        deployment_ref = {}
+        if str(target_type or "") == "DeploymentPlan" and target_id:
+            deployment_ref = {
+                "plan_id": target_id,
+                "href": f"/bff/deployments/{target_id}",
+            }
+        return {
+            "id": decision_id,
+            "decision_id": decision_id,
+            "decision_type": raw.get("decision_type"),
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_version": raw.get("target_version"),
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
+            "deployment_ref": deployment_ref,
+            "outcome": raw.get("decision") or raw.get("outcome"),
+            "reviewer": raw.get("actor_id") or raw.get("reviewer"),
+            "actor_role": raw.get("actor_role"),
+            "created_by": raw.get("created_by") or raw.get("actor_id"),
+            "created_at": raw.get("created_at") or raw.get("submitted_at"),
+            "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
+            "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "revoked_at": raw.get("revoked_at"),
+            "proposal_id": raw.get("proposal_id"),
+            "proposal_revision": raw.get("proposal_revision"),
+            "proposal_content_digest": raw.get("proposal_content_digest"),
+            "validation_result_digest": raw.get("validation_result_digest"),
+            "risk_level": raw.get("risk_level"),
+            "state": raw.get("decision_state") or raw.get("state"),
+            "rationale": raw.get("rationale"),
+            "evidence_refs": list(raw.get("evidence_refs") or []),
+        }
+
+
+read_store = ReadStoreDouble()
+
+
+def _make_app():
+    from fastapi import FastAPI, HTTPException
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.responses import JSONResponse
+    from typing import Any
+    from services.control_plane.bff.agora.router import create_agora_router
+    from services.control_plane.bff.models import ErrorCode
+    from services.control_plane.bff.personas.service import (
+        _extract_identity,
+        _require_read_role,
+        _require_operator_role,
+        _bff_error,
+    )
+    try:
+        from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
+    except ImportError:
+        from services.control_plane.bff.agora.service import (
+            _AGORA_SIGNAL_WRITE_ROLES,
+            _AGORA_BULK_FEEDBACK_ROLES,
+        )
+
+    def _require_agora_signal_write_role(identity: Any) -> None:
+        if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Agora signal creation requires analyst-level role",
+                "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
+                precondition_failed="role_check",
+                suggestion="Escalate to a user with analyst-level Agora write access",
+            )
+
+    def _require_agora_bulk_feedback_role(identity: Any) -> None:
+        if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Agora feedback access requires analyst role",
+                "Operator does not hold the required Agora feedback role",
+                precondition_failed="role_check",
+                suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
+            )
+
+    def _utc_now():
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_agora_signal_write_role,
+        require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        read_surface=lambda: read_store,
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    return app
 
 
 def payload():
@@ -30,7 +171,7 @@ def payload():
 def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    return TestClient(_make_app(), raise_server_exceptions=False)
 
 
 def error_payload(response):
@@ -46,7 +187,7 @@ def strict_client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", JWT_ISSUER)
     monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    return TestClient(_make_app(), raise_server_exceptions=False)
 
 
 def jwt_authorization(subject, roles, *, user_id="proposal-owner"):
@@ -326,7 +467,7 @@ def test_proposal_exposes_only_authoritative_available_approval_refs(monkeypatch
     # Stub auth scopes the private proposal to the actor id rather than the
     # strict JWT user_id used by the approval action tests below.
     monkeypatch.setattr(
-        bff_main.read_store,
+        read_store,
         "list_approval_decisions",
         lambda: [
             authoritative_approval(
@@ -396,7 +537,7 @@ def test_approval_rejects_non_authoritative_ref_and_operator_role(monkeypatch):
     proposer_auth = jwt_authorization("proposal-user", ["operator"])
     operator_auth = jwt_authorization("other-operator", ["operator"])
     reviewer_auth = jwt_authorization("risk-reviewer", ["reviewer"])
-    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", lambda _ref: None)
+    monkeypatch.setattr(read_store, "get_approval_decision", lambda _ref: None)
     created = c.post(
         "/bff/agora/proposals",
         headers={"Authorization": proposer_auth, "Idempotency-Key": "approval-authority-negative"},
@@ -439,7 +580,7 @@ def test_approval_rejects_self_approval_and_target_mismatch(monkeypatch):
             tenant_id="tenant-other",
         ),
     }
-    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", approvals.get)
+    monkeypatch.setattr(read_store, "get_approval_decision", approvals.get)
     created = c.post(
         "/bff/agora/proposals",
         headers={"Authorization": proposer_auth, "Idempotency-Key": "approval-self-negative"},
@@ -513,7 +654,7 @@ def test_approval_accepts_matching_canonical_decision(monkeypatch):
     c = strict_client(monkeypatch)
     proposer_auth = jwt_authorization("proposal-user", ["operator"])
     reviewer_auth = jwt_authorization("risk-reviewer", ["reviewer"])
-    record = bff_main.read_store._project_canonical_approval_decision(
+    record = read_store._project_canonical_approval_decision(
         {
             "decision_id": "approval-risk-1",
             "decision": "approved",
@@ -529,7 +670,7 @@ def test_approval_accepts_matching_canonical_decision(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        bff_main.read_store,
+        read_store,
         "get_approval_decision",
         lambda approval_id: record if approval_id == record["decision_id"] else None,
     )
@@ -613,7 +754,7 @@ def test_approval_rejects_stale_content_validation_time_and_expiry_bindings(monk
         "revoked-at": {**base, "decision_id": "revoked-at", "id": "revoked-at", "revoked_at": "2026-07-14T00:00:00Z"},
         "revoked-state": {**base, "decision_id": "revoked-state", "id": "revoked-state", "decision_state": "revoked"},
     }
-    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", records.get)
+    monkeypatch.setattr(read_store, "get_approval_decision", records.get)
     expected = {
         "wrong-revision": "revision mismatch",
         "wrong-content": "content digest mismatch",

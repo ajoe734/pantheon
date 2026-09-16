@@ -32,6 +32,22 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 | Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
 
+## OpenClaw acceptance after deployment
+
+The dev release deploys and verifies the exact FE/BFF pair before provider
+authentication and AI functional acceptance. OpenClaw pairing, authentication,
+provider quota, and live-answer failures are not deployment gates and do not
+hold or quarantine the deployment lease. Basic BFF login/session validation,
+tenant isolation, exact artifact checks, and rollback remain in force.
+
+After the pair is served, use the existing
+`scripts/openclaw-assistant-openclaw-live-smoke.sh` with the adapter's existing
+service credential, then run the authenticated Management AI paper-action
+journey. Record those results separately from deployment. The smoke still
+returns nonzero on failure; a deployed pair does not mean AI is usable, and a
+quota/auth failure is not an accepted AI journey. Do not repeat provider calls
+when a known quota limit already explains the failure.
+
 ## Deployment Script
 
 The workflow uses:

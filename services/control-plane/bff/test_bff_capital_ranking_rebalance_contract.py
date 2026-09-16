@@ -536,8 +536,18 @@ def test_bff_ranking_formula_action_accepted() -> None:
             formula = create_resp.json()["data"]
             formula_id = formula.get("formula_id") or formula.get("id")
             action_resp = client.post(
-                f"/bff/actions/ranking-formula/{formula_id}/activate",
-                json={},
+                "/bff/v1/commands",
+                json={
+                    "command": "RankingFormulaAction",
+                    "target": {"type": "RankingFormula", "id": formula_id},
+                    "action": "activate",
+                    "params": {
+                        "action_id": "activate",
+                        "entity_type": "ranking-formula",
+                        "entity_id": formula_id,
+                    },
+                    "audit_context": {"reason": "activate ranking formula"},
+                },
                 headers={**HEADERS, "Idempotency-Key": "rf-action-001"},
             )
             assert action_resp.status_code == 202, action_resp.text

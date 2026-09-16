@@ -2,8 +2,8 @@
 """Classify a change against the one component-boundary manifest.
 
 The classifier is deliberately small: it does not decide approval, deployment,
-or task routing.  It only tells CI whether a diff touches product runtime, so a
-development-tooling change is not made to run unrelated product tests.
+or task routing. It supplies the same source classification to CI test and
+commit-trailer selection. Unmapped paths never prove a tooling-only change.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def classify_paths(manifest: dict[str, Any], paths: list[str]) -> dict[str, Any]
         "product_touched": product_touched,
         "development_tooling_touched": "development_tooling" in domains,
         "delivery_touched": "delivery" in domains,
-        "tooling_only": bool(paths) and not product_touched,
+        "tooling_only": bool(paths) and not unknown and not product_touched,
     }
 
 

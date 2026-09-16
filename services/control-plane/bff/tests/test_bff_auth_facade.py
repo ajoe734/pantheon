@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
@@ -27,6 +28,7 @@ from services.control_plane.bff.core.app_factory import (
     create_core_router,
 )
 from services.control_plane.bff.core.lifespan import create_lifespan
+from services.control_plane.bff.tests.conftest import asgi_request
 
 
 TASK_DELIVERY_EVIDENCE = {

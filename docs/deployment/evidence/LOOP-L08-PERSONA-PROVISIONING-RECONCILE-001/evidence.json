@@ -1,0 +1,127 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001",
+  "title": "Persona provisioning reconcile root cause",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "base_sha": "96d7e794c3fd72331dd6b00f2ae8fe60d2838cf5",
+  "recorded_at": "2026-09-15T06:42:00Z",
+  "scope": {
+    "declared_artifacts": [
+      "services/control-plane/bff/personas/reconciliation.py",
+      "services/control-plane/bff/personas/routes/provisioning.py",
+      "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+      "docs/deployment/evidence/LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001/evidence.json"
+    ],
+    "exact_artifact_count": 5,
+    "evidence_manifest": "docs/deployment/evidence/LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001/evidence.json"
+  },
+  "root_cause_analysis": {
+    "failure_summary": "dev deployment failed with exit 75 in nonprod-deploy during bootstrap_dev_paper_baseline.py. The script polled /bff/personas/{id}/provisioning/reconcile 74 times over 420 seconds, with provisioning_state remaining stuck in 'provisioning' across every attempt.",
+    "reproduction": {
+      "reproduced": true,
+      "reproduction_tests": [
+        "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py::test_reconcile_polling_remains_in_provisioning_without_downstream_owners",
+        "services/control-plane/bff/test_loop_prod_per_001_provisioning.py::test_persona_provisioning_reconcile_remains_provisioning_without_downstream_owners"
+      ],
+      "observed_behavior": "Repeated reconcile calls returned HTTP 200 with data.state='provisioning' and meta.lifecycle_state='provisioning'. No state transition occurred and no terminal failure or success was reached."
+    },
+    "mechanism": {
+      "1_missing_downstream_runtime_binding": "RuntimeManagerClient.list_by_plan(plan_id) returned 0 active bindings. In the Pantheon architecture, RuntimeBinding creation is owned asynchronously by services/deployment/outbox_consumer_worker.py calling RuntimeManagerClient.deploy(). Without an active RuntimeBinding matching the plan, capital pool, and tenant, binding_ok evaluates to False.",
+      "2_missing_paper_execution_worker": "list_authoritative_paper_runtime_monitoring_sessions() returned 0 sessions. In the Pantheon architecture, the Paper Execution Worker must boot and publish live heartbeats (<=90s) to paper_runtime_manager. Because binding_ok was False, heartbeat evaluation was not even reached, and heartbeat_ok evaluated to False.",
+      "3_absence_treated_as_in_flight": "In _evaluate_persona_provisioning_status, having 0 active bindings does not trigger binding_failed=True because asynchronous saga dispatch may still be in progress. Consequently, no immediate failure was recorded.",
+      "4_timeout_threshold_discrepancy": "BFF's internal PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS defaults to 600 seconds. However, bootstrap_dev_paper_baseline.py was invoked with --timeout-seconds 420 (74 polls * 5s = ~370-420s). When the bootstrap script timed out at 420s and raised BootstrapError with exit 75, BFF still evaluated is_timeout=False because elapsed time was under 600s.",
+      "5_fail_closed_boundary": "The state machine correctly refused to fabricate success or default identifiers without underlying owner evidence. The missing owners (RuntimeManagerClient and paper execution worker) are executable runtime components genuinely outside this artifact contract.",
+      "6_mutation_port_wiring": "services/control-plane/bff/personas/routes/provisioning.py was enhanced to wire PersonaProvisioningReconciliationMutationPort so that terminal transitions (paper_running, provisioning_failed) are durably recorded via the write owner with provisioning_reconciliation_state."
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_failure_reproduced": {
+      "status": "satisfied",
+      "proof": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py::test_reconcile_polling_remains_in_provisioning_without_downstream_owners and services/control-plane/bff/test_loop_prod_per_001_provisioning.py::test_persona_provisioning_reconcile_remains_provisioning_without_downstream_owners demonstrate that without downstream owners, reconcile stays in provisioning across repeated polling passes."
+    },
+    "ac2_root_cause_and_owner_boundary_determined": {
+      "status": "satisfied",
+      "proof": "Root cause analyzed and verified by test_reconcile_refuses_to_advance_without_executable_runtime_binding_owner and test_reconcile_refuses_to_advance_without_paper_worker_heartbeat_owner. The missing owners are RuntimeManagerClient and the paper execution worker. Reconcile fail-closes without faking success or synthesizing IDs."
+    },
+    "ac3_terminal_state_backed_by_durable_readback": {
+      "status": "satisfied",
+      "proof": "Verified by test_reconcile_drives_terminal_success_when_all_owners_present and test_persona_provisioning_completes_upon_readback_success. When owners are present, reconcile transitions to paper_running and persists provisioning_reconciliation_state='paper_running' via PersonaProvisioningReconciliationMutationPort."
+    },
+    "ac4_negative_paths_surface_real_reasons": {
+      "status": "satisfied",
+      "proof": "Verified by test_reconcile_negative_path_timeout, test_reconcile_negative_path_runtime_binding_failed, test_reconcile_negative_path_deployment_saga_failed, and test_reconcile_negative_path_stale_paper_worker_heartbeat. Real failure reasons are surfaced in metadata.provisioning_failure_reason and persisted via PersonaProvisioningReconciliationMutationPort with provisioning_reconciliation_state='provisioning_failed'."
+    },
+    "ac5_focused_and_full_regression_executed": {
+      "status": "satisfied",
+      "proof": "71 tests passed across services/control-plane/bff/tests/test_persona_provisioning_reconcile.py (9 passed), services/control-plane/bff/test_loop_prod_per_001_provisioning.py (7 passed), services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py (3 passed), and services/control-plane/bff/test_persona_provisioning_readback.py (52 passed) with 0 failures."
+    }
+  },
+  "source_files_proof": {
+    "services/control-plane/bff/personas/reconciliation.py": {
+      "bytes": 2799,
+      "lines": 75,
+      "sha256": "d749c6bedb733520b86d1ea01f5e72d7c55757a71faa533ac9c819b59732cbd9"
+    },
+    "services/control-plane/bff/personas/routes/provisioning.py": {
+      "bytes": 4227,
+      "lines": 111,
+      "sha256": "6e3a2b30f0b0825d50f5a3ac200acf6a21f67d1ba2e7d155a2d527b836c0343a"
+    },
+    "services/control-plane/bff/test_loop_prod_per_001_provisioning.py": {
+      "bytes": 26305,
+      "lines": 629,
+      "sha256": "d98d464d0eedcdc035afcd736518eaeb8898df9991abec97a2e709e57c6c2e71"
+    },
+    "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py": {
+      "bytes": 30748,
+      "lines": 721,
+      "sha256": "2ff4919cd5aae64d671b924048115101887fa6db47c7004e2b93802e8800833d"
+    }
+  },
+  "test_executions": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+      "exit_code": 0,
+      "collected": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "exit_code": 0,
+      "collected": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py",
+      "exit_code": 0,
+      "collected": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_persona_provisioning_readback.py",
+      "exit_code": 0,
+      "collected": 52,
+      "passed": 52,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py services/control-plane/bff/test_persona_provisioning_readback.py",
+      "exit_code": 0,
+      "collected": 71,
+      "passed": 71,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 24.28
+    }
+  ]
+}

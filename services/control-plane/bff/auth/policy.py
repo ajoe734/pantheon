@@ -57,7 +57,9 @@ _WRITE_ROLES = frozenset({"operator", "approver", "admin", "reviewer"})
 _DEV_LOGIN_IDENTITY_DEFS = {
     "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
     "operator": {"roles": ("operator",), "subject_suffix": "operator"},
-    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
+    # Keep the UI role and the Governance owner's ordinary review role aligned
+    # for this configured dev account; other dev identities stay distinct.
+    "approver": {"roles": ("approver", "governance_reviewer"), "subject_suffix": "approver"},
     "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
     "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
     "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
@@ -346,11 +348,8 @@ def bff_source_commit() -> str:
 def dev_login_forbidden_environment() -> bool:
     env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
     deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
-    return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-
-
-def dev_login_bool_env(name: str, *, default: bool) -> bool:
-    return bool_from_env(name, default=default)
+    forbidden = _PRODUCTION_STRICT_ENVIRONMENTS | {"staging"}
+    return env_name in forbidden or deployment_stage in forbidden
 
 
 def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
@@ -382,8 +381,6 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
         if tenant_id not in allowed_tenants:
             allowed_tenants = [tenant_id] + list(allowed_tenants)
 
-        mfa_verified = dev_login_bool_env(f"{env_prefix}_MFA_VERIFIED", default=False)
-
         registry[name] = {
             "identity": name,
             "client_id": client_id,
@@ -392,7 +389,6 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
             "subject": f"pantheon-dev-{base['subject_suffix']}",
             "tenant_id": tenant_id,
             "allowed_tenants": allowed_tenants,
-            "mfa_verified": mfa_verified,
         }
     return registry
 
@@ -868,6 +864,33 @@ def raise_if_session_logged_out(
     )
 
 
+def require_admin_mfa(
+    identity: OperatorIdentity,
+    command_name: str,
+    *,
+    error_factory: Optional[Callable[..., HTTPException]] = None,
+) -> None:
+    err_fn = error_factory or bff_error
+    if "admin" not in identity.roles:
+        raise err_fn(
+            403,
+            ErrorCode.FORBIDDEN,
+            f"{command_name} requires 'admin' role",
+            "Operator does not hold the admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to an admin-role operator",
+        )
+    if not identity.mfa_verified:
+        raise err_fn(
+            403,
+            ErrorCode.AUTH_REQUIRED,
+            f"{command_name} requires MFA verification",
+            "Admin action requires MFA validation",
+            precondition_failed="mfa_check",
+            suggestion="Provide a valid MFA token in your session",
+        )
+
+
 raise_if_session_logged_out._canonical_guard = True  # type: ignore[attr-defined]
 
 
@@ -987,3 +1010,4 @@ default_capabilities_for_identity = capabilities_for_identity
 default_bff_auth_stub_enabled = bff_auth_stub_enabled
 default_bff_auth_mode = bff_auth_mode
 default_bff_source_commit = bff_source_commit
+default_require_admin_mfa = require_admin_mfa

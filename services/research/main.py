@@ -1600,11 +1600,9 @@ def execute_research_stage(
                 VectorbtWorkflowError,
             )
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
-            try:
-                import vectorbt  # noqa: F401
-                backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
-            except ImportError:
-                backend_runner = StubVectorbtBackend()
+            # The real owner checks its dependencies; never fall back to a stub
+            # while retaining a real receipt label.
+            backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
             provenance = "real" if use_real else "simulation"
             vbt_config = BacktestConfig(
                 version="1.0.0",
@@ -1624,28 +1622,10 @@ def execute_research_stage(
                         records.append(rec)
                 ds_id = str(stage.get("dataset_id") or plan.get("dataset_id") or f"dataset:{run_id}")
                 st_id = str(plan.get("strategy_id") or f"strat:{run_id}")
-                insts = {r.get("instrument") for r in records if r.get("instrument")}
-                if len(insts) < 2 or any(sum(1 for r in records if r.get("instrument") == inst) < 30 for inst in insts):
-                    from datetime import date, timedelta
-                    start = date(2026, 1, 1)
-                    records = []
-                    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
-                        for i in range(35):
-                            d = (start + timedelta(days=i)).isoformat()
-                            p = base + i * 0.5
-                            records.append({
-                                "instrument": inst,
-                                "date": d,
-                                "open": p,
-                                "high": p + 1.0,
-                                "low": p - 0.5,
-                                "close": p + 0.2,
-                                "volume": 1000.0,
-                            })
                 vbt_dataset = {
                     "dataset_id": ds_id,
                     "strategy_id": st_id,
-                    "source_dataset_refs": [f"dataset:seed:{st_id}"],
+                    "source_dataset_refs": stage.get("source_dataset_refs") or plan.get("source_dataset_refs") or body.get("source_dataset_refs") or [],
                     "data_frequency": "daily",
                     "records": records,
                 }
@@ -1792,6 +1772,22 @@ def execute_research_stage(
             status_code=503,
             detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
         )
+
+    # A real engine does not turn explicitly simulated input into real evidence.
+    # This only downgrades provenance: an input label can never promote a stub.
+    inputs = [dataset_input]
+    records = dataset_input.get("records", []) if isinstance(dataset_input, dict) else dataset_input
+    if isinstance(records, list):
+        inputs.extend(records)
+    for value in inputs:
+        if not isinstance(value, dict):
+            continue
+        metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+        if any(item.get("provenance") == "simulation" or item.get("is_real") is False for item in (value, metadata)):
+            provenance = "simulation"
+            for metric in metrics:
+                metric["provenance"] = provenance
+            break
 
     artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
     artifact_record = {

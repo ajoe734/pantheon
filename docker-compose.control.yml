@@ -678,6 +678,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-postgres}
+      # U8A: Evolution Program owner store, same postgres-in-control-plane
+      # convention as REGISTRY_STORE_BACKEND/CAPITAL_STORE_BACKEND above.
+      EVOLUTION_PROGRAM_STORE_BACKEND: ${EVOLUTION_PROGRAM_STORE_BACKEND:-postgres}
+      EVOLUTION_PROGRAM_STORE_DSN: ${EVOLUTION_PROGRAM_STORE_DSN:-}
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents

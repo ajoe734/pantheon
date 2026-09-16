@@ -117,7 +117,6 @@ def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
         "PANTHEON_BFF_OIDC_AUDIENCE",
         "PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID",
         "PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET",
-        "PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED",
         "PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID",
         "PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET",
         "PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID",
@@ -146,4 +145,3 @@ def test_dev_compose_login_ttl_contract_matches_proof_window_floor() -> None:
     assert (
         "PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     ) in block
-

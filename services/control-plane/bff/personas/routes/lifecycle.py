@@ -543,7 +543,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         return _deprecated_bff_path_response(
             route="/bff/personas/{persona_id}/actions/{action_id}",
-            replacement="/bff/actions/persona/{persona_id}/{action_id}",
+            replacement="/bff/v1/commands",
         )
 
 

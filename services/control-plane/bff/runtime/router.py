@@ -1207,7 +1207,7 @@ def create_runtime_router(
         """BFF: submit an action against a runtime binding."""
         return _deprecated_bff_path_response(
             route="/bff/runtimes/{runtime_id}/actions/{action_id}",
-            replacement="/bff/actions/runtime/{runtime_id}/{action_id}",
+            replacement="/bff/v1/commands",
         )
 
 

@@ -1223,6 +1223,7 @@ EOF
             env: dict[str, str] | None = None,
             refresh_if_needed: bool = True,
             account_lock_key: str | None = None,
+            auth_status_payload: dict[str, object] | None = None,
         ) -> bool:
             home = str((env or {}).get("HOME") or "")
             return bool(binary) and home.endswith(".claude2")
@@ -1306,6 +1307,47 @@ EOF
             claude2_runtime["env"]["CLAUDE_CONFIG_DIR"],
         )
 
+    def test_antigravity2_auth_probe_matches_antigravity_qualified_timeout(self) -> None:
+        config = json.loads((Path(ROOT) / ".orchestrator" / "config.json").read_text(encoding="utf-8"))
+
+        antigravity_probe_config = config["providers"]["antigravity"]["auth_probe"]
+        antigravity2_probe_config = config["providers"]["antigravity2"]["auth_probe"]
+
+        self.assertEqual(antigravity2_probe_config, antigravity_probe_config)
+        self.assertEqual(antigravity2_probe_config["probe_timeout_seconds"], 120)
+        self.assertEqual(antigravity2_probe_config["failed_probe_interval_seconds"], 60)
+
+        antigravity_settings = provider_permissions._auth_probe_settings(config, "antigravity")
+        antigravity2_settings = provider_permissions._auth_probe_settings(config, "antigravity2")
+
+        self.assertEqual(antigravity2_settings["probe_timeout_seconds"], antigravity_settings["probe_timeout_seconds"])
+        self.assertEqual(
+            antigravity2_settings["failed_probe_interval_seconds"],
+            antigravity_settings["failed_probe_interval_seconds"],
+        )
+        self.assertNotEqual(
+            antigravity2_settings["probe_timeout_seconds"],
+            provider_permissions.AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS,
+        )
+
+        # Untouched providers keep resolving the plain global default.
+        unconfigured_settings = provider_permissions._auth_probe_settings(config, "codex")
+        self.assertEqual(
+            unconfigured_settings["probe_timeout_seconds"],
+            provider_permissions.AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS,
+        )
+
+        # The explicit timeout does not merge credentials, capacity, or retry
+        # state between the two provider lanes.
+        antigravity_provider = config["providers"]["antigravity"]
+        antigravity2_provider = config["providers"]["antigravity2"]
+        self.assertNotEqual(antigravity_provider["account"], antigravity2_provider["account"])
+        self.assertNotEqual(
+            antigravity_provider["antigravity"].get("home"),
+            antigravity2_provider["antigravity"].get("home"),
+        )
+        self.assertEqual(antigravity_provider["retry"], antigravity2_provider["retry"])
+
     def test_configured_claude_probes_use_their_isolated_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1375,11 +1417,29 @@ EOF
             [env["CLAUDE_CONFIG_DIR"] for env in probe_envs],
             [
                 str(claude2_config_dir),
-                str(claude2_config_dir),
-                str(claude_config_dir),
                 str(claude_config_dir),
             ],
         )
+
+    def test_claude_probe_reuses_status_payload_for_refresh_lock_resolution(self) -> None:
+        payload = {"loggedIn": True, "organization": {"orgId": "unit-shared-org"}}
+        config = {"providers": {"claude2": {"account": "claude2"}}}
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.object(
+                provider_permissions,
+                "_claude_auth_status_payload",
+                return_value=payload,
+            ),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True) as auth_ready,
+        ):
+            probe = provider_permissions._claude_auth_probe(
+                config, "claude2", "claude", {"HOME": tmpdir}
+            )
+
+        self.assertTrue(probe["ready"])
+        self.assertEqual(auth_ready.call_args.kwargs["account_lock_key"], "claude2")
+        self.assertIs(auth_ready.call_args.kwargs["auth_status_payload"], payload)
 
     def test_provider_capabilities_include_custom_gemini_provider(self) -> None:
         config = {

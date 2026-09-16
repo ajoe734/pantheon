@@ -105,7 +105,6 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           HEAD_SHA: ${{ github.sha }}
           RANGE: ${{ steps.range.outputs.range }}
-          DELIVERY_CLASS: ${{ contains(github.event.pull_request.labels.*.name, 'delivery:tooling') && 'tooling' || 'product' }}
         run: |
           if [[ "$EVENT" == "workflow_dispatch" && "$REF_NAME" == promote/* ]]; then
             echo "Skipping commit trailer re-scan for exact-head promote dispatch ${REF_NAME}; publish history was already validated before snapshot cut."
@@ -126,11 +125,14 @@ jobs:
             echo "commit range was not resolved; refusing to skip the trailer gate" >&2
             exit 1
           fi
+          # Use the existing component manifest for each commit in both PR
+          # and push events. Labels describe delivery intent, not source scope.
+          python3 -m pip install pyyaml
           echo "Checking commit trailers over ${RANGE}"
           python3 scripts/git/check_commit_trailers.py \
             --range "$RANGE" \
             --skip-merge \
-            --delivery-class "$DELIVERY_CLASS"
+            --delivery-class auto
 
   generated-files:
     name: Runtime mirror guard
@@ -267,13 +269,6 @@ jobs:
           # Keep these explicit: requirements.txt intentionally does not pull
           # product service dependencies into a tooling-only change.
           python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
-          # scripts/run-acceptance.sh (invoked below for a mixed product+
-          # tooling diff) also runs the execution-grant-issuer suites; install
-          # their pinned deps here so that best-effort path does not
-          # silently fail closed on a missing firebase-admin/PyJWT import.
-          if [[ -f deploy/execution-grant-issuer/requirements.txt ]]; then
-            python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt || true
-          fi
 
       - name: Verify workflow contract
         run: |
@@ -330,34 +325,6 @@ jobs:
             echo "${field}=${value}" >> "$GITHUB_OUTPUT"
           done
 
-      - name: Detect execution-grant-issuer changes
-        id: issuer_boundary
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          # Independent of scripts/component_boundary.py's manifest-driven
-          # classification (which currently has no entry for this path set),
-          # so this dedicated tooling gate cannot silently stop running if
-          # the manifest ever falls behind these exact paths.
-          if [[ -n "$BASE_SHA" && "$BASE_SHA" != "0000000000000000000000000000000000000000" ]] \
-            && git cat-file -e "${BASE_SHA}^{commit}"; then
-            range="$BASE_SHA...$HEAD_SHA"
-          else
-            range="${HEAD_SHA}~1...$HEAD_SHA"
-          fi
-          changed="$(git diff --name-only $range -- \
-            .orchestrator/execution_grant_issuer \
-            scripts/request_execution_grant.py \
-            scripts/test_request_execution_grant.py \
-            deploy/execution-grant-issuer)"
-          if [[ -n "$changed" ]]; then
-            echo "$changed"
-            echo "touched=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "touched=false" >> "$GITHUB_OUTPUT"
-          fi
-
       # DTG-CI-01: these three gates are independent, not mutually exclusive.
       # A mixed tooling/product diff must run every applicable gate; an
       # unknown-only or delivery-only diff falls through to the product/mixed
@@ -374,12 +341,18 @@ jobs:
           PYTHONPATH=.orchestrator python3 -m pytest -q \
             .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py \
             .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py \
+            .orchestrator/test_worker_runner_heartbeat.py \
+            scripts/test_promote_supervisor_runtime.py \
+            scripts/test_human_ops_status.py \
             scripts/test_verify_task_state_store.py
 
       - name: Run tooling integration-authority gate
         if: steps.boundary.outputs.development_tooling_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m pytest -q \
+            scripts/git/test_commit_delivery_classification.py \
+            scripts/git/test_check_commit_trailers_independent_review.py \
+            scripts/git/test_git_workflow_helpers.py \
             .orchestrator/test_recovery_contract_boundaries.py \
             .orchestrator/rewrite/test_integration_receipt.py \
             scripts/git/test_auto_integrator.py \
@@ -390,15 +363,18 @@ jobs:
             scripts/test_supervisor_launch_ownership.py \
             scripts/test_supervisor_watchdog_install.py
 
-      - name: Run execution-grant-issuer gate
-        if: steps.issuer_boundary.outputs.touched == 'true'
+      - name: Run delivery diagnostics and exit-status regressions
+        if: steps.boundary.outputs.delivery_touched == 'true'
         run: |
-          python3 -m pip install -r deploy/execution-grant-issuer/requirements.txt
           PYTHONPATH=.orchestrator python3 -m pytest -q \
-            .orchestrator/execution_grant_issuer/test_issuer.py \
-            deploy/execution-grant-issuer/test_run_server.py
-          PANTHEON_COMMAND_ROOT="$PWD" python3 -m pytest -q \
-            scripts/test_request_execution_grant.py
+            scripts/test_capture_dev_artifact_baseline.py \
+            scripts/test_dev_release_artifact_driver.py \
+            scripts/test_dev_release_artifacts.py \
+            scripts/test_dev_remote_guarded_exec.py \
+            scripts/test_dev_vm_ssh.py \
+            scripts/test_dev_direct_ssh_workflow_contract.py \
+            scripts/test_dev_deploy_worktree_isolation_contract.py \
+            scripts/test_run_acceptance.py
 
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')

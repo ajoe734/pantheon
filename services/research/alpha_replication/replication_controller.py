@@ -22,6 +22,7 @@ from services.research.alpha_replication.controller_state import ControllerState
 from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.revalidation_worker import AlphaRevalidationWorker
 from services.research.experiment_orchestrator.authority import ExperimentAuthority
+from services.service_token_file import configured_service_token
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -56,7 +57,11 @@ class ReplicationControllerConfig:
 def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> list[dict]:
     url = f"{registry_url}/api/registry/strategies/{strategy_id}/strategy-specs?artifact_state=approved"
     try:
-        req = urllib.request.Request(url, method="GET")
+        headers = {}
+        token = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5) as response:
             views = json.loads(response.read().decode("utf-8"))
             return [view["entry"] for view in views if "entry" in view]
@@ -310,23 +315,38 @@ def run_controller_tick(
     return state.to_dict()
 
 
-def main() -> int:
-    config = ReplicationControllerConfig()
-    
-    # Initialize state
-    store = ControllerStateStore(config.state_path)
+def initialize_controller_state(store: ControllerStateStore) -> ControllerState:
+    """Resume a checkpoint only within its configured tenant and deployment.
+
+    Admissions and queue entries are separate stores and are never moved or
+    rewritten here. An old health checkpoint must not choose the new worker's
+    tenant or continue publishing an obsolete source identity after rollout.
+    """
     state = store.load()
-    if state is None:
-        git_sha = os.getenv("GIT_SHA") or "unknown"
+    tenant_id = os.getenv("PANTHEON_TENANT_ID") or "default"
+    environment = os.getenv("PANTHEON_ENV") or "dev"
+    git_sha = os.getenv("GIT_SHA") or "unknown"
+    if state is None or (
+        state.tenant_id != tenant_id
+        or state.environment != environment
+        or state.deployment.get("git_sha") != git_sha
+    ):
         state = ControllerState(
             controller_id=os.getenv("PANTHEON_CONTROLLER_ID") or f"alpha-replication-controller-{os.getpid()}",
             controller_name=os.getenv("PANTHEON_CONTROLLER_NAME") or "alpha-replication-controller",
-            environment=os.getenv("PANTHEON_ENV") or "dev",
-            tenant_id=os.getenv("PANTHEON_TENANT_ID") or "default",
+            environment=environment,
+            tenant_id=tenant_id,
             deployment={"git_sha": git_sha},
         )
         store.save(state)
-        
+    return state
+
+
+def main() -> int:
+    config = ReplicationControllerConfig()
+    store = ControllerStateStore(config.state_path)
+    state = initialize_controller_state(store)
+
     writer = None
     if config.database_url:
         writer = build_loop_writer(dsn=config.database_url, state=state)
