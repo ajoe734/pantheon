@@ -31,6 +31,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from evolution.router import create_evolution_programs_router, create_evolution_router
 from evolution.service import EvolutionService
+from ports.evolution_program_commands import (
+    EvolutionProgramCommandError,
+    EvolutionProgramConflictError,
+    EvolutionProgramNotFoundError,
+)
 
 
 class _MockReadStore:
@@ -67,25 +72,12 @@ class _MockReadStore:
     def get_evolution_program(self, program_id: str) -> Optional[Dict[str, Any]]:
         return self.evolution_programs.get(program_id)
 
-    def create_evolution_program(self, *, program_id: str, name: str, actor_id: str, created_at: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        item = {
-            "program_id": program_id,
-            "id": program_id,
-            "name": name,
-            "status": "draft",
-            "actor_id": actor_id,
-            "created_at": created_at or "2026-08-30T00:00:00Z",
-            "updated_at": created_at or "2026-08-30T00:00:00Z",
-            "params": params or {},
-        }
-        self.evolution_programs[program_id] = item
-        return item
-
-    def patch_evolution_program(self, program_id: str, *, patch: Dict[str, Any], actor_id: str, updated_at: Optional[str] = None) -> Dict[str, Any]:
-        item = self.evolution_programs[program_id]
-        item.update(patch)
-        item["updated_at"] = updated_at or "2026-08-30T00:00:00Z"
-        return item
+    def seed_evolution_program(self, program: Dict[str, Any]) -> None:
+        """Test-setup helper only. Per the U8A owner contract, this store is
+        read-only in production -- there is no ``create_evolution_program``/
+        ``patch_evolution_program`` here; all writes go through the injected
+        ``program_commands`` port (see ``_FakeProgramCommandPort`` below)."""
+        self.evolution_programs[program["program_id"]] = program
 
     def list_evolution_program_runs(self, program_id: str) -> List[Dict[str, Any]]:
         return self.evolution_program_runs.get(program_id, [])
@@ -198,10 +190,60 @@ class _MockReadStore:
         return self.incidents
 
 
+class _FakeProgramCommandPort:
+    """Stub standing in for ``EvolutionServiceProgramCommandPort`` -- models
+    the Evolution service owner API's create/PATCH(name) semantics without a
+    real HTTP call, matching the fake used in
+    ``test_evolution_program_owner_contract.py`` and
+    ``evolution/test_router.py``."""
+
+    def __init__(self, read_store: _MockReadStore) -> None:
+        self._read_store = read_store
+        self._seq = 0
+
+    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+        self._seq += 1
+        program_id = f"prog-{self._seq}"
+        program = {
+            "id": program_id,
+            "program_id": program_id,
+            "tenant_id": tenant_id,
+            "name": name,
+            "status": "draft",
+            "revision": 1,
+            "created_at": "2026-08-30T00:00:00Z",
+            "updated_at": "2026-08-30T00:00:00Z",
+            "created_by": actor_id,
+        }
+        self._read_store.seed_evolution_program(program)
+        return program
+
+    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+        current = self._read_store.get_evolution_program(program_id)
+        if current is None:
+            raise EvolutionProgramNotFoundError(f"Evolution program not found: {program_id}")
+        if int(current.get("revision") or 0) != expected_revision:
+            raise EvolutionProgramConflictError(f"Evolution program {program_id} was modified concurrently")
+        updated = dict(current)
+        updated["name"] = name
+        updated["revision"] = int(current["revision"]) + 1
+        updated["updated_at"] = "2026-08-30T01:00:00Z"
+        self._read_store.seed_evolution_program(updated)
+        return updated
+
+
 def _build_test_client(store: _MockReadStore, **kwargs: Any) -> TestClient:
     app = FastAPI()
+    kwargs.setdefault("program_commands", _FakeProgramCommandPort(store))
     router = create_evolution_router(get_read_store=lambda: store, **kwargs)
     app.include_router(router)
+
+    @app.exception_handler(EvolutionProgramCommandError)
+    async def _handle_program_command_error(request, exc: EvolutionProgramCommandError):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=exc.status_code, content={"message": str(exc)})
+
     return TestClient(app)
 
 
@@ -568,9 +610,15 @@ def test_management_evolution_journal_persona_lineage_filtering():
 
 
 def test_evolution_programs_router_factory_compatibility():
-    """Verify create_evolution_programs_router maintains backwards-compatible behavior."""
+    """Verify create_evolution_programs_router maintains backwards-compatible
+    behavior. Create still requires the injected ``program_commands`` write
+    port -- the U8A owner contract routes writes through it, not the read
+    store -- so this wires the same fake used by ``_build_test_client``."""
     store = _MockReadStore()
-    router = create_evolution_programs_router(get_read_store=lambda: store)
+    router = create_evolution_programs_router(
+        get_read_store=lambda: store,
+        program_commands=_FakeProgramCommandPort(store),
+    )
     app = FastAPI()
     app.include_router(router)
     client = TestClient(app)

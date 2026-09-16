@@ -4,7 +4,6 @@ import base64
 import asyncio
 import json
 import os
-import sys
 import threading
 import uuid
 from pathlib import Path
@@ -15,21 +14,34 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from assistant.control_mode import ControlModeStore
-from assistant.models import AssistantMode
-from management_nl_command_idempotency import (
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.assistant.control_mode import ControlModeStore
+from services.control_plane.bff.assistant.models import AssistantMode
+from services.control_plane.bff.management_nl_command_idempotency import (
     ManagementNlCommandIdempotencyStore,
     ManagementNlCommandPayloadConflict,
     ManagementNlCommandRecoveryRequired,
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
-from models import OperatorIdentity
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-from rebalance_authority_test_support import create_market_persona_projection_test_double
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    create_market_persona_projection_test_double,
+)
+
+
+@pytest.fixture(autouse=True)
+def _management_nl_command_idempotency_default_path(monkeypatch, tmp_path):
+    """BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable admission via
+    ManagementNlCommandIdempotencyStore is unconditional for both nl/ask
+    transports; give it a writable per-test default path since the module
+    default (/data/bff/...) does not exist in the test sandbox."""
+    if not os.environ.get("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"):
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+            str(tmp_path / "management-nl-command-idempotency.json"),
+        )
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}
@@ -310,7 +322,6 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
         return json.loads(json.dumps(record))
     store.record_agora_audit_event = _record_agora_audit_event
     bff_main.read_store = store
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._sse_buffers["ask"].clear()
     bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
@@ -335,7 +346,9 @@ def _clear_provider_env(monkeypatch) -> None:
 
 
 def _enable_management_nl_command_idempotency(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: durable command admission is
+    # unconditional now (no more REQUIRED bypass flag); this helper only
+    # needs to point the store at a fast, isolated per-test config.
     monkeypatch.setenv(
         "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
         str(tmp_path / "management-nl-command-idempotency.json"),
@@ -620,7 +633,6 @@ def test_management_nl_request_exception_marks_reservation_uncertain_immediately
         )
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
@@ -674,7 +686,6 @@ def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replay
     finally:
         provider.release.set()
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
@@ -733,7 +744,6 @@ def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect
     finally:
         provider.release.set()
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
@@ -1230,7 +1240,6 @@ def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_pat
         assert fake.calls == []
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -1274,7 +1283,6 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         assert "persona_health" in source_ids
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -1304,7 +1312,6 @@ def test_management_nl_persona_fleet_summary_includes_health_items(tmp_path, mon
         assert "persona-beta" not in json.dumps(fleet_context)
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -1378,7 +1385,6 @@ def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, 
         assert fake.calls[0]["context_pack"]["frontend"]["route"] == "/management/personas"
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1426,7 +1432,6 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1504,7 +1509,6 @@ def test_management_nl_context_pack_excludes_development_orchestrator_status(
         assert "backend.orchestrator_status" not in fake.calls[0]["prompt"]
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1560,7 +1564,6 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1642,7 +1645,6 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1707,7 +1709,6 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1750,7 +1751,6 @@ def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monk
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1812,7 +1812,6 @@ def test_management_nl_stream_records_openclaw_provider_audit_and_usage(tmp_path
         assert "observedUsage" not in openclaw
         assert openclaw["models"][0]["model"] == "openclaw/main"
     finally:
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -1866,9 +1865,105 @@ def test_management_nl_stream_records_done_only_openclaw_answer(tmp_path, monkey
         ]
         assert provider_events[1]["output_summary"]["output_bytes"] == len("Done-only provider answer.".encode("utf-8"))
     finally:
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+@pytest.mark.parametrize("wire_format", ["structured_done", "json_done", "json_deltas"])
+def test_management_nl_stream_preserves_filtered_actions_after_durable_reload(
+    tmp_path, monkeypatch, wire_format
+) -> None:
+    answer = "Review this paper-only proposal; it requires your confirmation."
+    raw_actions = [
+        {
+            "id": "paper-pause", "kind": "runBffAction", "label": "Pause paper runtime",
+            "requiresConfirmation": False,
+            "params": {
+                "actionId": "PausePaperRuntime", "entityType": "Runtime", "entityId": "rt-stream-test",
+                "payload": {"runtime_id": "rt-stream-test", "reason": "operator_requested_pause"},
+            },
+        },
+        {"id": "disallowed", "kind": "openDrawer", "params": {"drawer": "runtime"}},
+        {"id": "invalid", "kind": "runBffAction", "params": {"endpoint": "https://example.invalid"}},
+        {"id": "missing-runtime", "kind": "runBffAction", "params": {"entityType": "Runtime", "actionId": "PausePaperRuntime"}},
+    ]
+    structured = {"answer": answer, "actions": raw_actions}
+    encoded = json.dumps(structured)
+    if wire_format == "structured_done":
+        events = [{"type": "delta", "text": "Partial answer"}, {"type": "done", "text": answer, "actions": raw_actions}]
+    elif wire_format == "json_done":
+        events = [{"type": "done", "text": encoded}]
+    else:
+        midpoint = len(encoded) // 2
+        events = [{"type": "delta", "text": encoded[:midpoint]}, {"type": "delta", "text": encoded[midpoint:]},
+                  {"type": "done", "text": encoded}]
+    fake = FakeProviderClient(stream_events=events)
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+    client = _seeded_client(tmp_path, monkeypatch)
+    store_path = str(tmp_path / "stream-conversation.json")
+    def fresh_store():
+        return bff_main.ManagementAiConversationStore(
+            storage_path=store_path,
+            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        )
+    monkeypatch.setattr(bff_main, "_MGMT_AI_CONVERSATION_STORE", fresh_store())
+    response = client.post(
+        "/bff/management/nl/ask/stream",
+        json={"question": "Explain this paper runtime proposal", "sessionId": "stream-actions",
+              "ui": {"availableUiActions": [{"kind": "runBffAction"}]}},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": f"stream-actions-durable-reload-{wire_format}"},
+    )
+    assert response.status_code == 200, response.text
+    frames = [json.loads(line[6:]) for line in response.text.splitlines()
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    done = [event for event in frames if event.get("type") == "done"]
+    assert len(done) == 1  # Never expose an unfiltered upstream terminal event.
+    assert done[0]["text"] == answer
+    actions = done[0]["ui_actions"]
+    assert [action["id"] for action in actions] == ["paper-pause"]
+    assert actions[0]["requiresConfirmation"] is True
+    assert actions[0]["params"] == raw_actions[0]["params"]
+    assert done[0]["provider_status"]["used"] is True
+
+    monkeypatch.setattr(bff_main, "_MGMT_AI_CONVERSATION_STORE", fresh_store())
+    readback = client.get("/bff/management/ai/conversations/stream-actions", headers=OPERATOR_HEADERS)
+    assert readback.status_code == 200, readback.text
+    turns = [turn for turn in readback.json()["data"]["turns"] if turn["role"] == "assistant"]
+    assert len(turns) == 1
+    assert turns[0]["text"] == answer
+    assert turns[0]["ui_actions"] == actions
+
+
+@pytest.mark.parametrize("failure", [False, True, "incomplete"])
+def test_management_nl_stream_does_not_offer_unallowed_or_failed_actions(tmp_path, monkeypatch, failure) -> None:
+    events = [{"type": "done", "text": "Provider proposal", "actions": [
+        {"id": "proposal", "kind": "runBffAction", "params": {"endpoint": "/api/v1/operator/commands"}},
+    ]}]
+    if failure == "incomplete":
+        events = [{"type": "delta", "text": json.dumps({"answer": "Incomplete proposal", "actions": events[0]["actions"]})}]
+    elif failure:
+        events.append({"type": "error", "message": "Provider stream failed", "error_code": "UPSTREAM_FAILED"})
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: FakeProviderClient(stream_events=events))
+    client = _seeded_client(tmp_path, monkeypatch)
+    response = client.post(
+        "/bff/management/nl/ask/stream",
+        json={"question": "Explain this proposal", "sessionId": "stream-no-action",
+              "ui": {"availableUiActions": [{"kind": "runBffAction"}] if failure else []}},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": f"stream-no-action-{failure}"},
+    )
+    assert response.status_code == 200, response.text
+    frames = [json.loads(line[6:]) for line in response.text.splitlines()
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    done = [event for event in frames if event.get("type") == "done"]
+    if failure:
+        assert done == []
+        assert not [turn for turn in bff_main._management_ai_conversation_store().list_turns("stream-no-action")
+                    if turn["role"] == "assistant"]
+    else:
+        assert len(done) == 1
+        assert done[0]["ui_actions"] == []
 
 
 def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:
@@ -1904,7 +1999,6 @@ def test_management_nl_chat_control_command_requires_authorized_operator(tmp_pat
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2000,7 +2094,6 @@ def test_management_nl_filters_provider_actions_to_ui_allowlist(tmp_path, monkey
         assert completed["actions"] == actions
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2053,7 +2146,6 @@ def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypat
         assert "reason" not in body["data"]["provider_status"]
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -2165,7 +2257,6 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         assert "Authorization" not in json.dumps(events)
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2379,7 +2470,6 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
         assert "turnCount" not in sessions[0]
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2432,7 +2522,6 @@ def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkey
         assert last_management_context["conversation"]["recent_turns"][0]["content"] == "Persistence question 1?"
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2495,7 +2584,6 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
         ]
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2558,7 +2646,6 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
         assert len(fake.calls) == 1
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2593,7 +2680,6 @@ def test_management_ai_idempotency_replay_survives_store_restart_without_duplica
 
         # Reconstruct the durable store and clear only the process-local cache,
         # mirroring a BFF restart between the original request and its replay.
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
             storage_path=conversation_path,
             attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
@@ -2611,7 +2697,6 @@ def test_management_ai_idempotency_replay_survives_store_restart_without_duplica
         assert len(fake.calls) == 1
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2633,7 +2718,6 @@ def test_management_ai_conversation_missing_session_returns_404(
         assert body["error"]["details"]["precondition_failed"] == "management_ai_session"
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2697,7 +2781,6 @@ def test_management_ai_conversation_get_enforces_owner_or_tenant_scope(
         assert scoped_resp.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2771,7 +2854,6 @@ def test_management_ai_inline_attachment_is_stored_and_read_back_as_proxy_url(
         assert metadata_attachments[0]["url"] == attachment["url"]
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -2810,7 +2892,6 @@ def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypa
         assert len(fake.calls) == 1
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -2880,7 +2961,6 @@ def test_management_nl_inner_degraded_response_uses_configured_provider_failover
         assert all(0 < call["timeout_seconds"] <= 7 for call in fake.calls)
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -2935,7 +3015,6 @@ def test_management_nl_inner_degraded_response_is_typed_not_an_answer(tmp_path, 
         ]
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -2979,7 +3058,6 @@ def test_codex_auth_unavailable_status_has_operator_notice(tmp_path, monkeypatch
         assert len(fake.calls) == 1
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3002,7 +3080,6 @@ def test_provider_enabled_requires_read_role_before_invocation(tmp_path, monkeyp
         assert fake.calls == []
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3026,7 +3103,6 @@ def test_high_risk_refusal_runs_before_provider_invocation(tmp_path, monkeypatch
         assert fake.calls == []
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3126,7 +3202,6 @@ def test_claude_provider_enabled_invokes_openclaw_claude_route(tmp_path, monkeyp
         assert provider_status["used"] is True
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
@@ -3164,7 +3239,6 @@ def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, m
         assert len(fake.calls) == 1
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3209,7 +3283,6 @@ def test_provider_async_returns_processing_under_slow_provider(tmp_path, monkeyp
         assert body["meta"]["status"] == "processing"
     finally:
         bff_main.read_store = original_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
@@ -3259,7 +3332,6 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
             trace_id="mnl-trace-fin",
             focus="portfolio",
             resolved_key="k-fin",
-            request_hash="hash-fin",
             audit_log_href="/bff/audit/x",
             conversation_href="/bff/management/ai/conversations/x",
             base_result=base_result,
@@ -3270,11 +3342,8 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     assistant = [t for t in turns if t.get("turn_id") == assistant_turn_id]
     assert len(assistant) == 1, "finaliser must append the assistant turn exactly once"
     assert assistant[0]["text"] == "Async provider answer."
-    cached = store.get_idempotency("k-fin")
-    assert cached is not None
-    assert cached["result"]["data"]["answer"] == "Async provider answer."
-    assert cached["result"]["data"]["status"] == "completed"
-    assert cached["result"]["data"]["lifecycle_status"] == "completed"
-    assert "lifecycleStatus" not in cached["result"]["data"]
-    assert "providerStatus" not in cached["result"]["data"]
-    bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: the finaliser no longer dual-writes
+    # to ManagementAiConversationStore's idempotency API -- durable command
+    # completion (via command_reservation) is the sole persistence path, and
+    # this call passed no reservation, so there is nothing further to assert
+    # here beyond the assistant turn being appended exactly once.

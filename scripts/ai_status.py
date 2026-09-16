@@ -72,7 +72,6 @@ from dispatch_policy import (
     normalize_execution_resources,
     task_execution_resources,
 )
-import execution_authorization
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
@@ -264,10 +263,9 @@ DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
 DEV_BRIDGE_BATCH_MAX_TASKS = 64
 DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
 DEV_BRIDGE_BATCH_READBACK_COMMAND = "dev-bridge-materialize-readback"
-# These lanes are executable development work and must not wait for a hosted
-# operator-live/write-proof window. The packet remains Ed25519-signed and is
-# still subject to canonical task/dependency/readback checks. Security,
-# hosted, and live packets retain the one-shot MFA authorization requirement.
+# Work classes describe signed task scope, not a separate MFA permission.
+# Only live work receives an explicit operator hold at intake; existing holds
+# and canonical task/dependency/readback checks apply to every class.
 DEV_BRIDGE_FUNCTIONAL_WORK_CLASSES = frozenset(
     {"functional", "paper", "read_only", "ci", "reconcile_only"}
 )
@@ -307,8 +305,6 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "archive_collision_fence",
         "record_terminal_fact",
         "operator_accept",
-        "execution-grant-submit",
-        "execution-grant-revoke",
     }
 )
 DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"
@@ -676,8 +672,6 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "archive_collision_fence": 0,
     "approve": 0,
     "archive_correct_review_file": 0,
-    "execution-grant-submit": 0,
-    "execution-grant-revoke": 0,
 }
 ACTIVE_WORKER_LEASE_STATUSES = {
     "running",
@@ -4468,6 +4462,77 @@ def _catalog_assignment_revision_allows_guard_change(
     return True
 
 
+def validate_reassignment_runtime_admission(task_id: str) -> None:
+    """Require settled dispatch authority in the caller's admission transaction.
+
+    Governed callers hold runtime(shared) -> task(exclusive) through commit.
+    Read the raw source: projections can prune workers or normalize malformed
+    launch records away. Never acquire a runtime lock under the task lock.
+    """
+    def reject(reason: str) -> None:
+        raise SystemExit(
+            f"Cannot reassign task {task_id}: {reason}; "
+            "wait for normal supervisor settlement"
+        )
+
+    try:
+        runtime = json.loads(read_regular_file_bytes(
+            _resolve_runtime_source_leaf(load_config(), "state_file"),
+            source="reassignment runtime admission",
+        ))
+    except (OSError, ValueError) as exc:
+        reject(f"runtime admission snapshot unavailable: {exc}")
+    if not isinstance(runtime, Mapping) or runtime.get("version") != 2:
+        reject("runtime admission snapshot is not V2")
+
+    def records(value: Any, label: str):
+        if not isinstance(value, Mapping):
+            reject(f"runtime {label} is malformed")
+        for record in value.values():
+            if not isinstance(record, Mapping):
+                reject(f"runtime {label} record is malformed")
+            yield record
+
+    def affects_task(record: Mapping[str, Any]) -> bool:
+        # Unattributable records cannot prove that this task is unleased.
+        return not record.get("task_id") or record.get("task_id") == task_id
+
+    # Expired timestamps or missing PIDs do not settle a lease; recovery owns
+    # that decision. Retained older generations must settle normally as well.
+    for worker in records(runtime.get("workers"), "workers"):
+        if worker.get("status") not in {"completed", "failed", "superseded"} and affects_task(worker):
+            reject("active worker lease")
+    queue = runtime.get("queue")
+    if not isinstance(queue, Mapping):
+        reject("runtime queue is malformed")
+    for event in records(queue.get("events"), "queue.events"):
+        if event.get("status") in {"completed", "failed"}:
+            continue
+        intent = event.get("intent")
+        if not isinstance(intent, Mapping):
+            reject("runtime queue intent is malformed")
+        if affects_task(intent) or event.get("task_id") == task_id:
+            reject("queued or launching dispatch intent")
+    supervisor = runtime.get("supervisor", {})
+    if not isinstance(supervisor, Mapping):
+        reject("runtime supervisor is malformed")
+    for reservation in records(supervisor.get("runtime_phase_reservations", {}), "phase reservations"):
+        for key in ("launch_intent", "launch_receipt"):
+            if key not in reservation:
+                continue
+            launch = reservation[key]
+            if not isinstance(launch, Mapping):
+                reject(f"runtime {key} is malformed")
+            if key == "launch_receipt":
+                launch = launch.get("worker")
+                if not isinstance(launch, Mapping):
+                    reject("runtime launch_receipt worker is malformed")
+            # Even a terminal detached worker has not settled until its
+            # reservation receipt is committed by the supervisor.
+            if affects_task(launch):
+                reject(f"unsettled {key}")
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
@@ -4506,42 +4571,9 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
         target_repo = spec.get("target_repo")
-        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: a signed security/hosted/
-        # live packet materializes without an operator grant (the former
-        # MFA-at-intake rule is retired, see dev_bridge_materialize.py), but
-        # it must atomically become a canonical non-executable
-        # pending-authorization record. This only ever attaches metadata for
-        # a brand-new task -- the existing-bridge-row path below
-        # (``elif bridge is not None: pass``) never merges ``metadata`` into
-        # an already-materialized task, so a reassignment or replay can
-        # never re-derive or overwrite the frozen policy/hold.
-        bridge_work_class = str(bridge.get("work_class") or "").strip().lower()
-        if execution_authorization.is_privileged_work_class(bridge_work_class):
-            execution_policy = execution_authorization.derive_execution_policy(
-                task_id=task_id,
-                work_class=bridge_work_class,
-                repository=target_repo,
-                resources=execution_resources,
-                artifacts=artifacts,
-                task_spec=spec,
-                task_spec_hash=bridge["task_spec_hash"],
-            )
-            metadata["execution_authorization"] = (
-                execution_authorization.pending_authorization_hold(execution_policy)
-            )
-            # Old-runtime-recognized durable hold (SA/SD 2, 6): ``waiting_for``
-            # predates this task and is already honored, unconditionally, by
-            # every prior supervisor/dispatch-admission revision (including
-            # one with no execution_authorization module at all) as a
-            # dispatch-blocking Human/Ops hold. Only OWNED_READY is reachable
-            # from a brand-new task's ``todo`` status, so this cannot also
-            # block a review/finalize purpose (SA/SD 4) the way the
-            # execution-authorization gate itself could if applied too
-            # broadly; it exists purely so an old runtime that predates
-            # execution_authorization.py entirely still cannot dispatch this
-            # task's first, owner-execution attempt.
-            # command_execution_grant_submit clears this once a genuine grant
-            # is verified and bound.
+        # Live operations remain on the existing explicit Human/Ops hold.
+        # Ordinary signed dev work needs no separate MFA service or grant.
+        if bridge.get("work_class") == "live":
             metadata["waiting_for"] = "Human/Ops"
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
@@ -4777,12 +4809,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             raise SystemExit(
                 f"Task {task_id} assignment transition rejected: {exc}"
             ) from exc
+        validate_reassignment_runtime_admission(task_id)
         old_generation = task_assignment_generation(task)
         task["owner"] = assignment.new_owner
         task["reviewer"] = assignment.new_reviewer
         task["generation"] = old_generation + 1
-        if _reopen_invalidates_execution_authorization(task):
-            task["waiting_for"] = "Human/Ops"
         if title:
             task["title"] = title
         if summary_zh:
@@ -5246,12 +5277,18 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
                     _dependency_contract_validate_worker_recovery(task_id, task)
                     continue
                 raise DependencyContractBusy(f"{task_id} has pending {field}")
-        if execution_authorization.task_privileged_by_source(task) or any(
+        bridge = task.get("dev_bridge")
+        work_class = bridge.get("work_class") if isinstance(bridge, dict) else None
+        # Editing dependencies does not grant execution authority. Local
+        # operators may reconcile ordinary hosted work without minting grants.
+        if work_class in {"security", "live"} or any(
             task.get(field) not in (None, {}, [], "") for field in (
                 "artifact_conflict_guard", "catalog_task_contract_sha256", "proof_ownership",
-                "execution_authorization", "execution_authorization_policy",
             )
-        ):
+        ) or (work_class != "hosted" and any(
+            task.get(field) not in (None, {}, [], "")
+            for field in ("execution_authorization", "execution_authorization_policy")
+        )):
             raise SystemExit(f"dependency-contract does not revise privileged/catalog authority: {task_id}")
         old_deps = task.get("depends_on")
         tracks = task.get("dependency_tracks", {})
@@ -5696,42 +5733,6 @@ def command_artifact_contract(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
-def _reopen_invalidates_execution_authorization(task: dict[str, Any]) -> bool:
-    """Reset an outstanding privileged grant/reservation back to pending.
-
-    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 2, 6): reopen must not let
-    a previously verified execution grant, or an in-flight reservation,
-    survive into the next attempt -- the reopened task may carry a revised
-    scope, and either way a fresh, independently verified MFA grant is
-    required before it may execute again. Returns whether the task is
-    privileged (by durable source provenance, or by an already-attached
-    policy) so the caller can also restore the old-runtime-recognized
-    ``waiting_for`` fence instead of unconditionally clearing it.
-    """
-
-    existing_record = task.get("execution_authorization")
-    existing_policy = (
-        existing_record.get("policy") if isinstance(existing_record, dict) else None
-    )
-    already_privileged_record = isinstance(existing_policy, dict) and bool(
-        existing_policy.get("requires_execution_authorization")
-    )
-    privileged = execution_authorization.task_privileged_by_source(task) or already_privileged_record
-    if not privileged:
-        return False
-    # Reopen is not source intake authority. Preserve even an invalid policy
-    # as a closed hold; never bless changed scope by deriving a new digest.
-    task["execution_authorization"] = {
-        "state": execution_authorization.STATE_PENDING,
-        "policy": deepcopy(existing_policy),
-        "old_runtime_hold": True,
-        "grant": None,
-        "reserved_run_id": None,
-        "reserved_at": None,
-    }
-    return True
-
-
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
@@ -5759,8 +5760,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
     task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
-    apply_task_lifecycle_transition(task, "reopen")
-    task_is_privileged = _reopen_invalidates_execution_authorization(task)
+    # A held todo has never started: use the existing START transition after
+    # the operator-only preflight, then the same durable requeue intent below.
+    apply_task_lifecycle_transition(task, "start" if task.get("status") == "todo" else "reopen")
+    preserve_hold = actor != "Human/Ops" and task.get("waiting_for") == "Human/Ops"
     generation = max(1, int(task.get("generation", 1) or 1))
     requeue_basis = {
         "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
@@ -5787,14 +5790,8 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     task["last_update"] = timestamp
     task["next"] = message
-    if task_is_privileged:
-        # Restore the old-runtime-recognized durable hold (SA/SD 2, 6): the
-        # grant invalidation above means this task is once again
-        # non-executable pending authorization, so an old runtime that
-        # predates execution_authorization.py entirely must still see it as
-        # dispatch-blocked, exactly like at fresh intake.
-        task["waiting_for"] = "Human/Ops"
-    else:
+    # Only an explicit operator reopen may release an operator stop/hold.
+    if not preserve_hold:
         task.pop("waiting_for", None)
     # A reviewer rejection returns the work to the owner.  A subsequent
     # handoff must freeze the new deliverable instead of reusing this head.
@@ -5805,7 +5802,8 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
     else:
         task.pop(GITHUB_REVIEW_BRIDGE_KEY, None)
-    mark_blockers_resolved(state, task_id)
+    if not preserve_hold:
+        mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
         state.setdefault("handoffs", []).append(
@@ -6074,11 +6072,6 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "block")
     task["waiting_for"] = waiting_for
-    authorization = task.get("execution_authorization")
-    if isinstance(authorization, dict):
-        # A genuine blocker owns this wait; an existing authorization record
-        # must not make the shared dispatch predicate ignore it later.
-        authorization["old_runtime_hold"] = False
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6092,186 +6085,6 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     }
     state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
-
-
-def _execution_authorization_record(task: Mapping[str, Any]) -> dict[str, Any]:
-    record = task.get("execution_authorization")
-    if not isinstance(record, dict):
-        raise SystemExit(
-            f"Task {task.get('id')} has no privileged execution-authorization "
-            "policy; this task does not require an execution grant"
-        )
-    policy = record.get("policy")
-    if not isinstance(policy, dict) or not policy.get("requires_execution_authorization"):
-        raise SystemExit(
-            f"Task {task.get('id')} execution policy does not require authorization"
-        )
-    return record
-
-
-def _trusted_execution_mfa_issuers(config: Mapping[str, Any]) -> dict[str, str]:
-    """Return the independently provisioned MFA-issuer public-key trust root.
-
-    Deliberately read from the on-disk ``.orchestrator/config.json`` (via
-    ``load_config()``), never from an environment variable the same CLI
-    invocation could also set: an isolated probe showed a caller supplying
-    both a self-generated "issuer" key through an env var and a grant signed
-    by the matching private key in the same command invocation, which a
-    caller-controlled trust root can never distinguish from a genuine
-    independently issued grant. Binding this to the config file instead
-    means the grant submitter's own shell environment cannot mint its own
-    trust root; only whatever is actually provisioned in the config this
-    process was launched with counts (SA/SD 3).
-    """
-
-    section = config.get("execution_authorization")
-    if not isinstance(section, Mapping):
-        return {}
-    issuers = section.get("mfa_issuer_public_keys")
-    if not isinstance(issuers, Mapping):
-        return {}
-    return {
-        str(key_id): str(public_key)
-        for key_id, public_key in issuers.items()
-        if str(key_id).strip() and str(public_key).strip()
-    }
-
-
-def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> None:
-    """Human/Ops CLI: submit one independently verified MFA-bound execution grant.
-
-    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001. The signed grant travels through
-    ``EXECUTION_GRANT_JSON`` (the assertion itself, not a trust root) and is
-    verified against the trusted MFA-issuer public-key set configured at
-    ``execution_authorization.mfa_issuer_public_keys`` in
-    ``.orchestrator/config.json`` -- a distinct, independently provisioned
-    trust root from both the dev-bridge packet-source keys
-    (``BRIDGE_SIGNING_PUBLIC_KEYS_JSON``) and the grant submitter's own
-    environment. A source-only signing key, an unsigned ``mfaVerified``
-    boolean, a claimed operator id, or a trust root the same command
-    invocation also supplied is never accepted here; only a signature
-    verified against the configured issuer trust root counts. Never issues
-    real keys or a signing service.
-    """
-
-    if len(args) < 1:
-        raise SystemExit("Usage: execution-grant-submit <task-id>")
-    task_id = args[0]
-    actor = current_actor()
-    if actor != "Human/Ops":
-        raise SystemExit("Only Human/Ops may submit an execution-authorization grant")
-    task = get_task(state, task_id)
-    if task is None:
-        raise SystemExit(f"Unknown task: {task_id}")
-    record = _execution_authorization_record(task)
-    policy = record["policy"]
-    release_authorization_hold = execution_authorization.is_execution_authorization_hold(task)
-
-    grant = parse_json_env("EXECUTION_GRANT_JSON")
-    if not grant:
-        raise SystemExit("EXECUTION_GRANT_JSON is required")
-    trusted_issuers = _trusted_execution_mfa_issuers(load_config())
-    if not trusted_issuers:
-        raise SystemExit(
-            "No trusted MFA issuer is configured at "
-            "execution_authorization.mfa_issuer_public_keys in "
-            ".orchestrator/config.json; no dev fallback or caller-supplied "
-            "trust root may authorize privileged execution"
-        )
-
-    now = datetime.now(timezone.utc)
-    try:
-        issuer_fingerprint = execution_authorization.verify_execution_grant(
-            grant,
-            policy=policy,
-            task_id=task_id,
-            generation=task.get("generation", 0),
-            trusted_issuers=trusted_issuers,
-            now=now,
-            task=task,
-        )
-        ledger = state.setdefault("execution_authorization_consumed_grants", {})
-        if not isinstance(ledger, dict):
-            raise execution_authorization.ExecutionAuthorizationError(
-                "execution grant replay ledger is invalid"
-            )
-        execution_authorization.consume_grant_nonce(
-            ledger, grant, task_id=task_id, now=now, issuer_fingerprint=issuer_fingerprint,
-        )
-    except execution_authorization.ExecutionAuthorizationError as exc:
-        raise SystemExit(str(exc)) from exc
-
-    task["execution_authorization"] = execution_authorization.build_granted_authorization(
-        policy=policy, grant=grant, task=task
-    )
-    # Release the old-runtime-recognized intake hold (SA/SD 2, 6) now that a
-    # genuine grant is bound. The ongoing execution-authorization gate itself
-    # -- scoped to owner-execution dispatch only -- takes over from here.
-    if release_authorization_hold:
-        task.pop("waiting_for", None)
-    elif task.get("waiting_for"):
-        task["execution_authorization"]["old_runtime_hold"] = False
-    timestamp = iso_now()
-    task["last_update"] = timestamp
-    append_log(
-        {
-            "ts": timestamp,
-            "agent": actor,
-            "type": "execution_grant_submitted",
-            "task_id": task_id,
-            "message": (
-                f"Execution-authorization grant verified and bound for {task_id}; "
-                f"mfa_actor={grant.get('mfa_actor')!r} expires_at={grant.get('expires_at')!r}"
-            ),
-        }
-    )
-
-
-def command_execution_grant_revoke(state: dict[str, Any], args: list[str]) -> None:
-    """Human/Ops CLI: revoke a task's execution-authorization grant.
-
-    Only stops *new* unauthorized effects (dispatch admission will refuse the
-    task again immediately); it never declares an already-running attempt's
-    compensation confirmed on its own (SA/SD 4).
-    """
-
-    if len(args) < 1:
-        raise SystemExit("Usage: execution-grant-revoke <task-id> [reason]")
-    task_id = args[0]
-    reason = args[1] if len(args) > 1 else None
-    actor = current_actor()
-    if actor != "Human/Ops":
-        raise SystemExit("Only Human/Ops may revoke an execution-authorization grant")
-    task = get_task(state, task_id)
-    if task is None:
-        raise SystemExit(f"Unknown task: {task_id}")
-    _execution_authorization_record(task)
-    preserve_unrelated_hold = bool(task.get("waiting_for")) and not execution_authorization.is_execution_authorization_hold(task)
-    now = datetime.now(timezone.utc)
-    try:
-        task["execution_authorization"] = execution_authorization.revoked_execution_authorization(
-            task, actor=actor, now=now, reason=reason
-        )
-    except execution_authorization.ExecutionAuthorizationError as exc:
-        raise SystemExit(str(exc)) from exc
-    # Restore the old-runtime-recognized durable hold (SA/SD 2, 6): a revoked
-    # grant is once again non-executable, so an old runtime that predates
-    # execution_authorization.py entirely must still see this task as
-    # dispatch-blocked, exactly like at fresh intake and after reopen.
-    if not preserve_unrelated_hold:
-        task["waiting_for"] = "Human/Ops"
-    task["execution_authorization"]["old_runtime_hold"] = not preserve_unrelated_hold
-    timestamp = iso_now()
-    task["last_update"] = timestamp
-    append_log(
-        {
-            "ts": timestamp,
-            "agent": actor,
-            "type": "execution_grant_revoked",
-            "task_id": task_id,
-            "message": f"Execution-authorization grant revoked for {task_id}" + (f": {reason}" if reason else ""),
-        }
-    )
 
 
 def _required_reconcile_env(name: str) -> str:
@@ -7577,16 +7390,10 @@ def verify_stale_archive_resurrection_proof(
             f"Cannot reconcile stale resurrected task: activity audit is unavailable: {task_id}"
         ) from exc
 
-    # The exception proves import plus role recovery only. Unknown mutations
-    # must fail closed too, rather than relying on an exhaustive denylist of
-    # every current and future lifecycle/delivery command. Notes update only
-    # narrative; the import and assignment events are authenticated below.
-    role_recovery_types = {
-        "assign", "task_imported", "import", "task_reentered",
-        "task_reassigned", "task_assigned", "note",
-    }
+    # Monotonically ordered activity events for task_id across all sources.
+    task_events: list[tuple[int, datetime, dict[str, Any]]] = []
     last_task_ts = None
-    for event in events:
+    for idx, event in enumerate(events):
         if not isinstance(event, Mapping):
             continue
         if str(event.get("task_id") or "").strip() != task_id:
@@ -7601,148 +7408,249 @@ def verify_stale_archive_resurrection_proof(
                 f"stale resurrection lineage audit log timestamp ordering is ambiguous: {task_id}"
             )
         last_task_ts = ev_ts
-        if ev_ts >= archived_at:
+        task_events.append((idx, ev_ts, event))
+
+    post_archive_events = [
+        (idx, ev_ts, ev) for idx, ev_ts, ev in task_events
+        if ev_ts >= archived_at
+    ]
+
+    reopen_events = [
+        (idx, ev_ts, ev) for idx, ev_ts, ev in post_archive_events
+        if str(ev.get("type") or "").strip() == "reopen"
+    ]
+    if len(reopen_events) > 1:
+        raise RuntimeError(
+            f"stale resurrection lineage fork: multiple reopen events detected: {task_id}"
+        )
+
+    has_reopen = False
+    reopen_idx = -1
+    reopen_ts = None
+    reopen_ev: dict[str, Any] = {}
+    if len(reopen_events) == 1:
+        reopen_idx, reopen_ts, reopen_ev = reopen_events[0]
+        actor = str(reopen_ev.get("agent") or "").strip()
+        op_mode = str(reopen_ev.get("operator_mode") or "").strip()
+        if actor != "Human/Ops" or op_mode != "local_human_ops":
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: intervening reopen event detected: {task_id}"
+            )
+        ev_id = str(reopen_ev.get("event_id") or "").strip()
+        if not ev_id:
+            raise RuntimeError(
+                f"stale resurrection reopen event missing event_id: {task_id}"
+            )
+        payload_without_cmd = {
+            k: v for k, v in reopen_ev.items() if k not in {"event_id", "status_command"}
+        }
+        payload_all = {k: v for k, v in reopen_ev.items() if k != "event_id"}
+        accepted_digests = {
+            _canonical_json_sha256(payload_without_cmd),
+            _canonical_json_sha256(payload_all),
+        }
+        accepted_ids = {
+            f"{prefix}-{d}"
+            for d in accepted_digests
+            for prefix in (
+                "ai-status-event",
+                "human-ops-reopen",
+                "human-ops-task-reopened",
+            )
+        }
+        if ev_id not in accepted_ids:
+            raise RuntimeError(
+                f"stale resurrection reopen event unauthenticated event_id ({ev_id!r}): {task_id}"
+            )
+        has_reopen = True
+
+    if not has_reopen:
+        # The exception proves import plus role recovery only. Unknown mutations
+        # must fail closed too, rather than relying on an exhaustive denylist of
+        # every current and future lifecycle/delivery command. Notes update only
+        # narrative; the import and assignment events are authenticated below.
+        role_recovery_types = {
+            "assign", "task_imported", "import", "task_reentered",
+            "task_reassigned", "task_assigned", "note",
+        }
+        for idx, ev_ts, event in post_archive_events:
             ev_type = str(event.get("type") or "").strip()
             if ev_type not in role_recovery_types:
                 raise RuntimeError(
                     f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
                 )
+    else:
+        pre_reopen_allowed_types = {
+            "note", "task_reassigned", "task_assigned",
+            "assign", "task_imported", "import", "task_reentered",
+        }
+        post_reopen_allowed_types = {
+            "note", "blocker", "start", "task_started",
+            "task_reassigned", "task_assigned",
+            "wake_queued", "worker_worktree_allocated", "worker_started",
+            "worker_governance_lease_preserved", "worker_lost_lease",
+            "worker_lost_lease_recovery_held", "worker_lost_lease_recovery_pending",
+            "worker_promotion_continuation_pending",
+        }
+        for idx, ev_ts, event in post_archive_events:
+            ev_type = str(event.get("type") or "").strip()
+            if idx < reopen_idx:
+                if ev_type not in pre_reopen_allowed_types:
+                    raise RuntimeError(
+                        f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
+                    )
+            elif idx > reopen_idx:
+                if ev_type not in post_reopen_allowed_types:
+                    raise RuntimeError(
+                        f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
+                    )
+                for d_key in (
+                    "commit", "git_commit", "head_sha", "head_oid", "review_head_sha",
+                    "branch", "review_pr", "pr_number", "review_file",
+                    "delivery", "delivery_binding", "review_evidence",
+                ):
+                    val = event.get(d_key)
+                    if val is not None and str(val).strip():
+                        raise RuntimeError(
+                            f"Cannot reconcile stale resurrected task: post-reopen delivery activity detected ({d_key}): {task_id}"
+                        )
+
+        if active_task.get("delivery_binding") is not None:
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: active task has post-reopen delivery binding: {task_id}"
+            )
+        if active_task.get("review_file"):
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: active task has post-reopen review_file: {task_id}"
+            )
+        if active_task.get("branch") and active_task.get("branch") != archived_task.get("branch"):
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: active task has altered branch: {task_id}"
+            )
 
     import_events: list[tuple[int, datetime, dict[str, Any]]] = []
-    for idx, event in enumerate(events):
-        if not isinstance(event, Mapping):
-            continue
-        if str(event.get("task_id") or "").strip() != task_id:
-            continue
-        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
-        if ev_ts is None or archived_at is None or ev_ts < archived_at:
-            continue
-        ev_type = str(event.get("type") or "").strip()
-        if ev_type in {"assign", "task_imported", "import", "task_reentered"}:
-            ev_id = str(event.get("event_id") or "").strip()
-            actor = str(event.get("agent") or "").strip()
-            if not ev_id:
-                raise RuntimeError(
-                    f"stale resurrection import event missing event_id: {task_id}"
-                )
-            payload_without_cmd = {
-                k: v for k, v in event.items() if k not in {"event_id", "status_command"}
-            }
-            payload_all = {k: v for k, v in event.items() if k != "event_id"}
-            accepted_digests = {
-                _canonical_json_sha256(payload_without_cmd),
-                _canonical_json_sha256(payload_all),
-            }
-            accepted_ids = {
-                f"{prefix}-{d}"
-                for d in accepted_digests
-                for prefix in (
-                    "ai-status-event",
-                    "human-ops-import",
-                    "human-ops-task-imported",
-                    "human-ops-task-reentered",
-                    "human-ops-assign",
-                )
-            }
-            if ev_id not in accepted_ids:
-                raise RuntimeError(
-                    f"stale resurrection import event unauthenticated event_id ({ev_id!r}): {task_id}"
-                )
-            if actor != "Human/Ops":
-                raise RuntimeError(
-                    f"stale resurrection import event unauthorized actor ({actor!r}): {task_id}"
-                )
-            op_mode = str(event.get("operator_mode") or "").strip()
-            if op_mode != "local_human_ops":
-                raise RuntimeError(
-                    f"stale resurrection import event missing or invalid operator_mode ({op_mode!r}): {task_id}"
-                )
-            raw_gen = event.get("generation")
-            if raw_gen is None or isinstance(raw_gen, bool):
-                raise RuntimeError(
-                    f"stale resurrection import event missing or invalid generation: {task_id}"
-                )
-            try:
-                if int(raw_gen) != archive_gen:
+    if not has_reopen:
+        for idx, ev_ts, event in post_archive_events:
+            ev_type = str(event.get("type") or "").strip()
+            if ev_type in {"assign", "task_imported", "import", "task_reentered"}:
+                ev_id = str(event.get("event_id") or "").strip()
+                actor = str(event.get("agent") or "").strip()
+                if not ev_id:
                     raise RuntimeError(
-                        f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
+                        f"stale resurrection import event missing event_id: {task_id}"
                     )
-            except (ValueError, TypeError) as exc:
-                raise RuntimeError(
-                    f"stale resurrection import event generation invalid: {task_id}"
-                ) from exc
-            raw_arch_gen = event.get("archive_generation")
-            if raw_arch_gen is None or isinstance(raw_arch_gen, bool):
-                raise RuntimeError(
-                    f"stale resurrection import event missing or invalid archive_generation: {task_id}"
-                )
-            try:
-                if int(raw_arch_gen) != archive_gen:
+                payload_without_cmd = {
+                    k: v for k, v in event.items() if k not in {"event_id", "status_command"}
+                }
+                payload_all = {k: v for k, v in event.items() if k != "event_id"}
+                accepted_digests = {
+                    _canonical_json_sha256(payload_without_cmd),
+                    _canonical_json_sha256(payload_all),
+                }
+                accepted_ids = {
+                    f"{prefix}-{d}"
+                    for d in accepted_digests
+                    for prefix in (
+                        "ai-status-event",
+                        "human-ops-import",
+                        "human-ops-task-imported",
+                        "human-ops-task-reentered",
+                        "human-ops-assign",
+                    )
+                }
+                if ev_id not in accepted_ids:
                     raise RuntimeError(
-                        f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
+                        f"stale resurrection import event unauthenticated event_id ({ev_id!r}): {task_id}"
                     )
-            except (ValueError, TypeError) as exc:
-                raise RuntimeError(
-                    f"stale resurrection import event archive_generation invalid: {task_id}"
-                ) from exc
-            raw_owner = event.get("owner") or event.get("new_owner")
-            if not raw_owner:
-                raise RuntimeError(
-                    f"stale resurrection import event missing mandatory owner: {task_id}"
-                )
-            ev_owner = canonical_agent_name(raw_owner)
-            if ev_owner != archive_owner:
-                raise RuntimeError(
-                    f"stale resurrection import event owner mismatch (expected {archive_owner!r}, got {ev_owner!r}): {task_id}"
-                )
-            raw_reviewer = event.get("reviewer") or event.get("new_reviewer")
-            if not raw_reviewer:
-                raise RuntimeError(
-                    f"stale resurrection import event missing mandatory reviewer: {task_id}"
-                )
-            ev_reviewer = canonical_agent_name(raw_reviewer)
-            if ev_reviewer != archive_reviewer:
-                raise RuntimeError(
-                    f"stale resurrection import event reviewer mismatch (expected {archive_reviewer!r}, got {ev_reviewer!r}): {task_id}"
-                )
-            ev_archive_digest = str(event.get("archive_snapshot_sha256") or "").strip()
-            if not ev_archive_digest:
-                raise RuntimeError(
-                    f"stale resurrection import event missing mandatory archive_snapshot_sha256: {task_id}"
-                )
-            if ev_archive_digest != archive_sha256:
-                raise RuntimeError(
-                    f"stale resurrection import event archive digest mismatch (expected {archive_sha256!r}, got {ev_archive_digest!r}): {task_id}"
-                )
-            import_events.append((idx, ev_ts, event))
+                if actor != "Human/Ops":
+                    raise RuntimeError(
+                        f"stale resurrection import event unauthorized actor ({actor!r}): {task_id}"
+                    )
+                op_mode = str(event.get("operator_mode") or "").strip()
+                if op_mode != "local_human_ops":
+                    raise RuntimeError(
+                        f"stale resurrection import event missing or invalid operator_mode ({op_mode!r}): {task_id}"
+                    )
+                raw_gen = event.get("generation")
+                if raw_gen is None or isinstance(raw_gen, bool):
+                    raise RuntimeError(
+                        f"stale resurrection import event missing or invalid generation: {task_id}"
+                    )
+                try:
+                    if int(raw_gen) != archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"stale resurrection import event generation invalid: {task_id}"
+                    ) from exc
+                raw_arch_gen = event.get("archive_generation")
+                if raw_arch_gen is None or isinstance(raw_arch_gen, bool):
+                    raise RuntimeError(
+                        f"stale resurrection import event missing or invalid archive_generation: {task_id}"
+                    )
+                try:
+                    if int(raw_arch_gen) != archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"stale resurrection import event archive_generation invalid: {task_id}"
+                    ) from exc
+                raw_owner = event.get("owner") or event.get("new_owner")
+                if not raw_owner:
+                    raise RuntimeError(
+                        f"stale resurrection import event missing mandatory owner: {task_id}"
+                    )
+                ev_owner = canonical_agent_name(raw_owner)
+                if ev_owner != archive_owner:
+                    raise RuntimeError(
+                        f"stale resurrection import event owner mismatch (expected {archive_owner!r}, got {ev_owner!r}): {task_id}"
+                    )
+                raw_reviewer = event.get("reviewer") or event.get("new_reviewer")
+                if not raw_reviewer:
+                    raise RuntimeError(
+                        f"stale resurrection import event missing mandatory reviewer: {task_id}"
+                    )
+                ev_reviewer = canonical_agent_name(raw_reviewer)
+                if ev_reviewer != archive_reviewer:
+                    raise RuntimeError(
+                        f"stale resurrection import event reviewer mismatch (expected {archive_reviewer!r}, got {ev_reviewer!r}): {task_id}"
+                    )
+                ev_archive_digest = str(event.get("archive_snapshot_sha256") or "").strip()
+                if not ev_archive_digest:
+                    raise RuntimeError(
+                        f"stale resurrection import event missing mandatory archive_snapshot_sha256: {task_id}"
+                    )
+                if ev_archive_digest != archive_sha256:
+                    raise RuntimeError(
+                        f"stale resurrection import event archive digest mismatch (expected {archive_sha256!r}, got {ev_archive_digest!r}): {task_id}"
+                    )
+                import_events.append((idx, ev_ts, event))
 
-    if not import_events:
-        raise RuntimeError(
-            f"stale resurrection lineage missing authoritative import/re-entry event: {task_id}"
-        )
-    if len(import_events) > 1:
-        raise RuntimeError(
-            f"stale resurrection lineage fork: multiple import/re-entry events detected: {task_id}"
-        )
-    import_idx, import_ts, import_ev = import_events[0]
+        if not import_events:
+            raise RuntimeError(
+                f"stale resurrection lineage missing authoritative import/re-entry event: {task_id}"
+            )
+        if len(import_events) > 1:
+            raise RuntimeError(
+                f"stale resurrection lineage fork: multiple import/re-entry events detected: {task_id}"
+            )
+        import_idx, import_ts, import_ev = import_events[0]
+    else:
+        import_idx, import_ts, import_ev = reopen_idx, reopen_ts, reopen_ev
 
-    reassignment_events: list[tuple[int, datetime, dict[str, Any]]] = []
-    for idx, event in enumerate(events):
-        if not isinstance(event, Mapping):
-            continue
-        if str(event.get("task_id") or "").strip() != task_id:
-            continue
-        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
-        if ev_ts is None:
-            continue
+    transition_events: list[tuple[int, datetime, dict[str, Any]]] = []
+    for idx, ev_ts, event in post_archive_events:
         ev_type = str(event.get("type") or "").strip()
         if ev_type in {"task_reassigned", "task_assigned"}:
-            if archived_at is not None and ev_ts < archived_at:
-                continue
-            if idx < import_idx or ev_ts < import_ts:
-                raise RuntimeError(
-                    f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
-                )
+            if not has_reopen:
+                if idx < import_idx or ev_ts < import_ts:
+                    raise RuntimeError(
+                        f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
+                    )
             validated = task_machine.validate_assignment_activity_event(event)
             if validated is None:
                 raise RuntimeError(
@@ -7759,18 +7667,82 @@ def verify_stale_archive_resurrection_proof(
                 raise RuntimeError(
                     f"stale resurrection lineage contains extra generation transition ({validated.old_generation} -> {validated.generation}) beyond active generation ({active_gen}): {task_id}"
                 )
-            reassignment_events.append((idx, ev_ts, validated.as_dict()))
+            ev_dict = validated.as_dict()
+            ev_dict["kind"] = "assignment"
+            ev_dict["operator_mode"] = str(event.get("operator_mode") or "").strip()
+            transition_events.append((idx, ev_ts, ev_dict))
+
+        elif has_reopen and ev_type in {
+            "worker_lost_lease_recovery_held",
+            "worker_lost_lease_recovery_pending",
+            "worker_promotion_continuation_pending",
+        }:
+            rec_actor = str(event.get("agent") or "").strip()
+            if rec_actor != "Orchestrator":
+                raise RuntimeError(
+                    f"stale resurrection lineage recovery event {event.get('event_id')} unauthorized (expected Orchestrator): {task_id}"
+                )
+            rcpt = event.get("worker_recovery_receipt")
+            if not isinstance(rcpt, Mapping):
+                rcpt = event
+            raw_old_gen = rcpt.get("task_generation")
+            raw_new_gen = rcpt.get("fence_generation")
+            if raw_old_gen is not None and raw_new_gen is not None:
+                try:
+                    old_gen = int(raw_old_gen)
+                    new_gen = int(raw_new_gen)
+                except (ValueError, TypeError):
+                    continue
+                if old_gen < new_gen:
+                    if old_gen < archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection lineage historical recovery occurred after archive: {task_id}"
+                        )
+                    if old_gen >= active_gen or new_gen > active_gen:
+                        raise RuntimeError(
+                            f"stale resurrection lineage contains extra generation transition ({old_gen} -> {new_gen}) beyond active generation ({active_gen}): {task_id}"
+                        )
+                    transition_events.append(
+                        (
+                            idx,
+                            ev_ts,
+                            {
+                                "kind": "lease_recovery",
+                                "old_generation": old_gen,
+                                "generation": new_gen,
+                                "event_id": str(event.get("event_id") or ""),
+                                "ts": str(event.get("ts") or event.get("timestamp") or ""),
+                                "message": str(event.get("message") or ""),
+                                "agent": "Orchestrator",
+                            },
+                        )
+                    )
 
     current_owner = archive_owner
     current_reviewer = archive_reviewer
+    if has_reopen:
+        matching_first = [
+            ev for idx, ts, ev in transition_events
+            if ev.get("old_generation") == archive_gen
+        ]
+        if matching_first:
+            first_ev = matching_first[0]
+            evidence_rev = canonical_agent_name(review_evidence.get("reviewer"))
+            if (
+                first_ev.get("kind") == "assignment"
+                and first_ev.get("old_reviewer")
+                and canonical_agent_name(first_ev.get("old_reviewer")) == evidence_rev
+            ):
+                current_reviewer = evidence_rev
+
     chain: list[dict[str, Any]] = []
-    last_file_idx = import_idx
-    last_ts = import_ts
+    last_file_idx = import_idx if not has_reopen else -1
+    last_ts = import_ts if not has_reopen else None
 
     for g in range(archive_gen, active_gen):
         matching = [
             (idx, ts, ev)
-            for idx, ts, ev in reassignment_events
+            for idx, ts, ev in transition_events
             if ev.get("old_generation") == g and ev.get("generation") == g + 1
         ]
         if not matching:
@@ -7783,33 +7755,56 @@ def verify_stale_archive_resurrection_proof(
             )
         ev_file_idx, ev_ts, ev = matching[0]
 
-        if ev_file_idx < last_file_idx:
+        if last_file_idx != -1 and ev_file_idx < last_file_idx:
             raise RuntimeError(
                 f"stale resurrection lineage timestamp ordering is ambiguous: reassignments out of file sequence: {task_id}"
             )
-        if ev_ts < last_ts:
+        if last_ts is not None and ev_ts < last_ts:
             raise RuntimeError(
                 f"stale resurrection lineage timestamp ordering is ambiguous: {task_id}"
             )
 
-        reassign_actor = str(ev.get("agent") or "").strip()
-        reassign_op_mode = str(ev.get("operator_mode") or "").strip()
-        if reassign_actor != "Human/Ops" and reassign_op_mode != "local_human_ops":
-            raise RuntimeError(
-                f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
-            )
-        old_owner = canonical_agent_name(ev.get("old_owner"))
-        old_reviewer = canonical_agent_name(ev.get("old_reviewer"))
-        if old_owner != current_owner:
-            raise RuntimeError(
-                f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old owner {current_owner!r}, got {old_owner!r}: {task_id}"
-            )
-        if old_reviewer != current_reviewer:
-            raise RuntimeError(
-                f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old reviewer {current_reviewer!r}, got {old_reviewer!r}: {task_id}"
-            )
-        new_owner = canonical_agent_name(ev.get("new_owner"))
-        new_reviewer = canonical_agent_name(ev.get("new_reviewer"))
+        if not has_reopen:
+            reassign_actor = str(ev.get("agent") or "").strip()
+            reassign_op_mode = str(ev.get("operator_mode") or "").strip()
+            if reassign_actor != "Human/Ops" and reassign_op_mode != "local_human_ops":
+                raise RuntimeError(
+                    f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
+                )
+        else:
+            if ev_file_idx < reopen_idx:
+                reassign_actor = str(ev.get("agent") or "").strip()
+                reassign_op_mode = str(ev.get("operator_mode") or "").strip()
+                if reassign_actor != "Human/Ops" or reassign_op_mode != "local_human_ops":
+                    raise RuntimeError(
+                        f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
+                    )
+            else:
+                reassign_actor = str(ev.get("agent") or "").strip()
+                if reassign_actor not in {"Human/Ops", "Orchestrator"}:
+                    raise RuntimeError(
+                        f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops or Orchestrator, got {reassign_actor!r}): {task_id}"
+                    )
+
+        if ev.get("kind") == "assignment":
+            old_owner = canonical_agent_name(ev.get("old_owner"))
+            old_reviewer = canonical_agent_name(ev.get("old_reviewer"))
+            if old_owner != current_owner:
+                raise RuntimeError(
+                    f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old owner {current_owner!r}, got {old_owner!r}: {task_id}"
+                )
+            if old_reviewer != current_reviewer:
+                raise RuntimeError(
+                    f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old reviewer {current_reviewer!r}, got {old_reviewer!r}: {task_id}"
+                )
+            new_owner = canonical_agent_name(ev.get("new_owner"))
+            new_reviewer = canonical_agent_name(ev.get("new_reviewer"))
+        else:
+            old_owner = current_owner
+            new_owner = current_owner
+            old_reviewer = current_reviewer
+            new_reviewer = current_reviewer
+
         chain.append(
             {
                 "event_id": str(ev.get("event_id") or ""),
@@ -7829,7 +7824,7 @@ def verify_stale_archive_resurrection_proof(
         last_file_idx = ev_file_idx
         last_ts = ev_ts
 
-    if len(reassignment_events) != len(chain):
+    if len(transition_events) != len(chain):
         raise RuntimeError(
             f"stale resurrection lineage contains extraneous or unhandled reassignment events: {task_id}"
         )
@@ -7850,8 +7845,31 @@ def verify_stale_archive_resurrection_proof(
     archive_sha256 = _canonical_json_sha256(archived)
     audit_proof_digest = _compute_audit_proof_digest(events, task_id)
 
-    import_event_id = str(import_ev.get("event_id") or "")
-    all_event_ids = ([import_event_id] if import_event_id else []) + [item["event_id"] for item in chain]
+    if has_reopen:
+        entry_event_id = str(reopen_ev.get("event_id") or "")
+        entry_ts = str(reopen_ev.get("ts") or "")
+        entry_file_idx = reopen_idx
+    else:
+        entry_event_id = str(import_ev.get("event_id") or "")
+        entry_ts = str(import_ev.get("ts") or "")
+        entry_file_idx = import_idx
+
+    events_ordered = [(entry_file_idx, entry_event_id, entry_ts)]
+    for item, (idx, ts, ev) in zip(chain, transition_events):
+        events_ordered.append((idx, item["event_id"], item["ts"]))
+    events_ordered.sort(key=lambda x: x[0])
+
+    seen_ids = set()
+    all_event_ids = []
+    for _, eid, _ in events_ordered:
+        if eid and eid not in seen_ids:
+            seen_ids.add(eid)
+            all_event_ids.append(eid)
+
+    start_event_id = events_ordered[0][1] if events_ordered else entry_event_id
+    end_event_id = events_ordered[-1][1] if events_ordered else entry_event_id
+    start_ts = events_ordered[0][2] if events_ordered else entry_ts
+    end_ts = events_ordered[-1][2] if events_ordered else entry_ts
 
     proof = {
         "proof_kind": "stale_role_recovery_archive_resurrection",
@@ -7875,14 +7893,15 @@ def verify_stale_archive_resurrection_proof(
             "digest": cas_digest,
         },
         "audit_proof_range": {
-            "import_event_id": import_event_id,
-            "start_event_id": chain[0]["event_id"] if chain else import_event_id,
-            "end_event_id": chain[-1]["event_id"] if chain else import_event_id,
-            "start_timestamp": str(import_ev.get("ts") or ""),
-            "end_timestamp": chain[-1]["ts"] if chain else str(import_ev.get("ts") or ""),
+            "import_event_id": entry_event_id,
+            "start_event_id": start_event_id,
+            "end_event_id": end_event_id,
+            "start_timestamp": start_ts,
+            "end_timestamp": end_ts,
             "hops": len(chain),
             "event_ids": all_event_ids,
             "audit_proof_digest": audit_proof_digest,
+            **({"reopen_event_id": entry_event_id} if has_reopen else {}),
         },
         "reassignment_chain": [
             {
@@ -8928,7 +8947,12 @@ def prepare_external_mutation_preflight(
                 f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops "
                 f"can reopen {task_id}"
             )
-        validate_task_lifecycle_transition(task, "reopen")
+        action = "reopen"
+        if task.get("status") == "todo":
+            if actor != "Human/Ops" or not local_human_ops_requested() or task.get("waiting_for") != "Human/Ops":
+                raise SystemExit("Only local Human/Ops may reopen an operator-held todo task")
+            action = "start"
+        validate_task_lifecycle_transition(task, action)
         binding: dict[str, Any] = {}
         exact_binding: dict[str, Any] = {}
         repository_slug_value = ""
@@ -10755,9 +10779,6 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         payload = {
             "source": "active",
             "task": active_task,
-            "execution_authorization_status": execution_authorization.execution_authorization_status(
-                active_task, now=datetime.now(timezone.utc)
-            ),
         }
         snapshot = load_archived_snapshot(task_id)
         if snapshot is not None:
@@ -11150,8 +11171,6 @@ def main(argv: list[str]) -> int:
         "archive_collision_fence": command_archive_collision_fence,
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
-        "execution-grant-submit": command_execution_grant_submit,
-        "execution-grant-revoke": command_execution_grant_revoke,
         "sync": command_sync,
     }
 

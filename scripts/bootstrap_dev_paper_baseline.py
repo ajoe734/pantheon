@@ -86,7 +86,7 @@ def _login_credential_pair() -> tuple[str, str, str]:
 
 def _post_json(
     url: str,
-    payload: Mapping[str, Any],
+    payload: Mapping[str, Any] | None = None,
     *,
     headers: Mapping[str, str] | None = None,
     timeout_seconds: float = 30,
@@ -98,7 +98,7 @@ def _post_json(
     }
     request = urllib.request.Request(
         url,
-        data=json.dumps(dict(payload), separators=(",", ":")).encode("utf-8"),
+        data=json.dumps(dict(payload or {}), separators=(",", ":")).encode("utf-8"),
         headers=request_headers,
         method="POST",
     )
@@ -171,79 +171,239 @@ def ensure_paper_baseline(
         "strategy_family": "dev_paper_baseline",
     }
     deadline = monotonic() + timeout_seconds
-    attempts = 0
+    attempts = 1
+
+    status, body = _post_json(
+        f"{base_url.rstrip('/')}/bff/management/personas/create-paper-bundle",
+        payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": idempotency_key,
+        },
+        timeout_seconds=request_timeout_seconds,
+    )
+    if status != 201:
+        raise BootstrapError(
+            "governed dev paper provisioning failed: " + _failure_summary(status, body)
+        )
+
+    data = body.get("data") if isinstance(body.get("data"), Mapping) else {}
+    meta = body.get("meta") if isinstance(body.get("meta"), Mapping) else {}
+    persona_id = str(data.get("id") or "").strip()
+    if not persona_id:
+        raise BootstrapError("BFF response missing Persona ID")
+
+    if data.get("capitalMode") != "paper" or meta.get("live_capital_side_effects") is not False:
+        raise BootstrapError("BFF returned a response outside the paper-only boundary")
+
+    state = str(data.get("state") or "").strip()
+    provisioning_state = str(meta.get("provisioning_state") or "").strip()
+    runtime_id = str(meta.get("runtime_id") or "").strip()
+    runtime_binding_id = str(meta.get("runtime_binding_id") or "").strip()
+
+    if (
+        state == "paper_running"
+        and provisioning_state == "succeeded"
+        and runtime_id
+        and runtime_binding_id
+    ):
+        return {
+            "status": "ok",
+            "attempts": attempts,
+            "persona_id": persona_id,
+            "state": state,
+            "provisioning_state": provisioning_state,
+            "provisioning_step": meta.get("provisioning_step"),
+            "runtime_id": runtime_id,
+            "runtime_binding_id": runtime_binding_id,
+            "deployment_plan_id": meta.get("deployment_plan_id"),
+            "capital_mode": "paper",
+            "live_capital_side_effects": False,
+        }
+
+    if (
+        state in {"provisioning_failed", "failed"}
+        or provisioning_state in {"failed", "compensated"}
+    ):
+        raise BootstrapError(
+            "dev paper provisioning reached an unexpected non-success state: "
+            + json.dumps(
+                {
+                    "state": state,
+                    "provisioning_state": provisioning_state,
+                    "provisioning_step": meta.get("provisioning_step"),
+                },
+                sort_keys=True,
+            )
+        )
+
+    if provisioning_state not in {"reserved", "provisioning"}:
+        raise BootstrapError(
+            "dev paper provisioning reached an unexpected non-success state: "
+            + json.dumps(
+                {
+                    "state": state,
+                    "provisioning_state": provisioning_state,
+                    "provisioning_step": meta.get("provisioning_step"),
+                },
+                sort_keys=True,
+            )
+        )
+
+    reconcile_url = f"{base_url.rstrip('/')}/bff/personas/{persona_id}/provisioning/reconcile"
+    reconcile_headers = {"Authorization": f"Bearer {token}"}
 
     while True:
-        attempts += 1
-        status, body = _post_json(
-            f"{base_url.rstrip('/')}/bff/management/personas/create-paper-bundle",
-            payload,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Idempotency-Key": idempotency_key,
-            },
-            timeout_seconds=request_timeout_seconds,
-        )
-        if status != 201:
-            raise BootstrapError(
-                "governed dev paper provisioning failed: " + _failure_summary(status, body)
-            )
-
-        data = body.get("data") if isinstance(body.get("data"), Mapping) else {}
-        meta = body.get("meta") if isinstance(body.get("meta"), Mapping) else {}
-        state = str(data.get("state") or "")
-        provisioning_state = str(meta.get("provisioning_state") or "")
-        runtime_id = str(meta.get("runtime_id") or "").strip()
-        runtime_binding_id = str(meta.get("runtime_binding_id") or "").strip()
-
-        if data.get("capitalMode") != "paper" or meta.get("live_capital_side_effects") is not False:
-            raise BootstrapError("BFF returned a response outside the paper-only boundary")
-
-        if (
-            state == "paper_running"
-            and provisioning_state == "succeeded"
-            and runtime_id
-            and runtime_binding_id
-        ):
-            return {
-                "status": "ok",
-                "attempts": attempts,
-                "persona_id": data.get("id"),
-                "state": state,
-                "provisioning_state": provisioning_state,
-                "provisioning_step": meta.get("provisioning_step"),
-                "runtime_id": runtime_id,
-                "runtime_binding_id": runtime_binding_id,
-                "deployment_plan_id": meta.get("deployment_plan_id"),
-                "capital_mode": "paper",
-                "live_capital_side_effects": False,
-            }
-
-        if provisioning_state not in {"reserved", "provisioning"}:
-            raise BootstrapError(
-                "dev paper provisioning reached an unexpected non-success state: "
-                + json.dumps(
-                    {
-                        "state": state,
-                        "provisioning_state": provisioning_state,
-                        "provisioning_step": meta.get("provisioning_step"),
-                    },
-                    sort_keys=True,
-                )
-            )
         if monotonic() >= deadline:
             raise BootstrapError(
                 "timed out waiting for authoritative runtime binding and paper worker: "
                 + json.dumps(
                     {
                         "attempts": attempts,
+                        "persona_id": persona_id,
                         "state": state,
                         "provisioning_state": provisioning_state,
-                        "provisioning_step": meta.get("provisioning_step"),
                     },
                     sort_keys=True,
                 )
             )
+
+        attempts += 1
+        r_status, r_body = _post_json(
+            reconcile_url,
+            headers=reconcile_headers,
+            timeout_seconds=request_timeout_seconds,
+        )
+        if r_status != 200:
+            raise BootstrapError(
+                "persona provisioning reconcile failed: " + _failure_summary(r_status, r_body)
+            )
+
+        r_data = r_body.get("data") if isinstance(r_body.get("data"), Mapping) else {}
+        r_meta = r_body.get("meta") if isinstance(r_body.get("meta"), Mapping) else {}
+
+        r_persona_id = str(r_data.get("id") or r_data.get("persona_id") or "").strip()
+        if not r_persona_id or r_persona_id != persona_id:
+            raise BootstrapError(
+                f"reconcile returned mismatched Persona ID {r_persona_id!r}, expected {persona_id!r}"
+            )
+
+        if r_data.get("capitalMode") != "paper":
+            raise BootstrapError("reconcile response outside paper-only boundary")
+
+        r_lifecycle = str(r_meta.get("lifecycle_state") or r_data.get("state") or "").strip()
+        r_status_label = str(r_meta.get("status") or "").strip().lower()
+        degraded_deps = r_meta.get("degraded_dependencies") or []
+
+        if r_lifecycle in {"provisioning_failed", "failed"}:
+            raise BootstrapError(
+                "dev paper provisioning terminal failure during reconcile: "
+                + json.dumps(
+                    {
+                        "persona_id": persona_id,
+                        "lifecycle_state": r_lifecycle,
+                        "meta": r_meta,
+                    },
+                    sort_keys=True,
+                )
+            )
+
+        if r_status_label == "degraded" or degraded_deps:
+            raise BootstrapError(
+                "dev paper provisioning degraded during reconcile: "
+                + json.dumps(
+                    {
+                        "persona_id": persona_id,
+                        "lifecycle_state": r_lifecycle,
+                        "status": r_status_label,
+                        "degraded_dependencies": degraded_deps,
+                    },
+                    sort_keys=True,
+                )
+            )
+
+        if r_lifecycle == "paper_running":
+            s_status, s_body = _post_json(
+                f"{base_url.rstrip('/')}/bff/management/personas/create-paper-bundle",
+                payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Idempotency-Key": idempotency_key,
+                },
+                timeout_seconds=request_timeout_seconds,
+            )
+            if s_status != 201:
+                raise BootstrapError(
+                    "governed dev paper provisioning authoritative readback failed: "
+                    + _failure_summary(s_status, s_body)
+                )
+
+            s_data = s_body.get("data") if isinstance(s_body.get("data"), Mapping) else {}
+            s_meta = s_body.get("meta") if isinstance(s_body.get("meta"), Mapping) else {}
+            s_persona_id = str(s_data.get("id") or "").strip()
+            if s_persona_id != persona_id:
+                raise BootstrapError(
+                    f"authoritative create readback returned mismatched Persona ID {s_persona_id!r}, expected {persona_id!r}"
+                )
+
+            if s_data.get("capitalMode") != "paper" or s_meta.get("live_capital_side_effects") is not False:
+                raise BootstrapError("BFF returned a response outside the paper-only boundary")
+
+            s_state = str(s_data.get("state") or "")
+            s_prov_state = str(s_meta.get("provisioning_state") or "")
+            s_runtime_id = str(s_meta.get("runtime_id") or "").strip()
+            s_runtime_binding_id = str(s_meta.get("runtime_binding_id") or "").strip()
+
+            if (
+                s_state == "paper_running"
+                and s_prov_state == "succeeded"
+                and s_runtime_id
+                and s_runtime_binding_id
+            ):
+                return {
+                    "status": "ok",
+                    "attempts": attempts,
+                    "persona_id": persona_id,
+                    "state": s_state,
+                    "provisioning_state": s_prov_state,
+                    "provisioning_step": s_meta.get("provisioning_step"),
+                    "runtime_id": s_runtime_id,
+                    "runtime_binding_id": s_runtime_binding_id,
+                    "deployment_plan_id": s_meta.get("deployment_plan_id"),
+                    "capital_mode": "paper",
+                    "live_capital_side_effects": False,
+                }
+
+            if s_prov_state not in {"reserved", "provisioning"}:
+                raise BootstrapError(
+                    "dev paper provisioning reached an unexpected non-success state: "
+                    + json.dumps(
+                        {
+                            "state": s_state,
+                            "provisioning_state": s_prov_state,
+                            "provisioning_step": s_meta.get("provisioning_step"),
+                        },
+                        sort_keys=True,
+                    )
+                )
+
+        state = r_lifecycle
+        provisioning_state = "provisioning"
+
+        if monotonic() >= deadline:
+            raise BootstrapError(
+                "timed out waiting for authoritative runtime binding and paper worker: "
+                + json.dumps(
+                    {
+                        "attempts": attempts,
+                        "persona_id": persona_id,
+                        "state": state,
+                        "provisioning_state": provisioning_state,
+                    },
+                    sort_keys=True,
+                )
+            )
+
         sleep(poll_seconds)
 
 

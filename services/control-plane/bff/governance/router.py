@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from .service import GovernanceService, page_slice, split_csv, utc_now_rfc3339
+from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
@@ -121,10 +121,12 @@ def create_governance_router(
     meta_staleness: Optional[Callable[[], Any]] = None,
     redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
     capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
-    submit_action: Optional[Callable[..., Any]] = None,
+    submit_action: Optional["SubmitAction"] = None,
     publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+    read_surface_state: Optional[Callable[[], str]] = None,
     governance_service: Optional[GovernanceService] = None,
+    reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
 
@@ -145,7 +147,9 @@ def create_governance_router(
     _read_meta = read_surface_meta or _default_read_surface_meta
     _staleness = meta_staleness or (lambda: None)
     _redact = redact_evidence_refs or _default_redact_evidence_refs
+    _reject_body_idempotency_key = reject_body_idempotency_key or (lambda payload: None)
     _capabilities = capabilities_for_identity or (lambda identity: [])
+    _read_surface_state = read_surface_state or (lambda: "fresh")
 
     def _safe_redact(identity: Any, refs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
         try:
@@ -175,6 +179,7 @@ def create_governance_router(
                 dataset_surface_status=_surface,
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
+                read_surface_state=_read_surface_state,
             )
         return resolved_service
 
@@ -253,6 +258,11 @@ def create_governance_router(
             }
         elif surface_key == "governance_approval_queue":
             surfaces["approval_queue"] = surface
+            surfaces["allowedActions"] = {
+                "status": surface.get("status", "ok"),
+                "available": surface.get("status") != "unavailable",
+                "snapshot_at": snapshot_at,
+            }
         meta["surfaces"] = surfaces
         staleness = _staleness()
         if staleness is not None:
@@ -605,16 +615,18 @@ def create_governance_router(
     async def list_governance_approval_queue(
         decision_type: Optional[str] = None,
         risk_level: Optional[str] = None,
+        decision_state: Optional[str] = None,
         state: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
+        resolved_state = decision_state if decision_state is not None else state
         items = _service().list_approval_queue(
             decision_types=split_csv(decision_type),
             risk_levels=split_csv(risk_level),
-            states=split_csv(state),
+            decision_states=split_csv(resolved_state),
         )
         return _paged(
             items,
@@ -655,25 +667,26 @@ def create_governance_router(
     async def get_mutation_review(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        _identity(authorization)
-        payload = _service().mutation_review(decision_id)
-        if payload is None:
-            _not_found("Mutation review decision", decision_id)
-        required = (
-            "decision_id",
-            "target_type",
-            "target_id",
-            "target_version",
-            "action_type",
-            "decision_state",
-            "risk_level",
-            "created_at",
+    ) -> Any:
+        identity = _identity(authorization)
+        projection = _service().mutation_review_projection(
+            decision_id, identity=identity, snapshot_at=_now()
         )
-        missing = [field for field in required if payload.get(field) in (None, "")]
-        if missing:
-            _fail(503, "DEPENDENCY_UNAVAILABLE", "Mutation review evidence is incomplete", f"Missing fields: {missing}")
-        return payload
+        if projection is None:
+            _not_found("Mutation review decision", decision_id)
+        if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "DEPENDENCY_UNAVAILABLE",
+                        "message": "Mutation review evidence is unavailable",
+                        "reason": "Mutation-review evidence cannot be composed reliably",
+                    },
+                    "surfaces": {"mutation_review": "unavailable"},
+                },
+            )
+        return projection
 
     @router.get("/api/v1/operator/rollback-review/{rollback_id}")
     async def get_rollback_review(
@@ -1070,6 +1083,7 @@ def create_governance_router(
     ) -> JSONResponse:
         identity = _identity(authorization, operator=True)
         _require_approver(identity)
+        _reject_body_idempotency_key(payload)
         decisions = payload.get("decisions") if isinstance(payload.get("decisions"), list) else None
         if not decisions:
             _fail(422, "VALIDATION_FAILED", "decisions must be a non-empty list", "The decisions field must contain at least one item", precondition_failed="decisions")

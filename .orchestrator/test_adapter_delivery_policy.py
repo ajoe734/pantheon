@@ -13,6 +13,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from adapters.base import DeliveryRequest
+from adapters import claude_cli
 from adapters.antigravity import AntigravityAdapter
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.copilot_local import CopilotLocalAdapter
@@ -281,6 +282,28 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "claude_cli")
+
+    def test_claude_adapter_preserves_account_fallback_for_auth_locking(self) -> None:
+        config = {
+            "providers": {
+                "claude2": {
+                    "account": "claude2",
+                    "runtime": {"cli": "claude"},
+                }
+            }
+        }
+        with mock.patch.object(claude_cli, "shared_claude_auth_ready", return_value=True) as auth_ready:
+            self.assertTrue(
+                claude_cli._claude_auth_ready(
+                    "claude",
+                    env={"HOME": "/tmp/claude2"},
+                    config=config,
+                    provider_id="claude2",
+                )
+            )
+
+        self.assertEqual(auth_ready.call_args.kwargs["account_lock_key"], "claude2")
+        self.assertNotIn("auth_status_payload", auth_ready.call_args.kwargs)
 
     def test_claude_temporary_auth_result_reaches_launcher_without_spawn(self) -> None:
         from common import ClaudeAuthRetry

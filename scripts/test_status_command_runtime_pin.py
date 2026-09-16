@@ -56,7 +56,6 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
             ".orchestrator/dispatch_policy.py",
-            ".orchestrator/execution_authorization.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",

@@ -29,6 +29,18 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
+import importlib.util
+if "command_executor" not in sys.modules:
+    _ce_spec = importlib.util.spec_from_file_location(
+        "services.control_plane.bff.command_executor",
+        os.path.join(os.path.dirname(__file__), "command_executor.py"),
+    )
+    if _ce_spec and _ce_spec.loader:
+        _ce_mod = importlib.util.module_from_spec(_ce_spec)
+        sys.modules["services.control_plane.bff.command_executor"] = _ce_mod
+        sys.modules["command_executor"] = _ce_mod
+        _ce_spec.loader.exec_module(_ce_mod)
+
 import main as bff_main  # noqa: E402
 from command_queue import CommandStore  # noqa: E402
 from ports import ReadSurfacePorts  # noqa: E402
@@ -127,7 +139,6 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
         super().__init__()
         self._data = seed_data if seed_data is not None else _local_write_gap_read_data()
         self.allow_local_snapshot_fallback = allow_local_snapshot_fallback
-        self._ranking_snapshots: dict[str, Any] = {}
 
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
         return "bff_local_dev_store"

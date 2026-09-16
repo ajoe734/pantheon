@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from scripts.issue_dev_paper_principals import (
-    PAPER_SCOPE, PAPER_SUBJECT, READERS, TTL_SECONDS, issue_environment, write_environment,
+    PAPER_SCOPE, PAPER_SUBJECT, READERS, WRITERS, TTL_SECONDS, issue_environment, write_environment,
 )
 from services.runtime_auth_inbound import AuthError, _verify_jwt_hs256, validate_request_auth
 
@@ -43,7 +43,17 @@ def test_fixed_product_profiles_are_tenant_scoped_short_lived_and_separate():
         assert claims["exp"] - claims["iat"] == TTL_SECONDS
         assert claims["scope"] == "pantheon:dev-owner-read"
         ids.add(claims["jti"])
-    assert len(ids) == len(READERS)
+    for variable, (subject, role, scope) in WRITERS.items():
+        claims = verify(values[variable])
+        assert claims["sub"] == subject
+        assert claims["roles"] == [role]
+        assert claims["tenant_id"] == "tenant-dev"
+        assert claims["allowed_tenants"] == ["tenant-dev"]
+        assert claims["exp"] - claims["iat"] == TTL_SECONDS
+        assert claims["scope"] == scope
+        assert not {"admin", "risk_owner", "operator", "approval_reader", "automated_gate", "runtime", "capital"}.intersection(claims["roles"])
+        ids.add(claims["jti"])
+    assert len(ids) == len(READERS) + len(WRITERS)
     writer = verify(values["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"])
     assert writer["sub"] == PAPER_SUBJECT
     assert writer["roles"] == ["automated_gate"]
@@ -88,6 +98,25 @@ def test_readers_do_not_have_product_write_roles(variable):
     with pytest.raises(AuthError) as rejected:
         validate_request_auth(authorization="Bearer " + token, mfa_header=None,
                               required_roles=("automated_gate", "admin", "operator"),
+                              mfa_required=False, env=env)
+    assert rejected.value.status_code == 403
+
+
+@pytest.mark.parametrize("variable", WRITERS)
+def test_writers_do_not_have_admin_operator_or_approval_roles(variable):
+    token = issue_environment(configured())[variable]
+    env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": "strict", "PANTHEON_RUNTIME_JWT_SECRET": KEY,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "isolated-issuer",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "isolated-audience",
+    }
+    subject, role, scope = WRITERS[variable]
+    context = validate_request_auth(authorization="Bearer " + token,
+                                    required_roles=(role,), env=env)
+    assert context.actor_id == subject
+    with pytest.raises(AuthError) as rejected:
+        validate_request_auth(authorization="Bearer " + token, mfa_header=None,
+                              required_roles=("automated_gate", "admin", "operator", "approval_reader"),
                               mfa_required=False, env=env)
     assert rejected.value.status_code == 403
 
@@ -137,3 +166,7 @@ def test_deploy_and_compose_connect_authorized_environment_without_embedded_toke
         assert compose[service]["environment"]["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
     assert "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN" in compose["operator-bff"]["environment"]
     assert "GOVERNANCE_REGISTRY_SERVICE_TOKEN" in compose["governance"]["environment"]
+    assert "DISTILLATION_REGISTRY_SERVICE_TOKEN" in compose["strategy-distillation-worker"]["environment"]
+    assert "DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["strategy-distillation-worker"]["environment"]
+    assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN" in compose["alpha-replication-worker"]["environment"]
+    assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]

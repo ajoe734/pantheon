@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple, Union
 
 
 def _utc_now_rfc3339() -> str:
@@ -492,6 +492,18 @@ class SynthesisConflictLogsPort:
 # Management Review Queues Port (Explicit Composition)
 # ---------------------------------------------------------------------------
 
+class ManagementApprovalQueueReaderPort(Protocol):
+    """Protocol defining the typed contract for reading approval queue items."""
+
+    def list_approval_queue_items(
+        self,
+        *,
+        decision_types: Optional[List[str]] = None,
+        risk_levels: Optional[List[str]] = None,
+        decision_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]: ...
+
+
 class ManagementReviewQueuePort:
     """Port for explicit Management review and approval queue compositions."""
 
@@ -715,6 +727,7 @@ class ManagementReviewQueuePort:
         decision_types: Optional[List[str]] = None,
         risk_levels: Optional[List[str]] = None,
         decision_states: Optional[List[str]] = None,
+        states: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         raw_decisions = self._approval_decisions_reader() if self._approval_decisions_reader else []
         items: List[Dict[str, Any]] = []
@@ -763,8 +776,9 @@ class ManagementReviewQueuePort:
         if risk_levels:
             requested_risk_levels = {value for value in risk_levels if value}
             items = [item for item in items if str(item.get("risk_level") or "") in requested_risk_levels]
-        if decision_states:
-            requested_states = {value for value in decision_states if value}
+        effective_states = decision_states if decision_states is not None else states
+        if effective_states:
+            requested_states = {value for value in effective_states if value}
             items = [item for item in items if str(item.get("decision_state") or "") in requested_states]
 
         return [json.loads(json.dumps(item)) for item in items]
@@ -831,8 +845,22 @@ class OodaManagementDomainPort:
     def list_governance_review_queue_items(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.review_queue.list_governance_review_queue_items(**kwargs)
 
-    def list_approval_queue_items(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.review_queue.list_approval_queue_items(**kwargs)
+    def list_approval_queue_items(
+        self,
+        *,
+        decision_types: Optional[List[str]] = None,
+        risk_levels: Optional[List[str]] = None,
+        decision_states: Optional[List[str]] = None,
+        states: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        return self.review_queue.list_approval_queue_items(
+            decision_types=decision_types,
+            risk_levels=risk_levels,
+            decision_states=decision_states,
+            states=states,
+            **kwargs,
+        )
 
     def get_deployment_diff(self, plan_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.review_queue.get_deployment_diff(plan_id)

@@ -24,7 +24,7 @@ The current parent task, `BFF-TEST-FULL-MIGRATION-CORRECTIVE-001`, is held in `b
    - PR #5714 `source_audit`: 184 direct importers, 172 outside allowlist.
    - Catalog (`bff_test_architecture_inventory.json`): 182 `PLANNED` rows, 141 `DECOUPLED` rows, 12 `ALLOWLIST` rows, 34 `MIGRATED` rows.
 
-This prerequisite resolves the count discrepancies, defines an exact-file partition covering all 184 remaining non-allowlisted importers across 18 pairwise-disjoint batches, separates shared foundation files, proves acyclicity and serialization of overlapping writers, and documents the exact Human/Ops canonical contract revision templates.
+This prerequisite resolves the count discrepancies, defines an exact-file partition covering all 182 remaining non-allowlisted importers across 18 pairwise-disjoint batches (with the 2 whole-app execute-plans suites reclassified to the composition allowlist), separates shared foundation files, proves acyclicity and serialization of overlapping writers, and documents the exact Human/Ops canonical contract revision templates.
 
 ---
 
@@ -45,16 +45,16 @@ The scan evaluates all 369 test and support files under `services/control-plane/
 | Metric | Count | Technical Source & Explanation |
 |---|---|---|
 | **Total Test & Support Files** | **369** | Exact count of `.py` files in `services/control-plane/bff/` matching test patterns or residing in `tests/`. Matches catalog entries exactly. |
-| **Composition Allowlist** | **12** | Explicitly permitted architectural suites in `test_bff_test_architecture.py`. 8 import `main` directly; 4 do not import `main`. |
+| **Composition Allowlist** | **14** | Explicitly permitted architectural suites in `test_bff_test_architecture.py`. 10 import `main` directly (including the 2 whole-app execute-plans contract suites); 4 do not import `main`. |
 | **Migrated Suites** | **34** | Successfully decoupled suites across router, incident, research, training, and governance domains. 0 import `main`. |
 | **Verified Decoupled Suites** | **139** | Suites tagged `DECOUPLED` in the catalog that genuinely do not import `main` (verified via AST). |
 | **Mislabeled Decoupled Suites** | **2** | Suites tagged `DECOUPLED` in the catalog that **actually import main**: `tests/test_management_read_models_router.py` and `tests/test_unhandled_error_cors.py`. |
-| **Planned Suites** | **182** | Suites tagged `PLANNED` in the catalog that import `main`. |
-| **Total Main Importers** | **192** | 8 allowlist importers + 182 planned + 2 mislabeled decoupled = **192 total main importers**. |
-| **Remaining Non-Allowlist Importers** | **184** | 182 planned + 2 mislabeled decoupled = **184 suites requiring migration**. |
+| **Planned Suites** | **180** | Suites tagged `PLANNED` in the catalog that import `main` (182 minus 2 reclassified to allowlist). |
+| **Total Main Importers** | **192** | 10 allowlist importers + 180 planned + 2 mislabeled decoupled = **192 total main importers**. |
+| **Remaining Non-Allowlist Importers** | **182** | 180 planned + 2 mislabeled decoupled = **182 suites requiring migration**. |
 | **Stale 172 Figure** | **172** | Stale calculation in parent `evidence.json` `source_audit` (`184 direct importers - 12 allowlist = 172`). Derived from an older 365-file scan before the 28 missing files were incorporated. |
 
-**Audit Conclusion**: There are exactly **184** non-allowlisted test suites that import `main` and must be partitioned and decoupled. Claiming `DECOUPLED` status without an AST scan is invalid; the two mislabeled suites are captured in the partition.
+**Audit Conclusion**: There are exactly **182** non-allowlisted test suites that import `main` and must be partitioned and decoupled. Claiming `DECOUPLED` status without an AST scan is invalid; the two mislabeled suites are captured in the partition.
 
 ---
 
@@ -91,14 +91,14 @@ The earlier four entries under `tests/fixtures/` were absent at the reviewed pla
 
 ## 4. Machine-Readable Exact-File Partition (B01–B18)
 
-The 184 remaining non-allowlisted test files are grouped into 18 domain-oriented batches. Every file path is repository-relative and unique.
+The 182 remaining non-allowlisted test files are grouped into 18 domain-oriented batches. Every file path is repository-relative and unique.
 
 ### 4.1 Mathematical Partition Properties
 
-- **Total Non-Allowlist Files**: 184
+- **Total Non-Allowlist Files**: 182
 - **Partition Size**: 18 batches
-- **Sum of Files Across Batches**: 184
-- **Unique Files**: 184
+- **Sum of Files Across Batches**: 182
+- **Unique Files**: 182
 - **Pairwise Disjointness**: For all i != j, intersection of B_i and B_j is empty (Verified: True)
 - **Allowlist Disjointness**: Intersection of partition and Allowlist is empty (Verified: True)
 - **Migrated Disjointness**: Intersection of partition and Migrated is empty (Verified: True)
@@ -122,11 +122,11 @@ The 184 remaining non-allowlisted test files are grouped into 18 domain-oriented
 | **B12** | Management Console Read Models | `BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001` | 9 | `PLAN-001`, `B04` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B12-MANAGEMENT-CONSOLE-READ-MODELS-001/evidence.json` |
 | **B13** | Runtime Health & Readiness | `BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001` | 10 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B13-RUNTIME-HEALTH-READINESS-001/evidence.json` |
 | **B14** | Loops & Paper V5 | `BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001` | 11 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B14-LOOPS-PAPER-V5-001/evidence.json` |
-| **B15** | Deployment & Hosted | `BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001` | 6 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001/evidence.json` |
+| **B15** | Deployment & Hosted | `BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001` | 4 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B15-DEPLOYMENT-HOSTED-001/evidence.json` |
 | **B16** | Command Write & Workflow | `BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001` | 10 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B16-COMMAND-WRITE-WORKFLOW-001/evidence.json` |
 | **B17** | Router & SSE Surfaces | `BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001` | 11 | `PLAN-001` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B17-ROUTER-SSE-SURFACES-001/evidence.json` |
 | **B18** | Cross-Cutting & Consolidation | `BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001` | 14 | `PLAN-001`, `B04` | `docs/deployment/evidence/BFF-TEST-MIGRATION-B18-CROSS-CUTTING-CONSOLIDATION-001/evidence.json` |
-| **Total** | **All 18 Batches** | — | **184** | — | — |
+| **Total** | **All 18 Batches** | — | **182** | — | — |
 
 *The complete file-by-file listing for each batch is preserved in `docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json`.*
 
@@ -280,7 +280,7 @@ Child tasks execute across auto-workers in parallel or bounded foreground batche
 ### Step 6: Parent Reopen and Final Closure
 Once all 18 children are merged into `dev`:
 1. Parent task (`BFF-TEST-FULL-MIGRATION-CORRECTIVE-001`) unblocks and reopens.
-2. Updates `bff_test_architecture_inventory.json` marking all 184 suites as `DECOUPLED` / `MIGRATED`, reducing `current_main_importers` to 8 (allowlist suites).
+2. Updates `bff_test_architecture_inventory.json` marking all 182 suites as `DECOUPLED` / `MIGRATED`, reducing `current_main_importers` to 10 (allowlist suites).
 3. Verifies `test_bff_test_architecture.py` passes with zero violations across all suites.
 4. Generates final parent evidence in `docs/deployment/evidence/BFF-TEST-FULL-MIGRATION-CORRECTIVE-001/evidence.json` and closes out via governed `done`.
 
@@ -327,9 +327,9 @@ python3 -c "
 import json
 d = json.load(open('docs/deployment/evidence/BFF-TEST-MIGRATION-REPARTITION-PLAN-001/partition.json'))
 files = [f for c in d['candidate_children'] for f in c['source_artifacts']]
-assert len(files) == 184, f'Expected 184, got {len(files)}'
-assert len(set(files)) == 184, 'Duplicate file in partition'
-print('Partition validation passed: 184 files, pairwise disjoint, exact cover.')
+assert len(files) == 182, f'Expected 182, got {len(files)}'
+assert len(set(files)) == 182, 'Duplicate file in partition'
+print('Partition validation passed: 182 files, pairwise disjoint, exact cover.')
 "
 
 # 2. Check commit scope and trailers

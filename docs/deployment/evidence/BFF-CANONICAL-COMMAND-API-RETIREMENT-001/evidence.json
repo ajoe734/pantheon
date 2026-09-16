@@ -1,0 +1,99 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-CANONICAL-COMMAND-API-RETIREMENT-001",
+  "base_ref": "dev@dc15751a9b20f8bc0931529d68af8898e691c898",
+  "decision_ref": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md#U9",
+  "scope": "BE-only half of V2 U9: retire the two obsolete generic command-write HTTP routes (POST /bff/actions/{type}/{id}/{action} and POST /api/v1/operator/commands) from the Pantheon BFF while keeping the sole canonical generic write route (POST /bff/v1/commands), the action catalog read (GET /bff/actions), and the command status read (GET /api/v1/operator/commands/{command_id}). Deletes the dead router/service code and OpenAPI legacy-path aliasing the retired routes required, repoints every deprecation replacement string and governed_action_link that used to point at the retired generic actions route to /bff/v1/commands, migrates every test/smoke script that POSTed to a retired route onto the canonical route (or deletes the test outright when its only subject was the retired route's own mechanics), regenerates the BFF route contract manifest/doc, and adds services/control-plane/bff/tests/test_legacy_command_write_retirement.py proving both retired routes now 404 while the three surviving routes (including a full persona-action round trip through the canonical route) keep working. FE consumer migration is a separate task (FE-CANONICAL-COMMAND-API-RETIREMENT-001) in the execute-plans repo and is explicitly out of scope here.",
+  "source_hashes": {
+    "scripts/aggregate_bff_release_gate.mjs": "a0b85bbf21d9234c74f1dfe22891c8edcbbcf3c52e26ce272c443c6c82b63339",
+    "scripts/test_bff_cw_contract_prerequisite.py": "734b4374f13c0e6e0084e079c41e9a4b4b4e05bfd3fb7f5881f9536b1cff86ec",
+    "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md": "b3060dad2a2c0651c494e4afd5002d6969317aa8e957bbc9891305aa058b9c4c",
+    "services/control-plane/bff/agora/governance/router.py": "fd691b3877b832a07ab960a7d3107dde1a9581fe430c8acbb8452ae1021097a0",
+    "services/control-plane/bff/command_adapters/router.py": "33a788d25e4c9fa0898a79f066eddac49d0fb908828178b33e9eba977461c39b",
+    "services/control-plane/bff/command_adapters/service.py": "471464622350ab1a6725f41bdbac6edad606b3e178b2527f294d6041cc3796b4",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json": "329dbb9ce078e352f3d579c57025479f165eac28ddbc1505034173240f143693",
+    "services/control-plane/bff/control_loops/router.py": "42193b91ce7a985074c11873854795d0d5142ac4f103d048a1ff861785853d52",
+    "services/control-plane/bff/deployment/router.py": "7ed0445ff040774536b0b2bc2176ca250993c7ef0c3891b2c99e7e75868dc419",
+    "services/control-plane/bff/http_smoke_test.py": "9efa58c54241c736709a23bb7a5e6f0e6302132920b81d19adac363a7b2ec567",
+    "services/control-plane/bff/main.py": "df8104d0ea5e1071a4cadccc7bd4cb49d6ad8350f22dd4f683be331914a490fd",
+    "services/control-plane/bff/management_read_models/ranking_router.py": "a8d4a2b415151258d5e46b067f4af5357b6668a251b9881c2afc63d996539e9b",
+    "services/control-plane/bff/personas/routes/lifecycle.py": "2d4123d8672814b357c9e050184a0a8e50ea889e91e5517b2ce08105631d3b2b",
+    "services/control-plane/bff/personas/service.py": "fd76db2a84b7339fad7e3daa2cbbd4b9fedae4e89c2c35387d41ee0b427c4606",
+    "services/control-plane/bff/runtime/router.py": "0b2ac9c6fdd53f870cead8ae60db2658be19756b5ae6147ffeb0e0b5209e828e",
+    "services/control-plane/bff/smoke_test.py": "ac3ac41c1a3bc3bf2d058ddb2011420d74fbd35c66e402b79cf0f22e168371e4",
+    "services/control-plane/bff/smoke_test_incident.py": "4043369650c902ecebcb5ebc74fa5c88a458f0cf6c394d5cbc72c385652694cd",
+    "services/control-plane/bff/strategies/routes/detail.py": "51bb88ac97f7fe467492f781827b24cbe6b1bc5ab0ae96c8debce3a322e9d994",
+    "services/control-plane/bff/test_aud_002_audit_action_write_engine.py": "21a9f8e57fb4d3ce4f1964b3af5310ba32da8bc443335892dcf09288dafa70ee",
+    "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py": "dd376b01df42ac20a4c635a0261a8c3e3d8c953bde2723debdb74bba0837d6e5",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py": "74ace6fba691609a10caef1b2f17237d7e176bed21f5910ec12efab2de2d91f8",
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py": "00ff072a4e7f08419dc2f9e2ceb12070e02f42bb7ece28a99292460546c36fe3",
+    "services/control-plane/bff/test_cw03_committee_board_contract.py": "c1a49ba3246e2a5d24f75af0550beaab42d73149bf3b1949a1c62974fc32625c",
+    "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py": "484b8c6e52ba3bad19bb9d77e986be1aa5c3733854c9f67b1bbf7635d08487a2",
+    "services/control-plane/bff/test_final_command_execution_bridge.py": "6305dc0b45cca0c2b55295b810f2155f0af327556e8c680fa797330f93d75a17",
+    "services/control-plane/bff/test_final_contract_primitives.py": "7b7736a9351eac0e59f875b27b0e6815dcddf357e84aa76b07c9299d98f3f5bc",
+    "services/control-plane/bff/test_governance_command_submission.py": "e4f3b4c96c381f1445ecafdfd9afe10d3fb2b8a717f0cbd1cf7f9c8085734829",
+    "services/control-plane/bff/tests/test_bff_emergency_containment.py": "57233b08b251a1c592f284cccb296bc7c67c1b136e0878dcfc15b981ed56cdfc",
+    "services/control-plane/bff/tests/test_bff_path_dedupe.py": "248a07cc2f275e393d3c07677962602b6e7399044d23469f4725135428952820",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py": "c1ea9f5dd9cb12623488434400b3c38b49f776d481c4960a23deab6aa0c2f991",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "0451f90d9e9acdbe4025481c3f04b2b261d2e155b361e293618a15eb35b8c4a4",
+    "services/control-plane/bff/tests/test_command_replay_conflict.py": "3a02320fc483ec3004b0bad5b2ae76b87ca3ba7f693e07c5f729d35f53eeb505",
+    "services/control-plane/bff/tests/test_legacy_command_write_retirement.py": "ca7b41bd16d53fdf71ab19cf0736f57dcfc388f4ec1fafbab88c07eead200dc2",
+    "services/control-plane/bff/tests/test_runtime_router.py": "67e5a3936ec7e55ad640a4a64cd02f3c6e4d6b3dc9bb7b4ab760ef240767d917",
+    "services/control-plane/bff/tools_integrations/router.py": "3bf185458a904b58678d533338e6e799db08863ff35611e2ce0f018970175cb8"
+  },
+  "deleted_files": [
+    "services/control-plane/bff/tests/test_actions_to_commands_adapter.py"
+  ],
+  "deletion_reason": {
+    "services/control-plane/bff/tests/test_actions_to_commands_adapter.py": "Every test in this file was solely about the mechanics of the retired POST /bff/actions/{type}/{id}/{action} route (idempotency-key/entity-type/audit-event validation on that exact route); once the route is deleted there is no surviving subject for these tests to cover, and the equivalent envelope/idempotency/audit behavior for the surviving POST /bff/v1/commands route is already covered by tests/test_command_adapters_router.py and the new tests/test_legacy_command_write_retirement.py."
+  },
+  "verification": [
+    {
+      "command": "<provisioned python> -m services.control_plane.bff.smoke_test (equivalent to the Branch CI Gate 'Smoke acceptance' stage0-baseline invocation)",
+      "exit_code": 0,
+      "result": "Ran 26 tests in 1.427s -- OK. Fixes acceptance-review finding on PR #5833: switching ApproveDeployment/ApproveEvolutionDecision/ExecuteEvolutionAction/ExecuteRollback/PauseRuntime/ActivateKillSwitch smoke callers from /api/v1/operator/commands to /bff/v1/commands triggers the strict require_final_command_preconditions gate (428 CONFIRMATION_REQUIRED / 409 HUMAN_GATE_PENDING) that the retired legacy route skipped; the 9 previously-failing tests now seed approval decisions (via a narrow bff_main.read_store.get_approval_decision override), confirm tokens (via POST /bff/confirm-tokens), and a two-man signature (via POST /bff/v5/interventions/{id}/two-man-sign) bound to the exact command/target/operator being submitted, matching the pattern already established in test_governance_command_submission.py::test_runtime_deployment_approval_incident_commands_record_foundation_controls."
+    },
+    {
+      "command": "<provisioned python> services/control-plane/bff/smoke_test_incident.py (exact CI invocation form; also verified via pytest)",
+      "exit_code": 0,
+      "result": "21 passed, 0 failed -- ALL ACCEPTANCE CRITERIA VERIFIED. Fixes the same acceptance-review finding for the four IN-05 command-schema smoke tests (IssueRiskOff, LiquidateAll, HardRollback, IssueSafeMode); also gave each test a distinct target id (e.g. runtime-042-risk-off) instead of the shared runtime-042 fixture target, since satisfying the confirm-token/approval preconditions surfaced a pre-existing false pass masked by the earlier 428/409 short-circuit: sequential /bff/v1/commands submissions against the same target while an earlier command is still 'submitted' now correctly hit the RESOURCE_CONFLICT concurrent-safety gate."
+    },
+    {
+      "command": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 <provisioned .venv-pantheon python> -m pytest -q services/control-plane/bff/tests/test_legacy_command_write_retirement.py",
+      "exit_code": 0,
+      "result": "5 passed, 4 warnings in 8.82s (re-run after rebase onto origin/dev@dc15751a9)"
+    },
+    {
+      "command": "<provisioned python> -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_admission_single_owner.py",
+      "exit_code": 0,
+      "result": "20 passed"
+    },
+    {
+      "command": "<provisioned python> -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_command_admission_single_owner.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/tests/test_runtime_router.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "exit_code": 1,
+      "result": "32 passed, 3 failed. The 3 failures (test_runtime_router.py::test_main_composes_runtime_router_without_runtime_decorators; test_bff_path_dedupe.py::test_deprecated_alternate_url_families_return_410_with_headers; test_bff_path_dedupe.py::test_deprecated_nested_action_families_return_410_with_headers) are pre-existing and unrelated to this task's diff: the runtime_router failure asserts a literal 'from runtime.router import create_runtime_router' substring against main.py's actual (unrelated, untouched) '.runtime.router' relative-import style; the two path_dedupe failures assert response.headers['X-Deprecated-At'] against a stale literal for an untouched GET route family (/bff/mcp/servers, /bff/ranking/formulas) and assert body['error']['details']['replacement'] against the actual (unrelated, untouched) response shape produced by main.py's _deprecated_bff_path_response, which nests error under body['detail']['error'] -- a pre-existing shape mismatch identical for every replacement string, not something this task's replacement-string edits changed. Verified none of the failing assertions reference the specific replacement-string values this task edited."
+    },
+    {
+      "command": "<provisioned python> -m pytest -q services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_final_contract_primitives.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_bff_strategy_persona_contract.py services/control-plane/bff/test_v5_interventions.py",
+      "exit_code": 1,
+      "result": "110 passed, 2 skipped, 22 failed. The 22 failures are pre-existing environment/feature gaps unrelated to the two retired routes (e.g. test_bff_capital_ranking_rebalance_contract.py failures assert on body['meta']['surfaces']['capital_pool_list'], a capital-pool read-surface key entirely outside command-adapter/route-retirement scope; test_final_command_execution_bridge.py failures are about durable idempotency/command-store persistence semantics unrelated to which HTTP path submitted the command). test_cw03_committee_board_contract.py itself (the file whose 3 POST call sites were migrated from the retired /api/v1/operator/commands to the canonical /bff/v1/commands as part of this task) passed in full within this run.",
+      "note": "This corroborates, without re-deriving from a pristine checkout in this session, the prior sub-agent's stash-comparison finding that this failure set is pre-existing and not introduced by this task's diff."
+    },
+    {
+      "command": "<provisioned python> -m pytest -q scripts/test_bff_cw_contract_prerequisite.py",
+      "exit_code": 0,
+      "result": "34 passed (includes the 3 committee-governance test cases migrated from POST /api/v1/operator/commands to POST /bff/v1/commands)"
+    },
+    {
+      "command": "<provisioned python> -m pytest -q services/control-plane/bff/tests -p no:cacheprovider",
+      "exit_code": 2,
+      "result": "3853 warnings, 10 collection errors in 241.14s -- all 10 are pre-existing collection failures unrelated to this task, reproduced with an unmodified pre-existing bug: several tests/*.py files do `import command_executor` as a top-level module, which raises `ImportError: attempted relative import with no known parent package` from command_executor.py's own unmodified `from .models import ...` when collected in this configuration; confirmed via `git show HEAD:services/control-plane/bff/tests/test_bff_rebalance_proposals.py` that the same top-level `import command_executor` statement predates this task's changes. Full-directory collection was not completed to a pass/fail tally because of this pre-existing collection blocker, not because of a timeout or a change made in this task."
+    }
+  ],
+  "scope_trim_note": "The first commit on this branch (26d8a35a9) additionally touched command_adapters/contracts.py, command_adapters/receipts.py, docs/bff/contract_snapshots/route-diff-baseline.json, tests/test_command_admission_single_owner.py, command_adapters/__init__.py, and test_v5_interventions.py, none of which are in this task's declared artifact contract. A second commit (2f07f83ba) reverted the first four to their exact pre-task content (zero diff against origin/dev) after confirming: (a) the contracts.py/receipts.py edit only repointed a cosmetic default route-tag string with no live callers relying on the retired value, (b) the route-diff-baseline.json regeneration was a non-load-bearing side effect of the manifest generator (test_normalized_route_uniqueness.py still passes against the regenerated manifest with the old baseline left in place), and (c) tests/test_command_admission_single_owner.py passes unmodified (6 passed) against the retired-route service/router changes, so its earlier edit was unnecessary. For command_adapters/__init__.py and test_v5_interventions.py, a full deletion of create_action_command_router from the declared command_adapters/router.py would have forced changes to both (they import/call that exact symbol) and an attempted AI_NAME=Claude ai-status.sh artifact-contract add was rejected with 'Only Human/Ops can revise task artifact contracts'. Resolved by keeping create_action_command_router in the declared router.py as a documented zero-route stub (returns an empty APIRouter(), registers nothing, covered by the new test_create_action_command_router_is_a_zero_route_stub regression test) instead of deleting it outright, which let both __init__.py and test_v5_interventions.py revert to zero diff against origin/dev too -- so the final PR touches only files inside the declared artifact contract, with no residual gap.",
+  "known_pre_existing_gaps_not_fixed_in_this_task": [
+    "test_runtime_router.py::test_main_composes_runtime_router_without_runtime_decorators and both failing cases in test_bff_path_dedupe.py assert against a stale literal/shape that no longer matches main.py's actual (untouched-by-this-task) deprecation response contract.",
+    "22 failures across test_execute_plans_final_live_wiring_contract.py, test_final_command_execution_bridge.py, test_bff_capital_ranking_rebalance_contract.py, and test_aud_002_audit_action_write_engine.py concern capital-pool read surfaces and durable command-store persistence semantics that predate and are unrelated to this route retirement.",
+    "10 files under services/control-plane/bff/tests fail to collect as a full-directory pytest run due to a pre-existing `import command_executor` top-level-import bug in command_executor.py, unrelated to this task."
+  ]
+}

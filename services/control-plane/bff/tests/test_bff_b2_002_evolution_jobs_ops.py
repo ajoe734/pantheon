@@ -81,20 +81,11 @@ class _EvolutionJobsOpsTestStore:
             return True, None
         return True, self._findings.get(finding_id)
 
-    def create_evolution_program(self, program_id: str, name: str, actor_id: Optional[str] = None, created_at: Optional[str] = None, params: Optional[dict] = None, **kwargs: Any) -> dict[str, Any]:
-        item = {
-            "id": program_id,
-            "program_id": program_id,
-            "name": name,
-            "actor_id": actor_id,
-            "created_at": created_at or "2026-06-01T00:00:00Z",
-            "status": "active",
-            "params": params or {},
-            "runs": [],
-            "candidates": [],
-        }
-        self._programs[program_id] = item
-        return item
+    # U8A note: create/patch are no longer methods on the read-store double
+    # (the real read surface never had them — see
+    # ports/read_surface_ports.py). Program creation for these read-facade
+    # tests now goes through ``_FakeProgramCommandPort`` below, wired as
+    # ``bff_main._evolution_program_commands`` in ``_fresh_client``.
 
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[dict[str, Any]]:
         if not program_id:
@@ -155,6 +146,51 @@ class _EvolutionJobsOpsTestStore:
 
     def dataset_source(self, dataset: str) -> str:
         return "evolution_jobs_ops_test"
+
+
+class _FakeProgramCommandPort:
+    """U8A: ``create_evolution_program`` now writes through the typed
+    ``program_commands`` port to the real Evolution service over HTTP, not
+    a read-store mutation. This double mutates the same
+    ``_EvolutionJobsOpsTestStore._programs`` dict the read paths under test
+    consult, so create->read stays consistent without a live Evolution
+    service."""
+
+    def __init__(self, store: "_EvolutionJobsOpsTestStore") -> None:
+        self._store = store
+        self._counter = 0
+
+    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+        self._counter += 1
+        program_id = f"evp-b2-002-{self._counter:04d}"
+        item = {
+            "id": program_id,
+            "program_id": program_id,
+            "tenant_id": tenant_id,
+            "name": name,
+            "created_by": actor_id,
+            "created_at": "2026-06-01T00:00:00Z",
+            "status": "draft",
+            "revision": 1,
+            "runs": [],
+            "candidates": [],
+        }
+        self._store._programs[program_id] = item
+        return item
+
+    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+        item = self._store._programs.get(program_id)
+        if item is None:
+            from services.control_plane.bff.ports.evolution_program_commands import EvolutionProgramNotFoundError
+
+            raise EvolutionProgramNotFoundError(f"Evolution program not found: {program_id}")
+        if int(item.get("revision") or 0) != expected_revision:
+            from services.control_plane.bff.ports.evolution_program_commands import EvolutionProgramConflictError
+
+            raise EvolutionProgramConflictError(f"Evolution program {program_id} was modified concurrently")
+        item["name"] = name
+        item["revision"] = int(item["revision"]) + 1
+        return item
 
 
 class _B2002TestClient(TestClient):
@@ -241,6 +277,7 @@ def _create_app(store: _EvolutionJobsOpsTestStore) -> FastAPI:
             page_slice=_page_slice,
             snapshot_meta=_snapshot_meta,
             dataset_surface_status=_dataset_surface_status,
+            program_commands=_FakeProgramCommandPort(store),
         )
     )
     app.include_router(
@@ -327,7 +364,7 @@ def _create_evolution_program(client: TestClient, name: str = "Test Program") ->
     key = f"{_IDEM_PREFIX}-evp-{uuid.uuid4().hex[:8]}"
     resp = client.post(
         "/bff/evolution-programs",
-        json={"name": name, "description": "b2-002 test program"},
+        json={"name": name},
         headers={**OPERATOR_HEADERS, "Idempotency-Key": key},
     )
     assert resp.status_code == 201, resp.text

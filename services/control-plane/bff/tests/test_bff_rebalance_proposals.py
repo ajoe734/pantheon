@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,14 +13,38 @@ from urllib.error import HTTPError, URLError
 import pytest
 from fastapi.testclient import TestClient
 
-import command_executor
-import main as bff_main
-from rebalance_authority_test_support import (
+from services.control_plane.bff import command_executor
+from services.control_plane.bff.models import CommandType
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
     HEADERS,
     CapitalBffAuthorityHarness,
     rebalance_payload,
 )
+
+
+# RETAINED_COMPOSITION (seam gap): two tests below need the real, fully
+# assembled composition-root app rather than the CapitalBffAuthorityHarness's
+# lightweight app (`_build_authority_harness_app` in
+# rebalance_authority_test_support.py, which only mounts the capital and
+# command-adapter routers). `test_startup_replays_submitted_approved_apply_
+# to_terminal_owner_receipt` verifies main.py's own process-startup command
+# replay behaviour built around `_process_command_stub` (main.py, currently
+# ~line 17832) and `test_bff_version_reports_configured_source_sha` exercises
+# `/bff/version`, whose handler (`sem_bff_version`, main.py ~line 18694) is
+# only ever assembled by the composition root's core-router dispatch — no
+# extracted router owns either. Both dependencies are sourced from main.py
+# via a lazily-imported module reference so only those two tests pay the
+# composition-root import cost; every other test in this file runs entirely
+# against the already-extracted CapitalBffAuthorityHarness / command_executor
+# seams.
+def _bff_main_module():
+    bff_dir = os.path.dirname(os.path.dirname(__file__))
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+    import main as bff_main  # noqa: E402
+
+    return bff_main
 
 
 def _create_proposal(
@@ -230,7 +256,7 @@ def test_approved_apply_is_terminal_authoritative_and_ignores_body_tampering(
         assert [item["persona_id"] for item in result["allocation_readback"]] == ["p-live"]
         assert result["allocation_readback"][0]["current_weight"] == 0.12
 
-        stored = bff_main.command_store.get_command(command_id)
+        stored = harness.command_store.get_command(command_id)
         assert stored is not None
         assert stored["target"] == {"type": "Rebalance", "id": rebalance_id}
         assert stored["params"]["entity_type"] == "Rebalance"
@@ -318,14 +344,14 @@ def test_pre_auto_redeem_guarded_record_keeps_token_consumed_after_upgrade_resta
         # record exists yet.
         records = [
             record
-            for record in bff_main.command_store._get_all_commands()
+            for record in harness.command_store._get_all_commands()
             if not (
                 record.get("type")
-                == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+                == CommandType.CONFIRM_TOKEN_REDEEM.value
                 and record.get("target", {}).get("id") == token_id
             )
         ]
-        bff_main.command_store._update_commands(records)
+        harness.command_store._update_commands(records)
         assert (
             harness.client.get(
                 f"/bff/confirm-tokens/{token_id}",
@@ -577,7 +603,7 @@ def test_owner_http_409_semantic_conflict_is_not_retryable(
 
     status, result, error = command_executor.execute_command_with_status(
         "cmd-conflict",
-        bff_main.CommandType.APPROVED_APPLY,
+        CommandType.APPROVED_APPLY,
         {
             "entity_type": "Rebalance",
             "entity_id": "rb-conflict",
@@ -606,7 +632,7 @@ def test_concurrent_single_sign_records_aggregate_to_valid_two_man_evidence(
             suffix="concurrent-sign",
         )
 
-        records = bff_main.command_store._get_all_commands()
+        records = harness.command_store._get_all_commands()
         for record in records:
             if (
                 record.get("type") == "RebalanceTwoManSign"
@@ -618,7 +644,7 @@ def test_concurrent_single_sign_records_aggregate_to_valid_two_man_evidence(
                     second_operator_id=None,
                     complete=False,
                 )
-        bff_main.command_store._update_commands(records)
+        harness.command_store._update_commands(records)
 
         assert harness.client is not None
         accepted = harness.client.post(
@@ -632,11 +658,8 @@ def test_concurrent_single_sign_records_aggregate_to_valid_two_man_evidence(
 
 
 @pytest.mark.parametrize(
-    ("route", "idempotency_header"),
-    [
-        ("/bff/v1/commands", "Idempotency-Key"),
-        ("/api/v1/operator/commands", "X-Idempotency-Key"),
-    ],
+    "idempotency_header",
+    ["Idempotency-Key", "X-Idempotency-Key"],
 )
 @pytest.mark.parametrize(
     ("command", "target"),
@@ -647,11 +670,11 @@ def test_concurrent_single_sign_records_aggregate_to_valid_two_man_evidence(
 )
 def test_public_command_admissions_reject_forged_rebalance_evidence(
     tmp_path: Path,
-    route: str,
     idempotency_header: str,
     command: str,
     target: Dict[str, str],
 ) -> None:
+    route = "/bff/v1/commands"
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key=f"rb-proposal-{command}-{idempotency_header}")
         rebalance_id = created.json()["rebalance_id"]
@@ -680,7 +703,7 @@ def test_public_command_admissions_reject_forged_rebalance_evidence(
         assert "server-managed" in forged.text
 
 
-def test_legacy_operator_admission_cannot_bypass_approved_apply_gates(
+def test_final_command_admission_cannot_bypass_approved_apply_gates(
     tmp_path: Path,
 ) -> None:
     with CapitalBffAuthorityHarness(tmp_path) as harness:
@@ -688,7 +711,7 @@ def test_legacy_operator_admission_cannot_bypass_approved_apply_gates(
         rebalance_id = created.json()["rebalance_id"]
         assert harness.client is not None
         bypass = harness.client.post(
-            "/api/v1/operator/commands",
+            "/bff/v1/commands",
             json={
                 "command": "ApprovedApply",
                 "target": {"type": "Rebalance", "id": rebalance_id},
@@ -708,17 +731,14 @@ def test_legacy_operator_admission_cannot_bypass_approved_apply_gates(
 
 
 @pytest.mark.parametrize(
-    ("route", "idempotency_header"),
-    [
-        ("/bff/v1/commands", "Idempotency-Key"),
-        ("/api/v1/operator/commands", "X-Idempotency-Key"),
-    ],
+    "idempotency_header",
+    ["Idempotency-Key", "X-Idempotency-Key"],
 )
 def test_approved_apply_admissions_reject_params_target_redirect(
     tmp_path: Path,
-    route: str,
     idempotency_header: str,
 ) -> None:
+    route = "/bff/v1/commands"
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key=f"rb-proposal-redirect-{idempotency_header}")
         rebalance_id = created.json()["rebalance_id"]
@@ -744,17 +764,14 @@ def test_approved_apply_admissions_reject_params_target_redirect(
 
 
 @pytest.mark.parametrize(
-    ("route", "idempotency_header"),
-    [
-        ("/bff/v1/commands", "Idempotency-Key"),
-        ("/api/v1/operator/commands", "X-Idempotency-Key"),
-    ],
+    "idempotency_header",
+    ["Idempotency-Key", "X-Idempotency-Key"],
 )
 def test_validated_apply_evidence_overwrites_conflicting_param_aliases(
     tmp_path: Path,
-    route: str,
     idempotency_header: str,
 ) -> None:
+    route = "/bff/v1/commands"
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key=f"rb-proposal-alias-{idempotency_header}")
         rebalance_id = created.json()["rebalance_id"]
@@ -799,7 +816,7 @@ def test_validated_apply_evidence_overwrites_conflicting_param_aliases(
         assert receipt["status"] == "executed"
         assert receipt["result"]["approval_ref"] == approval_id
 
-        stored = bff_main.command_store.get_command(command_id)
+        stored = harness.command_store.get_command(command_id)
         assert stored is not None
         assert stored["params"]["approval_decision_id"] == approval_id
         assert stored["params"]["approval_ref"] == approval_id
@@ -905,7 +922,7 @@ def test_concurrent_same_key_approval_produces_one_durable_record(
         assert replayed == [False, True]
         records = [
             record
-            for record in bff_main.command_store._get_all_commands()
+            for record in harness.command_store._get_all_commands()
             if record.get("type") == "RebalanceApproval"
             and (record.get("params") or {}).get("approval_decision_id")
             == "approval-concurrent"
@@ -935,14 +952,14 @@ def test_restart_replay_heals_trusted_submitted_rebalance_evidence(
         assert first.status_code == 201, first.text
         command_id = first.json()["data"]["command_id"]
 
-        records = bff_main.command_store._get_all_commands()
+        records = harness.command_store._get_all_commands()
         evidence_record = next(
             record for record in records if record.get("command_id") == command_id
         )
         evidence_record["status"] = "submitted"
         evidence_record["result"] = None
         evidence_record["audit"].pop("execution_completed_at", None)
-        bff_main.command_store._update_commands(records)
+        harness.command_store._update_commands(records)
 
         harness.restart()
         assert harness.client is not None
@@ -958,7 +975,7 @@ def test_restart_replay_heals_trusted_submitted_rebalance_evidence(
         assert replay.json()["data"]["command_id"] == command_id
         assert replay.json()["meta"]["idempotency"]["replayed"] is True
 
-        healed = bff_main.command_store.get_command(command_id)
+        healed = harness.command_store.get_command(command_id)
         assert healed is not None
         assert healed["status"] == "executed"
         assert healed["result"]["approval_decision_id"] == "approval-heal-evidence"
@@ -1123,6 +1140,7 @@ def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    bff_main = _bff_main_module()
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key="rb-proposal-startup-replay")
         rebalance_id = created.json()["rebalance_id"]
@@ -1148,7 +1166,7 @@ def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
         )
         assert accepted.status_code == 202, accepted.text
         command_id = accepted.json()["data"]["command_id"]
-        submitted = bff_main.command_store.get_command(command_id)
+        submitted = harness.command_store.get_command(command_id)
         assert submitted is not None
         assert submitted["status"] == "submitted"
         assert (
@@ -1191,9 +1209,9 @@ def test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt(
             assert token_state.json()["data"]["status"] == "redeemed"
             redemption_records = [
                 record
-                for record in bff_main.command_store._get_all_commands()
+                for record in harness.command_store._get_all_commands()
                 if record.get("type")
-                == bff_main.CommandType.CONFIRM_TOKEN_REDEEM.value
+                == CommandType.CONFIRM_TOKEN_REDEEM.value
                 and record.get("target", {}).get("id") == token_id
             ]
             assert len(redemption_records) == 1
@@ -1284,6 +1302,7 @@ def test_emergency_proposal_rejects_increase_and_accepts_containment(
 
 
 def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
+    bff_main = _bff_main_module()
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     monkeypatch.setenv("BFF_COMMIT", source_sha)
     monkeypatch.setenv("BFF_IMAGE_DIGEST", "sha256:123456")
@@ -1358,10 +1377,27 @@ def test_action_adapter_rebalance_apply_forwarding(tmp_path: Path) -> None:
             suffix="adapter-apply",
         )
 
-        # Call the action adapter endpoint
+        # Submit the equivalent command envelope the retired
+        # `/bff/actions/rebalance/{id}/apply` adapter route used to build
+        # before forwarding into the shared `/bff/v1/commands` admission path.
         response = harness.client.post(
-            f"/bff/actions/rebalance/{rebalance_id}/apply",
-            json=evidence,
+            "/bff/v1/commands",
+            json={
+                "command": "RebalanceAction",
+                "target": {"type": "Rebalance", "id": rebalance_id},
+                "action": "apply",
+                "params": {
+                    **evidence,
+                    "action_id": "apply",
+                    "actionId": "apply",
+                    "entity_type": "rebalance",
+                    "entityType": "rebalance",
+                    "entity_id": rebalance_id,
+                    "entityId": rebalance_id,
+                    "audit_event": "rebalance.apply",
+                },
+                "audit_context": {"reason": "rebalance.apply"},
+            },
             headers={
                 **apply_headers,
                 "Idempotency-Key": "rb-apply-adapter-apply",
@@ -1396,14 +1432,30 @@ def test_action_adapter_emergency_containment_forwarding(tmp_path: Path) -> None
             persona_id=persona_id,
         )
 
-        # Call the action adapter endpoint for persona emergency containment
+        # Submit the equivalent command envelope the retired
+        # `/bff/actions/persona/{id}/EmergencyContainment` adapter route used
+        # to build before forwarding into the shared `/bff/v1/commands`
+        # admission path.
         response = harness.client.post(
-            f"/bff/actions/persona/{persona_id}/EmergencyContainment",
+            "/bff/v1/commands",
             json={
-                "action": "freeze",
-                "trigger": "hard_risk_breach",
-                "evidence_refs": ["risk-event:42"],
-                "two_man_signature_id": sig_id,
+                "command": "PersonaAction",
+                "target": {"type": "Persona", "id": persona_id},
+                "action": "EmergencyContainment",
+                "params": {
+                    "action": "freeze",
+                    "trigger": "hard_risk_breach",
+                    "evidence_refs": ["risk-event:42"],
+                    "two_man_signature_id": sig_id,
+                    "action_id": "EmergencyContainment",
+                    "actionId": "EmergencyContainment",
+                    "entity_type": "persona",
+                    "entityType": "persona",
+                    "entity_id": persona_id,
+                    "entityId": persona_id,
+                    "audit_event": "persona.EmergencyContainment",
+                },
+                "audit_context": {"reason": "persona.EmergencyContainment"},
             },
             headers={
                 **apply_headers,

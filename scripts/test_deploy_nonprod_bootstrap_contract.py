@@ -675,8 +675,14 @@ def test_deploy_script_dev_rejects_empty_cli_project_id() -> None:
     assert "dev deployment requires --project-id or PROJECT_ID to be set" in proc.stderr
 
 
-def test_deploy_script_dev_executes_beyond_dry_run_with_stubbed_ssh_and_no_staging_vars(tmp_path: Path) -> None:
-    """Dev deployment beyond dry-run executes cleanly with stubbed SSH when all staging variables are unset."""
+def test_dev_deploy_rejects_synthetic_target_before_ssh_without_staging_vars(tmp_path: Path) -> None:
+    """A fake SSH exit zero must not be reported as accepted deployment.
+
+    Positive guarded transport and durable receipt coverage belongs to
+    test_dev_remote_guarded_exec.py::test_candidate_cli_real_receiver_persists_and_acknowledges_before_action;
+    its test_candidate_cli_requires_receipt_even_when_remote_script_exits_zero
+    also checks that exit status alone cannot substitute for receipt evidence.
+    """
     import json
     lease_file = tmp_path / "dev-lease.json"
     lease_file.write_text(
@@ -739,16 +745,10 @@ exit 0
         env=env,
         cwd=ROOT,
     )
-    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed: {proc.stderr}"
-    assert "direct ssh synthetic-user@192.0.2.50 component=root" in proc.stdout
-    assert f"deployment complete: dev/root {DUMMY_SHA}" in proc.stdout
-
-    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
-    assert "synthetic-user@192.0.2.50" in ssh_args
-    command_prefix = ssh_args[-1]
-    assert "PANTHEON_DEPLOY_ENV=dev" in command_prefix
-    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
-    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
+    assert proc.returncode == 75, proc.stderr
+    assert "guarded artifact transport requires the explicit current dev target" in proc.stderr
+    assert "deployment complete:" not in proc.stdout
+    assert not args_file.exists(), "invalid target reached SSH"
 
 
 def test_deploy_script_staging_live_executes_beyond_dry_run_with_stubbed_gcloud_and_no_dev_vars(tmp_path: Path) -> None:

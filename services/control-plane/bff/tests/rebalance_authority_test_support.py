@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+__test__ = False
+
 import copy
+import hashlib
 import importlib
+import json
 import os
 import sys
 from io import BytesIO
@@ -11,13 +15,27 @@ from typing import Any, Dict, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 
-import command_executor
-import main as bff_main
-from command_queue import CommandStore
-from management_projection_test_doubles import PplFixtureBuilder
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff import command_executor
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.command_adapters.router import (
+    create_action_command_router,
+    create_command_adapters_router,
+)
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.tests.management_projection_test_doubles import PplFixtureBuilder
+from services.control_plane.bff.models import ErrorCode, utc_now
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 AUTHORITY_URL = "http://capital-authority.test"
@@ -315,6 +333,44 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         return clone
 
 
+_PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
+    "ranking_snapshot_id",
+    "allocation_evaluation_id",
+    "allocation_policy_version",
+    "persona_id",
+    "stage",
+    "capital_scope",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "cap_reasons",
+    "evidence_refs",
+)
+
+
+def _stable_json_hash(payload: Dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
+    basis = {
+        field: line.get(field)
+        for field in _PM12_ALLOCATION_LINE_DIGEST_FIELDS
+    }
+    basis["capital_scope"] = line.get("capital_scope") or "pool"
+    basis["cap_reasons"] = list(line.get("cap_reasons") or [])
+    basis["evidence_refs"] = list(line.get("evidence_refs") or [])
+    return _stable_json_hash(basis)
+
+
 def _assign_rebalance_lineage(payload: Dict[str, Any]) -> Dict[str, Any]:
     snapshot_id = str(payload.get("ranking_snapshot_id") or "rank-q3")
     policy_version = "persona-real-allocation-v1"
@@ -333,7 +389,7 @@ def _assign_rebalance_lineage(payload: Dict[str, Any]) -> Dict[str, Any]:
     ]
     evaluation_id = (
         "allocation-evaluation-"
-        + bff_main._stable_json_hash(
+        + _stable_json_hash(
             {
                 "ranking_snapshot_id": snapshot_id,
                 "allocation_policy_version": policy_version,
@@ -349,7 +405,7 @@ def _assign_rebalance_lineage(payload: Dict[str, Any]) -> Dict[str, Any]:
         line["allocation_evaluation_id"] = evaluation_id
         line["allocation_policy_version"] = policy_version
         line.pop("allocation_line_digest", None)
-        line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(
+        line["allocation_line_digest"] = _pm12_allocation_line_digest(
             line
         )
     return payload
@@ -386,6 +442,71 @@ def rebalance_payload(**overrides: Any) -> Dict[str, Any]:
     return _assign_rebalance_lineage(payload)
 
 
+def _build_authority_harness_app(
+    read_surface: ReadSurfacePorts,
+    command_store: CommandStore,
+) -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(detail)}},
+        )
+
+    app.include_router(
+        create_capital_router(
+            read_surface=read_surface,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.include_router(
+        create_command_adapters_router(
+            command_store=command_store,
+            read_surface=read_surface,
+            extract_identity=extract_identity,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.include_router(
+        create_action_command_router(
+            command_store=command_store,
+            extract_identity=extract_identity,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
+
+    @app.post("/api/v1/bindings", status_code=201)
+    async def _create_binding(payload: Dict[str, Any] = Body(...)):
+        return command_executor.create_capital_binding(payload)
+
+    @app.get("/api/v1/bindings")
+    async def _list_bindings():
+        return {"data": read_surface.list_bindings(), "meta": {}}
+
+    @app.get("/api/v1/bindings/{binding_id}")
+    async def _get_binding(binding_id: str):
+        for b in read_surface.list_bindings():
+            if b.get("binding_id") == binding_id or b.get("id") == binding_id:
+                return {"data": b, "meta": {}}
+        raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Binding not found")
+
+    return app
+
+
 class CapitalBffAuthorityHarness:
     """Run BFF tests against the real, durable Capital service boundary."""
 
@@ -414,6 +535,7 @@ class CapitalBffAuthorityHarness:
         self.capital_data_dir = self.root / "capital"
         self.read_path = self.root / "bff-read-surfaces.json"
         self.command_path = self.root / "bff-commands.jsonl"
+        self.command_store: Optional[CommandStore] = None
         self.capital_module: Optional[ModuleType] = None
         self.capital_client: Optional[TestClient] = None
         self.client: Optional[TestClient] = None
@@ -424,13 +546,8 @@ class CapitalBffAuthorityHarness:
         self.capital_data_dir.mkdir(parents=True, exist_ok=True)
         self._environment = {key: os.environ.get(key) for key in self._ENV_KEYS}
         self._previous_capital_module = sys.modules.get("services.capital.main")
-        self._original_read_store = bff_main.read_store
-        self._original_command_store = bff_main.command_store
         self._original_post_json = command_executor._post_json
         self._original_get_json = command_executor._get_json
-        self._capital_idempotency = dict(bff_main._CAPITAL_BFF_IDEMPOTENCY)
-        self._command_auth_context = dict(bff_main._COMMAND_AUTH_CONTEXT)
-        self._persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
 
         for key in self._ENV_KEYS:
             os.environ.pop(key, None)
@@ -498,14 +615,6 @@ class CapitalBffAuthorityHarness:
 
         command_executor._post_json = self._original_post_json
         command_executor._get_json = self._original_get_json
-        bff_main.read_store = self._original_read_store
-        bff_main.command_store = self._original_command_store
-        bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-        bff_main._CAPITAL_BFF_IDEMPOTENCY.update(self._capital_idempotency)
-        bff_main._COMMAND_AUTH_CONTEXT.clear()
-        bff_main._COMMAND_AUTH_CONTEXT.update(self._command_auth_context)
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.update(self._persona_overlay)
 
         if self._previous_capital_module is None:
             sys.modules.pop("services.capital.main", None)
@@ -520,12 +629,9 @@ class CapitalBffAuthorityHarness:
     def _reset_bff_process_state(self) -> None:
         if self.client is not None:
             self.client.close()
-        bff_main.read_store = self.read_surface
-        bff_main.command_store = CommandStore(str(self.command_path))
-        bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
-        bff_main._COMMAND_AUTH_CONTEXT.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        self.client = TestClient(bff_main.app)
+        self.command_store = CommandStore(str(self.command_path))
+        app = _build_authority_harness_app(self.read_surface, self.command_store)
+        self.client = TestClient(app)
 
     def restart(self) -> None:
         """Rebuild both owner and BFF process-local state over the same files."""
@@ -559,7 +665,7 @@ class CapitalBffAuthorityHarness:
             "surface": "quarterly",
             "period": "test",
             "formula_version": "pm12-default-v1",
-            "content_digest": bff_main._stable_json_hash(
+            "content_digest": _stable_json_hash(
                 {
                     "surface": "quarterly",
                     "period": "test",
@@ -575,7 +681,7 @@ class CapitalBffAuthorityHarness:
             "allocation_evaluation_id": evaluation_id,
             "ranking_snapshot_id": snapshot_id,
             "allocation_policy_version": policy_version,
-            "content_digest": bff_main._stable_json_hash(
+            "content_digest": _stable_json_hash(
                 {
                     "ranking_snapshot_id": snapshot_id,
                     "allocation_evaluation_id": evaluation_id,
@@ -607,7 +713,7 @@ class CapitalBffAuthorityHarness:
             "evidence_refs": [],
         }
         seed_line["allocation_line_digest"] = (
-            bff_main._pm12_allocation_line_digest(seed_line)
+            _pm12_allocation_line_digest(seed_line)
         )
         created = self.capital_client.post(
             "/api/rebalances",

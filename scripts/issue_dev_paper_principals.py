@@ -32,6 +32,14 @@ READERS = {
     "GOVERNANCE_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-governance-registry-reader", "registry-reader"),
     "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-runtime-approval-reader", "approval_reader"),
     "RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-runtime-registry-reader", "registry-reader"),
+    "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
+}
+WRITERS = {
+    "DISTILLATION_REGISTRY_SERVICE_TOKEN": (
+        "pantheon-dev-distillation-registry-writer",
+        "registry-writer",
+        "pantheon:dev-owner-write",
+    ),
 }
 CONSUMER_FILES = {
     "deployment": ("DEPLOYMENT_REGISTRY_SERVICE_TOKEN", "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN"),
@@ -39,6 +47,8 @@ CONSUMER_FILES = {
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN"),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",),
+    "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
+    "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
 }
 REFRESH_SECONDS = 60 * 60
 
@@ -73,6 +83,10 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         variable: token(subject, role, "pantheon:dev-owner-read")
         for variable, (subject, role) in READERS.items()
     }
+    values.update({
+        variable: token(subject, role, scope)
+        for variable, (subject, role, scope) in WRITERS.items()
+    })
     values.update({
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
         "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": PAPER_SUBJECT,
@@ -164,8 +178,14 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
             if not hmac.compare_digest(decode(signature), hmac.new(secret, signed, hashlib.sha256).digest()):
                 return False
             claims = json.loads(decode(payload))
-            subject, role = READERS.get(variable, (PAPER_SUBJECT, "automated_gate"))
-            scope = PAPER_SCOPE if subject == PAPER_SUBJECT else "pantheon:dev-owner-read"
+            if variable in READERS:
+                subject, role = READERS[variable]
+                scope = "pantheon:dev-owner-read"
+            elif variable in WRITERS:
+                subject, role, scope = WRITERS[variable]
+            else:
+                subject, role = PAPER_SUBJECT, "automated_gate"
+                scope = PAPER_SCOPE
             expected = {"sub": subject, "service": subject, "roles": [role], "scope": scope,
                         "tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"],
                         "iss": env["PANTHEON_DEV_BFF_JWT_ISSUER"].strip(),

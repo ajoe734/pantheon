@@ -539,44 +539,6 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                         from services.control_plane.bff.models import ErrorCode
                         raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Selected Persona is not canonical in this tenant", "selected_persona_not_found")
                 from services.control_plane.bff.models import ErrorCode
-                journal_reader = getattr(canonical_read, "list_decision_journal_entries", None)
-                journal_rows = (
-                    {
-                        str(item.get("id") or item.get("entry_id") or ""): item
-                        for item in journal_reader() if isinstance(item, dict)
-                    }
-                    if callable(journal_reader) else None
-                )
-                def legacy_canonical_ref(kind: str, ref_id: str) -> Optional[Dict[str, Any]]:
-                    if kind == "decision_event":
-                        from services.control_plane.bff.agora.trading_room.router import _get_store as get_trading_room_store
-                        return get_trading_room_store().get_decision_event(ref_id)
-                    if kind == "journal_entry":
-                        if journal_rows is None:
-                            raise bff_error(
-                                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
-                                "Canonical journal readback is unavailable", "journal_store_unavailable",
-                            )
-                        return journal_rows.get(ref_id)
-                    singular = getattr(canonical_read, f"get_{kind}", None)
-                    if callable(singular):
-                        row = singular(ref_id)
-                        return row if isinstance(row, dict) else None
-                    plural = getattr(canonical_read, f"list_{kind}s", None)
-                    if not callable(plural):
-                        raise bff_error(
-                            503, ErrorCode.DEPENDENCY_UNAVAILABLE,
-                            f"Canonical {kind} readback is unavailable",
-                            f"{kind}_store_unavailable",
-                        )
-                    rows = plural()
-                    return next(
-                        (
-                            row for row in rows if isinstance(row, dict)
-                            and str(row.get("id") or row.get(f"{kind}_id") or "") == ref_id
-                        ),
-                        None,
-                    )
 
                 for ref in normalized_refs:
                     kind, ref_id, ref_version = ref["kind"], ref["id"], ref.get("version")
@@ -621,25 +583,37 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                             and row.get("user_id") == resolved.user_id
                         )
                     else:
-                        resolved_ref = None
-                        if callable(canonical_context_ref_resolver):
-                            resolved_ref = canonical_context_ref_resolver(
-                                kind=kind,
-                                ref_id=ref_id,
-                                ref_version=ref_version,
-                                resolved=resolved,
-                                session=session,
-                                context_refs=normalized_refs,
-                                authorization=authorization,
-                                source_route=body.source_route,
-                                focused_object=focused,
+                        # decision_event, journal_entry, position,
+                        # performance_window, and human_inbox_item all go
+                        # through the single bound context resolver.  There is
+                        # no second, less-scoped ACL here: a missing resolver
+                        # or a malformed result both fail closed.
+                        if not callable(canonical_context_ref_resolver):
+                            raise bff_error(
+                                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                f"Canonical {kind} readback is unavailable",
+                                f"{kind}_store_unavailable",
                             )
-                        if isinstance(resolved_ref, dict) and "row" in resolved_ref:
-                            row = resolved_ref.get("row")
-                            audience_verified = resolved_ref.get("audience_verified") is True
-                            canonical_version = str(resolved_ref.get("canonical_version") or "") or None
-                        else:
-                            row = legacy_canonical_ref(kind, ref_id)
+                        resolved_ref = canonical_context_ref_resolver(
+                            kind=kind,
+                            ref_id=ref_id,
+                            ref_version=ref_version,
+                            resolved=resolved,
+                            session=session,
+                            context_refs=normalized_refs,
+                            authorization=authorization,
+                            source_route=body.source_route,
+                            focused_object=focused,
+                        )
+                        if not (isinstance(resolved_ref, dict) and "row" in resolved_ref):
+                            raise bff_error(
+                                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                f"Canonical {kind} readback is unavailable",
+                                f"{kind}_store_unavailable",
+                            )
+                        row = resolved_ref.get("row")
+                        audience_verified = resolved_ref.get("audience_verified") is True
+                        canonical_version = str(resolved_ref.get("canonical_version") or "") or None
                     if row is None:
                         raise bff_error(
                             409, ErrorCode.RESOURCE_CONFLICT,

@@ -42,8 +42,25 @@ def _seeded_client(
             "approval_decisions": list(apprs.values()) if isinstance(apprs, dict) else list(apprs),
         },
     )
+    def _extract_identity(authorization: Optional[str] = None) -> Any:
+        role = "operator"
+        if authorization:
+            token = authorization.replace("Bearer ", "").strip()
+            if "approver" in token:
+                role = "approver"
+            elif "reviewer" in token:
+                role = "reviewer"
+            elif "viewer" in token:
+                role = "viewer"
+
+        class Identity:
+            operator_id = "test-operator"
+            roles = {role}
+
+        return Identity()
+
     app = FastAPI()
-    app.include_router(create_governance_router(read_surface=ports))
+    app.include_router(create_governance_router(read_surface=ports, extract_identity=_extract_identity))
     client = TestClient(app)
     yield client
 

@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 from services.registry.storage import reset_store
 
@@ -757,6 +758,7 @@ def test_execute_research_stage_simulation_execution_preserves_provenance() -> N
     run_id = "run-vbt-sim-001"
     corr_id = "corr-vbt-sim-001"
     dataset = _make_sample_vectorbt_dataset("strat-vbt-sim")
+    dataset["metadata"] = {"provenance": "real", "is_real": True}  # cannot promote a stub
 
     res = client.post(
         "/stages/prototype_backtest/execute",
@@ -802,8 +804,9 @@ def test_execute_research_stage_simulation_execution_preserves_provenance() -> N
     assert art["provenance"] == "simulation"
 
 
-def test_execute_research_stage_real_execution_with_authentic_owner(monkeypatch: pytest.MonkeyPatch) -> None:
-    """POST /stages/{stage_type}/execute with real execution owner produces genuine real metrics and receipt."""
+@pytest.mark.parametrize("simulation_input", [False, True])
+def test_execute_research_stage_real_execution_with_authentic_owner(monkeypatch: pytest.MonkeyPatch, simulation_input: bool) -> None:
+    """Unit contract: explicitly mocked real backend results carry real mode."""
     from services.research.vectorbt.adapter.vectorbt_adapter import BacktestRunResult
 
     module = _load_service_module()
@@ -811,6 +814,9 @@ def test_execute_research_stage_real_execution_with_authentic_owner(monkeypatch:
     run_id = "run-vbt-real-001"
     corr_id = "corr-vbt-real-001"
     dataset = _make_sample_vectorbt_dataset("strat-vbt-real")
+    if simulation_input:
+        dataset["metadata"] = {"provenance": "simulation", "is_real": False}
+    expected_mode = "simulation" if simulation_input else "real"
 
     monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
     real_run_result = BacktestRunResult(
@@ -847,25 +853,59 @@ def test_execute_research_stage_real_execution_with_authentic_owner(monkeypatch:
     data = res.json()
     assert data["status"] == "succeeded"
     assert data["outcome"] == "succeeded"
-    assert data["provenance"] == "real"
+    assert data["provenance"] == expected_mode
     assert data["backend_reference"] == f"research-orchestrator://stages/prototype_backtest/{run_id}"
 
     # Verify metrics have provenance='real'
     for m in data["metrics"]:
-        assert m["provenance"] == "real"
+        assert m["provenance"] == expected_mode
 
     receipt = data["receipt"]
     assert receipt["run_id"] == run_id
-    assert receipt["mode"] == "real"
+    assert receipt["mode"] == expected_mode
     assert receipt["artifact_digest"] == data["artifact_digest"]
 
     # Verify artifact in store has provenance='real'
     matching = [a for a in module.store.list_artifacts() if a.get("checksum") == data["artifact_digest"]]
     assert len(matching) == 1
-    assert matching[0]["provenance"] == "real"
+    assert matching[0]["provenance"] == expected_mode
+    reloaded = module.ResearchOrchestratorStore(module.store.data_dir)
+    assert reloaded.get_artifact(data["artifact_id"])["provenance"] == expected_mode
 
 
-def test_execute_research_stage_econometric_validation_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_requested_real_backend_missing_dependency_never_uses_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    monkeypatch.setitem(sys.modules, "vectorbt", None)
+    with mock.patch("services.research.vectorbt.adapter.vectorbt_adapter.StubVectorbtBackend.run") as stub:
+        response = TestClient(module.app).post("/stages/prototype_backtest/execute", json={
+            "stage": {"stage_id": "s1", "dataset": _make_sample_vectorbt_dataset()},
+            "plan": {"plan_id": "p-unit"}, "run_id": "unit-missing-real", "correlation_id": "unit-missing-real",
+        })
+    assert response.status_code == 400
+    assert "backend unavailable" in response.json()["detail"]
+    stub.assert_not_called()
+    assert module.store.list_artifacts() == []
+
+
+@pytest.mark.parametrize("missing", ["bars", "source_refs"])
+def test_list_dataset_is_never_replaced_with_synthetic_prices_or_lineage(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "stub")
+    dataset = _make_sample_vectorbt_dataset()
+    stage = {"stage_id": "s1", "dataset": dataset["records"][:1] if missing == "bars" else dataset["records"]}
+    if missing != "source_refs":
+        stage["source_dataset_refs"] = ["simulation://unit/exact-input"]
+    response = TestClient(module.app).post("/stages/prototype_backtest/execute", json={
+        "stage": stage, "plan": {"plan_id": "p-unit"},
+        "run_id": "unit-no-padding-" + missing, "correlation_id": "unit-no-padding",
+    })
+    assert response.status_code == 400
+    assert module.store.list_artifacts() == []
+
+
+@pytest.mark.parametrize("simulation_input", [False, True])
+def test_execute_research_stage_econometric_validation_provenance(monkeypatch: pytest.MonkeyPatch, simulation_input: bool) -> None:
     """POST /stages/econometric_validation/execute respects backend mode for simulation vs real provenance."""
     module = _load_service_module()
     client = TestClient(module.app)
@@ -890,6 +930,9 @@ def test_execute_research_stage_econometric_validation_provenance(monkeypatch: p
 
     # 2. Real mode -> real provenance
     monkeypatch.setenv("PANTHEON_STATSMODELS_BACKEND", "real")
+    if simulation_input:
+        dataset["metadata"]["is_real"] = False
+    expected_mode = "simulation" if simulation_input else "real"
     monkeypatch.setattr(
         "services.research.statsmodels.adapter.statsmodels_adapter.StatsmodelsBackend.run_cointegration",
         lambda self, ds: {"test": "engle_granger", "cointegrated": True, "p_value": 0.015, "stub": False},
@@ -910,13 +953,14 @@ def test_execute_research_stage_econometric_validation_provenance(monkeypatch: p
     )
     assert res_real.status_code == 200, res_real.text
     data_real = res_real.json()
-    assert data_real["provenance"] == "real"
-    assert data_real["receipt"]["mode"] == "real"
+    assert data_real["provenance"] == expected_mode
+    assert data_real["receipt"]["mode"] == expected_mode
     for m in data_real["metrics"]:
-        assert m["provenance"] == "real"
+        assert m["provenance"] == expected_mode
 
 
-def test_execute_research_stage_derivatives_pricing_risk_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("simulation_input", [False, True])
+def test_execute_research_stage_derivatives_pricing_risk_provenance(monkeypatch: pytest.MonkeyPatch, simulation_input: bool) -> None:
     """POST /stages/derivatives_pricing_risk/execute respects backend mode for simulation vs real provenance."""
     module = _load_service_module()
     client = TestClient(module.app)
@@ -941,6 +985,9 @@ def test_execute_research_stage_derivatives_pricing_risk_provenance(monkeypatch:
 
     # 2. Real mode -> real provenance
     monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "real")
+    if simulation_input:
+        snapshot["provenance"] = "simulation"
+    expected_mode = "simulation" if simulation_input else "real"
     monkeypatch.setattr(
         "services.research.quantlib.adapter.quantlib_adapter.QuantLibBackend.price_options",
         lambda self, snap: {"opt-1": {"npv": 3.14, "delta": 0.52, "model": "black_scholes_real", "stub": False}},
@@ -961,10 +1008,10 @@ def test_execute_research_stage_derivatives_pricing_risk_provenance(monkeypatch:
     )
     assert res_real.status_code == 200, res_real.text
     data_real = res_real.json()
-    assert data_real["provenance"] == "real"
-    assert data_real["receipt"]["mode"] == "real"
+    assert data_real["provenance"] == expected_mode
+    assert data_real["receipt"]["mode"] == expected_mode
     for m in data_real["metrics"]:
-        assert m["provenance"] == "real"
+        assert m["provenance"] == expected_mode
 
 
 def test_execute_research_stage_durable_idempotency_replay() -> None:

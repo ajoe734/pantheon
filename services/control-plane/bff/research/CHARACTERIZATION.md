@@ -121,6 +121,74 @@ fixed here, and this task's acceptance criteria forbid touching
 `read_store.py`. Flagged for the cutover/follow-up task to decide whether
 to extend the read_store projection.
 
+## BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 (U10A) update
+
+`read_store.py` no longer exists in the repository at all (it was removed
+by an earlier corrective task); every "read_store.py" reference above is
+historical context for how the route family got here, not a live import.
+This task (see
+`docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md`)
+makes the following corrections, narrowly scoped to Research Experiments and
+the separate Jobs projection (`jobs/router.py`, `ports/job_read.py`) that
+this family had been silently reusing:
+
+- **In-memory `_experiments` dict DELETED.** `DefaultResearchKnowledgeSourcePort`
+  (`ports/research_knowledge_source.py`) no longer holds any experiment
+  state itself. `create_research_experiment` / `cancel_research_experiment` /
+  `get_research_experiment` / `list_research_experiments` delegate
+  exclusively to `services.research.write_owner.ResearchWriteOwner`
+  (Postgres, `research.research_experiments`). If the write owner cannot be
+  resolved (missing `DATABASE_URL`/`RESEARCH_STORE_DSN`, or a DB round-trip
+  failure), every one of those methods raises
+  `ResearchWriteOwnerUnavailableError`, mapped by callers to HTTP 500/503 —
+  never a silent empty/fake success and never a fallback to memory.
+- **`get_experiment_logs` / `get_experiment_metrics` / `get_experiment_artifacts`
+  are real methods now**, added directly to `ReadSurfacePorts`
+  (`ports/read_surface_ports.py`), no longer probed with
+  `hasattr`/`getattr` fallback chains that silently returned `[]`/`{}` when
+  the method happened to be missing. They still legitimately return
+  `[]`/`{}` when an experiment genuinely has no logs/metrics/artifacts yet
+  (the "empty when genuinely no data" case explicitly preserved by the
+  decision doc) — `get_experiment_artifacts` resolves `artifact_ids` through
+  the existing RW-05 `get_research_artifact` port method rather than
+  inventing a second artifact store.
+- **`create_research_experiment` / `cancel_research_experiment` are
+  deliberately NOT exposed on `ReadSurfacePorts` itself** — see
+  `tests/test_read_surface_caller_migration.py`'s
+  `RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE` static regression. Callers
+  reach the mutation through `ResearchRouteContext.call_mutation_port` (see
+  `research/routes/common.py`) / `_resolve_research_write_port` (see
+  `research/routes/experiments.py`), which follow main.py's test-time
+  `_active_delegate` swap explicitly and then read
+  `research_knowledge_source` off of whichever object is actually active,
+  rather than reaching `read_store.research_knowledge_source` directly
+  (which would silently bypass a test's swapped-in `read_store` double,
+  since `research_knowledge_source` is one of the fixed sub-port names
+  `ReadSurfacePorts.__getattribute__` never forwards to `_active_delegate`).
+- **Experiment action dispatch is real, not faked.** `POST
+  /bff/experiments/{id}/actions/{action_id}` (via `ExperimentAction`) now
+  routes to `command_adapters/experiment_adapter.py::ExperimentCommandAdapter`,
+  registered ahead of `EvolutionCommandAdapter` in
+  `command_adapters/registry.py`. Only `cancel` performs a real mutation
+  (`ResearchWriteOwner.cancel_research_experiment`, the only experiment
+  mutation method that already existed); `invalidated` / `attached_to_review`
+  / `archived` / `retry` fail closed with `ActionUnavailableError` because no
+  owner mutation exists for them yet — implementing those is explicit
+  follow-up scope, not invented here.
+- **Jobs are a completely separate aggregate from this family.**
+  `GET /bff/jobs*` no longer touches `research_knowledge_source` at all (it
+  used to call `get_research_ticket`/`list_research_tickets`, i.e.
+  `ResearchTicket`s masquerading as Jobs). It is now served by
+  `ports/job_read.py::JobReadPort`, a typed read composition across the six
+  qualified job sources (`job-worker-*`, `job-orchestrator-*`,
+  `job-trainer-*`, `job-ingest-*`, `job-policy-*`, `job-openclaw-*`
+  detail-only), dispatched by `job_id` prefix. `JobAction` routes to
+  `command_adapters/job_adapter.py::JobCommandAdapter`, which fails every
+  action closed with `ActionUnavailableError` in this task (U10A is
+  read-plumbing/minimal-write scope; real job action execution closure is
+  tracked as U10B for the orchestrator source and separate per-service
+  follow-up tasks for the other four).
+
 ## What still needs main.py at wiring time (not reimplemented here)
 
 - `submit_experiment_action`: the command-store/audit dispatch pipeline

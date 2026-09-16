@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.command_adapters import create_command_adapters_router
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.errors import register_error_handlers
 
 
 HEADERS = {"Authorization": "Bearer op-bff-b1-009:operator,approver:mfa"}
@@ -19,17 +19,17 @@ HEADERS = {"Authorization": "Bearer op-bff-b1-009:operator,approver:mfa"}
 
 @contextmanager
 def _isolated_confirm_tokens() -> Iterator[TestClient]:
+    app = FastAPI()
+    register_error_handlers(app)
     with tempfile.TemporaryDirectory() as td:
-        original_command_store = bff_main.command_store
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        router = create_command_adapters_router(
+            get_command_store=lambda: store,
+            get_read_store=lambda: None,
+            extract_identity=lambda auth, mfa_token=None: auth_policy.extract_identity_stub(auth),
+        )
+        app.include_router(router)
+        yield TestClient(app)
 
 
 def test_confirm_token_and_command_confirmation_lifecycle() -> None:

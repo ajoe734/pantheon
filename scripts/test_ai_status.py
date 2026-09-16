@@ -5,6 +5,7 @@ import gzip
 import base64
 import hashlib
 import io
+import importlib.util
 import json
 import contextlib
 import multiprocessing
@@ -28,11 +29,20 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
-import execution_authorization
 import task_archive
 import common
 from common import rotate_activity_log_unlocked
 from rewrite import status_projection, task_contract, task_machine, task_state_store
+
+
+def _supervisor_fixtures():
+    # scripts/test_supervisor.py is a different smoke entry point. Load the
+    # actual fixture file explicitly, independent of pytest/unittest import order.
+    path = Path(__file__).resolve().parents[1] / ".orchestrator" / "test_supervisor.py"
+    spec = importlib.util.spec_from_file_location("supervisor_contract_fixtures", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
@@ -686,6 +696,31 @@ class DependencyContractBatchTests(unittest.TestCase):
                 self.assertEqual(self._snapshot(), before)
                 self.state['tasks'][1].pop(field)
 
+    def test_hosted_dependency_cleanup_preserves_authority_and_hold(self):
+        task = self.state['tasks'][0]
+        task['dev_bridge'] = {'work_class': 'hosted', 'task_spec_hash': 'a' * 64}
+        task['waiting_for'] = 'Human/Ops'
+        task['execution_authorization'] = {'status': 'pending_authorization'}
+        task['execution_authorization_policy'] = {'requires_execution_authorization': True}
+        self._seed()
+        before = deepcopy(task)
+        self.assertEqual(self._run(self._request())[0], 0)
+        updated = ai_status.get_task(self._snapshot()['state'], 'DEP')
+        for field in ('dev_bridge', 'waiting_for', 'execution_authorization',
+                      'execution_authorization_policy', 'acceptance', 'status'):
+            self.assertEqual(updated[field], before[field])
+        self.assertEqual(updated['depends_on'], ['COVERAGE'])
+
+    def test_security_and_live_dependencies_remain_unchanged(self):
+        for work_class in ('security', 'live'):
+            with self.subTest(work_class=work_class):
+                self.state['tasks'][0]['dev_bridge'] = {'work_class': work_class}
+                self._seed()
+                before = self._snapshot()
+                with self.assertRaisesRegex(SystemExit, 'privileged/catalog'):
+                    self._run(self._request())
+                self.assertEqual(self._snapshot(), before)
+
     def test_settled_held_recovery_allows_dependency_revision_and_preserves_holds(self):
         dep = self.state['tasks'][0]
         dep['status'] = 'blocked'
@@ -1119,7 +1154,7 @@ class DependencyContractBatchTests(unittest.TestCase):
 
     def test_existing_offlock_phase_refuses_revision_then_stale_queue_cannot_launch(self):
         import supervisor
-        import test_supervisor as fixtures
+        fixtures = _supervisor_fixtures()
         ai_status.configure_status_root_paths(self._test_root)
         config = fixtures.config_fixture(self._test_root)
         config['paths'].update(self.config['paths'])
@@ -1157,7 +1192,7 @@ class DependencyContractBatchTests(unittest.TestCase):
 
     def test_existing_final_spawn_boundary_reloads_revised_task_generation(self):
         import supervisor
-        import test_supervisor as fixtures
+        fixtures = _supervisor_fixtures()
         ai_status.configure_status_root_paths(self._test_root)
         config = fixtures.config_fixture(self._test_root)
         config['paths'].update(self.config['paths'])
@@ -2828,368 +2863,25 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertEqual(task["dev_bridge"]["work_class"], "functional")
         self.assertFalse(task["dev_bridge"]["operator_authorization_required"])
 
-    def test_security_packet_without_operator_authorization_materializes_pending(self) -> None:
-        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 retired the former
-        # MFA-at-intake rule: a signed security/hosted/live packet without an
-        # operator grant now materializes as a durable, non-executable
-        # pending-authorization record instead of being rejected at intake.
-        packet_id = "pkt-security-without-auth-20260906T000000Z"
-        row = self._task_row("SECURITY-WITHOUT-AUTH", packet_id=packet_id)
-        payload = self._payload_path(
-            [row],
-            packet_id=packet_id,
-            packet_digest="unused",
-            work_class="security",
-            include_authorization=False,
-        )
+    def test_dev_packets_need_no_mfa_issuer_and_live_keeps_operator_hold(self) -> None:
+        for work_class in ("security", "hosted", "live"):
+            with self.subTest(work_class=work_class):
+                task_id = "NO-MFA-" + work_class.upper()
+                packet_id = "pkt-no-mfa-" + work_class
+                row = self._task_row(task_id, packet_id=packet_id)
+                payload = self._payload_path(
+                    [row], packet_id=packet_id, packet_digest="unused",
+                    work_class=work_class, include_authorization=False,
+                )
+                self.assertEqual(self._run_main(payload), 0)
+                task = ai_status.get_task(ai_status.load_state(), task_id)
+                self.assertEqual(task["dev_bridge"]["work_class"], work_class)
+                self.assertNotIn("execution_authorization", task)
+                if work_class == "live":
+                    self.assertEqual(task["waiting_for"], "Human/Ops")
+                else:
+                    self.assertFalse(task.get("waiting_for"))
 
-        self.assertEqual(self._run_main(payload), 0)
-        task = ai_status.get_task(ai_status.load_state(), "SECURITY-WITHOUT-AUTH")
-        self.assertEqual(task["dev_bridge"]["work_class"], "security")
-        self.assertTrue(task["dev_bridge"]["operator_authorization_required"])
-        auth = task["execution_authorization"]
-        self.assertEqual(auth["state"], execution_authorization.STATE_PENDING)
-        self.assertIsNone(auth["grant"])
-        self.assertTrue(auth["policy"]["requires_execution_authorization"])
-        self.assertFalse(
-            execution_authorization.is_execution_authorized(
-                task, now=datetime.now(timezone.utc)
-            )
-        )
-        # Old-runtime-recognized durable hold (SA/SD 2, 6): ``waiting_for``
-        # is honored unconditionally by dispatch admission on any runtime
-        # revision, including one that predates execution_authorization.py
-        # entirely.
-        self.assertEqual(task["waiting_for"], "Human/Ops")
-
-    def test_execution_grant_submit_binds_a_genuine_grant_and_releases_hold(self) -> None:
-        packet_id = "pkt-security-grant-submit-20260906T000000Z"
-        task_id = "SECURITY-GRANT-SUBMIT"
-        row = self._task_row(task_id, packet_id=packet_id)
-        payload = self._payload_path(
-            [row], packet_id=packet_id, packet_digest="unused",
-            work_class="security", include_authorization=False,
-        )
-        self.assertEqual(self._run_main(payload), 0)
-        task = ai_status.get_task(ai_status.load_state(), task_id)
-        policy = task["execution_authorization"]["policy"]
-
-        issuer_key = Ed25519PrivateKey.from_private_bytes(
-            hashlib.sha256(b"mfa-issuer-test-key-for-ai-status").digest()
-        )
-        issuer_public_key = base64.urlsafe_b64encode(
-            issuer_key.public_key().public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw,
-            )
-        ).decode().rstrip("=")
-        now = datetime.now(timezone.utc)
-        grant_body = {
-            "task_id": task_id,
-            "generation": task.get("generation", 0),
-            "policy_digest": policy["policy_digest"],
-            "repository": policy["repository"],
-            "environment": policy["environment"],
-            "resources": policy["resources"],
-            "action_scope": policy["action_scope"],
-            "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
-            "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
-            "audience": task_id,
-            "mfa_verified": True,
-            "mfa_actor": "human-ops-genuine",
-            "nonce": "genuine-nonce-1",
-            "issued_at": now.isoformat().replace("+00:00", "Z"),
-            "expires_at": (now + timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
-            "run_ttl_seconds": 1800,
-        }
-        canonical = execution_authorization._canonical_json(grant_body)
-        grant = dict(grant_body)
-        grant["signature"] = {
-            "key_id": "mfa-issuer-1",
-            "algorithm": "Ed25519",
-            "value": base64.urlsafe_b64encode(issuer_key.sign(canonical)).decode().rstrip("="),
-        }
-
-        # A caller-supplied env var claiming to be the trust root must be
-        # ignored entirely (Codex2 exact-head review finding 3): only the
-        # independently provisioned config counts.
-        spoofed_key = Ed25519PrivateKey.generate()
-        spoofed_public = base64.urlsafe_b64encode(
-            spoofed_key.public_key().public_bytes(
-                encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
-            )
-        ).decode().rstrip("=")
-        with (
-            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
-            mock.patch.object(ai_status, "validate_status_root_binding"),
-            mock.patch.object(
-                ai_status,
-                "load_config",
-                return_value={
-                    "execution_authorization": {
-                        "mfa_issuer_public_keys": {"mfa-issuer-1": issuer_public_key}
-                    }
-                },
-            ),
-            mock.patch.object(sys, "stdout", io.StringIO()),
-            mock.patch.dict(
-                os.environ,
-                {
-                    "AI_NAME": "Human/Ops",
-                    ai_status.LOCAL_HUMAN_OPS_ENV: "1",
-                    "EXECUTION_GRANT_JSON": json.dumps(grant),
-                    "EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON": json.dumps(
-                        {"mfa-issuer-1": spoofed_public}
-                    ),
-                },
-                clear=False,
-            ),
-        ):
-            exit_code = ai_status.main(
-                ["ai_status.py", "execution-grant-submit", task_id]
-            )
-        self.assertEqual(exit_code, 0)
-        task_after = ai_status.get_task(ai_status.load_state(), task_id)
-        self.assertEqual(
-            task_after["execution_authorization"]["state"],
-            execution_authorization.STATE_GRANTED,
-        )
-        self.assertNotIn("waiting_for", task_after)
-        self.assertTrue(
-            execution_authorization.is_execution_authorized(task_after, now=now)
-        )
-
-    def _synthetic_execution_grant(self, task_id: str) -> tuple[dict, dict]:
-        packet_id = "pkt-contract-binding-20260906T000000Z"
-        payload = self._payload_path(
-            [self._task_row(task_id, packet_id=packet_id)],
-            packet_id=packet_id, packet_digest="unused", work_class="security",
-            include_authorization=False,
-        )
-        self.assertEqual(self._run_main(payload), 0)
-        task = ai_status.get_task(ai_status.load_state(), task_id)
-        policy = task["execution_authorization"]["policy"]
-        self.assertEqual(policy["task_spec_hash"], task["dev_bridge"]["task_spec_hash"])
-        key = Ed25519PrivateKey.generate()
-        public = base64.urlsafe_b64encode(key.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
-        )).decode().rstrip("=")
-        now = datetime.now(timezone.utc)
-        grant = {
-            "task_id": task_id, "generation": task["generation"],
-            "policy_digest": policy["policy_digest"], "repository": policy["repository"],
-            "environment": policy["environment"], "resources": policy["resources"],
-            "action_scope": policy["action_scope"],
-            "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
-            "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
-            "audience": task_id, "mfa_verified": True, "mfa_actor": "isolated-test-operator",
-            "nonce": "one-shot-test-nonce", "issued_at": now.isoformat(),
-            "expires_at": (now + timedelta(seconds=120)).isoformat(), "run_ttl_seconds": 1800,
-        }
-        grant["signature"] = {
-            "key_id": "isolated-test-issuer", "algorithm": "Ed25519",
-            "value": base64.urlsafe_b64encode(key.sign(execution_authorization._canonical_json(grant))).decode().rstrip("="),
-        }
-        return grant, {"execution_authorization": {"mfa_issuer_public_keys": {"isolated-test-issuer": public}}}
-
-    def _run_execution_grant_cli(self, grant: dict, config: dict, *args: str) -> int:
-        with (
-            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
-            mock.patch.object(ai_status, "validate_status_root_binding"),
-            mock.patch.object(ai_status, "load_config", return_value=config),
-            mock.patch.object(sys, "stdout", io.StringIO()),
-            mock.patch.dict(os.environ, {
-                "AI_NAME": "Human/Ops", ai_status.LOCAL_HUMAN_OPS_ENV: "1",
-                "EXECUTION_GRANT_JSON": json.dumps(grant),
-            }, clear=False),
-        ):
-            return ai_status.main(["ai_status.py", *args])
-
-    def test_grant_nonce_stays_spent_across_revoke_reopen_and_taskstore_reload(self) -> None:
-        task_id = "NONCE-REPLAY-CLOSED"
-        grant, config = self._synthetic_execution_grant(task_id)
-        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id), 0)
-        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-revoke", task_id, "Test revoke"), 0)
-        with self.assertRaisesRegex(SystemExit, "already consumed"):
-            self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id)
-        aliases = config["execution_authorization"]["mfa_issuer_public_keys"]
-        aliases["same-issuer-alias"] = aliases["isolated-test-issuer"]
-        alias_grant = deepcopy(grant)
-        alias_grant["signature"]["key_id"] = "same-issuer-alias"
-        with self.assertRaisesRegex(SystemExit, "already consumed"):
-            self._run_execution_grant_cli(alias_grant, config, "execution-grant-submit", task_id)
-        state = ai_status.load_state()
-        task = ai_status.get_task(state, task_id)
-        policy = deepcopy(task["execution_authorization"]["policy"])
-        self.assertTrue(ai_status._reopen_invalidates_execution_authorization(task))
-        ai_status.save_state(state)
-        with self.assertRaisesRegex(SystemExit, "already consumed"):
-            self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id)
-        after = ai_status.get_task(ai_status.load_state(), task_id)
-        self.assertEqual(after["execution_authorization"]["policy"], policy)
-        self.assertEqual(after["execution_authorization"]["state"], execution_authorization.STATE_PENDING)
-        self.assertFalse(execution_authorization.is_execution_authorized(after, now=datetime.now(timezone.utc)))
-
-    def test_grant_submit_rejects_changed_acceptance_without_consuming_nonce(self) -> None:
-        task_id = "CONTRACT-MISMATCH-CLOSED"
-        grant, config = self._synthetic_execution_grant(task_id)
-        state = ai_status.load_state()
-        task = ai_status.get_task(state, task_id)
-        policy = deepcopy(task["execution_authorization"]["policy"])
-        task["acceptance"] = ["Broadened after source intake"]
-        ai_status._reopen_invalidates_execution_authorization(task)
-        ai_status.save_state(state)
-        with self.assertRaisesRegex(SystemExit, "current signed task contract"):
-            self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id)
-        state = ai_status.load_state()
-        self.assertFalse(state.get("execution_authorization_consumed_grants"))
-        self.assertEqual(ai_status.get_task(state, task_id)["execution_authorization"]["policy"], policy)
-
-    def test_grant_and_revoke_preserve_genuine_human_ops_blocker(self) -> None:
-        task_id = "AUTH-WITH-SEPARATE-BLOCKER"
-        grant, config = self._synthetic_execution_grant(task_id)
-        state = ai_status.load_state()
-        task = ai_status.get_task(state, task_id)
-        with mock.patch.dict(os.environ, {"AI_NAME": task["owner"]}, clear=False), mock.patch.object(ai_status, "append_log"):
-            ai_status.command_blocker(state, [task_id, "Independent operator hold", "Human/Ops"])
-        self.assertEqual(task["status"], "blocked")
-        self.assertFalse(task["execution_authorization"]["old_runtime_hold"])
-        ai_status.save_state(state)
-        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id), 0)
-        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-revoke", task_id, "Revoke only grant"), 0)
-        task = ai_status.get_task(ai_status.load_state(), task_id)
-        self.assertEqual(task["waiting_for"], "Human/Ops")
-        self.assertEqual(task["status"], "blocked")
-        self.assertFalse(task["execution_authorization"]["old_runtime_hold"])
-        self.assertFalse(execution_authorization.is_execution_authorization_hold(task))
-
-    def test_execution_grant_revoke_restores_old_runtime_hold(self) -> None:
-        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001, Codex2 exact-head REJECT
-        # P1-5: revoking a granted execution-authorization record must
-        # restore the old-runtime-recognized ``waiting_for`` fence, not just
-        # flip the record's own ``state``.
-        packet_id = "pkt-security-grant-revoke-20260906T000000Z"
-        task_id = "SECURITY-GRANT-REVOKE"
-        row = self._task_row(task_id, packet_id=packet_id)
-        payload = self._payload_path(
-            [row], packet_id=packet_id, packet_digest="unused",
-            work_class="security", include_authorization=False,
-        )
-        self.assertEqual(self._run_main(payload), 0)
-        state = ai_status.load_state()
-        task = ai_status.get_task(state, task_id)
-        policy = task["execution_authorization"]["policy"]
-        grant = {
-            "task_id": task_id,
-            "generation": task.get("generation", 0),
-            "policy_digest": policy["policy_digest"],
-            "repository": policy["repository"],
-            "environment": policy["environment"],
-            "resources": policy["resources"],
-            "action_scope": policy["action_scope"],
-        }
-        task["execution_authorization"] = execution_authorization.build_granted_authorization(
-            policy=policy, grant=grant
-        )
-        task.pop("waiting_for", None)
-        ai_status.save_state(state)
-
-        with (
-            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
-            mock.patch.object(ai_status, "validate_status_root_binding"),
-            mock.patch.object(sys, "stdout", io.StringIO()),
-            mock.patch.dict(
-                os.environ,
-                {"AI_NAME": "Human/Ops", ai_status.LOCAL_HUMAN_OPS_ENV: "1"},
-                clear=False,
-            ),
-        ):
-            exit_code = ai_status.main(
-                ["ai_status.py", "execution-grant-revoke", task_id, "incident"]
-            )
-        self.assertEqual(exit_code, 0)
-        task_after = ai_status.get_task(ai_status.load_state(), task_id)
-        self.assertEqual(
-            task_after["execution_authorization"]["state"],
-            execution_authorization.STATE_REVOKED,
-        )
-        self.assertEqual(task_after["waiting_for"], "Human/Ops")
-
-    def test_execution_grant_submit_rejects_caller_supplied_trust_root(self) -> None:
-        # Without any configured issuer, a caller-supplied
-        # EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON must not substitute for it,
-        # even if it happens to verify the grant's own signature.
-        packet_id = "pkt-security-grant-spoof-20260906T000000Z"
-        task_id = "SECURITY-GRANT-SPOOF"
-        row = self._task_row(task_id, packet_id=packet_id)
-        payload = self._payload_path(
-            [row], packet_id=packet_id, packet_digest="unused",
-            work_class="security", include_authorization=False,
-        )
-        self.assertEqual(self._run_main(payload), 0)
-        task = ai_status.get_task(ai_status.load_state(), task_id)
-        policy = task["execution_authorization"]["policy"]
-
-        issuer_key = Ed25519PrivateKey.generate()
-        issuer_public_key = base64.urlsafe_b64encode(
-            issuer_key.public_key().public_bytes(
-                encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
-            )
-        ).decode().rstrip("=")
-        now = datetime.now(timezone.utc)
-        grant_body = {
-            "task_id": task_id,
-            "generation": task.get("generation", 0),
-            "policy_digest": policy["policy_digest"],
-            "repository": policy["repository"],
-            "environment": policy["environment"],
-            "resources": policy["resources"],
-            "action_scope": policy["action_scope"],
-            "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
-            "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
-            "audience": task_id,
-            "mfa_verified": True,
-            "mfa_actor": "self-issued",
-            "nonce": "spoof-nonce-1",
-            "issued_at": now.isoformat().replace("+00:00", "Z"),
-            "expires_at": (now + timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
-            "run_ttl_seconds": 1800,
-        }
-        canonical = execution_authorization._canonical_json(grant_body)
-        grant = dict(grant_body)
-        grant["signature"] = {
-            "key_id": "mfa-issuer-1",
-            "algorithm": "Ed25519",
-            "value": base64.urlsafe_b64encode(issuer_key.sign(canonical)).decode().rstrip("="),
-        }
-
-        with (
-            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
-            mock.patch.object(ai_status, "validate_status_root_binding"),
-            mock.patch.object(ai_status, "load_config", return_value={}),
-            mock.patch.object(sys, "stdout", io.StringIO()),
-            mock.patch.object(sys, "stderr", io.StringIO()),
-            mock.patch.dict(
-                os.environ,
-                {
-                    "AI_NAME": "Human/Ops",
-                    ai_status.LOCAL_HUMAN_OPS_ENV: "1",
-                    "EXECUTION_GRANT_JSON": json.dumps(grant),
-                    "EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON": json.dumps(
-                        {"mfa-issuer-1": issuer_public_key}
-                    ),
-                },
-                clear=False,
-            ),
-        ):
-            with self.assertRaises(SystemExit):
-                ai_status.main(["ai_status.py", "execution-grant-submit", task_id])
-        task_after = ai_status.get_task(ai_status.load_state(), task_id)
-        self.assertEqual(
-            task_after["execution_authorization"]["state"],
-            execution_authorization.STATE_PENDING,
-        )
-        self.assertEqual(task_after["waiting_for"], "Human/Ops")
 
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
         packet_id = "pkt-batch-ok-20260811T000000Z"
@@ -3703,6 +3395,10 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertIsNone(ai_status.get_task(state, "BATCH-CONFLICT-ALIASES"))
 
     def test_human_ops_reassignment_is_not_blocked_by_retired_wave_state(self) -> None:
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
         state = {
             "agents": [
                 {"name": "Codex", "current_task_ids": ["WAVE-RETIRED-ONE"]},
@@ -3903,7 +3599,6 @@ class StatusRootRoutingTests(unittest.TestCase):
             "scripts/git/check_commit_trailers.py",
             ".orchestrator/common.py",
             ".orchestrator/dispatch_policy.py",
-            ".orchestrator/execution_authorization.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
@@ -9606,71 +9301,6 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
 
-    def test_reopen_invalidates_outstanding_grant_and_restores_old_runtime_hold(
-        self,
-    ) -> None:
-        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001, Codex2 exact-head REJECT
-        # P1-5: reopen must not let a previously verified grant/reservation
-        # survive into the next attempt, and must restore the
-        # old-runtime-recognized ``waiting_for`` fence exactly like fresh
-        # intake.
-        task = self.state["tasks"][0]
-        task["status"] = "review"
-        task["target_repo"] = "pantheon"
-        spec = {
-            field: deepcopy(task.get(field, [] if field in {"depends_on", "artifacts", "acceptance", "execution_resources"} else None))
-            for field in ("id", "title", "owner", "reviewer", "target_repo", "phase", "depends_on", "artifacts", "acceptance", "execution_resources")
-        }
-        spec["summary"] = task.get("summary_zh")
-        task.update({key: value for key, value in spec.items() if key != "summary"})
-        task["dev_bridge"] = {"work_class": "security", "task_spec": spec}
-        policy = execution_authorization.derive_execution_policy(
-            task_id="REG-002",
-            work_class="security",
-            repository="pantheon",
-            resources=task.get("execution_resources"),
-            artifacts=task.get("artifacts"),
-            task_spec=spec,
-        )
-        task["dev_bridge"]["task_spec_hash"] = policy["task_spec_hash"]
-        now = datetime.now(timezone.utc)
-        grant = {
-            "task_id": "REG-002",
-            "generation": int(task.get("generation", 0) or 0),
-            "policy_digest": policy["policy_digest"],
-            "repository": "pantheon",
-            "environment": policy["environment"],
-            "resources": [],
-            "action_scope": "execute",
-            "issued_at": now.isoformat().replace("+00:00", "Z"),
-            "expires_at": (now + timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
-            "run_ttl_seconds": 1800,
-        }
-        task["execution_authorization"] = execution_authorization.build_granted_authorization(
-            policy=policy, grant=grant
-        )
-        reserved = execution_authorization.reserve_execution_authorization(
-            task, run_id="run-1", now=now
-        )
-        task["execution_authorization"] = reserved
-        self.assertEqual(
-            task["execution_authorization"]["state"],
-            execution_authorization.STATE_RESERVED,
-        )
-
-        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
-            _command_reopen(self.state, ["REG-002", "Independent review found defects"])
-
-        task_after = ai_status.get_task(self.state, "REG-002")
-        auth = task_after["execution_authorization"]
-        self.assertEqual(auth["state"], execution_authorization.STATE_PENDING)
-        self.assertIsNone(auth["grant"])
-        self.assertEqual(task_after["waiting_for"], "Human/Ops")
-        self.assertFalse(
-            execution_authorization.is_execution_authorized(
-                task_after, now=datetime.now(timezone.utc)
-            )
-        )
 
     def test_same_second_reopens_receive_distinct_nonce_intents(self) -> None:
         task = self.state["tasks"][0]
@@ -9809,6 +9439,20 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "in_progress")
         self.assertNotIn("github_review_bridge", task)
 
+    def test_worker_reopen_preserves_operator_stop_and_blocker(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+        self.state["blockers"] = [{
+            "task_id": "REG-002", "owner": "Codex", "waiting_for": "Human/Ops",
+            "message": "Operator stopped this work", "status": "open",
+        }]
+        with mock.patch.dict(os.environ, {"AI_NAME": task["owner"]}, clear=False):
+            _command_reopen(self.state, ["REG-002", "Worker requests another attempt"])
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+        self.assertEqual(self.state["blockers"][0]["status"], "open")
+        self.assertNotIn("execution_authorization", task)
+
     def test_human_ops_reopen_clears_blocker_without_impersonating_worker(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"
         self.state["tasks"][0]["waiting_for"] = "Human/Ops"
@@ -9836,6 +9480,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertFalse(
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         )
+
+    def test_local_operator_reopens_held_todo_through_existing_intent(self) -> None:
+        task = self.state['tasks'][0]
+        task.update(status='todo', waiting_for='Human/Ops', generation=7,
+                    depends_on=['REG-001'], execution_authorization={'status': 'pending_authorization'})
+        with mock.patch.dict(os.environ, {'AI_NAME': 'Human/Ops', ai_status.LOCAL_HUMAN_OPS_ENV: '1'}):
+            _command_reopen(self.state, ['REG-002', 'Operator resumes original dev work'])
+        self.assertEqual(task['status'], 'in_progress')
+        self.assertNotIn('waiting_for', task)
+        self.assertEqual(task['generation'], 7)
+        self.assertEqual(task['depends_on'], ['REG-001'])
+        self.assertEqual(task['execution_authorization'], {'status': 'pending_authorization'})
+        intent = task[ai_status.REVIEW_REQUEUE_INTENT_KEY]
+        self.assertEqual(intent['reopened_by'], 'Human/Ops')
+        self.assertEqual(intent['status'], 'pending')
+        self.assertEqual(intent['task_generation'], 7)
+
+    def test_todo_reopen_requires_local_operator_and_actual_hold(self) -> None:
+        for actor, local, hold in [('Codex', '0', 'Human/Ops'), ('Claude', '0', 'Human/Ops'),
+                                   ('Human/Ops', '0', 'Human/Ops'), ('Human/Ops', '1', None)]:
+            with self.subTest(actor=actor, local=local, hold=hold):
+                task = self.state['tasks'][0]
+                task.update(status='todo', waiting_for=hold)
+                before = deepcopy(self.state)
+                with mock.patch.dict(os.environ, {'AI_NAME': actor, ai_status.LOCAL_HUMAN_OPS_ENV: local}):
+                    with self.assertRaisesRegex(SystemExit, 'Only local Human/Ops'):
+                        _command_reopen(self.state, ['REG-002', 'Attempt todo resumption'])
+                self.assertEqual(self.state, before)
 
     def test_human_ops_resume_integration_preserves_matching_approved_pr(self) -> None:
         task = self.state["tasks"][0]
@@ -10206,6 +9878,10 @@ class DiscoverOpenPullRequestForBranchTests(unittest.TestCase):
 class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
 
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
@@ -13426,6 +13102,10 @@ class DependencyTrackCommandTests(unittest.TestCase):
 class TaskMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
+        ai_status.ORCHESTRATOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+            "version": 2, "workers": {}, "queue": {"events": {}},
+        }))
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -14054,45 +13734,6 @@ class TaskMetadataTests(unittest.TestCase):
         self.assertEqual(payload["source"], "active")
         self.assertEqual(payload["task"]["execution_resources"], ["pantheon-dev"])
 
-    def test_command_show_reports_current_authorization_without_mutating_task(self) -> None:
-        from test_execution_authorization import ExecutionAuthorizationTestCase
-
-        fixture = ExecutionAuthorizationTestCase()
-        fixture.setUp()
-        base = deepcopy(fixture._granted_task())
-        base["status"] = "in_progress"
-        pending = deepcopy(base)
-        pending["execution_authorization"] = execution_authorization.pending_authorization_hold(fixture.policy)
-        pending["waiting_for"] = "Human/Ops"
-        reserved = deepcopy(base)
-        reserved["execution_authorization"] = execution_authorization.reserve_execution_authorization(base, run_id="show-reserved-run", now=fixture.now)
-        revoked = deepcopy(base)
-        revoked["execution_authorization"] = execution_authorization.revoked_execution_authorization(base, actor="Human/Ops", now=fixture.now)
-        invalid = deepcopy(base)
-        invalid["acceptance"] = ["Revised after grant"]
-        for task, now, expected, ready in (
-            (pending, fixture.now, "admitted_pending_authorization", False),
-            (base, fixture.now, "authorization_ready", True),
-            (base, fixture.now + timedelta(seconds=121), "expired", False),
-            (reserved, fixture.now + timedelta(seconds=121), "reserved_attempt", False),
-            (reserved, fixture.now + timedelta(seconds=1801), "expired", False),
-            (revoked, fixture.now, "revoked", False),
-            (invalid, fixture.now, "invalid", False),
-        ):
-            with self.subTest(expected=expected, now=now):
-                state = {**self.state, "tasks": [task]}
-                before = deepcopy(state)
-                buf = io.StringIO()
-                with mock.patch("sys.stdout", buf), mock.patch.object(ai_status, "datetime") as clock:
-                    clock.now.return_value = now
-                    ai_status.command_show(state, [task["id"]])
-                output = json.loads(buf.getvalue())
-                readback = output["execution_authorization_status"]
-                self.assertEqual(readback["status"], expected)
-                self.assertEqual(readback["authorizes_new_attempt"], ready)
-                self.assertEqual(readback["reservation_current"], expected == "reserved_attempt")
-                self.assertEqual(output["task"], task)
-                self.assertEqual(state, before)
 
     def test_assign_preserves_antigravity_runtime_agent_names(self) -> None:
         ai_status.command_assign(self.state, ["APP-002-SIDECAR-REVIEW", "Antigravity2", "Claude"])
@@ -14428,6 +14069,78 @@ class TaskMetadataTests(unittest.TestCase):
         updated = ai_status.get_task(self.state, "REOPEN-REASSIGN-001")
         self.assertEqual(updated["generation"], 2)
         self.assertNotIn(ai_status.REVIEW_REQUEUE_INTENT_KEY, updated)
+
+    def test_reassignment_rejects_unsettled_runtime_without_assignment_or_audit_changes(self) -> None:
+        worker = {"task_id": "ASSIGN-FENCE", "task_generation": 1, "status": "running"}
+        intent = {"task_id": "ASSIGN-FENCE", "task_generation": 1}
+        cases = []
+        for status in ("running", "waiting_approval", "suspended_approval", "retry_backoff", "stalled", "unknown"):
+            cases.append(("active worker", {"workers": {"run": {**worker, "status": status,
+                "lease_expires_at": "2000-01-01T00:00:00Z", "pid": None}}}))
+        for status in ("pending", "queued", "processing", "launching", "running", "retry_backoff"):
+            cases.append(("dispatch intent", {"queue": {"events": {"evt": {"status": status, "intent": intent}}}}))
+        for key, launch in (("launch_intent", intent), ("launch_receipt", {"worker": worker}),
+                            ("launch_receipt", {"worker": {**worker, "status": "completed"}})):
+            cases.append((f"unsettled {key}", {"supervisor": {"runtime_phase_reservations": {"poll": {key: launch}}}}))
+        cases.extend([
+            ("malformed", {"workers": []}),
+            ("malformed", {"queue": {"events": {"evt": {"status": "queued", "intent": None}}}}),
+            ("malformed", {"supervisor": {"runtime_phase_reservations": {"poll": {"launch_receipt": {}}}}}),
+            ("active worker", {"workers": {"run": {"status": "running"}}}),
+        ])
+        self.state["tasks"].append({"id": "ASSIGN-FENCE", "owner": "Codex", "reviewer": "Claude",
+                                    "status": "in_progress", "generation": 1})
+        for reason, overlay in cases:
+            for owner, reviewer in (("Copilot", "Claude"), ("Codex", "Copilot")):
+                with self.subTest(reason=reason, overlay=overlay, owner=owner, reviewer=reviewer):
+                    ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps({
+                        "version": 2, "workers": {}, "queue": {"events": {}}, **overlay,
+                    }))
+                    before = deepcopy(self.state)
+                    audit = self._test_log_file.read_bytes()
+                    with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}), \
+                         self.assertRaisesRegex(SystemExit, reason):
+                        ai_status.command_assign(self.state, ["ASSIGN-FENCE", owner, reviewer])
+                    self.assertEqual(self.state, before)
+                    self.assertEqual(self._test_log_file.read_bytes(), audit)
+
+    def test_reassignment_requires_readable_raw_runtime(self) -> None:
+        self.state["tasks"].append({"id": "ASSIGN-FENCE", "owner": "Codex", "reviewer": "Claude",
+                                    "status": "in_progress", "generation": 1})
+        for content in (None, "{", "[]", '{"version": 1}'):
+            with self.subTest(content=content):
+                if content is None:
+                    ai_status.ORCHESTRATOR_STATE_FILE.unlink()
+                else:
+                    ai_status.ORCHESTRATOR_STATE_FILE.write_text(content)
+                before = deepcopy(self.state)
+                with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}), \
+                     self.assertRaisesRegex(SystemExit, "runtime admission snapshot"):
+                    ai_status.command_assign(self.state, ["ASSIGN-FENCE", "Copilot", "Claude"])
+                self.assertEqual(self.state, before)
+
+    def test_reassignment_after_settlement_advances_once_and_preserves_other_runtime(self) -> None:
+        self.state["tasks"].append({"id": "ASSIGN-FENCE", "owner": "Codex", "reviewer": "Claude",
+                                    "status": "in_progress", "generation": 1})
+        runtime = {"version": 2, "workers": {
+            "old": {"task_id": "ASSIGN-FENCE", "task_generation": 1, "status": "completed"},
+            "other": {"task_id": "OTHER", "status": "running"}},
+            "queue": {"events": {"old": {"status": "completed", "intent": {"task_id": "ASSIGN-FENCE"}}}},
+            "worker_worktrees": {"leases": {"ASSIGN-FENCE": {"task_id": "ASSIGN-FENCE", "path": "/retained"}}},
+            "supervisor": {"runtime_phase_reservations": {"other": {
+                "launch_intent": {"task_id": "OTHER"}, "launch_receipt": {"worker": {"task_id": "OTHER"}}}}}}
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(runtime))
+        raw = ai_status.ORCHESTRATOR_STATE_FILE.read_bytes()
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "TASK_ASSIGN_EXPECTED_OWNER": "Codex"}), ai_status.buffer_activity_events() as events:
+            ai_status.command_assign(self.state, ["ASSIGN-FENCE", "Copilot", "Claude"])
+            self.assertEqual(self.state["tasks"][0]["generation"], 2)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["type"], "task_reassigned")
+            with self.assertRaises(SystemExit):
+                ai_status.command_assign(self.state, ["ASSIGN-FENCE", "Copilot", "Claude"])
+            self.assertEqual(self.state["tasks"][0]["generation"], 2)
+            self.assertEqual(len(events), 1)
+        self.assertEqual(ai_status.ORCHESTRATOR_STATE_FILE.read_bytes(), raw)
 
     def test_human_ops_assignment_rejects_active_worker_recovery(self) -> None:
         task = {
@@ -17659,6 +17372,13 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         reassign_event: bool = True,
         intervening_event: str | None = None,
         scope_overrides: dict[str, Any] | None = None,
+        reopen_event: bool = False,
+        reopen_actor: str = "Human/Ops",
+        reopen_op_mode: str = "local_human_ops",
+        reopen_ts: str = "2026-08-01T15:00:00Z",
+        reopen_valid_id: bool = True,
+        reassign_actor: str = "Human/Ops",
+        post_reopen_event: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, str]]:
         delivery_root = self.root / "execute-plans"
         delivery_sha = self._init_git_repo(
@@ -17865,6 +17585,22 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             import_ev["event_id"] = f"human-ops-import-{digest}"
             ai_status.append_log(import_ev)
 
+        if reopen_event:
+            reopen_ev = {
+                "ts": reopen_ts,
+                "agent": reopen_actor,
+                "operator_mode": reopen_op_mode,
+                "type": "reopen",
+                "task_id": "REG-002",
+                "message": "Operator reopened task for triage",
+            }
+            if reopen_valid_id:
+                reopen_digest = ai_status._canonical_json_sha256(reopen_ev)
+                reopen_ev["event_id"] = f"human-ops-reopen-{reopen_digest}"
+            else:
+                reopen_ev["event_id"] = "unauthenticated-reopen-id"
+            ai_status.append_log(reopen_ev)
+
         if reassign_event:
             ev = audited_reassignment_event(
                 task_id="REG-002",
@@ -17874,11 +17610,12 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 new_reviewer=reassign_new_reviewer,
                 timestamp=reassign_ts,
                 message="Auto-reassign REG-002",
-                actor="Human/Ops",
+                actor=reassign_actor,
                 old_generation=archive_gen,
                 new_generation=active_gen,
             )
-            ev["operator_mode"] = "local_human_ops"
+            if reassign_actor == "Human/Ops":
+                ev["operator_mode"] = "local_human_ops"
             ai_status.append_log(ev)
 
         if intervening_event is not None:
@@ -17891,6 +17628,9 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                     "message": f"intervening {intervening_event}",
                 }
             )
+
+        if post_reopen_event is not None:
+            ai_status.append_log(post_reopen_event)
 
         return state, snapshot, config, ai_status._canonical_json_sha256(snapshot), reconcile_env
 
@@ -17992,6 +17732,169 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertEqual(len(reconcile_events), 1)
         self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
         self.assertIn("archive_resurrection_proof", reconcile_events[0])
+
+    def test_positive_archive_resurrection_zero_delivery_reopen(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            reassign_actor="Orchestrator",
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+
+        # 1. Diagnostic
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertTrue(diag["eligible"])
+        self.assertEqual(diag["reason"], "eligible_for_stale_role_recovery")
+        proof = diag["proof"]
+        self.assertEqual(proof["retired_active_row"]["generation"], 2)
+        self.assertEqual(proof["retired_active_row"]["owner"], "Codex2")
+        self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
+        self.assertEqual(proof["archive_generation"], 1)
+        self.assertIn("reopen_event_id", proof["audit_proof_range"])
+
+        # 2. Command show via isolated CLI
+        show_proc = self._run_cli(["show", "REG-002"])
+        self.assertEqual(show_proc.returncode, 0, show_proc.stderr)
+        show_out = json.loads(show_proc.stdout)
+        self.assertEqual(show_out["source"], "active")
+        self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
+
+        # 3. Preflight and reconcile via real isolated CLI
+        rec_proc = self._run_cli(["reconcile_merged_done", "REG-002", "Reconcile zero-delivery reopen recovery."])
+        self.assertEqual(rec_proc.returncode, 0, rec_proc.stderr)
+
+        # 4. Outbox recovery / drain via CLI recover
+        recover_proc = self._run_cli(["recover"])
+        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
+
+        # 5. Assertions on final state:
+        final_state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
+        self.assertIsNone(final_state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        term_fact = final_state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
+        self.assertEqual(term_fact["generation"], 1)
+        self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
+        self.assertEqual(term_fact["terminal_outcome"], "completed")
+
+        on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
+        self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
+        self.assertEqual(on_disk_snapshot, snapshot)
+
+        receipt = final_state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
+        self.assertEqual(final_state["blockers"], [])
+
+        # Verify dependency resolution for downstream task REG-003
+        resolver = task_archive.TaskResolver(final_state)
+        reg_003 = ai_status.get_task(final_state, "REG-003")
+        self.assertTrue(task_archive.dependency_satisfied_for(reg_003, "REG-002", resolver))
+
+        # 6. Audit log entries
+        logs = [
+            json.loads(line)
+            for line in self.log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
+        self.assertEqual(len(retired_events), 1)
+        self.assertEqual(retired_events[0]["retired_generation"], 2)
+        self.assertEqual(retired_events[0]["archive_generation"], 1)
+
+        reconcile_events = [e for e in logs if e.get("type") == "reconcile_merged_done"]
+        self.assertEqual(len(reconcile_events), 1)
+        self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
+        self.assertIn("archive_resurrection_proof", reconcile_events[0])
+
+    def test_negative_zero_delivery_reopen_with_new_commit(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            post_reopen_event={
+                "ts": "2026-08-02T12:00:00Z",
+                "agent": "Codex2",
+                "type": "note",
+                "task_id": "REG-002",
+                "commit": "a" * 40,
+                "message": "Pushed commit after reopen",
+            },
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("post-reopen delivery activity detected (commit)", diag["reason"])
+        self._assert_cli_retirement_refused("post-reopen delivery activity detected (commit)")
+
+    def test_negative_zero_delivery_reopen_with_changed_delivery(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            scope_overrides={
+                "delivery_binding": {
+                    "kind": "pull_request",
+                    "pr_number": 999,
+                    "head_sha": "b" * 40,
+                }
+            },
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("existing archive snapshot conflicts with terminal task", diag["reason"])
+        self._assert_cli_retirement_refused("existing archive snapshot conflicts with terminal task")
+
+    def test_negative_zero_delivery_reopen_with_invalidated_review(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            scope_overrides={
+                "github_review_bridge": {
+                    "decision": "reject",
+                    "message": "Independent review rejected deliverable",
+                }
+            },
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("github review bridge indicates review rejection (reject)", diag["reason"])
+        self._assert_cli_retirement_refused("github review bridge indicates review rejection (reject)")
+
+    def test_negative_zero_delivery_reopen_with_altered_scope(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            scope_overrides={"acceptance": ["completely altered acceptance scope"]},
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("existing archive snapshot conflicts with terminal task", diag["reason"])
+        self._assert_cli_retirement_refused("existing archive snapshot conflicts with terminal task")
+
+    def test_negative_zero_delivery_reopen_unauthorized_actor(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            reopen_actor="Codex",
+            reopen_op_mode="",
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("intervening reopen event detected", diag["reason"])
+        self._assert_cli_retirement_refused("intervening reopen event detected")
+
+    def test_negative_zero_delivery_reopen_unauthenticated_id(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            import_event=False,
+            reopen_event=True,
+            reopen_valid_id=False,
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("unauthenticated event_id", diag["reason"])
+        self._assert_cli_retirement_refused("unauthenticated event_id")
 
     def test_negative_missing_import_lineage(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture(import_event=False)

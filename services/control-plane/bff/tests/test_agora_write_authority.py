@@ -9,9 +9,51 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import main as bff_main
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from typing import Any
 from services.runtime_auth_inbound import encode_jwt_hs256
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.personas.service import (
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _bff_error,
+)
+try:
+    from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
+except ImportError:
+    from services.control_plane.bff.agora.service import (
+        _AGORA_SIGNAL_WRITE_ROLES,
+        _AGORA_BULK_FEEDBACK_ROLES,
+    )
+
+
+def _require_agora_signal_write_role(identity: Any) -> None:
+    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora signal creation requires analyst-level role",
+            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst-level Agora write access",
+        )
+
+
+def _require_agora_bulk_feedback_role(identity: Any) -> None:
+    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora feedback access requires analyst role",
+            "Operator does not hold the required Agora feedback role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
+        )
 
 
 class _ReadStore:
@@ -36,11 +78,39 @@ class _ReadStore:
         return []
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _client(monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    monkeypatch.setattr(bff_main, "read_store", _ReadStore())
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+    store = _ReadStore()
+    router = create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        require_operator_role=_require_operator_role,
+        require_journal_write_role=_require_operator_role,
+        require_agora_signal_write_role=_require_agora_signal_write_role,
+        require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        read_surface=store,
+        persona_write_owner=store,
+        sync_servant_agent=lambda p: {},
+    )
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def _headers(role: str, *, idempotency_key: str | None = None) -> dict[str, str]:
@@ -288,3 +358,53 @@ def test_viewer_cannot_bypass_agora_write_authority(monkeypatch):
         json={"action": "modify", "reason": "operator review", "proposed_value": {"risk": 0.07}},
     )
     assert modified.status_code == 200, modified.text
+
+
+def test_analyst_can_create_signal_and_bulk_feedback_while_viewer_is_rejected(monkeypatch) -> None:
+    """Verify require_agora_signal_write_role and require_agora_bulk_feedback_role accept analyst and reject viewer."""
+    client = _client(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    analyst = {"Authorization": "Bearer authority-analyst:analyst"}
+    viewer = {"Authorization": "Bearer authority-viewer:viewer"}
+
+    # Signal creation: analyst allowed
+    sig_resp = client.post(
+        "/bff/agora/signals",
+        headers={**analyst, "Idempotency-Key": f"sig-analyst-{suffix}"},
+        json={"title": "Analyst signal", "body": "Testing analyst write access"},
+    )
+    assert sig_resp.status_code == 201, sig_resp.text
+    sig_id = sig_resp.json()["data"]["id"]
+
+    # Signal creation: viewer rejected
+    viewer_sig = client.post(
+        "/bff/agora/signals",
+        headers={**viewer, "Idempotency-Key": f"sig-viewer-{suffix}"},
+        json={"title": "Viewer signal", "body": "Testing viewer write access"},
+    )
+    assert viewer_sig.status_code == 403, viewer_sig.text
+    sig_err = viewer_sig.json()["error"]
+    assert sig_err["code"] == "FORBIDDEN"
+    assert sig_err["message"] == "Agora signal creation requires analyst-level role"
+    assert sig_err["details"]["precondition_failed"] == "role_check"
+
+    # Feedback: analyst allowed
+    fb_resp = client.post(
+        "/bff/agora/feedback",
+        headers={**analyst, "Idempotency-Key": f"fb-analyst-{suffix}"},
+        json={"signal_id": sig_id, "verdict": "useful", "memo": "Analyst feedback"},
+    )
+    assert fb_resp.status_code == 201, fb_resp.text
+
+    # Feedback: viewer rejected
+    viewer_fb = client.post(
+        "/bff/agora/feedback",
+        headers={**viewer, "Idempotency-Key": f"fb-viewer-{suffix}"},
+        json={"signal_id": sig_id, "verdict": "useful"},
+    )
+    assert viewer_fb.status_code == 403, viewer_fb.text
+    fb_err = viewer_fb.json()["error"]
+    assert fb_err["code"] == "FORBIDDEN"
+    assert fb_err["message"] == "Agora feedback access requires analyst role"
+    assert fb_err["details"]["precondition_failed"] == "role_check"
+

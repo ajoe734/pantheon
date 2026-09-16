@@ -38,56 +38,32 @@ canonical control-plane authorities. The BFF does not become a canonical store.
 
 | Route | Method | Purpose |
 |---|---:|---|
-| `/bff/v1/commands` | POST | Submit a governed operator command (final contract); returns `CommandResponse<T>`. |
-| `/bff/actions/{entityType}/{entityId}/{actionId}` | POST | Deprecated named action adapter used by the frontend path inventory; dual-writes through final command admission and returns a deprecated receipt marker. |
-| `/bff/actions/{type}/{id}/{action}` | POST | Deprecated generic action adapter alias; dual-writes through final command admission and returns a deprecated receipt marker. |
-| `/api/v1/operator/commands` | POST | Legacy command submission; returns `CommandSubmissionResponse`. Kept for adapter compatibility. |
+| `/bff/v1/commands` | POST | Submit a governed operator command (sole canonical command write route); returns `CommandResponse<T>`. |
 | `/api/v1/operator/commands/{command_id}` | GET | Poll command status, result, error, and audit record. |
 
 The status route is a read projection of command state. It is not a retry or
 mutation endpoint.
 
-### Final vs Legacy Route
+### Sole Canonical Write Route
 
-The final contract route `/bff/v1/commands` is the authoritative command surface for new
-frontend integrations. As of 2026-05-14, frontend `runAction()` live writes default to this
-route. The generic `/bff/actions/*` adapter remains active only for explicit compatibility
-checks and old clients; it must expose deprecation metadata rather than silently behaving as
-the preferred path. The legacy `/api/v1/operator/commands` remains active to avoid breaking
-existing adapters and must not be silently removed; use an explicit migration test when
-retiring it.
+`/bff/v1/commands` is the sole canonical generic command write route. It is the
+authoritative command surface for all frontend integrations; `runAction()` live
+writes have used this route exclusively since 2026-05-14.
 
-Key differences:
+The previously deprecated generic action adapters (`POST
+/bff/actions/{entityType}/{entityId}/{actionId}` and its compact three-segment
+alias) and the legacy `POST /api/v1/operator/commands` submission route have
+been retired and fully removed from the router, handlers, and OpenAPI schema.
+No compatibility shim remains for either route. Any client still targeting
+them will receive a 404.
 
-| Dimension | `/bff/v1/commands` (final) | `/api/v1/operator/commands` (legacy) |
-|---|---|---|
-| Idempotency header | `Idempotency-Key` (canonical); `X-Idempotency-Key` accepted as alias | `X-Idempotency-Key` only |
-| Body `idempotencyKey` | Rejected with 400 `INVALID_REQUEST` | Not checked |
-| Response shape | `CommandResponse<T>` with `status` and `data` | `CommandSubmissionResponse` with flat `receipt_id` |
+Key contract details of the sole canonical route:
 
-### Deprecated Action Adapter Templates
-
-`POST /bff/actions/{type}/{id}/{action}` and
-`POST /bff/actions/{entityType}/{entityId}/{actionId}` are deprecated as of
-2026-05-14. They are retained as compatibility adapters until at least
-2026-06-15 while downstream audit and replay tooling finishes consuming the
-final command receipt.
-
-OpenAPI exposes both templates with distinct operation IDs. The named template
-matches the frontend path inventory and keeps generator-driven clients able to
-discover the route, while the generic template remains visible as a deprecated
-alias for existing compatibility checks.
-
-Compatibility responses must still be successful `CommandResponse<T>` envelopes on accepted
-commands, but they also include:
-
-- HTTP headers: `Deprecation: true`, `Sunset: Mon, 15 Jun 2026 00:00:00 GMT`,
-  `Link: </bff/v1/commands>; rel="successor-version"`, `X-Pantheon-Deprecated-Route:
-  /bff/actions/*`, and a 299 `Warning` naming `/bff/v1/commands`.
-- `data.deprecated: true` and `data.deprecation.replacement: "/bff/v1/commands"`.
-- `data.receipt.deprecated: true` for consumers still reading the nested receipt.
-- `meta.deprecated: true` plus the same `meta.deprecation` object for audit and replay
-  tools that inspect metadata before receipt bodies.
+| Dimension | `/bff/v1/commands` |
+|---|---|
+| Idempotency header | `Idempotency-Key` (canonical); `X-Idempotency-Key` accepted as alias |
+| Body `idempotencyKey` | Rejected with 400 `INVALID_REQUEST` |
+| Response shape | `CommandResponse<T>` with `status` and `data` |
 
 ## 4. Required Admission Controls
 
@@ -117,15 +93,7 @@ X-MFA-Token: <required for MFA-gated commands when not already session-bound>
 ```
 
 `Idempotency-Key` takes precedence over `X-Idempotency-Key` when both are present.
-`idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST` on final routes.
-
-Headers (legacy `/api/v1/operator/commands` route):
-
-```http
-Authorization: Bearer <operator-token>
-X-Idempotency-Key: <stable-client-retry-key>
-X-Trace-Id: <optional-trace-id>
-```
+`idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST` on the final route.
 
 Body:
 
@@ -199,9 +167,6 @@ Contract rules:
 - `requires_approval`, `requires_confirm_token`, and `requires_two_man` are
   not success statuses. Missing preconditions must be returned as non-2xx
   errors.
-- The legacy `/api/v1/operator/commands` response remains
-  `CommandSubmissionResponse` until that route is explicitly migrated; new
-  final-contract routes should use the final `CommandResponse<T>` adapter.
 
 Rejected commands return a non-2xx `BffErrorEnvelope` plus foundation error,
 policy decision when applicable, and audit action evidence. Canonical BFF error
@@ -268,11 +233,15 @@ confirmation, and audit gates.
 
 ## 8. Command Adapter Mapping
 
-This section maps every `/bff/actions/{entityType}/{entityId}/{actionId}` call
-that `runAction.ts` emits, plus the compact `/bff/actions/{type}/{id}/{action}`
-alias, special-path decision writes, and confirm-token lifecycle calls, to the
-equivalent `/bff/v1/commands` envelope fields required by BFF-CONSOL-019's
-command adapter implementation.
+The `/bff/actions/{entityType}/{entityId}/{actionId}` routes and their compact
+three-segment alias, referenced throughout this section, have been retired and
+fully removed from the router, handlers, and OpenAPI schema; `/bff/v1/commands`
+is the sole live generic command write route. The
+tables below are preserved as a historical mapping reference — they document
+how each retired `runAction.ts` call, special-path decision write, and
+confirm-token lifecycle call translates to the equivalent `/bff/v1/commands`
+envelope fields, which remains authoritative for BFF-CONSOL-019's command
+adapter implementation.
 
 Sources for the action vocabulary:
 - `execute-plans/src/lib/bff/runAction.ts` `KIND_TO_ENTITY_TYPE` and `paths.action()`
@@ -308,7 +277,7 @@ Sources for the action vocabulary:
 
 ### 8.1 Strategy Actions
 
-Route template: `POST /bff/actions/strategy/{strategyId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/strategy/{strategyId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -330,7 +299,7 @@ Route template: `POST /bff/actions/strategy/{strategyId}/{actionId}`
 
 ### 8.2 Persona Actions
 
-Route template: `POST /bff/actions/persona/{personaId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/persona/{personaId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -350,7 +319,7 @@ Route template: `POST /bff/actions/persona/{personaId}/{actionId}`
 
 ### 8.3 Capital Pool Actions
 
-Route template: `POST /bff/actions/capital-pool/{poolId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/capital-pool/{poolId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -368,7 +337,7 @@ Route template: `POST /bff/actions/capital-pool/{poolId}/{actionId}`
 
 ### 8.4 Rebalance Actions
 
-Route template: `POST /bff/actions/rebalance/{rebalanceId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/rebalance/{rebalanceId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -393,7 +362,7 @@ Route template: `POST /bff/actions/rebalance/{rebalanceId}/{actionId}`
 
 ### 8.5 Deployment Actions
 
-Route template: `POST /bff/actions/deployment/{deploymentId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/deployment/{deploymentId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -411,7 +380,7 @@ Route template: `POST /bff/actions/deployment/{deploymentId}/{actionId}`
 
 ### 8.6 Evolution Program Actions
 
-Route template: `POST /bff/actions/evolution-program/{programId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/evolution-program/{programId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -430,7 +399,7 @@ Route template: `POST /bff/actions/evolution-program/{programId}/{actionId}`
 
 ### 8.7 Research Experiment Actions
 
-Route template: `POST /bff/actions/research-experiment/{experimentId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/research-experiment/{experimentId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -443,7 +412,7 @@ Route template: `POST /bff/actions/research-experiment/{experimentId}/{actionId}
 
 ### 8.8 Artifact Actions
 
-Route template: `POST /bff/actions/artifact/{artifactId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/artifact/{artifactId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -451,7 +420,7 @@ Route template: `POST /bff/actions/artifact/{artifactId}/{actionId}`
 
 ### 8.9 Ranking Formula Actions
 
-Route template: `POST /bff/actions/ranking-formula/{formulaId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/ranking-formula/{formulaId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -466,7 +435,7 @@ Route template: `POST /bff/actions/ranking-formula/{formulaId}/{actionId}`
 
 ### 8.10 Runtime Actions
 
-Route template: `POST /bff/actions/runtime/{runtimeId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/runtime/{runtimeId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -481,7 +450,7 @@ Route template: `POST /bff/actions/runtime/{runtimeId}/{actionId}`
 
 ### 8.11 Tool Actions
 
-Route template: `POST /bff/actions/tool/{toolId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/tool/{toolId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -496,7 +465,7 @@ Route template: `POST /bff/actions/tool/{toolId}/{actionId}`
 
 ### 8.12 MCP Server Actions
 
-Route template: `POST /bff/actions/mcp-server/{serverId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/mcp-server/{serverId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -511,7 +480,7 @@ Route template: `POST /bff/actions/mcp-server/{serverId}/{actionId}`
 
 ### 8.13 MCP Tool Actions
 
-Route template: `POST /bff/actions/mcp-tool/{toolId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/mcp-tool/{toolId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -520,7 +489,7 @@ Route template: `POST /bff/actions/mcp-tool/{toolId}/{actionId}`
 
 ### 8.14 Skill Actions
 
-Route template: `POST /bff/actions/skill/{skillId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/skill/{skillId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -539,7 +508,7 @@ Route template: `POST /bff/actions/skill/{skillId}/{actionId}`
 
 ### 8.15 Channel Actions
 
-Route template: `POST /bff/actions/channel/{channelId}/{actionId}`
+Historical route template (retired; mapping preserved for reference only): `POST /bff/actions/channel/{channelId}/{actionId}`
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -549,12 +518,13 @@ Route template: `POST /bff/actions/channel/{channelId}/{actionId}`
 
 ### 8.16 Generic Approval / Alert / Incident Action Fallbacks
 
-`runAction.ts` now defaults live writes to `/bff/v1/commands`. It still carries an
+`runAction.ts` sends all live writes to `/bff/v1/commands`. It still carries an
 explicit `KIND_TO_ENTITY_TYPE` map for building command envelopes from the primary
 management entity kinds and then falls back to `kind.toLowerCase()` for other
-`RunActionInput.kind` values. The deprecated action adapter must not admit arbitrary
-fallback kinds; these three fallback route families are documented because they appear
-in tests, state-machine catalogs, or current BFF consolidation acceptance language.
+`RunActionInput.kind` values. These three fallback route families are documented
+(as historical mapping reference, since the routes they were named after are
+retired) because they appear in tests, state-machine catalogs, or current BFF
+consolidation acceptance language.
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -626,12 +596,14 @@ in this mapping table:
 7. **Target typed reference** — The command envelope `target` field uses `{ "type": <target_type>,
    "id": <entityId> }` where `target_type` is the value from the §8.1-§8.17 tables above.
 
-8. **Deprecated action receipt marker** — Responses served from `/bff/actions/*` must include
-   the deprecation headers and `deprecated: true` markers described in §3. The persisted
-   command foundation context remains `admission_route=POST /bff/v1/commands` with
-   `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` for backward-compatible
-   audit consumers to reconcile against the final command receipt, not a separate legacy
-   receipt stream.
+8. **Historical source-route reconciliation (retired routes)** — While the
+   `/bff/actions/*` adapters were still live, the persisted command foundation
+   context recorded `admission_route=POST /bff/v1/commands` with
+   `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` so that
+   audit consumers could reconcile action-adapter receipts against the final
+   command receipt. Now that `/bff/actions/*` is retired, all commands are
+   admitted directly through `/bff/v1/commands` and no `source_route`
+   reconciliation is produced.
 
 ---
 
@@ -646,21 +618,19 @@ python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adap
 
 This test set verifies:
 
-- `Idempotency-Key` header is accepted on `/bff/v1/commands` (final route)
-- `X-Idempotency-Key` is accepted as a compatibility alias on the final route
+- `Idempotency-Key` header is accepted on `/bff/v1/commands` (sole canonical route)
+- `X-Idempotency-Key` is accepted as a compatibility alias on the canonical route
 - `Idempotency-Key` takes precedence over `X-Idempotency-Key` when both are present
 - `idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST`
 - missing idempotency key returns 400 `INVALID_PARAMS` with `precondition_failed=idempotency_key`
 - duplicate idempotency key with identical request replays the original `CommandResponse`
 - same key with different body returns 409 `IDEMPOTENCY_CONFLICT`
 - `/bff/v1/commands` response shape is `CommandResponse<T>` with `status` and `data`
-- `/bff/actions/*` remains operational but returns deprecation headers plus
-  `deprecated: true` receipt/meta markers
-- action adapter audit records still persist `admission_route=POST /bff/v1/commands`
-  and the `/bff/actions/*` `source_route`
-- frontend `runAction()` live writes default to `/bff/v1/commands`; explicit
-  compatibility checks can still opt into the legacy action adapter
-- legacy `/api/v1/operator/commands` is unaffected and returns `CommandSubmissionResponse`
+- `/bff/actions/*` and `/api/v1/operator/commands` (POST) are fully retired and
+  return 404; no compatibility shim remains for either route
+- frontend `runAction()` live writes go exclusively to `/bff/v1/commands`
+- `/api/v1/operator/commands/{command_id}` (GET) is unaffected and continues to
+  poll command status
 - runtime, deployment, approval, and incident command classes persist actor,
   trace, idempotency, policy decision, and audit evidence
 - the existing committee command path still uses the shared operator command

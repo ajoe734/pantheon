@@ -255,8 +255,8 @@ exit 0
     return env, args_file, stdin_file
 
 
-def test_deploy_nonprod_vm_dev_execution_stubbed_ssh_without_staging_vars(tmp_path: Path) -> None:
-    """Regression test: dev execution beyond dry-run succeeds with stubbed SSH when all staging variables are unset."""
+def test_deploy_nonprod_vm_dev_requires_artifact_admission_without_staging_vars(tmp_path: Path) -> None:
+    """Missing dev artifact admission rejects before SSH, independent of staging settings."""
     sha = "4804b6d863e68dc65ab8a923ebc93eeef7923cec"
     env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=sha)
 
@@ -280,31 +280,17 @@ def test_deploy_nonprod_vm_dev_execution_stubbed_ssh_without_staging_vars(tmp_pa
         env=env,
         cwd=ROOT,
     )
-    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed with stderr: {proc.stderr}\nstdout: {proc.stdout}"
+    assert proc.returncode != 0
+    assert "candidate evidence directory must be canonical and absolute" in proc.stderr
+    assert "unbound variable" not in proc.stderr
     assert "direct ssh chloe_ong_dev_cctech_support_com@34.81.52.222 component=root" in proc.stdout
-    assert f"deployment complete: dev/root {sha}" in proc.stdout
-
-    # Prove selected dev target and exact payload passed to stubbed transport
-    assert args_file.exists()
-    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
-    assert "chloe_ong_dev_cctech_support_com@34.81.52.222" in ssh_args
-    command_prefix = ssh_args[-1]
-    assert "PANTHEON_DEPLOY_ENV=dev" in command_prefix
-    assert "PANTHEON_DEPLOY_COMPONENT=root" in command_prefix
-    assert f"PANTHEON_DEPLOY_SHA={sha}" in command_prefix
-    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
-    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
-    assert command_prefix.endswith("bash -s")
-
-    # Prove remote script payload delivered over stdin
-    assert stdin_file.exists()
-    stdin_content = stdin_file.read_text(encoding="utf-8")
-    assert "PANTHEON_DEPLOY_COMPONENT" in stdin_content
-    assert "case \"${PANTHEON_DEPLOY_COMPONENT}\" in" in stdin_content
+    assert "deployment complete:" not in proc.stdout
+    assert not args_file.exists()
+    assert not stdin_file.exists()
 
 
-def test_deploy_nonprod_vm_dev_execution_custom_target_and_bff_component(tmp_path: Path) -> None:
-    """dev execution beyond dry-run correctly propagates custom target host and user for bff component."""
+def test_deploy_nonprod_vm_rejects_target_outside_current_dev_artifact_boundary(tmp_path: Path) -> None:
+    """A lease UUID never permits the artifact driver to target an arbitrary VM."""
     sha = "4804b6d863e68dc65ab8a923ebc93eeef7923cec"
     extra_env = {
         "DEV_DEPLOY_SSH_HOST": "192.0.2.77",
@@ -329,16 +315,12 @@ def test_deploy_nonprod_vm_dev_execution_custom_target_and_bff_component(tmp_pat
         env=env,
         cwd=ROOT,
     )
-    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed: {proc.stderr}"
+    assert proc.returncode == 75
+    assert "requires the explicit current dev target" in proc.stderr
     assert "direct ssh custom-dev-user@192.0.2.77 component=bff" in proc.stdout
-    assert f"deployment complete: dev/bff {sha}" in proc.stdout
-
-    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
-    assert "custom-dev-user@192.0.2.77" in ssh_args
-    command_prefix = ssh_args[-1]
-    assert "PANTHEON_DEPLOY_COMPONENT=bff" in command_prefix
-    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
-    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
+    assert "deployment complete:" not in proc.stdout
+    assert not args_file.exists()
+    assert not stdin_file.exists()
 
 
 def test_postgres_live_container_shm_size() -> None:
@@ -448,14 +430,19 @@ def test_bff_deployment_service_set_includes_agora_interaction_worker() -> None:
     """BFF deployment build, recreate, and rollback in deploy_nonprod_vm.sh must include agora-interaction-worker."""
     deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    # Rollback must include all 3 BFF-owned persistent processes
-    assert "docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+    # Rollback now delegates the sealed 3-service set to the artifact driver;
+    # source rebuilds are forbidden. Executable delegation/failure coverage is
+    # in test_deploy_nonprod_artifact_restore.py and the artifact driver suite.
+    rollback = deploy_script.split("rollback_dev_bff_on_failure() {", 1)[1].split("\nprepare_dev_paper_principals()", 1)[0]
+    assert "run_dev_artifact_driver restore" in rollback
+    assert "--build" not in rollback
+    assert "git checkout" not in rollback
 
     # BFF Phase 2 build must build all 3 services
     assert "docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
 
     # BFF Phase 3 recreate must recreate all 3 services
-    assert "docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+    assert "run_dev_candidate_compose up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
 
     # BFF Phase 4 verification must verify all 3 services
     assert "verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script

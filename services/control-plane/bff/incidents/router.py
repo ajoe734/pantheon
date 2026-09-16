@@ -70,6 +70,7 @@ from services.control_plane.bff.models import (
     ErrorCode,
     ObjectType,
     OperatorIdentity,
+    TargetObject,
 )
 
 log = logging.getLogger(__name__)
@@ -617,18 +618,17 @@ def create_incident_router(
             pass
         clean_id = alert_id.strip()
 
-        if submit_action_command is not None:
-            return submit_action_command(
-                ObjectType.RISK_ALERT, clean_id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION
+        if submit_action_command is None:
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Risk alert action submission unavailable",
+                "Command admission is not wired for this deployment; refusing to fabricate an accepted receipt.",
+                precondition_failed="command_admission_unavailable",
             )
-        return {
-            "command_id": str(uuid.uuid4()),
-            "status": "accepted",
-            "entity_type": ObjectType.RISK_ALERT,
-            "entity_id": clean_id,
-            "action_id": action_id,
-            "meta": {"idempotency_key": resolved_key},
-        }
+        return submit_action_command(
+            ObjectType.RISK_ALERT, clean_id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION
+        )
 
     # -------------------------------------------------------------------------
     # Route 11: GET /bff/incidents
@@ -808,18 +808,17 @@ def create_incident_router(
                 f"Incident {incident_id} does not exist",
             )
 
-        if submit_action_command is not None:
-            return submit_action_command(
-                ObjectType.INCIDENT, clean_id, action_id, resolved_key, identity, payload, CommandType.INCIDENT_ACTION
+        if submit_action_command is None:
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Incident action submission unavailable",
+                "Command admission is not wired for this deployment; refusing to fabricate an accepted receipt.",
+                precondition_failed="command_admission_unavailable",
             )
-        return {
-            "command_id": str(uuid.uuid4()),
-            "status": "accepted",
-            "entity_type": ObjectType.INCIDENT,
-            "entity_id": clean_id,
-            "action_id": action_id,
-            "meta": {"idempotency_key": resolved_key},
-        }
+        return submit_action_command(
+            ObjectType.INCIDENT, clean_id, action_id, resolved_key, identity, payload, CommandType.INCIDENT_ACTION
+        )
 
     # -------------------------------------------------------------------------
     # Route 15: GET /bff/alerts
@@ -930,27 +929,41 @@ def create_incident_router(
         ack_note = str(payload.get("note") or payload.get("reason") or "").strip() or None
 
         cmd_store = _service.get_command_store()
-        if cmd_store and hasattr(cmd_store, "submit_command"):
-            audit_record = {
-                "operator_id": operator_id,
-                "roles_at_submission": getattr(identity, "roles", ["operator"]),
-                "action": "acknowledge",
-                "preconditions_checked": ["authentication", "authorization", "idempotency"],
-                "timestamp": submitted_at,
-                "idempotency_key": resolved_key,
-                "request_hash": request_hash,
-            }
-            try:
-                cmd_store.submit_command(
-                    command_id=command_id,
-                    command_type=CommandType.ALERT_ACKNOWLEDGE,
-                    target={"type": ObjectType.RISK_ALERT, "id": clean_id},
-                    submitted_at=submitted_at,
-                    params={"alert_id": clean_id, "action": "acknowledge", **payload},
-                    audit_context=audit_record,
-                )
-            except Exception as e:
-                log.warning("command_store.submit_command failed: %s", e)
+        if not cmd_store or not hasattr(cmd_store, "submit_command"):
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Alert acknowledgement store unavailable",
+                "No command store is wired; refusing to record an acknowledgement that cannot be persisted.",
+                precondition_failed="command_store_unavailable",
+            )
+        audit_record = {
+            "operator_id": operator_id,
+            "roles_at_submission": getattr(identity, "roles", ["operator"]),
+            "action": "acknowledge",
+            "preconditions_checked": ["authentication", "authorization", "idempotency"],
+            "timestamp": submitted_at,
+            "idempotency_key": resolved_key,
+            "request_hash": request_hash,
+        }
+        try:
+            cmd_store.submit_command(
+                command_id=command_id,
+                command_type=CommandType.ALERT_ACKNOWLEDGE,
+                target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id),
+                submitted_at=submitted_at,
+                params={"alert_id": clean_id, "action": "acknowledge", **payload},
+                audit_context=audit_record,
+            )
+        except Exception as e:
+            log.warning("command_store.submit_command failed: %s", e)
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Alert acknowledgement could not be persisted",
+                f"command_store.submit_command failed: {e}",
+                precondition_failed="command_store_write_failed",
+            ) from e
 
         _ack_alerts[clean_id] = {
             "acknowledged_by": operator_id,
