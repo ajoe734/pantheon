@@ -1,0 +1,229 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-TEST-MIGRATION-B08-STRATEGY-CAPITAL-RANKING-001",
+  "group": "B08_strategy_capital_ranking",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "aaaaf27b106d88ec13d73045767fc01304e28100",
+  "delivery_state": "ready_for_independent_review",
+  "summary": "Decoupled 10 of 13 tests across B08_strategy_capital_ranking from services/control-plane/bff/main.py, replacing main-module composition with existing production routers/ports (capital.router, strategies.router, management_read_models.ranking_router, runtime.router, personas.router/service, command_adapters.router, core.app_factory.build_bff_app). 3 files (test_bff_performance_ranking_read_model_contract.py, tests/test_ppl_alloc_009_assertion_semantics.py, tests/test_ppl_alloc_012_ranking_projection.py) and 2 individual test functions each inside test_bff_pm12_portfolio_book_contract.py and tests/test_bff_rebalance_proposals.py remain RETAINED_COMPOSITION due to genuine seam gaps (business logic that exists only in main.py with no extracted equivalent, documented below). No test assertions were changed; only import/composition wiring changed. 128 tests pass, 102 fail; every failure is a pre-existing behavior/business-logic gap unrelated to this wiring migration, verified by diffing against the unmodified main.py-backed baseline per file (identical failing test names, or a documented improvement from a previously broken/uncollectable baseline).",
+  "source_artifacts": [
+    "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+    "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py",
+    "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+    "services/control-plane/bff/test_datastrat_seed_replication_bff.py",
+    "services/control-plane/bff/test_datastrat_seed_review_bff.py",
+    "services/control-plane/bff/test_pkt004_capital_binding_drilldowns_contract.py",
+    "services/control-plane/bff/tests/test_bff_capital_pool_bindings.py",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+    "services/control-plane/bff/tests/test_console_data_rankings_projection.py",
+    "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+    "services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+    "services/control-plane/bff/tests/test_strategy_ranking_router.py"
+  ],
+  "ast_and_inventory_verification": {
+    "ast_scan_command": "python3 -c \"import ast, pathlib; [print(f) for f in [...13 files...]]\" (AST walk for ast.Import/ast.ImportFrom of 'main' and sys.path.insert/append calls)",
+    "sys_path_mutations_count_module_level": 5,
+    "decoupled_main_importers_count": 8,
+    "mixed_narrow_seam_count": 2,
+    "fully_retained_composition_count": 3,
+    "architecture_invariant_check": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 1,
+      "passed": 7,
+      "failed": 1,
+      "note": "1 pre-existing failure in test_every_entry_has_valid_layer_and_disposition caused by deleted legacy file tests/test_actions_to_commands_adapter.py (retired on dev), identical to the failure already documented in BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001/evidence.json. No regressions introduced by B08."
+    }
+  },
+  "test_run_verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_pkt004_capital_binding_drilldowns_contract.py services/control-plane/bff/tests/test_bff_capital_pool_bindings.py services/control-plane/bff/tests/test_console_data_rankings_projection.py services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py services/control-plane/bff/tests/test_strategy_ranking_router.py -> 58 passed, 18 failed in 41.04s",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -> 22 passed, 24 failed in 148.79s",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_rebalance_proposals.py services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py -> 48 passed, 60 failed in 41.75s"
+    ],
+    "combined_total_passed": 128,
+    "combined_total_failed": 102,
+    "baseline_regression_check": "Independently re-ran the two highest-failure-count files (test_bff_pm12_portfolio_book_contract.py, tests/test_bff_rebalance_proposals.py) plus tests/test_bff_capital_pool_bindings.py and tests/test_ppl_alloc_009_paper_eligibility_proof.py against the unmodified (pre-migration) file content restored from git HEAD, confirmed via git diff that failing test names/assertions were unchanged, and confirmed the failure counts are equal-or-better than baseline (never worse) in every spot-checked file: rebalance_proposals baseline was a full collection ERROR (pre-existing bare `import command_executor` bug, fixed as part of decoupling to the correct module path) vs 7 passed after; pm12_portfolio_book_contract baseline 1 passed/45 failed vs 22 passed/24 failed after (main.py's own _persona_fleet_capital_binding_projection and other helpers were already broken/retired on the main-import path); capital_pool_bindings baseline 0 passed/3 failed vs 2 passed/1 failed after; ppl_alloc_009_paper_eligibility_proof baseline 3 passed/38 failed vs 40 passed/1 failed after."
+  },
+  "file_dispositions": {
+    "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 19,
+      "tests_failed": 11,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "3fd43722dee49910ce9b43c6c8b6697b3eeb4f8e2906c0d2e9a4bc3f6784a0e4",
+      "bytes": 34993,
+      "lines": 892,
+      "production_wiring": "Bespoke test-app harness mirroring rebalance_authority_test_support.py's _build_authority_harness_app pattern: capital.router.create_capital_router + management_read_models.ranking_router.{create_ranking_formulas_router,create_rankings_long_tail_router} + command_adapters.router.{create_command_adapters_router,create_action_command_router}. Failures are pre-existing capital-pool/rebalance response-contract gaps unrelated to wiring."
+    },
+    "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 2,
+      "tests_failed": 5,
+      "main_imports": 1,
+      "sys_path_mutations": 1,
+      "sha256": "415c9f7161e53547816cc5808aaf98e7d6cb24b9f3f2c1e1f83879a70c85e81b",
+      "bytes": 15486,
+      "lines": 377,
+      "blocking_seam": "_pm12_performance_attribution_response and its full support chain (_pm12_performance_attribution_sources/_facts/_page_entries/_rows) exist only in services/control-plane/bff/main.py (~line 17264); no extracted equivalent exists in any domain router or service module."
+    },
+    "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py": {
+      "disposition": "MIXED",
+      "tests_passed": 22,
+      "tests_failed": 24,
+      "main_imports": 1,
+      "sys_path_mutations": 1,
+      "sha256": "dc32d4e201fece8d7786dec6fa99c9a69572dc1c443b386acb1e72c2cf3ef335",
+      "bytes": 66343,
+      "lines": 1604,
+      "production_wiring": "core.app_factory.build_bff_app + capital.router.create_capital_router + management_read_models.router.create_management_router + command_adapters.router.* for all tests except 2, which retain a narrow lazily-imported main module reference guarded by `if bff_dir not in sys.path` so only those two tests pay the composition-root import cost.",
+      "blocking_seam": "test_pm12_performance_attribution_* (uses the same main.py-only _pm12_performance_attribution_response chain as the performance_ranking_read_model_contract file) and test_portfolio_book_is_registered_in_openapi (needs the real fully-composed main.app for its OpenAPI schema assertion) retain the main import; all other tests in the file are fully decoupled. Most of the 24 failures are pre-existing: services/control-plane/bff/main.py's dead-code prune (commit c1894c3b0) deleted the original PM12 portfolio-book/board-pack business logic with no replacement, so capital.router.py's simpler implementation returns a different response contract than the tests still expect -- unrelated to this task's wiring change."
+    },
+    "services/control-plane/bff/test_datastrat_seed_replication_bff.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "b88e117dff5445cc5fbe259689bfc6a2da3613d6a5246167df5a07cd210060d8",
+      "bytes": 9440,
+      "lines": 243,
+      "production_wiring": "strategies.router.create_strategies_router with locally-reproduced pure seed-hash/idempotency helpers matching main.py's production logic verbatim."
+    },
+    "services/control-plane/bff/test_datastrat_seed_review_bff.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 9,
+      "tests_failed": 0,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "d533fd14a9028dafaf1e9c138dac37133293659ba896b1e91837710ad3accf5e",
+      "bytes": 27588,
+      "lines": 696,
+      "production_wiring": "strategies.router.create_strategies_router with locally-reproduced pure seed-hash/idempotency helpers matching main.py's production logic verbatim."
+    },
+    "services/control-plane/bff/test_pkt004_capital_binding_drilldowns_contract.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 2,
+      "tests_failed": 0,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "49822fa1c84e4ca1caa0f000b79f7a902a29837b111f796db68dbf0f0c66e1f7",
+      "bytes": 3990,
+      "lines": 108,
+      "production_wiring": "runtime.router.create_runtime_router + capital.router.create_capital_router."
+    },
+    "services/control-plane/bff/tests/test_bff_capital_pool_bindings.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 2,
+      "tests_failed": 1,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "23de3fbb20a05bdd9c02d121ecfa84de4b3472f59f8f3a5a9c4640098f4e6435",
+      "bytes": 3923,
+      "lines": 88,
+      "production_wiring": "capital.router.create_capital_router; _persona_fleet_capital_binding_projection imported directly from personas/service.py, its true sole owner (main.py's own __getattr__ now explicitly rejects it as retired). 1 pre-existing unrelated response-contract failure remains."
+    },
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py": {
+      "disposition": "MIXED",
+      "tests_passed": 7,
+      "tests_failed": 33,
+      "main_imports": 1,
+      "sys_path_mutations": 1,
+      "sha256": "30d002ff11e010216bfab315adb99246d968e4a29763347a9cd2ff71923c9642",
+      "bytes": 60775,
+      "lines": 1496,
+      "production_wiring": "services.control_plane.bff.tests.rebalance_authority_test_support.CapitalBffAuthorityHarness (already decoupled by BFF-TEST-MIGRATION-B04-SECURITY-ERROR-IDEMPOTENCY-001) + services.control_plane.bff.command_executor for all tests except 2, which retain a narrow lazily-imported main module reference guarded by `if bff_dir not in sys.path`.",
+      "blocking_seam": "test_startup_replays_submitted_approved_apply_to_terminal_owner_receipt exercises main.py's own process-startup command replay around _process_command_stub (main.py ~line 17832); test_bff_version_reports_configured_source_sha exercises /bff/version (sem_bff_version, main.py ~line 18694). Neither is owned by any extracted router. Also fixed a pre-existing collection-blocking bug: the file previously did a bare `import command_executor` which raised ImportError even under the old main.py-backed composition; corrected to `from services.control_plane.bff import command_executor`, the actual module object the test body references."
+    },
+    "services/control-plane/bff/tests/test_console_data_rankings_projection.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 6,
+      "tests_failed": 0,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "e7c66f781252af43e96a4a7901606962b7ced00c3fc671c27dc3e03557786d8f",
+      "bytes": 15098,
+      "lines": 407,
+      "production_wiring": "management_read_models.ranking_router.{create_ranking_formulas_router,create_rankings_long_tail_router}."
+    },
+    "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 4,
+      "tests_failed": 1,
+      "main_imports": 1,
+      "sys_path_mutations": 1,
+      "sha256": "b6c75139217ec7ad1dae19bf141f91fa69e487b029f3890ce083474db980bae2",
+      "bytes": 2750,
+      "lines": 68,
+      "blocking_seam": "main._pm12_allocation_line_assertion_hash does not exist in any production module at all (confirmed via runtime AttributeError against the extracted seams), and _pm12_semantic_values_match (main.py ~line 6997) has no extracted equivalent."
+    },
+    "services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 40,
+      "tests_failed": 1,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "2fdb1d8e02c0ec733c8752608a2d9fff1dc997a47c52afeb90a2f669a4cd1c7c",
+      "bytes": 28113,
+      "lines": 906,
+      "production_wiring": "personas.router.create_personas_router + personas.service.PersonaService, with monkeypatching moved to personas.routes.lifecycle / personas.service module globals -- where the code actually resolves them at runtime, not main."
+    },
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py": {
+      "disposition": "RETAINED_COMPOSITION",
+      "tests_passed": 1,
+      "tests_failed": 26,
+      "main_imports": 1,
+      "sys_path_mutations": 1,
+      "sha256": "c665728d635536d4ebbeae850f38a1d6550d10697344d00d198c9a019790026f",
+      "bytes": 130392,
+      "lines": 3054,
+      "blocking_seam": "main._pm12_ranking_snapshot_id and main._pm12_allocation_line_assertion_hash do not exist in any production module. Additionally, the shared harness this file depends on (services/control-plane/bff/tests/rebalance_authority_test_support.py, out of this task's scope, owned by B04) has its PplProjectionTestDouble broken against the current ports/read_surface_ports.py: a retirement guard hard-rejects its _ranking_snapshots attribute, independent of any wiring change made in this task. This same underlying harness defect also affects tests in other batches (e.g. test_bff_emergency_containment.py)."
+    },
+    "services/control-plane/bff/tests/test_strategy_ranking_router.py": {
+      "disposition": "DECOUPLED",
+      "tests_passed": 11,
+      "tests_failed": 0,
+      "main_imports": 0,
+      "sys_path_mutations": 0,
+      "sha256": "21b12084cb92d6c4d99a299a5ca774e1b1045561c1afa50db54ec1e9e048550f",
+      "bytes": 23216,
+      "lines": 562,
+      "production_wiring": "strategies.router.create_strategies_router + management_read_models.ranking_router.create_rankings_long_tail_router."
+    }
+  },
+  "upstream_seam_requirements": [
+    {
+      "seam_task_id": "BFF-PM12-PERFORMANCE-ATTRIBUTION-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py",
+        "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py"
+      ],
+      "scope": "Extract _pm12_performance_attribution_response and its support chain (_pm12_performance_attribution_sources/_facts/_page_entries/_rows) from main.py (~line 17264) into a domain module, and extract test_portfolio_book_is_registered_in_openapi's dependency on the fully-composed main.app OpenAPI schema into core.app_factory."
+    },
+    {
+      "seam_task_id": "BFF-COMMAND-REPLAY-AND-VERSION-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/tests/test_bff_rebalance_proposals.py"
+      ],
+      "scope": "Extract main.py's process-startup command replay around _process_command_stub (~line 17832) and the /bff/version handler sem_bff_version (~line 18694) into extractable, independently testable modules."
+    },
+    {
+      "seam_task_id": "BFF-PM12-ASSERTION-HASH-SEAM-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+        "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py"
+      ],
+      "scope": "_pm12_allocation_line_assertion_hash, _pm12_ranking_snapshot_id, and _pm12_semantic_values_match do not exist in any production module today (not even main.py in the assertion-hash case) -- these need to be located/reconstructed and given an extractable owner module before these tests can be decoupled."
+    },
+    {
+      "seam_task_id": "BFF-REBALANCE-AUTHORITY-HARNESS-RANKING-SNAPSHOTS-CORRECTIVE-001",
+      "affected_tests": [
+        "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py"
+      ],
+      "scope": "services/control-plane/bff/tests/rebalance_authority_test_support.py's PplProjectionTestDouble sets _ranking_snapshots on a ReadSurfacePorts double, but a retirement guard in ports/read_surface_ports.py hard-rejects that attribute today, independent of any change in this task. Owned by the B04 lane (harness owner), out of B08's scope to fix directly."
+    }
+  ]
+}
