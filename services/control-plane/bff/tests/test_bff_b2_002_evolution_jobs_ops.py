@@ -22,16 +22,21 @@ Covers:
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
+from typing import Any, Callable, Optional
 import uuid
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.evolution.router import create_evolution_programs_router
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.jobs.router import create_jobs_router
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
+from services.control_plane.bff.runtime.router import create_runtime_router
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2-002:operator"}
 NO_AUTH_HEADERS: dict = {}
@@ -176,11 +181,11 @@ class _FakeProgramCommandPort:
     async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
         item = self._store._programs.get(program_id)
         if item is None:
-            from ports.evolution_program_commands import EvolutionProgramNotFoundError
+            from services.control_plane.bff.ports.evolution_program_commands import EvolutionProgramNotFoundError
 
             raise EvolutionProgramNotFoundError(f"Evolution program not found: {program_id}")
         if int(item.get("revision") or 0) != expected_revision:
-            from ports.evolution_program_commands import EvolutionProgramConflictError
+            from services.control_plane.bff.ports.evolution_program_commands import EvolutionProgramConflictError
 
             raise EvolutionProgramConflictError(f"Evolution program {program_id} was modified concurrently")
         item["name"] = name
@@ -188,13 +193,171 @@ class _FakeProgramCommandPort:
         return item
 
 
-def _fresh_client(td: str) -> TestClient:
+class _B2002TestClient(TestClient):
+    @property
+    def store(self) -> Any:
+        return self.app.state.store
+
+    @store.setter
+    def store(self, val: Any) -> None:
+        self.app.state.store = val
+
+
+class _Identity:
+    def __init__(self, op_id: str, roles: set[str]):
+        self.operator_id = op_id
+        self.roles = roles
+
+
+def _extract_identity(auth: Optional[str] = None) -> Optional[_Identity]:
+    if not auth or not auth.startswith("Bearer "):
+        return None
+    token = auth[len("Bearer "):].strip()
+    if ":" in token:
+        op_id, roles_str = token.split(":", 1)
+        roles = {r.strip() for r in roles_str.split(",") if r.strip()}
+    else:
+        op_id = token
+        roles = {"operator", "viewer", "reviewer", "admin"}
+    return _Identity(op_id, roles)
+
+
+def _require_read(identity: Optional[_Identity]) -> None:
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _require_operator(identity: Optional[_Identity]) -> None:
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    roles = getattr(identity, "roles", set()) or set()
+    if "operator" not in roles and "admin" not in roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"error": {"code": str(code), "message": message, "reason": reason or message, **kwargs}},
+    )
+
+
+def _utc_now() -> str:
+    return "2026-06-01T00:00:00Z"
+
+
+def _page_slice(items: list[Any], page_token: Optional[str] = None, page_size: int = 20) -> tuple[list[Any], Optional[str]]:
+    return list(items[:page_size]), None
+
+
+def _snapshot_meta(snapshot_at: str = "2026-06-01T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+    return {"snapshot_at": snapshot_at, **kwargs}
+
+
+def _dataset_surface_status(dataset: str, *, snapshot_at: str = "2026-06-01T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+    return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at}
+
+
+def _read_surface_meta(surface_name: str, read_type: str, *, snapshot_at: str = "2026-06-01T00:00:00Z", **kwargs: Any) -> dict[str, Any]:
+    return {"snapshot_at": snapshot_at, "surface": surface_name, **kwargs}
+
+
+def _create_app(store: _EvolutionJobsOpsTestStore) -> FastAPI:
+    app = FastAPI()
+    app.state.store = store
+
+    app.include_router(
+        create_evolution_programs_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            require_operator_role=_require_operator,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=_dataset_surface_status,
+            program_commands=_FakeProgramCommandPort(store),
+        )
+    )
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            read_surface_meta=_read_surface_meta,
+            dataset_surface_status=_dataset_surface_status,
+            raise_if_read_surface_unavailable=lambda s, label="": None,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **k: {},
+        )
+    )
+    app.include_router(
+        create_incident_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            require_operator_role=_require_operator,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=_dataset_surface_status,
+            read_surface_meta=_read_surface_meta,
+            raise_if_read_surface_unavailable=lambda s, label="": None,
+        )
+    )
+    app.include_router(
+        create_research_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            page_slice=_page_slice,
+            snapshot_meta=_snapshot_meta,
+            dataset_surface_status=_dataset_surface_status,
+            include_prepared_subrouters=True,
+        )
+    )
+    app.include_router(
+        create_runtime_router(
+            read_surface=lambda: app.state.store,
+            dependencies={
+                "_extract_identity": _extract_identity,
+                "_require_read_role": _require_read,
+                "_require_operator_role": _require_operator,
+                "utc_now": _utc_now,
+                "_dataset_surface_status": _dataset_surface_status,
+                "_page_slice": _page_slice,
+                "_snapshot_meta": _snapshot_meta,
+                "_meta_staleness": lambda: None,
+                "_raise_if_read_surface_unavailable": lambda s, label="": None,
+                "_bff_error": _bff_error,
+            },
+        )
+    )
+    app.include_router(
+        create_control_loops_router(
+            read_surface=lambda: app.state.store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read,
+            require_operator_role=_require_operator,
+            bff_error=_bff_error,
+            utc_now_fn=_utc_now,
+        )
+    )
+    return app
+
+
+def _fresh_client(td: str) -> _B2002TestClient:
     store = _EvolutionJobsOpsTestStore()
-    bff_main.read_store = store
-    bff_main._evolution_program_commands = _FakeProgramCommandPort(store)
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
-    return TestClient(bff_main.app)
+    app = _create_app(store)
+    return _B2002TestClient(app)
 
 
 def _create_evolution_program(client: TestClient, name: str = "Test Program") -> str:
@@ -215,8 +378,6 @@ def _create_evolution_program(client: TestClient, name: str = "Test Program") ->
 
 def test_bff_evolution_programs_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        original_program_commands = bff_main._evolution_program_commands
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/evolution-programs", headers=OPERATOR_HEADERS)
@@ -226,19 +387,16 @@ def test_bff_evolution_programs_list_envelope() -> None:
             assert "page_info" in body
             assert ("items" in body) or ("data" in body)
         finally:
-            bff_main.read_store = original
-            bff_main._evolution_program_commands = original_program_commands
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
+            pass
 
 
 def test_bff_evolution_programs_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/evolution-programs").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +405,6 @@ def test_bff_evolution_programs_list_unauthorized() -> None:
 
 def test_bff_evolution_program_detail_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        original_program_commands = bff_main._evolution_program_commands
         try:
             client = _fresh_client(td)
             prog_id = _create_evolution_program(client, "Detail Test")
@@ -258,30 +414,26 @@ def test_bff_evolution_program_detail_found() -> None:
             assert "data" in body and "meta" in body
             assert body["data"].get("program_id") == prog_id or body["data"].get("id") == prog_id
         finally:
-            bff_main.read_store = original
-            bff_main._evolution_program_commands = original_program_commands
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
+            pass
 
 
 def test_bff_evolution_program_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/evolution-programs/nonexistent-b2-002", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_evolution_program_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/evolution-programs/any-id").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +442,6 @@ def test_bff_evolution_program_detail_unauthorized() -> None:
 
 def test_bff_evolution_program_runs_list() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        original_program_commands = bff_main._evolution_program_commands
         try:
             client = _fresh_client(td)
             prog_id = _create_evolution_program(client, "Runs Test")
@@ -301,20 +451,17 @@ def test_bff_evolution_program_runs_list() -> None:
             assert "meta" in body
             assert ("items" in body) or ("data" in body)
         finally:
-            bff_main.read_store = original
-            bff_main._evolution_program_commands = original_program_commands
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
+            pass
 
 
 def test_bff_evolution_program_runs_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/evolution-programs/ghost-prog/runs", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +470,6 @@ def test_bff_evolution_program_runs_not_found() -> None:
 
 def test_bff_evolution_program_candidates_list() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        original_program_commands = bff_main._evolution_program_commands
         try:
             client = _fresh_client(td)
             prog_id = _create_evolution_program(client, "Candidates Test")
@@ -334,9 +479,7 @@ def test_bff_evolution_program_candidates_list() -> None:
             assert "meta" in body
             assert ("items" in body) or ("data" in body)
         finally:
-            bff_main.read_store = original
-            bff_main._evolution_program_commands = original_program_commands
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +488,6 @@ def test_bff_evolution_program_candidates_list() -> None:
 
 def test_bff_jobs_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/jobs", headers=OPERATOR_HEADERS)
@@ -354,17 +496,16 @@ def test_bff_jobs_list_envelope() -> None:
             assert "meta" in body
             assert ("items" in body) or ("data" in body)
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_jobs_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/jobs").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -373,32 +514,29 @@ def test_bff_jobs_list_unauthorized() -> None:
 
 def test_bff_job_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/jobs/nonexistent-b2-002-job", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_job_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/jobs/any-job").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_job_detail_found_via_overlay() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             job_id = f"job-b2-{uuid.uuid4().hex[:8]}"
-            bff_main.read_store._jobs[job_id] = {
+            client.store._jobs[job_id] = {
                 "id": job_id,
                 "job_id": job_id,
                 "status": "running",
@@ -409,7 +547,7 @@ def test_bff_job_detail_found_via_overlay() -> None:
             body = resp.json()
             assert "data" in body and "meta" in body
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +556,6 @@ def test_bff_job_detail_found_via_overlay() -> None:
 
 def test_bff_alerts_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/alerts", headers=OPERATOR_HEADERS)
@@ -426,17 +563,16 @@ def test_bff_alerts_list_envelope() -> None:
             body = resp.json()
             assert "meta" in body
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_alerts_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/alerts").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +581,6 @@ def test_bff_alerts_list_unauthorized() -> None:
 
 def test_bff_incidents_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/incidents", headers=OPERATOR_HEADERS)
@@ -453,17 +588,16 @@ def test_bff_incidents_list_envelope() -> None:
             body = resp.json()
             assert "meta" in body
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_incidents_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/incidents").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +606,6 @@ def test_bff_incidents_list_unauthorized() -> None:
 
 def test_bff_audit_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
@@ -480,17 +613,16 @@ def test_bff_audit_list_envelope() -> None:
             body = resp.json()
             assert "meta" in body
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_audit_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/audit").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +631,6 @@ def test_bff_audit_list_unauthorized() -> None:
 
 def test_bff_artifacts_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/artifacts", headers=OPERATOR_HEADERS)
@@ -508,17 +639,16 @@ def test_bff_artifacts_list_envelope() -> None:
             assert "meta" in body
             assert ("items" in body) or ("data" in body)
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_artifacts_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/artifacts").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +657,6 @@ def test_bff_artifacts_list_unauthorized() -> None:
 
 def test_bff_runtimes_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/runtimes", headers=OPERATOR_HEADERS)
@@ -536,17 +665,16 @@ def test_bff_runtimes_list_envelope() -> None:
             assert "meta" in body
             assert ("items" in body) or ("data" in body)
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_runtimes_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/runtimes").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -555,23 +683,21 @@ def test_bff_runtimes_list_unauthorized() -> None:
 
 def test_bff_runtime_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/runtimes/nonexistent-runtime-b2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_runtime_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/runtimes/any-rt").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +706,6 @@ def test_bff_runtime_detail_unauthorized() -> None:
 
 def test_bff_loop_runs_list_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/v5/loop-runs", headers=OPERATOR_HEADERS)
@@ -590,17 +715,16 @@ def test_bff_loop_runs_list_envelope() -> None:
             assert ("items" in body) or ("data" in body)
             assert "page_info" in body
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_loop_runs_list_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/v5/loop-runs").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -609,23 +733,21 @@ def test_bff_loop_runs_list_unauthorized() -> None:
 
 def test_bff_loop_run_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/v5/loop-runs/nonexistent-loop-run", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_loop_run_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/v5/loop-runs/any-lr").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -634,20 +756,18 @@ def test_bff_loop_run_detail_unauthorized() -> None:
 
 def test_bff_sentinel_finding_detail_not_found() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             resp = client.get("/bff/v5/sentinel/findings/nonexistent-finding", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
         finally:
-            bff_main.read_store = original
+            pass
 
 
 def test_bff_sentinel_finding_detail_unauthorized() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
         try:
             client = _fresh_client(td)
             assert client.get("/bff/v5/sentinel/findings/any-sf").status_code == 401
         finally:
-            bff_main.read_store = original
+            pass
