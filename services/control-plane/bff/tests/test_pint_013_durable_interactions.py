@@ -14,15 +14,84 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 
-from agora.interaction.router import SubmitInteractionRequest
-from agora.interaction.store import InteractionLifecycleStore
-from agora.interaction.worker import AgoraInteractionWorker
-from test_agora_persona_interactions import AUTH, client
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from services.control_plane.bff.agora.interaction.router import SubmitInteractionRequest
+from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.agora.router import create_agora_router
+from test_agora_persona_interactions import (
+    AUTH,
+    FakeReadStore,
+    _extract_identity,
+    _require_read_role,
+    _require_operator_role,
+    _require_agora_signal_write_role,
+    _require_agora_bulk_feedback_role,
+    _bff_error,
+)
+
+def _now_fn() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+read_store = FakeReadStore()
+router = create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    require_operator_role=_require_operator_role,
+    require_journal_write_role=_require_operator_role,
+    require_agora_signal_write_role=_require_agora_signal_write_role,
+    require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
+    bff_error=_bff_error,
+    utc_now=_now_fn,
+    get_read_store=lambda: read_store,
+    read_surface=lambda: read_store,
+    sync_servant_agent=lambda p: {},
+    canonical_context_ref_resolver=bff_main._resolve_agora_interaction_context_ref,
+)
+interaction_lifecycle = router.interaction_lifecycle
+workshop_store = router.workshop_store
+
+app = FastAPI()
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
+
+app.include_router(router)
+
+
+def client(monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    global read_store
+    read_store = FakeReadStore()
+    bff_main.read_store = read_store
+    if interaction_lifecycle.backend == "memory":
+        with interaction_lifecycle._lock:
+            interaction_lifecycle._requests.clear()
+            interaction_lifecycle._idempotency.clear()
+            interaction_lifecycle._invocations.clear()
+            interaction_lifecycle._syntheses.clear()
+            interaction_lifecycle._outbox.clear()
+            interaction_lifecycle._candidate_links.clear()
+            interaction_lifecycle._audits.clear()
+            interaction_lifecycle._retry_commands.clear()
+            interaction_lifecycle._context_bindings.clear()
+            interaction_lifecycle._context_binding_latest.clear()
+    return TestClient(app)
 
 
 def _v19_request(c, monkeypatch, *, mode="challenge", persona_ids=("ready",), request_text="Challenge this thesis",
                  resolve_key=None, double_resolve=False):
-    from agora.trading_room.router import _get_store
+    from services.control_plane.bff.agora.trading_room.router import _get_store
 
     _get_store().upsert_decision_event({
         "decision_event_id": "decision-1", "tenant_id": "pantheon-dev",
@@ -51,6 +120,7 @@ def _v19_request(c, monkeypatch, *, mode="challenge", persona_ids=("ready",), re
         "/bff/agora/interactions/context:resolve",
         headers=resolve_headers, json=resolve_payload,
     )
+    assert first_resolution.status_code == 200, f"STATUS {first_resolution.status_code}: {first_resolution.text}"
     if double_resolve:
         replay = c.post(
             "/bff/agora/interactions/context:resolve",
@@ -277,6 +347,8 @@ def test_replay_persists_only_returned_receipt_and_eligibility_uses_it(monkeypat
     # router.  Advancing it makes the discarded replay candidate observably
     # different from the first receipt instead of relying on second-level
     # wall-clock timing.
+    import test_agora_persona_interactions
+    monkeypatch.setattr(test_agora_persona_interactions, "datetime", TickingDateTime)
     monkeypatch.setitem(bff_main.utc_now.__globals__, "datetime", TickingDateTime)
 
     original_save = InteractionLifecycleStore.save_context_binding
@@ -307,7 +379,7 @@ def test_replay_persists_only_returned_receipt_and_eligibility_uses_it(monkeypat
     ) == returned_binding
     assert body["participants"][0]["captured_at"] == returned_binding["resolved_at"]
 
-    browser_capture = TickingDateTime.current.isoformat().replace("+00:00", "Z")
+    browser_capture = max(TickingDateTime.current, datetime.fromisoformat(body["context_snapshot"]["evidence_cutoff"].replace("Z", "+00:00"))).isoformat().replace("+00:00", "Z")
     body["human_request"]["submitted_at"] = browser_capture
     body["context_snapshot"]["captured_at"] = browser_capture
     submitted = _submit(c, body)
@@ -385,15 +457,15 @@ def test_retry_uses_frozen_persona_snapshot_and_new_invocation_identity(monkeypa
     assert submitted["status"] == "queued"
     interaction_id = submitted["interaction_id"]
     worker = AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     )
     worker.run_once()
     initial_detail = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
     assert initial_detail["status"] == "failed"
     original = initial_detail["provider_invocations"][0]
-    bff_main.read_store.list_personas = lambda **_kwargs: [{
+    read_store.list_personas = lambda **_kwargs: [{
         "persona_id": "ready", "tenant_id": "pantheon-dev", "display_name": "DRIFTED",
         "lifecycle_state": "active", "environment_ceiling": "paper",
     }]
@@ -730,9 +802,9 @@ def test_retry_command_is_durably_idempotent_and_audited(monkeypatch):
     assert submitted["status"] == "queued"
     interaction_id = submitted["interaction_id"]
     AgoraInteractionWorker(
-        lifecycle_store=bff_main.interaction_lifecycle,
-        workshop_store=bff_main.workshop_store,
-        read_store=bff_main.read_store,
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
     ).run_once()
     initial_detail = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
     assert initial_detail["status"] == "failed"

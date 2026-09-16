@@ -8,14 +8,19 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import json
 from pathlib import Path
 
+_BFF_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BFF_DIR.parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import json
+
 import main as bff_main
-from command_queue import CommandStore
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core import http_security
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 _DATA_PATH = Path(__file__).resolve().parent / "data" / "read_surfaces.json"
 with open(_DATA_PATH, "r", encoding="utf-8") as _f:
@@ -113,22 +118,23 @@ def test_submit_command_accepts_approval_queue_command_types() -> None:
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(APPROVER_TOKEN, "idmp-approve-decision-001"),
                 json={
                     "command": "ApproveDecision",
-                    "target": {"type": "ApprovalDecision", "id": "appr-001"},
+                    "target": {"type": "ApprovalDecision", "id": "appr-final-001"},
                     "action": "approve",
                     "params": {
-                        "decision_id": "appr-001",
+                        "decision_id": "appr-final-001",
                         "approval_notes": "Proceed to approval",
                     },
+                    "approvalId": "approval-final-001",
                     "audit_context": {"reason": "Policy checks passed"},
                 },
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "ApproveDecision"
+            assert payload["data"]["command"] == "ApproveDecision"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
@@ -145,7 +151,7 @@ def test_submit_command_rejects_missing_idempotency_key_with_foundation_audit() 
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers={"Authorization": APPROVER_TOKEN, "X-Trace-Id": "trace-missing-idmp"},
                 json={
                     "command": "ApproveDecision",
@@ -184,22 +190,23 @@ def test_submit_command_records_foundation_context_and_replays_idempotency() -> 
         }
         body = {
             "command": "ApproveDecision",
-            "target": {"type": "ApprovalDecision", "id": "appr-001"},
+            "target": {"type": "ApprovalDecision", "id": "appr-final-001"},
             "action": "approve",
             "params": {
-                "decision_id": "appr-001",
+                "decision_id": "appr-final-001",
                 "approval_notes": "Proceed to approval",
             },
+            "approvalId": "approval-final-001",
             "audit_context": {"reason": "Policy checks passed"},
         }
 
         try:
-            first = client.post("/api/v1/operator/commands", headers=headers, json=body)
-            second = client.post("/api/v1/operator/commands", headers=headers, json=body)
+            first = client.post("/bff/v1/commands", headers=headers, json=body)
+            second = client.post("/bff/v1/commands", headers=headers, json=body)
 
             assert first.status_code == 202, first.text
             assert second.status_code == 202, second.text
-            assert second.json()["receipt_id"] == first.json()["receipt_id"]
+            assert second.json()["data"]["receipt_id"] == first.json()["data"]["receipt_id"]
 
             records = bff_main.command_store._get_all_commands()
             assert len(records) == 1
@@ -226,7 +233,7 @@ def test_submit_command_policy_denial_returns_foundation_error_envelope() -> Non
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers={
                     "Authorization": OPERATOR_TOKEN,
                     "X-Trace-Id": "trace-bff-deny",
@@ -262,7 +269,7 @@ def test_submit_command_validation_error_returns_foundation_error_envelope() -> 
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers={
                     "Authorization": APPROVER_TOKEN,
                     "X-Trace-Id": "trace-bff-validation",
@@ -297,7 +304,7 @@ def test_submit_command_accepts_escalate_diff() -> None:
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(OPERATOR_TOKEN, "idmp-escalate-diff-001"),
                 json={
                     "command": "EscalateDiff",
@@ -312,14 +319,54 @@ def test_submit_command_accepts_escalate_diff() -> None:
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "EscalateDiff"
+            assert payload["data"]["command"] == "EscalateDiff"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
 
 
-def test_runtime_deployment_approval_incident_commands_record_foundation_controls() -> None:
+def test_runtime_deployment_approval_incident_commands_record_foundation_controls(monkeypatch) -> None:
+    # /bff/v1/commands enforces the full action-catalog precondition set for
+    # every command type (unlike the retired legacy route, which skipped
+    # require_final_command_preconditions for all but a couple of command
+    # types). ApproveDeployment/ApproveDecision require approval evidence and
+    # PauseRuntime/ActivateKillSwitch require a confirm token (plus, for
+    # ActivateKillSwitch, a two-man signature); supply that evidence here so
+    # each case still exercises "submission succeeds" as originally intended.
+    approval_decisions = {
+        "appr-deploy-001": {
+            "id": "appr-deploy-001",
+            "outcome": "approved",
+            "state": "approved",
+            "command": "ApproveDeployment",
+            "target_type": "DeploymentPlan",
+            "target_id": "dp-001",
+        },
+        "appr-review-001": {
+            "id": "appr-review-001",
+            "outcome": "approved",
+            "state": "approved",
+            "command": "ApproveDecision",
+            "target_type": "ApprovalDecision",
+            "target_id": "appr-001",
+        },
+        "appr-incident-001": {
+            "id": "appr-incident-001",
+            "outcome": "approved",
+            "state": "approved",
+            "command": "ActivateKillSwitch",
+            "target_type": "KillSwitchOrder",
+            "target_id": "ks-pool-001",
+        },
+    }
+    original_get_approval_decision = bff_main.read_store.get_approval_decision
+
+    def get_approval_decision(decision_id):
+        return approval_decisions.get(decision_id) or original_get_approval_decision(decision_id)
+
+    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", get_approval_decision)
+
     cases = [
         {
             "key": "deployment",
@@ -333,6 +380,7 @@ def test_runtime_deployment_approval_incident_commands_record_foundation_control
                     "deployment_plan_id": "dp-001",
                     "approval_decision": "approve",
                 },
+                "approvalId": "appr-deploy-001",
                 "audit_context": {"reason": "Deployment review passed"},
             },
         },
@@ -345,6 +393,7 @@ def test_runtime_deployment_approval_incident_commands_record_foundation_control
                 "target": {"type": "ApprovalDecision", "id": "appr-001"},
                 "action": "approve",
                 "params": {"decision_id": "appr-001"},
+                "approvalId": "appr-review-001",
                 "audit_context": {"reason": "Approval evidence is complete"},
             },
         },
@@ -360,6 +409,7 @@ def test_runtime_deployment_approval_incident_commands_record_foundation_control
                     "runtime_binding_id": "rb-001",
                     "pause_action": "pause",
                 },
+                "confirmToken": "ct-p0-bff-cmd-runtime",
                 "audit_context": {"reason": "Operator requested runtime pause"},
             },
         },
@@ -376,6 +426,9 @@ def test_runtime_deployment_approval_incident_commands_record_foundation_control
                     "activate": True,
                     "severity": "critical",
                 },
+                "confirmToken": "ct-p0-bff-cmd-incident",
+                "approvalId": "appr-incident-001",
+                "twoManSignatureId": "tms-p0-bff-cmd-incident",
                 "audit_context": {"reason": "Incident commander activated emergency stop"},
             },
         },
@@ -389,9 +442,54 @@ def test_runtime_deployment_approval_incident_commands_record_foundation_control
         client = TestClient(bff_main.app)
 
         try:
+            confirm = client.post(
+                "/bff/confirm-tokens",
+                json={
+                    "tokenId": "ct-p0-bff-cmd-runtime",
+                    "command": "PauseRuntime",
+                    "target": {"type": "RuntimeBinding", "id": "rb-001"},
+                    "operator_id": "op-2",
+                    "reason": "confirm operator runtime pause",
+                },
+                headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "confirm-p0-bff-cmd-runtime"},
+            )
+            assert confirm.status_code == 201, confirm.text
+
+            confirm = client.post(
+                "/bff/confirm-tokens",
+                json={
+                    "tokenId": "ct-p0-bff-cmd-incident",
+                    "command": "ActivateKillSwitch",
+                    "target": {"type": "KillSwitchOrder", "id": "ks-pool-001"},
+                    "operator_id": "op-admin",
+                    "reason": "confirm incident kill switch activation",
+                },
+                headers={"Authorization": ADMIN_MFA_TOKEN, "Idempotency-Key": "confirm-p0-bff-cmd-incident"},
+            )
+            assert confirm.status_code == 201, confirm.text
+
+            for operator_id, authorization in (
+                ("op-2", "Bearer op-2:operator"),
+                ("op-3", "Bearer op-3:operator"),
+            ):
+                signed = client.post(
+                    "/bff/v5/interventions/tms-p0-bff-cmd-incident/two-man-sign",
+                    json={
+                        "twoManSignatureId": "tms-p0-bff-cmd-incident",
+                        "command": "ActivateKillSwitch",
+                        "target": {"type": "KillSwitchOrder", "id": "ks-pool-001"},
+                        "reason": "authenticated operator approved kill switch activation",
+                    },
+                    headers={
+                        "Authorization": authorization,
+                        "Idempotency-Key": f"sign-p0-bff-cmd-incident-{operator_id}",
+                    },
+                )
+                assert signed.status_code == 202, signed.text
+
             for case in cases:
                 response = client.post(
-                    "/api/v1/operator/commands",
+                    "/bff/v1/commands",
                     headers=_command_headers(
                         case["token"],
                         f"idmp-p0-bff-cmd-{case['key']}",
@@ -401,7 +499,16 @@ def test_runtime_deployment_approval_incident_commands_record_foundation_control
                 )
                 assert response.status_code == 202, response.text
 
-            records = bff_main.command_store._get_all_commands()
+            # The confirm-token/two-man-sign setup above also wrote command
+            # records; filter down to the four commands under test (each a
+            # distinct, non-overlapping command type) before asserting on
+            # foundation metadata.
+            case_command_types = {case["body"]["command"] for case in cases}
+            records = [
+                record
+                for record in bff_main.command_store._get_all_commands()
+                if record.get("type") in case_command_types
+            ]
             assert len(records) == len(cases)
 
             for record, case in zip(records, cases):
@@ -442,7 +549,7 @@ def test_submit_command_rejects_live_runtime_scope_when_disabled(monkeypatch) ->
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(OPERATOR_TOKEN, "idmp-live-scope-deny-001"),
                 json={
                     "command": "PauseExecution",
@@ -466,12 +573,12 @@ def test_submit_command_rejects_live_runtime_scope_when_disabled(monkeypatch) ->
 
 
 def test_cors_origin_env_parser_trims_and_normalizes(monkeypatch) -> None:
-    monkeypatch.setattr(bff_main, "_is_production_strict_mode", lambda: True)
+    monkeypatch.setattr(http_security, "_is_production_strict_mode", lambda: True)
     monkeypatch.setenv(
         "PANTHEON_BFF_CORS_ORIGINS",
         " https://dev.lovable.app/, https://staging.lovable.app ",
     )
-    assert bff_main._cors_origins_from_env() == [
+    assert http_security._cors_origins_from_env() == [
         "https://dev.lovable.app",
         "https://staging.lovable.app",
     ]
@@ -487,19 +594,42 @@ def test_submit_command_accepts_approve_mutation_published_payload() -> None:
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 
+        # ApproveMutation requires approval evidence on /bff/v1/commands (the
+        # retired legacy route skipped this precondition); seed a matching
+        # approval decision and reference it via approvalId to keep this
+        # test's "submission succeeds" intent true. Fall back to the
+        # original lookup (used by the mutation-review-surface validator via
+        # the evolution decision's own approval_decision_id) for other ids.
+        original_get_approval_decision = bff_main.read_store.get_approval_decision
+
+        def get_approval_decision(aid):
+            if aid == "appr-approve-mutation-001":
+                return {
+                    "id": aid,
+                    "outcome": "approved",
+                    "state": "approved",
+                    "command": "ApproveMutation",
+                    "target_type": "EvolutionDecision",
+                    "target_id": "evo-dec-88f3a2c1",
+                }
+            return original_get_approval_decision(aid)
+
+        bff_main.read_store.get_approval_decision = get_approval_decision
+
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(APPROVER_TOKEN, "idmp-approve-mutation-001"),
                 json={
                     "command_type": "ApproveMutation",
                     "decision_id": "evo-dec-88f3a2c1",
                     "note": "Risk review complete",
+                    "approvalId": "appr-approve-mutation-001",
                 },
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "ApproveMutation"
+            assert payload["data"]["command"] == "ApproveMutation"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
@@ -519,7 +649,7 @@ def test_submit_command_accepts_reject_mutation_published_payload() -> None:
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(OPERATOR_TOKEN, "idmp-reject-mutation-001"),
                 json={
                     "command_type": "RejectMutation",
@@ -529,7 +659,7 @@ def test_submit_command_accepts_reject_mutation_published_payload() -> None:
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "RejectMutation"
+            assert payload["data"]["command"] == "RejectMutation"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
@@ -558,14 +688,27 @@ def test_submit_command_accepts_review_mutation_published_payload() -> None:
                     "created_at": "2026-07-01T00:00:00Z",
                     "rationale": "Initial threshold breach triage.",
                 }
-            }
+            },
+            # ReviewMutation requires approval evidence on /bff/v1/commands
+            # (the retired legacy route skipped this precondition); seed a
+            # matching, approved decision bound to this command/target.
+            extra_approval_decisions={
+                "appr-automated-gate-001": {
+                    "id": "appr-automated-gate-001",
+                    "outcome": "approved",
+                    "state": "approved",
+                    "command": "ReviewMutation",
+                    "target_type": "EvolutionDecision",
+                    "target_id": "evo-dec-review-001",
+                }
+            },
         )
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(APPROVER_TOKEN, "idmp-review-mutation-001"),
                 json={
                     "command_type": "ReviewMutation",
@@ -576,7 +719,7 @@ def test_submit_command_accepts_review_mutation_published_payload() -> None:
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "ReviewMutation"
+            assert payload["data"]["command"] == "ReviewMutation"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
@@ -592,11 +735,18 @@ def test_submit_command_accepts_execute_mutation_published_payload() -> None:
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main.read_store = _create_test_read_store(
             extra_approval_decisions={
+                # ExecuteMutation requires approval evidence on
+                # /bff/v1/commands (the retired legacy route skipped this
+                # precondition); bind this decision to the command/target so
+                # it satisfies the new precondition.
                 "appr-dec-exec-001": {
                     "id": "appr-dec-exec-001",
                     "decision_id": "appr-dec-exec-001",
                     "outcome": "approved",
                     "state": "approved",
+                    "command": "ExecuteMutation",
+                    "target_type": "EvolutionDecision",
+                    "target_id": "evo-dec-exec-001",
                 }
             },
             extra_evolution_decisions={
@@ -621,17 +771,18 @@ def test_submit_command_accepts_execute_mutation_published_payload() -> None:
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(OPERATOR_TOKEN, "idmp-execute-mutation-001"),
                 json={
                     "command_type": "ExecuteMutation",
                     "decision_id": "evo-dec-exec-001",
                     "note": "Executing approved freeze",
+                    "approvalId": "appr-dec-exec-001",
                 },
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "ExecuteMutation"
+            assert payload["data"]["command"] == "ExecuteMutation"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
@@ -651,7 +802,7 @@ def test_submit_command_accepts_record_sponsor_decision_published_payload() -> N
 
         try:
             response = client.post(
-                "/api/v1/operator/commands",
+                "/bff/v1/commands",
                 headers=_command_headers(OPERATOR_TOKEN, "idmp-record-sponsor-decision-001"),
                 json={
                     "command_type": "RecordSponsorDecision",
@@ -663,7 +814,7 @@ def test_submit_command_accepts_record_sponsor_decision_published_payload() -> N
             )
             assert response.status_code == 202, response.text
             payload = response.json()
-            assert payload["command"] == "RecordSponsorDecision"
+            assert payload["data"]["command"] == "RecordSponsorDecision"
             assert payload["status"] == "accepted"
         finally:
             bff_main.command_store = original_store
@@ -945,8 +1096,10 @@ def test_bff_v1_commands_returns_command_response_envelope() -> None:
             bff_main._process_command_stub = original_worker
 
 
-def test_legacy_api_v1_commands_unaffected_by_final_contract() -> None:
-    """The legacy /api/v1/operator/commands route still uses X-Idempotency-Key and returns CommandSubmissionResponse."""
+def test_legacy_api_v1_commands_post_is_retired() -> None:
+    """POST /api/v1/operator/commands has been fully retired (no compat shim);
+    only the canonical POST /bff/v1/commands write route and the surviving
+    GET /api/v1/operator/commands/{command_id} status readback remain."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.command_store
         original_worker = bff_main._process_command_stub
@@ -968,11 +1121,8 @@ def test_legacy_api_v1_commands_unaffected_by_final_contract() -> None:
                     "audit_context": {"reason": "Legacy path test"},
                 },
             )
-            assert response.status_code == 202, response.text
-            payload = response.json()
-            # Legacy route returns receipt_id at top level (CommandSubmissionResponse shape)
-            assert "receipt_id" in payload
-            assert "status" in payload
+            assert response.status_code in (404, 405), response.text
+            assert bff_main.command_store._get_all_commands() == []
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker

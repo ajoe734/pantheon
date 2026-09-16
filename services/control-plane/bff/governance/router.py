@@ -124,6 +124,7 @@ def create_governance_router(
     submit_action: Optional[Callable[..., Any]] = None,
     publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+    read_surface_state: Optional[Callable[[], str]] = None,
     governance_service: Optional[GovernanceService] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
@@ -146,6 +147,7 @@ def create_governance_router(
     _staleness = meta_staleness or (lambda: None)
     _redact = redact_evidence_refs or _default_redact_evidence_refs
     _capabilities = capabilities_for_identity or (lambda identity: [])
+    _read_surface_state = read_surface_state or (lambda: "fresh")
 
     def _safe_redact(identity: Any, refs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
         try:
@@ -175,6 +177,7 @@ def create_governance_router(
                 dataset_surface_status=_surface,
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
+                read_surface_state=_read_surface_state,
             )
         return resolved_service
 
@@ -655,25 +658,26 @@ def create_governance_router(
     async def get_mutation_review(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        _identity(authorization)
-        payload = _service().mutation_review(decision_id)
-        if payload is None:
-            _not_found("Mutation review decision", decision_id)
-        required = (
-            "decision_id",
-            "target_type",
-            "target_id",
-            "target_version",
-            "action_type",
-            "decision_state",
-            "risk_level",
-            "created_at",
+    ) -> Any:
+        identity = _identity(authorization)
+        projection = _service().mutation_review_projection(
+            decision_id, identity=identity, snapshot_at=_now()
         )
-        missing = [field for field in required if payload.get(field) in (None, "")]
-        if missing:
-            _fail(503, "DEPENDENCY_UNAVAILABLE", "Mutation review evidence is incomplete", f"Missing fields: {missing}")
-        return payload
+        if projection is None:
+            _not_found("Mutation review decision", decision_id)
+        if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "DEPENDENCY_UNAVAILABLE",
+                        "message": "Mutation review evidence is unavailable",
+                        "reason": "Mutation-review evidence cannot be composed reliably",
+                    },
+                    "surfaces": {"mutation_review": "unavailable"},
+                },
+            )
+        return projection
 
     @router.get("/api/v1/operator/rollback-review/{rollback_id}")
     async def get_rollback_review(

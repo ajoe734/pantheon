@@ -57,8 +57,10 @@ def test_middleware_is_streaming_safe():
                 yield f"chunk{i};".encode()
         return StreamingResponse(gen(), media_type="text/event-stream")
 
+    from services.control_plane.bff.core.http_security import _SecurityHeadersMiddleware
+
     app = Starlette(routes=[Route("/s", stream)])
-    app.add_middleware(bff_main._SecurityHeadersMiddleware)
+    app.add_middleware(_SecurityHeadersMiddleware)
     with StarletteTestClient(app) as client:
         r = client.get("/s")
     assert r.status_code == 200

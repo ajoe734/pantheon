@@ -629,7 +629,7 @@ def create_governance_router(
             next_row["validated_at"] = now
             next_row["validation_result_digest"] = _digest(body.validation_result)
             next_row["governed_action_link"] = {
-                "route": "/bff/actions/{type}/{id}/{action}",
+                "route": "/bff/v1/commands",
                 "target_type": current["target_kind"],
                 "target_id": current["target_id"],
                 "action": "submit_review",

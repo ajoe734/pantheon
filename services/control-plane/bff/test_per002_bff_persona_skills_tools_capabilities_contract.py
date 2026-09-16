@@ -17,17 +17,19 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_in_memory_read_surface_ports,
+    create_read_surface_ports,
+)
 
 OPERATOR_AUTH = "Bearer per002-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -46,6 +48,18 @@ CAPABILITY_SNAPSHOT = {
     "created_at": "2026-04-11T07:55:00Z",
     "generated_at": "2026-04-11T07:55:00Z",
 }
+
+
+class _FakeOwner:
+    pass
+
+
+class _FakeCommandStore:
+    def get_all(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    def record(self, *args: Any, **kwargs: Any) -> None:
+        pass
 
 
 def _capability_read_surface_double() -> ReadSurfacePorts:
@@ -72,27 +86,25 @@ def _capability_read_surface_double() -> ReadSurfacePorts:
 
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_skill_registry = dict(bff_main._SKILL_REGISTRY)
-    original_tool_registry = dict(bff_main._TOOL_REGISTRY)
-    original_persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
-    try:
-        if fallback:
-            bff_main.read_store = _capability_read_surface_double()
-        else:
-            bff_main.read_store = create_read_surface_ports()
-        bff_main._SKILL_REGISTRY.clear()
-        bff_main._TOOL_REGISTRY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        yield TestClient(bff_main.app)
-    finally:
-        bff_main.read_store = original_store
-        bff_main._SKILL_REGISTRY.clear()
-        bff_main._SKILL_REGISTRY.update(original_skill_registry)
-        bff_main._TOOL_REGISTRY.clear()
-        bff_main._TOOL_REGISTRY.update(original_tool_registry)
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.update(original_persona_overlay)
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+    if fallback:
+        read_store = _capability_read_surface_double()
+    else:
+        read_store = create_read_surface_ports()
+
+    personas_service._SKILL_REGISTRY = {}
+    personas_service._TOOL_REGISTRY = {}
+    personas_service._PERSONA_BFF_OVERLAY = {}
+    service = PersonaService(
+        read_store=read_store,
+        write_owner=_FakeOwner(),
+        ranking_write_owner=_FakeOwner(),
+        command_store=_FakeCommandStore(),
+    )
+    app = FastAPI()
+    app.include_router(create_personas_router(service=service))
+    yield TestClient(app)
 
 
 # ---------------------------------------------------------------------------

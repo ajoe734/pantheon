@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
+from services.service_token_file import configured_service_token
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
 from services.source_ingestion.controller_state import (
     ControllerState,
@@ -137,7 +138,11 @@ def config_from_env() -> DistillationControllerConfig:
 def _get_registry_entry(registry_url: str, registry_id: str) -> dict | None:
     url = f"{registry_url}/api/registry/strategy-specs/{registry_id}"
     try:
-        req = urllib.request.Request(url, method="GET")
+        headers = {}
+        token = configured_service_token("DISTILLATION_REGISTRY_SERVICE_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
@@ -153,10 +158,14 @@ def _register_strategy_spec_if_absent(registry_url: str, payload: dict) -> dict:
     url = f"{registry_url}/api/registry/strategy-specs"
     try:
         data = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        token = configured_service_token("DISTILLATION_REGISTRY_SERVICE_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(
             url,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=5) as response:

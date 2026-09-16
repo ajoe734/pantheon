@@ -1,0 +1,108 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "6110e40b8f3f0fb546dba106fbc85e431b84937f",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity"
+  },
+  "source_ref": {
+    "plan_doc": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
+    "plan_section": "U7 — Evolution Mutation-Review／Journal Read Truth",
+    "audit_row": "docs/operations/bff-upstream-v2-20260911/01_CURRENT_AUDIT.md row BFF-TEST-MIGRATION-B10-EVOLUTION-PROGRAMS-001 (mutation-review permission/evidence and journal-surfaces gaps)",
+    "precedent_pattern": "governance/service.py already had a `<entity>_surface_state` / `_<entity>_allowed_actions` / `<entity>_projection` seam (committee_projection, consult_memo_projection); this task adds mutation_review_projection following the same shape so it can be called from both the nested GET router and the direct POST action validators."
+  },
+  "delivery_nature": {
+    "documentation_only": false,
+    "statement": "Prior to this task, main.py's POST action validators (ApproveMutation/RejectMutation/ReviewMutation/ExecuteMutation) derived allowedActions from a correct, actor/state/evidence-based `_mutation_review_projection` helper, while the GET /api/v1/operator/mutation-review/{decision_id} route (governance/router.py -> GovernanceService.mutation_review) called a second, stale nested copy that hardcoded meta.surfaces.mutation_review to the literal string 'fresh', omitted allowedActions entirely, and never failed the surface to 'unavailable' when required approval/incident/postmortem evidence was missing -- it only 404/503'd on a handful of null top-level fields. The management evolution journal (evolution/router.py bff_management_evolution_journal) was wired without any mutation_review_projection callable at all, so it fell back to its own third ad-hoc dict (fixed 'low' risk default, no allowedActions, no surface degradation). This task consolidates all three call sites onto one policy owner: GovernanceService.mutation_review_projection (governance/service.py), which owns the actor/state/evidence-derived allowedActions matrix (_MUTATION_APPROVAL_ROLES/_MUTATION_REJECTION_ROLES/_MUTATION_REVIEW_ROLES/_MUTATION_EXECUTION_ROLES, moved from main.py), the fresh/stale/unavailable surface-state derivation (read_surface_state + per-dataset dataset_source, injected the same way as the file's other *_surface_state methods), and evidence-ref redaction. The returned projection retains the full `approval_decision` object (in addition to `approval_decision_id`) exactly as the pre-existing nested copy did, so no consumer loses information as part of the consolidation. main.py's own `_mutation_review_projection(decision_id, *, identity, snapshot_at)` is now a thin wrapper that builds a GovernanceService and delegates; the four POST validators call it by decision_id instead of pre-fetching decision/approval/incident/postmortem themselves. governance/router.py's GET endpoint calls the same method and returns a JSONResponse with a sibling top-level `surfaces` key (not nested under `error.details`) when the mutation_review surface is 'unavailable', matching the required 503 envelope shape. evolution/router.py's journal composition now calls `mutation_review_projection(decision_id, identity=..., snapshot_at=...)` (single-arg canonical API) and only falls back to its own ad-hoc dict when no projection callable is injected at all (preserving the existing standalone-router unit test path in tests/test_evolution_router.py, which is untouched and out of this task's declared write-set). evolution_journal_surfaces() gained a composed `management_evolution_journal` surface entry (source: bff_composed) alongside the existing per-dataset surfaces. The camelCase `mutationReview` alias on journal mutation-review items was deleted (canonical `mutation_review` / `record` only)."
+  },
+  "changed_files": [
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/governance/service.py",
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/evolution/service.py",
+    "services/control-plane/bff/evolution/router.py",
+    "docs/deployment/evidence/BFF-EVOLUTION-REVIEW-JOURNAL-SEAM-CORRECTIVE-001/evidence.json"
+  ],
+  "created_files": [
+    "services/control-plane/bff/tests/test_mutation_review_projection_policy.py"
+  ],
+  "document_proof": {
+    "services/control-plane/bff/main.py": {"sha256": "9e1f290bc5ec34417fe1b131989e817605d578cf328df4923814b2d0279744d6", "bytes": 843606},
+    "services/control-plane/bff/governance/service.py": {"sha256": "211029335fb7873023a5c1b89a621b778824b177fa95f30bc58a6810f7201845", "bytes": 61185},
+    "services/control-plane/bff/governance/router.py": {"sha256": "59307f8e2583293a5f588e069bc2caee183cf347bc4ed15a353936f9d5670c05", "bytes": 47162},
+    "services/control-plane/bff/evolution/service.py": {"sha256": "17fd3d6e4fac18f8e582ee7dc3c391ff6c68c09785fa77bb386fc82a198f2d6e", "bytes": 31956},
+    "services/control-plane/bff/evolution/router.py": {"sha256": "01a607c47bbeeef315d2b306c8ac25419df6f08adea42533ec820a2300f6cb43", "bytes": 49573},
+    "services/control-plane/bff/tests/test_mutation_review_projection_policy.py": {"sha256": "c8a592f1a7db6d9d3921ab117b9d67f22a72e7b010bbd03338506d33c5c46fb7", "bytes": 8986}
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself. All changed/created files above are within this task's declared artifact contract. Two out-of-contract test files (services/control-plane/bff/tests/test_governance_router.py and services/control-plane/bff/tests/test_read_surface_caller_migration.py) were initially edited to keep them green, but the governed handoff admission gate correctly rejected that PR head as outside the declared contract (only Human/Ops may revise a task's artifact contract). Both edits were reverted to their exact origin/dev content before this handoff; see delivery_nature and known_gaps_flagged_for_reviewer for how each was instead resolved without touching the file, or is an accepted known static-count gap for the standard downstream seam-measurement rebaseline tooling task (see 05850c35c / de3972c98 precedent in this repo's history).",
+  "seam_implementation": {
+    "module": "services/control-plane/bff/governance/service.py",
+    "class": "GovernanceService",
+    "methods": [
+      "mutation_review_inputs",
+      "_mutation_review_roles_for",
+      "_mutation_review_surface_state",
+      "_mutation_review_allowed_actions",
+      "_mutation_threshold_triggers",
+      "_mutation_required_approvals",
+      "mutation_review_projection"
+    ],
+    "injected_collaborators_used": [
+      "read_store (via self._call)",
+      "dataset_surface_status / dataset_source",
+      "capabilities_for_identity",
+      "redact_evidence_refs",
+      "read_surface_state (new constructor kwarg, default lambda: 'fresh')"
+    ],
+    "call_sites": {
+      "direct_post_actions": "services/control-plane/bff/main.py _validate_approve_mutation/_validate_reject_mutation/_validate_review_mutation/_validate_execute_mutation, via the module-level thin wrapper _mutation_review_projection(decision_id, identity=..., snapshot_at=...)",
+      "nested_get_detail": "services/control-plane/bff/governance/router.py get_mutation_review, via _service().mutation_review_projection(...)",
+      "nested_journal": "services/control-plane/bff/evolution/router.py bff_management_evolution_journal, via the injected mutation_review_projection(decision_id, identity=..., snapshot_at=...) callable wired from main.py's create_evolution_router(...) call"
+    }
+  },
+  "b10_failing_cases_retested": [
+    "test_ew05_mutation_review_contract.py::test_mutation_review_projection_contract",
+    "test_ew05_mutation_review_contract.py::test_mutation_review_reviewer_visibility_contract",
+    "test_ew05_mutation_review_contract.py::test_mutation_review_review_action_allowed_when_proposed",
+    "test_ew05_mutation_review_contract.py::test_mutation_review_execute_action_allowed_when_approved",
+    "test_ew05_mutation_review_contract.py::test_mutation_review_returns_503_when_required_evidence_is_unavailable",
+    "tests/test_bff_b3_evolution_journal.py::test_evolution_journal_composes_required_sources",
+    "tests/test_bff_b3_evolution_journal.py::test_evolution_journal_supports_filters_and_pagination"
+  ],
+  "known_gaps_flagged_for_reviewer": [
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped is a static AST inventory of `read_store.` attribute references literally written in main.py's source text; it currently still asserts the pre-task count of 44. This task's consolidation legitimately removes 3 of those literal references from main.py (get_evolution_decision_by_id, get_postmortem, get_rollbacks_by_incident), which now live behind GovernanceService's injected read_store instead of the main.py global -- the true post-task count is 41 (40 mapped + 1 deferred write, per that test's own accounting scheme). This file is outside the declared artifact contract and only Human/Ops can revise the contract, so the count was deliberately left unedited rather than gamed; the reviewer or a follow-up tooling task (matching the existing tooling/seam-measurement-rebaseline-* and tooling/main-py-seam-inventory-* precedent in this repo's recent history) should rebaseline it to 41/40/1 after this PR merges.",
+    "The declared write-set did not list tests/test_evolution_router.py; its standalone create_evolution_router() unit tests do not inject mutation_review_projection, so they still exercise the pre-existing ad-hoc fallback dict in evolution/router.py's journal composition (fixed 'low' risk default, no allowedActions) rather than the new canonical GovernanceService projection. That fallback path is unchanged by this task and remains a legitimate follow-up if a future task wants every journal composition path -- not just the production main.py wiring -- to go through the single policy owner."
+  ],
+  "validation": [
+    {
+      "command": "PANTHEON_PY=/tmp/pantheon-worker-worktrees/pantheon/bff-evolution-review-journal-seam-corrective-001/.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_evolution_center_contract.py services/control-plane/bff/test_ew05_mutation_review_contract.py services/control-plane/bff/tests/test_bff_b3_evolution_journal.py services/control-plane/bff/tests/test_mutation_review_projection_policy.py",
+      "exit_code": 0,
+      "result": "27 passed. All 7 previously-failing B10 mutation-review/journal cases pass, plus the 6 new isolated GovernanceService policy tests."
+    },
+    {
+      "command": "(same PANTHEON_PY) -m pytest -q services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/governance/ services/control-plane/bff/tests/test_evolution_router.py",
+      "exit_code": 1,
+      "result": "116 passed, 4 failed. 3 failures (test_governance_router.py::test_consultation_session_and_policy_read_routes, ::test_bff_approval_review_and_governance_ledger_compatibility, ::test_single_and_batch_approval_decisions_validate_and_report_partial_results) reproduced identically at base_sha via git stash push -u -m <unique-tag> / rerun / git stash apply <sha> (not pop) / git stash drop -- unrelated to mutation-review/journal, not regressions from this task. The 4th failure (test_read_surface_caller_migration.py's 44-attribute static count) is the accepted, documented known gap above; test_governance_queues_audit_and_mutation_review (the file's other mutation-review-touching test) passes unmodified because the projection retains the full approval_decision object."
+    },
+    {
+      "command": "(same PANTHEON_PY) -m pytest -q services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py services/control-plane/bff/tests/test_evochain_005_governance_writes.py services/control-plane/bff/tests/test_evolution_programs_population_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_ew04_inspiration_graph_contract.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
+      "exit_code": 1,
+      "result": "131 passed, 1 failed, 9 subtests passed. The 1 failure (test_ew04_inspiration_graph_contract.py::test_ew04_inspiration_graph_fallback_from_lineage_edges_does_not_synthesize_constant_weight) reproduced identically at base_sha via the same stash-based baseline check; unrelated to mutation-review/journal."
+    },
+    {
+      "command": "(same PANTHEON_PY) -m pytest -q services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_devloop_telread_telemetry_contract.py services/control-plane/bff/test_pkt003_lineage_view_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+      "exit_code": 0,
+      "result": "All passed."
+    },
+    {
+      "command": "python3 -c \"import ast; [ast.parse(open(p).read()) for p in ['services/control-plane/bff/main.py','services/control-plane/bff/governance/service.py','services/control-plane/bff/governance/router.py','services/control-plane/bff/evolution/service.py','services/control-plane/bff/evolution/router.py']]\"",
+      "exit_code": 0,
+      "result": "SYNTAX_OK for all five changed BFF modules."
+    }
+  ]
+}

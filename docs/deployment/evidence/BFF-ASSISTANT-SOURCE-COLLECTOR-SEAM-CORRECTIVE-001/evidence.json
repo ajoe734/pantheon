@@ -1,0 +1,125 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "base_sha": "0e7f2d17d2964b3985d1021ddf81ba0da2903787",
+  "delivery_state": "ready_for_independent_review",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity"
+  },
+  "source_ref": {
+    "plan_doc": "docs/operations/bff-upstream-v2-20260911/03_IMPLEMENTATION_PACKETS.md",
+    "plan_section": "U5 — Assistant Typed Source Collectors",
+    "precedent_pattern": "BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001 (services/control-plane/bff/agora/interaction/context_resolver.py) supplies the exact seam-extraction pattern this task follows."
+  },
+  "delivery_nature": {
+    "documentation_only": false,
+    "statement": "Extracts the monolithic assistant context source-collector functions out of main.py into a new pure, explicitly-dependency-injected module services/control-plane/bff/assistant/source_collectors.py. main.py's inline collector bodies are deleted in the same change; main.py now binds a thin _assistant_collect_source wrapper at the composition root that closes over the real runtime collaborators (read_store, the real command-audit-projected _list_governance_audit_events, PersonaService, job accessors, docs repo root, tenant/access-meta helpers) and delegates to collect_assistant_context_source. persona_health now reads through the real PersonaService.build_persona_health_items projection instead of the generic route-replay shortcut; control_room and strategy_health continue to use the injected generic route-replay callable because no narrower typed port exists for them yet (explicitly out of scope for this task). Job data source truth (real vs fixture) is untouched; this is structural extraction only, per the task's own acceptance note that Jobs real-source acceptance remains with U10A."
+  },
+  "changed_files": [
+    "services/control-plane/bff/assistant/source_collectors.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/tests/test_assistant_source_collectors_owner.py",
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+    "docs/deployment/evidence/BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001/evidence.json"
+  ],
+  "document_proof": {
+    "services/control-plane/bff/assistant/source_collectors.py": {
+      "sha256": "4cde2a97c99ada03f187ecd336fe25f149aebe4babd1c84f72628fcfd4268332",
+      "bytes": 25976
+    },
+    "services/control-plane/bff/main.py": {
+      "sha256": "ba21fdfb24c0bb7d0709e06383f8459f90313b2ee7a3b4693447b09dcc78c6f2",
+      "bytes": 851036
+    },
+    "services/control-plane/bff/tests/test_assistant_source_collectors_owner.py": {
+      "sha256": "be231d309f6b6a26b822f3f7e22ec4467724a1f17664c96b0f526a4d0684bddd",
+      "bytes": 20433
+    },
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py": {
+      "sha256": "7bbd37e5164b2cb60ccaeb85312a7b0b8c99d99ec482dae36ae8b513d2610073",
+      "bytes": 41298
+    }
+  },
+  "manifest_hash_note": "This manifest is bound by its Git blob at exact-head handoff; it does not hash itself.",
+  "seam_implementation": {
+    "module": "services/control-plane/bff/assistant/source_collectors.py",
+    "callable": "collect_assistant_context_source",
+    "deps_dataclass": "AssistantSourceCollectorDeps",
+    "extracted_symbols": [
+      "_assistant_focus_entity",
+      "_assistant_source_access_meta",
+      "_assistant_attach_access_meta",
+      "_assistant_tenant_scope",
+      "_assistant_filter_tenant_records",
+      "_assistant_filter_payload_tenant",
+      "_assistant_unavailable_source",
+      "_assistant_collect_jobs_source",
+      "_assistant_collect_job_logs_source",
+      "_assistant_collect_audit_source",
+      "_assistant_collect_recent_sse_source",
+      "_ASSISTANT_DOCS_RAG_ALLOWLIST",
+      "_assistant_repo_root",
+      "_assistant_doc_query_terms",
+      "_assistant_doc_snippet",
+      "_assistant_collect_docs_rag_source",
+      "_assistant_collect_source (dispatcher body)"
+    ],
+    "composition_root_binding": {
+      "file": "services/control-plane/bff/main.py",
+      "wrapper": "_assistant_collect_source",
+      "pattern": "Thin binding constructing AssistantSourceCollectorDeps from real composition-root globals (read_store, _list_governance_audit_events, _mgmt_nl_filter_tenant_records, _dataset_surface_status, _sem_final_generic_list_for_path, persona_service, _build_operator_alerts_payload, _get_bff_job, _list_bff_jobs, _bff_me_tenant_payload, _READ_ROLES) and delegating to collect_assistant_context_source; mirrors the _resolve_agora_interaction_context_ref composition-root binding introduced by BFF-JOURNAL-CONTEXT-SEAM-CORRECTIVE-001. _assistant_build_context_pack remains a thin wrapper around compose_context_pack, now calling the bound _assistant_collect_source."
+    },
+    "duplicate_implementation_removed": [
+      "main.py: all 16 extracted symbols above deleted in the same change (net main.py diff -501/+43 lines); no forwarding wrapper or second copy remains anywhere in the repo."
+    ],
+    "bug_fixed_in_same_change": "main.py's _assistant_repo_root() referenced an undefined _REPO_ROOT global (latent NameError, never exercised before this task added coverage that reaches the docs_rag collector's repo-root resolution). The extracted module's repo_root dependency now defaults to Path(__file__).resolve().parents[4], a real computed path, fixing test_assistant_context_pack_builds_structured_snapshot which failed at baseline for this reason."
+  },
+  "out_of_scope_investigated": {
+    "services/control-plane/bff/agora/identity/router.py": "No change needed. Grepped all repo usages of every extracted symbol; only _assistant_build_context_pack (unchanged name/signature/behavior) is referenced outside main.py, via agora/service.py and agora/identity/router.py.",
+    "services/control-plane/bff/agora/service.py": "Same finding as above — only references the unchanged _assistant_build_context_pack wrapper.",
+    "tenant_resolution_model": "Tenant resolution stays on the existing _bff_me_tenant_payload / auth.policy pattern (extracted verbatim as tenant_payload_fn) since it was already consistent and correct; did not switch to agora/identity/scope.resolve_canonical_agora_scope, which is the sibling seam's own domain-specific ACL and not a general assistant tenant resolver.",
+    "jobs_real_source_truth": "Job data source truth (real vs fixture) is explicitly out of scope for this task (owned by BFF-RESEARCH-JOBS...U10A). This task preserves main.py's prior jobs/job_logs collector behavior byte-for-byte; it does not change what counts as a real Job source."
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_assistant_source_collectors_owner.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "exit_code": 1,
+      "result": "87 passed, 7 failed. All 7 failures (6 in test_assistant_agora_ask.py::test_ask_enabled_* / test_ask_idempotency_replay_returns_cached_without_reinvoking, 1 in test_console_data_agora_projection.py::test_projected_consultation_agora_surfaces_return_ok_counts) reproduced identically at base_sha with this task's changes fully stashed out (git stash push -u; rerun; confirmed same 7 failures with 2 passed among the two files; git stash apply + drop to restore). None touch source collection; not a regression introduced here."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_assistant_conversation_store_bootstrap_resilience.py services/control-plane/bff/tests/test_assistant_dev_compose_flags.py services/control-plane/bff/tests/test_assistant_source_collectors_owner.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_console_data_agora_projection.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_persona_interactions.py",
+      "exit_code": 1,
+      "result": "215 passed, 9 failed. The 2 additional failures beyond the declared-artifact run (test_management_nl_assistant_provider.py::test_management_nl_request_exception_marks_reservation_uncertain_immediately, ::test_provider_enabled_invokes_openclaw_with_tenant_scoped_context) reproduced identically at base_sha via the same stash-bisect method (2 failed, 63 passed at baseline for that file alone); not a regression introduced here."
+    },
+    {
+      "command": "grep -rl symbol-name scan for all 16 extracted symbols plus 'source_collectors' across services/control-plane/bff, excluding main.py and the new module itself",
+      "exit_code": 0,
+      "result": "Only 4 files reference any extracted symbol name: services/control-plane/bff/agora/service.py and services/control-plane/bff/agora/identity/router.py (both reference only the unchanged _assistant_build_context_pack wrapper), services/control-plane/bff/tests/test_read_surface_caller_migration.py (updated static-count assertions, see below), and the new owner test file itself. No dangling reference to a deleted symbol anywhere in the repo."
+    },
+    {
+      "command": "services/control-plane/bff/tests/test_read_surface_caller_migration.py::test_main_py_all_read_store_attributes_are_inventoried_and_mapped update",
+      "exit_code": 0,
+      "result": "The static AST count of read_store.<attr> accesses appearing in main.py's own text dropped from 45 to 44 because the recent_sse source's read_store.list_events_bff(...) call moved into source_collectors.py, reached at runtime through the injected deps.read_store collaborator instead of a main.py-local reference. Updated the two assertions (45->44, mapped_reads 44->43, total 44) with an explanatory docstring; the runtime behavior (recent_sse still filters/paginates through the same read_store) is byte-for-byte unchanged."
+    }
+  ],
+  "owner_test_coverage": {
+    "file": "services/control-plane/bff/tests/test_assistant_source_collectors_owner.py",
+    "isolation": "Imports only services.control_plane.bff.assistant.source_collectors and .context_composer; zero import of services.control_plane.bff.main; zero monkeypatching of main.py globals.",
+    "acceptance_dimensions_covered": [
+      "identity/tenant: cross-tenant record leakage is rejected for jobs/audit/recent_sse filtering",
+      "citations: docs_rag citations and snippet extraction against the static doc allowlist",
+      "allowlist: unknown source_id and not-yet-implemented-but-allowlisted source_id both degrade cleanly (collector returns None)",
+      "pagination: jobs items truncated the same way main.py did (jobs[:20]), audit/recent_sse page_info preserved",
+      "freshness/staleness: degraded/unavailable status and staleness payload derivation for jobs, job_logs, audit, recent_sse, docs_rag, and the persona_health/strategy_health/control_room generic-path family"
+    ]
+  },
+  "scope_boundary": [
+    "Structural collector extraction only; does not complete Jobs real-source data truth (U10A) or the overall Management/Agora/12-loop or hosted deployment acceptance, per the V2 execution plan admission constraints.",
+    "No shell, no repo writes beyond the documented allowlisted doc reads that already existed, no new store/cache, no task/supervisor dependency introduced.",
+    "Single flow keeps a single implementation/state owner: no second copy of any collector logic survives anywhere in the repo after this change."
+  ]
+}

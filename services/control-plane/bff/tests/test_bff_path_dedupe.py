@@ -86,7 +86,7 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
         (
             "post",
             "/bff/ranking/formulas/formula-1/actions/promote",
-            "/bff/actions/rankingFormula/{formula_id}/{action_id}",
+            "/bff/v1/commands",
         ),
         (
             "post",
@@ -103,15 +103,15 @@ def test_deprecated_nested_action_families_return_410_with_headers() -> None:
     client = _client()
 
     cases = [
-        ("/bff/strategies/strategy-1/actions/promote", "/bff/actions/strategy/{strategy_id}/{action_id}"),
-        ("/bff/personas/persona-1/actions/promote", "/bff/actions/persona/{persona_id}/{action_id}"),
+        ("/bff/strategies/strategy-1/actions/promote", "/bff/v1/commands"),
+        ("/bff/personas/persona-1/actions/promote", "/bff/v1/commands"),
         ("/bff/capital-pools/pool-1/actions/freeze", "/bff/actions/capitalPool/{pool_id}/{action_id}"),
         ("/bff/rebalances/rebalance-1/actions/approve", "/bff/actions/rebalance/{rebalance_id}/{action_id}"),
-        ("/bff/deployments/deployment-1/actions/promote", "/bff/actions/deployment/{deployment_id}/{action_id}"),
+        ("/bff/deployments/deployment-1/actions/promote", "/bff/v1/commands"),
         ("/bff/incidents/incident-1/actions/resolve", "/bff/actions/incident/{incident_id}/{action_id}"),
-        ("/bff/runtimes/runtime-1/actions/pause", "/bff/actions/runtime/{runtime_id}/{action_id}"),
-        ("/bff/skills/skill-1/actions/disable", "/bff/actions/skill/{skill_id}/{action_id}"),
-        ("/bff/tools/tool-1/actions/disable", "/bff/actions/tool/{tool_id}/{action_id}"),
+        ("/bff/runtimes/runtime-1/actions/pause", "/bff/v1/commands"),
+        ("/bff/skills/skill-1/actions/disable", "/bff/v1/commands"),
+        ("/bff/tools/tool-1/actions/disable", "/bff/v1/commands"),
     ]
     for path, replacement in cases:
         _assert_deprecated(client.post(path, headers=OPERATOR_HEADERS), replacement)

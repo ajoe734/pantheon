@@ -171,7 +171,7 @@ def render_compose_environment(service: str, env: Mapping[str, str] | None = Non
     return {key: _interpolate(str(value), env or {}) for key, value in declared.items()}
 
 
-def _docker_compose_config() -> dict[str, Any] | None:
+def _docker_compose_config(overrides: Mapping[str, str] | None = None) -> dict[str, Any] | None:
     """``docker compose config`` for the scheduler profile, or None if absent."""
 
     if shutil.which("docker") is None:
@@ -181,6 +181,7 @@ def _docker_compose_config() -> dict[str, Any] | None:
         for key, value in os.environ.items()
         if not key.startswith(_INTERPOLATED_PREFIXES)
     }
+    clean_env.update(overrides or {})
     try:
         completed = subprocess.run(
             [
@@ -470,15 +471,75 @@ def test_operator_tenant_override_widens_both_services_together() -> None:
     assert widened["POLICY_LEARNING_SERVICE_TENANTS"] == "acme,beta"
 
 
-def test_offline_compose_renderer_matches_docker_compose_config() -> None:
+@pytest.mark.parametrize(
+    "overrides,expected_tenant",
+    [
+        ({}, "pantheon-local"),
+        ({"PANTHEON_BFF_TENANT_ID": "tenant-dev"}, "tenant-dev"),
+        ({"PANTHEON_BFF_TENANT_ID": "tenant-custom"}, "tenant-custom"),
+        ({"PANTHEON_BFF_TENANT_ID": ""}, "pantheon-local"),
+        ({"PANTHEON_BFF_TENANT_ID": "tenant-dev", "POLICY_LEARNING_AGORA_TENANT_ID": ""}, "tenant-dev"),
+        ({"PANTHEON_BFF_TENANT_ID": "tenant-dev", "POLICY_LEARNING_AGORA_TENANT_ID": "policy-tenant"}, "policy-tenant"),
+    ],
+)
+def test_policy_and_bff_handoff_scopes_follow_existing_deployed_tenant(
+    overrides: Mapping[str, str], expected_tenant: str,
+) -> None:
+    api = render_compose_environment(API_SERVICE, overrides)
+    scheduler = render_compose_environment(SCHEDULER_SERVICE, overrides)
+    bff = render_compose_environment("operator-bff", overrides)
+    assert api["POLICY_LEARNING_AGORA_TENANT_ID"] == expected_tenant
+    assert scheduler["POLICY_LEARNING_AGORA_TENANT_ID"] == expected_tenant
+    assert api["POLICY_LEARNING_SERVICE_TENANTS"] == expected_tenant
+    assert bff["AGORA_HANDOFF_SERVICE_TENANTS"] == expected_tenant
+
+    # The real API authority accepts this worker scope, not just a matching
+    # pair of configuration strings. Unrelated tenants remain forbidden.
+    authority = _inbound_authority_module()
+    with mock.patch.dict(os.environ, api):
+        resolved = authority.resolve_authority(
+            authorization="Bearer " + scheduler["POLICY_LEARNING_SERVICE_TOKEN"],
+            tenant_header=scheduler["POLICY_LEARNING_AGORA_TENANT_ID"],
+        )
+        assert resolved.tenant_id == expected_tenant
+        with pytest.raises(authority.PolicyLearningAuthorityError) as rejected:
+            authority.resolve_authority(
+                authorization="Bearer " + scheduler["POLICY_LEARNING_SERVICE_TOKEN"],
+                tenant_header="unrelated-tenant",
+            )
+        assert rejected.value.code == "TENANT_FORBIDDEN"
+
+
+def test_explicit_policy_and_handoff_allowlists_still_override_bff_tenant() -> None:
+    overrides = {
+        "PANTHEON_BFF_TENANT_ID": "tenant-dev",
+        "POLICY_LEARNING_AGORA_TENANT_ID": "policy-tenant",
+        "POLICY_LEARNING_SERVICE_TENANTS": "policy-tenant,policy-extra",
+        "AGORA_HANDOFF_SERVICE_TENANTS": "policy-tenant,handoff-extra",
+    }
+    api = render_compose_environment(API_SERVICE, overrides)
+    scheduler = render_compose_environment(SCHEDULER_SERVICE, overrides)
+    bff = render_compose_environment("operator-bff", overrides)
+    assert api["POLICY_LEARNING_AGORA_TENANT_ID"] == "policy-tenant"
+    assert scheduler["POLICY_LEARNING_AGORA_TENANT_ID"] == "policy-tenant"
+    assert api["POLICY_LEARNING_SERVICE_TENANTS"] == "policy-tenant,policy-extra"
+    assert bff["AGORA_HANDOFF_SERVICE_TENANTS"] == "policy-tenant,handoff-extra"
+
+
+@pytest.mark.parametrize("overrides", [
+    {},
+    {"PANTHEON_BFF_TENANT_ID": "tenant-dev"},
+    {"PANTHEON_BFF_TENANT_ID": "tenant-dev", "POLICY_LEARNING_AGORA_TENANT_ID": "policy-tenant"},
+])
+def test_offline_compose_renderer_matches_docker_compose_config(overrides: Mapping[str, str]) -> None:
     """The renderer the end-to-end proofs run on is the real compose default."""
 
-    config = _docker_compose_config()
+    config = _docker_compose_config(overrides)
     if config is None:
         pytest.skip("docker compose is not available")
 
-    for service in (API_SERVICE, SCHEDULER_SERVICE):
-        rendered = render_compose_environment(service)
+    for service in (API_SERVICE, SCHEDULER_SERVICE, "operator-bff"):
+        rendered = render_compose_environment(service, overrides)
         official = {key: str(value) for key, value in config["services"][service]["environment"].items()}
         assert rendered == official, service
 

@@ -1238,7 +1238,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight) {
     "/bff/v5/execution/persona-health",
   ];
   const writePaths = [
-    "/bff/actions/strategies/strategy-dev/promote",
+    "/bff/v1/commands",
     "/bff/approvals/approval-dev/decide",
     "/bff/v5/interventions/intervention-dev/decide",
   ];

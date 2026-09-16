@@ -27,31 +27,40 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-# Ensure bff is in sys.path
-_BFF_DIR = Path(__file__).resolve().parents[1]
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(_BFF_DIR) in sys.path:
-    sys.path.remove(str(_BFF_DIR))
-sys.path.insert(0, str(_BFF_DIR))
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-from agora.performance.consumer import (
-    CanonicalPerformanceEventTransport,
-    EvaluationTelemetryConsumer,
-    canonical_performance_publisher,
-    clear_performance_subscribers,
-    consume_telemetry_outcome,
-    get_canonical_performance_transport,
-    register_performance_subscriber,
-)
-from agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
-from agora.performance.router import create_performance_router
-from agora.performance.store import (
-    PerformanceSuggestionConflict,
-    PerformanceSuggestionNotFound,
-    PerformanceSuggestionStore,
-)
+try:
+    from agora.performance.consumer import (
+        CanonicalPerformanceEventTransport,
+        EvaluationTelemetryConsumer,
+        canonical_performance_publisher,
+        clear_performance_subscribers,
+        consume_telemetry_outcome,
+        get_canonical_performance_transport,
+        register_performance_subscriber,
+    )
+    from agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
+    from agora.performance.router import create_performance_router
+    from agora.performance.store import (
+        PerformanceSuggestionConflict,
+        PerformanceSuggestionNotFound,
+        PerformanceSuggestionStore,
+    )
+except ImportError:
+    from services.control_plane.bff.agora.performance.consumer import (
+        CanonicalPerformanceEventTransport,
+        EvaluationTelemetryConsumer,
+        canonical_performance_publisher,
+        clear_performance_subscribers,
+        consume_telemetry_outcome,
+        get_canonical_performance_transport,
+        register_performance_subscriber,
+    )
+    from services.control_plane.bff.agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
+    from services.control_plane.bff.agora.performance.router import create_performance_router
+    from services.control_plane.bff.agora.performance.store import (
+        PerformanceSuggestionConflict,
+        PerformanceSuggestionNotFound,
+        PerformanceSuggestionStore,
+    )
 from services.trade_journey.materializer import JourneyMaterializer
 
 

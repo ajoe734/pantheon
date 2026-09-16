@@ -111,13 +111,32 @@ def test_final_command_response_adapter_excludes_failure_statuses() -> None:
             )
 
 
-def test_idempotency_conflict_uses_final_error_code() -> None:
+def test_idempotency_conflict_uses_final_error_code(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.command_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
+
+        original_get_approval_decision = bff_main.read_store.get_approval_decision
+
+        def get_approval_decision(decision_id):
+            if decision_id == "approval-final-001":
+                return {
+                    "id": "approval-final-001",
+                    "decision_id": "approval-final-001",
+                    "outcome": "approved",
+                    "state": "approved",
+                    "command": "ApproveDecision",
+                    "target_type": "ApprovalDecision",
+                    "target_id": "appr-final-001",
+                    "reviewer": "governance",
+                    "risk_level": "medium",
+                }
+            return original_get_approval_decision(decision_id)
+
+        monkeypatch.setattr(bff_main.read_store, "get_approval_decision", get_approval_decision)
 
         headers = {
             "Authorization": APPROVER_TOKEN,
@@ -128,17 +147,25 @@ def test_idempotency_conflict_uses_final_error_code() -> None:
             "command": "ApproveDecision",
             "target": {"type": "ApprovalDecision", "id": "appr-final-001"},
             "action": "approve",
-            "params": {"decision_id": "appr-final-001", "approval_notes": "first"},
+            "params": {
+                "decision_id": "appr-final-001",
+                "approval_notes": "first",
+                "approvalId": "approval-final-001",
+            },
             "audit_context": {"reason": "Policy checks passed"},
         }
         changed_body = {
             **body,
-            "params": {"decision_id": "appr-final-001", "approval_notes": "changed"},
+            "params": {
+                "decision_id": "appr-final-001",
+                "approval_notes": "changed",
+                "approvalId": "approval-final-001",
+            },
         }
 
         try:
-            first = client.post("/api/v1/operator/commands", headers=headers, json=body)
-            second = client.post("/api/v1/operator/commands", headers=headers, json=changed_body)
+            first = client.post("/bff/v1/commands", headers=headers, json=body)
+            second = client.post("/bff/v1/commands", headers=headers, json=changed_body)
 
             assert first.status_code == 202, first.text
             assert second.status_code == 409, second.text

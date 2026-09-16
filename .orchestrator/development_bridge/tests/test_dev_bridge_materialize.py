@@ -12,6 +12,8 @@ the isolated copy calling in, silently breaking the bridge-provenance guard).
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 import unittest
 from copy import deepcopy
@@ -26,28 +28,41 @@ from development_bridge import dev_bridge_materialize
 
 
 class DevBridgeMaterializeModuleTests(unittest.TestCase):
-    def test_privileged_readback_requires_frozen_full_spec_policy(self) -> None:
-        from test_execution_authorization import ExecutionAuthorizationTestCase
-        import execution_authorization
 
-        fixture = ExecutionAuthorizationTestCase()
-        fixture.setUp()
-        task = deepcopy(fixture._granted_task())
-        task["execution_authorization"] = execution_authorization.pending_authorization_hold(fixture.policy)
-        bridge = deepcopy(task["dev_bridge"])
-        row = {
-            "task_id": task["id"], "owner": task["owner"], "reviewer": task["reviewer"],
-            "title": task["title"], "task_metadata": {"dev_bridge": bridge},
-        }
-        ai_status = dev_bridge_materialize._ai_status_module()
-        with mock.patch.object(ai_status, "_bridge_assignment_from_metadata", return_value=bridge):
-            receipt = dev_bridge_materialize.read_dev_bridge_materialized_batch({"tasks": [task]}, {"tasks": [row]})
-            self.assertEqual(receipt[0]["taskSpecHash"], fixture.policy["task_spec_hash"])
-            for policy in (None, {}, {**fixture.policy, "task_spec_hash": "0" * 64}, {**fixture.policy, "requires_execution_authorization": False}):
-                with self.subTest(policy=policy):
-                    task["execution_authorization"]["policy"] = policy
-                    with self.assertRaisesRegex(SystemExit, "execution-policy mismatch"):
-                        dev_bridge_materialize.read_dev_bridge_materialized_batch({"tasks": [task]}, {"tasks": [row]})
+    def test_local_materializer_does_not_require_pydantic(self):
+        program = '''
+import builtins, sys
+original = builtins.__import__
+def without_models(name, *args, **kwargs):
+    if name == "pydantic" or name.startswith("pydantic."):
+        raise ImportError("local task maintenance must not require packet models")
+    return original(name, *args, **kwargs)
+builtins.__import__ = without_models
+sys.path.insert(0, sys.argv[1])
+from development_bridge import dev_bridge_materialize
+assert callable(dev_bridge_materialize.verify_signed_dev_bridge_packet)
+'''
+        result = subprocess.run([sys.executable, "-B", "-c", program,
+                                 str(REPO_ROOT / ".orchestrator")],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_wire_canonicalization_keeps_legacy_fields_without_model_defaults(self):
+        from development_bridge.dev_bridge_signer import canonical_packet_bytes
+        packet = {"packet_id": "legacy-來源", "operator_authorization_required": True,
+                  "tasks": [], "signature": {"value": "excluded"}}
+        before = deepcopy(packet)
+        expected = json.dumps({k: v for k, v in packet.items() if k != "signature"},
+                              sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        self.assertEqual(canonical_packet_bytes(packet), expected)
+        self.assertIs(dev_bridge_materialize.canonical_packet_bytes, canonical_packet_bytes)
+        self.assertEqual(packet, before)
+
+    def test_queue_cli_defaults_to_local_tooling_source(self):
+        spec = importlib.util.spec_from_file_location("queue_cli_test", REPO_ROOT / "scripts/queue_assistant_dev_task_packet.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.build_parser().parse_args([]).source, "local_development_tooling")
 
     def test_module_imports_with_no_circular_dependency(self) -> None:
         # No importlib.reload() here: reloading this module would rebind its

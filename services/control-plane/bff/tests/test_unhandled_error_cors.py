@@ -12,10 +12,9 @@ import pytest
     ("https://untrusted.example", False),
 ])
 def test_unhandled_failure_retains_cors_boundary(monkeypatch, origin, allowed):
-    main = importlib.import_module("services.control_plane.bff.main")
+    from services.control_plane.bff.core.app_factory import build_bff_app
     monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://app.dev.mvl-cap.tw")
-    monkeypatch.setattr(main, "_cors_origins", ["https://app.dev.mvl-cap.tw"])
-    application = main._build_bff_app()
+    application = build_bff_app()
 
     @application.get("/test-owner-failure")
     async def fail():

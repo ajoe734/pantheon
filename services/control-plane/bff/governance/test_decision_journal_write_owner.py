@@ -1650,7 +1650,9 @@ patch_entry(
     def test_main_bff_journal_context_ref_resolution_parity(self) -> None:
         from unittest.mock import patch
         from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
-        from services.control_plane.bff.main import _resolve_agora_interaction_context_ref
+        from services.control_plane.bff.agora.interaction.context_resolver import (
+            resolve_agora_interaction_context_ref,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {}, clear=True):
@@ -1676,21 +1678,25 @@ patch_entry(
                     created_at="2026-09-08T00:00:00Z",
                 )
 
-                with patch("services.control_plane.bff.main.read_store", reader):
-                    with patch("services.control_plane.bff.main._extract_identity", return_value=identity):
-                        ref_res = _resolve_agora_interaction_context_ref(
-                            kind="journal_entry",
-                            ref_id="ctx-ref-1",
-                            ref_version=None,
-                            resolved=scope,
-                            session={"workshop_id": "ws-1"},
-                            context_refs=[],
-                            authorization="Bearer token",
-                            source_route="/agora/workshop",
-                            focused_object={"kind": "other", "id": "other-1"},
-                        )
-                        self.assertIsNotNone(ref_res["row"])
-                        self.assertEqual(ref_res["row"]["id"], "ctx-ref-1")
+                # Decoupled seam invocation: zero imports of `main`, zero
+                # monkeypatching of a global `read_store`. Explicit reader
+                # and identity ports only.
+                ref_res = resolve_agora_interaction_context_ref(
+                    kind="journal_entry",
+                    ref_id="ctx-ref-1",
+                    ref_version=None,
+                    resolved=scope,
+                    session={"workshop_id": "ws-1"},
+                    context_refs=[],
+                    authorization="Bearer token",
+                    source_route="/agora/workshop",
+                    focused_object={"kind": "other", "id": "other-1"},
+                    read_store=reader,
+                    extract_identity=lambda auth: identity,
+                    require_read_role=lambda ident: None,
+                )
+                self.assertIsNotNone(ref_res["row"])
+                self.assertEqual(ref_res["row"]["id"], "ctx-ref-1")
 
     def test_daily_obeys_authorized_requested_tenant(self) -> None:
         from unittest.mock import patch

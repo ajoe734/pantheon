@@ -11,12 +11,41 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 
-BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    extract_identity,
+    require_operator_role,
+    require_read_role,
+)
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+import services.control_plane.bff.loop_inventory as loop_inventory_model
+from services.runtime_auth_inbound import encode_jwt_hs256
 
-import main as bff_main  # noqa: E402
-import loop_inventory as loop_inventory_model  # noqa: E402
-from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
+BFF_DIR = Path(__file__).resolve().parent
+
+
+def _make_app() -> FastAPI:
+    app = FastAPI()
+
+    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Any, exc: HTTPException) -> JSONResponse:
+        if isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    app.include_router(
+        create_control_loops_router(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+        )
+    )
+    return app
 
 
 HEADERS = {"Authorization": "Bearer loop-inventory-operator:operator,reviewer,admin:mfa"}
@@ -126,8 +155,9 @@ def _response_schema_ref(schema: dict[str, Any], path: str) -> str:
 
 
 def test_loop_read_models_publish_typed_openapi_envelopes() -> None:
-    bff_main.app.openapi_schema = None
-    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    app = _make_app()
+    app.openapi_schema = None
+    schema = TestClient(app).get("/openapi.json").json()
     expected = {
         "/bff/v5/loop-inventory": "LoopInventoryListEnvelope",
         "/bff/v5/loop-inventory/{loop_id}": "LoopInventoryDetailEnvelope",
@@ -184,7 +214,7 @@ def test_loop_read_models_enforce_strict_jwt_auth_and_read_roles(monkeypatch) ->
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
     monkeypatch.delenv("PANTHEON_BFF_JWKS_URI", raising=False)
     monkeypatch.delenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", raising=False)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     for path in ("/bff/v5/loop-inventory", "/bff/v5/loop-health"):
         assert client.get(path).status_code == 401
@@ -208,7 +238,7 @@ def test_loop_read_models_enforce_strict_jwt_auth_and_read_roles(monkeypatch) ->
 
 def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     response = client.get("/bff/v5/loop-inventory", headers=HEADERS)
 
@@ -256,7 +286,7 @@ def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypa
 
 def test_loop_inventory_read_model_does_not_claim_live_without_present_live_evidence(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     response = client.get("/bff/v5/loop-inventory", headers=HEADERS)
 
@@ -274,7 +304,7 @@ def test_loop_inventory_read_model_does_not_claim_live_without_present_live_evid
 
 def test_loop_inventory_detail_returns_one_catalog_entry(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     response = client.get("/bff/v5/loop-inventory/promotion_deployment", headers=HEADERS)
 
@@ -289,7 +319,7 @@ def test_loop_inventory_detail_returns_one_catalog_entry(monkeypatch) -> None:
 
 def test_loop_inventory_detail_unknown_id_is_404(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     response = client.get("/bff/v5/loop-inventory/not-a-loop", headers=HEADERS)
 
@@ -418,7 +448,7 @@ def test_loop_catalog_stops_at_implemented_until_hosted_evidence_is_admitted() -
 
 def test_loop_inventory_publishes_controller_contract_coverage(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     response = client.get("/bff/v5/loop-inventory", headers=HEADERS)
 
@@ -471,7 +501,7 @@ def test_loop_inventory_archive_completion_and_catalog_claim_do_not_create_liven
         }
     )
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = TestClient(_make_app(), raise_server_exceptions=False)
 
     response = client.get("/bff/v5/loop-inventory/source_ingestion", headers=HEADERS)
 

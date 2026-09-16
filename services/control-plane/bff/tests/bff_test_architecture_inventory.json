@@ -18,7 +18,9 @@
     "tests/test_read_store_fixture_boundaries.py",
     "tests/test_agora_servant_production_write_owner.py",
     "tests/test_read_surface_caller_migration.py",
-    "tests/test_bff_test_architecture.py"
+    "tests/test_bff_test_architecture.py",
+    "test_execute_plans_contract_registry.py",
+    "test_execute_plans_final_live_wiring_contract.py"
   ],
   "migrated_suites": [
     "test_cw01_consult_request_contract.py",
@@ -42,9 +44,9 @@
     "hosted": 6
   },
   "disposition_summary": {
-    "ALLOWLIST": 11,
+    "ALLOWLIST": 13,
     "MIGRATED": 5,
-    "PLANNED": 204,
+    "PLANNED": 202,
     "DECOUPLED": 121
   },
   "tests": [
@@ -661,15 +663,15 @@
       "file": "test_execute_plans_contract_registry.py",
       "layer": "router",
       "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+      "disposition": "ALLOWLIST",
+      "rationale": "Retained on composition allowlist as whole-application contract registry suite"
     },
     {
       "file": "test_execute_plans_final_live_wiring_contract.py",
       "layer": "hosted",
       "imports_main": true,
-      "disposition": "PLANNED",
-      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+      "disposition": "ALLOWLIST",
+      "rationale": "Retained on composition allowlist as whole-application final live wiring contract suite"
     },
     {
       "file": "test_exp002_bff_research_experiments_contract.py",

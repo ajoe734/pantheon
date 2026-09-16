@@ -1,0 +1,109 @@
+{
+  "schema_version": "pantheon.bff-research-composition-seam-evidence.v1",
+  "task_id": "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "source_anchor": "d85a7117c10e25d34625ef9b0978c31f5be68bb7",
+  "implementation_anchor": "644c53eda38747e0164a5ab64fd1091aa817d612",
+  "historical_contract_source": {
+    "commit": "4cd637d0dd8c21f5ff1c7d4a44d1b72b08dfb0ed",
+    "path": "services/control-plane/bff/main.py",
+    "symbols": [
+      "_build_knowledge_workbench_overview",
+      "_build_research_oss_activation_ready_response"
+    ],
+    "usage": "Read-only recovery of established contracts; no runtime import or edits to main.py."
+  },
+  "changed_files": [
+    "services/control-plane/bff/research/routes/knowledge.py",
+    "services/control-plane/bff/research/routes/ops.py",
+    "services/control-plane/bff/tests/test_research_router.py",
+    "docs/deployment/evidence/BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001/evidence.json"
+  ],
+  "source_sha256": {
+    "services/control-plane/bff/research/routes/knowledge.py": "b03eb6a63a4aec2dd8486673ecae4101015d875eec059a1d627ac698b5974cfb",
+    "services/control-plane/bff/research/routes/ops.py": "a200b634a537a1599f9ff17ecdb465d85a3cfe6e055b8d6666343ee96c301294",
+    "services/control-plane/bff/tests/test_research_router.py": "f7616506ce2f1d9d40e69470218f2183e6bd8821db5fe6a3fd486b5cdef333b5"
+  },
+  "behavior": [
+    "Knowledge workbench preserves the full published KW-006 overview and uses the injected clock and snapshot metadata. The established overview is static route-contract metadata, independent of note-store availability; it does not need a typed data read.",
+    "OSS routes call the injected typed get_research_oss_preactivation_snapshot with activity_limit and preserve the complete payload, including offline readiness and disabled production/write flags.",
+    "Both OSS surface names and filtered service metadata retain the historical ok/degraded/unavailable aggregation; each endpoint places its own surface first.",
+    "Synchronous and asynchronous callbacks override local fallback composition; read authorization runs before either projection."
+  ],
+  "validation": [
+    {
+      "command": "timeout 120 python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3",
+      "exit_status": 0,
+      "result": "Checkout-scoped editable distribution verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_research_router.py",
+      "exit_status": 0,
+      "result": "44 passed, 1 dependency deprecation warning in 25.83s; terminal output collected."
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "passed"
+    }
+  ],
+  "ordering": {
+    "verified_at": "2026-09-10T06:46:15.238920+00:00",
+    "source": "Central canonical ai-status.json read-only mirror after governed show confirmed task in_progress; no task-state edits.",
+    "source_sha256": "462dc03717f9fe120e9a556c2b4916227381dcc3c0ff9152b4f0ad4c07fc0515",
+    "chain": [
+      "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001",
+      "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+      "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+      "BFF-ROUTER-USECASE-CORRECTIVE-001",
+      "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+      "STRUCT-RETIRE-001"
+    ],
+    "verified_edges": [
+      {
+        "predecessor": "BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001",
+        "successor": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "successor_status": "blocked",
+        "successor_last_update": "2026-09-10T06:40:04Z",
+        "direct_dependency_verified": true
+      },
+      {
+        "predecessor": "BFF-TEST-MIGRATION-B09-RESEARCH-KNOWLEDGE-001",
+        "successor": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "successor_status": "blocked",
+        "successor_last_update": "2026-09-10T05:47:32Z",
+        "direct_dependency_verified": true
+      },
+      {
+        "predecessor": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "successor": "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "successor_status": "todo",
+        "successor_last_update": "2026-09-10T06:15:04Z",
+        "direct_dependency_verified": true
+      },
+      {
+        "predecessor": "BFF-ROUTER-USECASE-CORRECTIVE-001",
+        "successor": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "successor_status": "todo",
+        "successor_last_update": "2026-09-10T05:58:07Z",
+        "direct_dependency_verified": true
+      },
+      {
+        "predecessor": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "successor": "STRUCT-RETIRE-001",
+        "successor_status": "todo",
+        "successor_last_update": "2026-09-10T05:58:30Z",
+        "direct_dependency_verified": true
+      }
+    ],
+    "scope_note": "Qualified serialized overlap; no downstream ownership transfer, no concurrent broad writers, and no claim that B09 or downstream tasks are complete."
+  },
+  "delivery": {
+    "target": "ajoe734/pantheon:dev",
+    "branch": "task/BFF-RESEARCH-COMPOSITION-SEAM-CORRECTIVE-001",
+    "review_status": "pending independent exact-head review",
+    "merge_status": "not yet merged",
+    "note": "PR/head/manifest binding is recorded by governed handoff; reviewer approval and merge evidence must come from canonical state and GitHub, not owner assertions."
+  }
+}

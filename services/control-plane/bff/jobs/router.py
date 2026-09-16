@@ -8,6 +8,15 @@ bff_main, inspects main.__dict__, or uses globals()/dynamic-proxy forwarding.
 
 Under OVERLAY-RETIRE-001, in-memory job overlays have been retired and deleted;
 all job reads resolve directly through the canonical read store.
+
+BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001: ``read_store.get_job_bff``/
+``list_jobs_bff`` now resolve through the typed ``JobReadPort`` composition
+across the six qualified job sources (see ``ports/job_read.py`` and
+``docs/operations/bff-upstream-v2-20260911/decisions/research-jobs.md``).
+``ResearchTicket`` records are never returned as jobs. A source that is
+unreachable/unconfigured for a specific ``job_id`` raises
+``JobSourceUnavailableError``, which this router maps to HTTP 503 rather than
+a false 404.
 """
 from __future__ import annotations
 
@@ -16,6 +25,7 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, Body, Header, Query
 
 from ..models import ErrorCode
+from ..ports.job_read import JobSourceUnavailableError
 
 JobOverlay = Callable[[], Dict[str, Dict[str, Any]]]
 SubmitJobAction = Callable[[str, str, str, Any, Dict[str, Any]], Dict[str, Any]]
@@ -53,7 +63,15 @@ def create_jobs_router(
 
     def _lookup_job(job_id: str) -> Optional[Dict[str, Any]]:
         read_store = _resolve_read_store()
-        return read_store.get_job_bff(job_id)
+        try:
+            return read_store.get_job_bff(job_id)
+        except JobSourceUnavailableError as exc:
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                f"Job source {exc.source} is unavailable",
+                exc.message,
+            ) from exc
 
     @router.get("/bff/jobs")
     async def list_jobs(
