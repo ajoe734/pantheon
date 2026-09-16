@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,10 +12,9 @@ from fastapi.testclient import TestClient
 from starlette.routing import Route
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
-sys.path.insert(0, os.path.dirname(__file__))
 
-import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
+from services.control_plane.bff import main as bff_main  # noqa: E402
+from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-002:operator,admin:mfa"}
