@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from typing import Any
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 HEADERS = {
