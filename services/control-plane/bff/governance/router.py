@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from .service import GovernanceService, page_slice, split_csv, utc_now_rfc3339
+from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
@@ -121,11 +121,12 @@ def create_governance_router(
     meta_staleness: Optional[Callable[[], Any]] = None,
     redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
     capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
-    submit_action: Optional[Callable[..., Any]] = None,
+    submit_action: Optional["SubmitAction"] = None,
     publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     read_surface_state: Optional[Callable[[], str]] = None,
     governance_service: Optional[GovernanceService] = None,
+    reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
 
@@ -146,6 +147,7 @@ def create_governance_router(
     _read_meta = read_surface_meta or _default_read_surface_meta
     _staleness = meta_staleness or (lambda: None)
     _redact = redact_evidence_refs or _default_redact_evidence_refs
+    _reject_body_idempotency_key = reject_body_idempotency_key or (lambda payload: None)
     _capabilities = capabilities_for_identity or (lambda identity: [])
     _read_surface_state = read_surface_state or (lambda: "fresh")
 
@@ -1081,6 +1083,7 @@ def create_governance_router(
     ) -> JSONResponse:
         identity = _identity(authorization, operator=True)
         _require_approver(identity)
+        _reject_body_idempotency_key(payload)
         decisions = payload.get("decisions") if isinstance(payload.get("decisions"), list) else None
         if not decisions:
             _fail(422, "VALIDATION_FAILED", "decisions must be a non-empty list", "The decisions field must contain at least one item", precondition_failed="decisions")

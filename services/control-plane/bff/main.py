@@ -19946,13 +19946,11 @@ app.include_router(
         redact_evidence_refs=redact_evidence_refs,
         capabilities_for_identity=_capabilities_for_identity,
         read_surface_state=_read_surface_state,
-        submit_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
-            entity_type, entity_id, action_id, resolved_key, identity, payload
-        ),
+        submit_action=_command_adapter_service.submit_governance_action,
         publish_event=lambda event_type, data: _publish_event(
             _sse_buffers["audit"], _sse_subscribers["audit"], event_type, data
         ),
-
+        reject_body_idempotency_key=_reject_body_idempotency_key,
     )
 )
 from .postmortems.router import create_postmortem_router

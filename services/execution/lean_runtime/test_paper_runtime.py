@@ -1261,6 +1261,36 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
         self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
 
+    def test_reproduces_zero_authoritative_sessions_when_binding_never_resolves(self):
+        """LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001 reproduction of root-cause
+        mechanism #2 recorded in docs/deployment/evidence/
+        LOOP-L08-PERSONA-PROVISIONING-RECONCILE-001/evidence.json:
+        list_authoritative_paper_runtime_monitoring_sessions() returned 0
+        sessions because no worker had an active RuntimeBinding to publish a
+        heartbeat against. When RuntimeBindingResolver.resolve() cannot
+        resolve any binding (no active RuntimeBinding exists for this
+        runtime), emit_heartbeat must return False and must never fabricate
+        a heartbeat payload or a default binding identifier -- so no
+        monitoring session is ever created downstream from a worker that has
+        nothing to report."""
+
+        class _UnresolvedBindingResolver:
+            def resolve(self):
+                return None
+
+        identity = replace(self._identity(), telemetry_url="http://telemetry.test")
+        emitter = RuntimeTelemetryEmitter(identity, _UnresolvedBindingResolver())
+        self.assertTrue(emitter.enabled)
+
+        with patch("urllib.request.urlopen") as urlopen:
+            emitted = emitter.emit_heartbeat()
+
+        self.assertFalse(emitted)
+        urlopen.assert_not_called()
+
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNone(event)
+
     def test_runtime_telemetry_emitter_authenticates_ingest_tenant(self):
         identity = replace(
             self._identity(),

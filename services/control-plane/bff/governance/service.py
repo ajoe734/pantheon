@@ -12,7 +12,20 @@ import inspect
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 
 class ApprovalQueueReaderPort(Protocol):
@@ -28,7 +41,28 @@ class ApprovalQueueReaderPort(Protocol):
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
-SubmitAction = Callable[..., Any]
+
+
+class SubmitAction(Protocol):
+    """Named-parameter contract for governance command-admission submission.
+
+    ``GovernanceService.submit_governance_action`` is the only caller and
+    always invokes this with these exact keyword arguments (see below); a
+    bare ``Callable[..., Any]`` let a mismatched positional-argument seam
+    (e.g. the composition-root lambda that used to bind this) pass static
+    checks while raising ``TypeError`` at request time.
+    """
+
+    def __call__(
+        self,
+        *,
+        action_kind: str,
+        target_id: str,
+        action_id: str,
+        payload: Mapping[str, Any],
+        identity: Any,
+        idempotency_key: str,
+    ) -> Union[Any, Awaitable[Any]]: ...
 
 
 def utc_now_rfc3339() -> str:

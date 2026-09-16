@@ -7390,16 +7390,10 @@ def verify_stale_archive_resurrection_proof(
             f"Cannot reconcile stale resurrected task: activity audit is unavailable: {task_id}"
         ) from exc
 
-    # The exception proves import plus role recovery only. Unknown mutations
-    # must fail closed too, rather than relying on an exhaustive denylist of
-    # every current and future lifecycle/delivery command. Notes update only
-    # narrative; the import and assignment events are authenticated below.
-    role_recovery_types = {
-        "assign", "task_imported", "import", "task_reentered",
-        "task_reassigned", "task_assigned", "note",
-    }
+    # Monotonically ordered activity events for task_id across all sources.
+    task_events: list[tuple[int, datetime, dict[str, Any]]] = []
     last_task_ts = None
-    for event in events:
+    for idx, event in enumerate(events):
         if not isinstance(event, Mapping):
             continue
         if str(event.get("task_id") or "").strip() != task_id:
@@ -7414,148 +7408,249 @@ def verify_stale_archive_resurrection_proof(
                 f"stale resurrection lineage audit log timestamp ordering is ambiguous: {task_id}"
             )
         last_task_ts = ev_ts
-        if ev_ts >= archived_at:
+        task_events.append((idx, ev_ts, event))
+
+    post_archive_events = [
+        (idx, ev_ts, ev) for idx, ev_ts, ev in task_events
+        if ev_ts >= archived_at
+    ]
+
+    reopen_events = [
+        (idx, ev_ts, ev) for idx, ev_ts, ev in post_archive_events
+        if str(ev.get("type") or "").strip() == "reopen"
+    ]
+    if len(reopen_events) > 1:
+        raise RuntimeError(
+            f"stale resurrection lineage fork: multiple reopen events detected: {task_id}"
+        )
+
+    has_reopen = False
+    reopen_idx = -1
+    reopen_ts = None
+    reopen_ev: dict[str, Any] = {}
+    if len(reopen_events) == 1:
+        reopen_idx, reopen_ts, reopen_ev = reopen_events[0]
+        actor = str(reopen_ev.get("agent") or "").strip()
+        op_mode = str(reopen_ev.get("operator_mode") or "").strip()
+        if actor != "Human/Ops" or op_mode != "local_human_ops":
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: intervening reopen event detected: {task_id}"
+            )
+        ev_id = str(reopen_ev.get("event_id") or "").strip()
+        if not ev_id:
+            raise RuntimeError(
+                f"stale resurrection reopen event missing event_id: {task_id}"
+            )
+        payload_without_cmd = {
+            k: v for k, v in reopen_ev.items() if k not in {"event_id", "status_command"}
+        }
+        payload_all = {k: v for k, v in reopen_ev.items() if k != "event_id"}
+        accepted_digests = {
+            _canonical_json_sha256(payload_without_cmd),
+            _canonical_json_sha256(payload_all),
+        }
+        accepted_ids = {
+            f"{prefix}-{d}"
+            for d in accepted_digests
+            for prefix in (
+                "ai-status-event",
+                "human-ops-reopen",
+                "human-ops-task-reopened",
+            )
+        }
+        if ev_id not in accepted_ids:
+            raise RuntimeError(
+                f"stale resurrection reopen event unauthenticated event_id ({ev_id!r}): {task_id}"
+            )
+        has_reopen = True
+
+    if not has_reopen:
+        # The exception proves import plus role recovery only. Unknown mutations
+        # must fail closed too, rather than relying on an exhaustive denylist of
+        # every current and future lifecycle/delivery command. Notes update only
+        # narrative; the import and assignment events are authenticated below.
+        role_recovery_types = {
+            "assign", "task_imported", "import", "task_reentered",
+            "task_reassigned", "task_assigned", "note",
+        }
+        for idx, ev_ts, event in post_archive_events:
             ev_type = str(event.get("type") or "").strip()
             if ev_type not in role_recovery_types:
                 raise RuntimeError(
                     f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
                 )
+    else:
+        pre_reopen_allowed_types = {
+            "note", "task_reassigned", "task_assigned",
+            "assign", "task_imported", "import", "task_reentered",
+        }
+        post_reopen_allowed_types = {
+            "note", "blocker", "start", "task_started",
+            "task_reassigned", "task_assigned",
+            "wake_queued", "worker_worktree_allocated", "worker_started",
+            "worker_governance_lease_preserved", "worker_lost_lease",
+            "worker_lost_lease_recovery_held", "worker_lost_lease_recovery_pending",
+            "worker_promotion_continuation_pending",
+        }
+        for idx, ev_ts, event in post_archive_events:
+            ev_type = str(event.get("type") or "").strip()
+            if idx < reopen_idx:
+                if ev_type not in pre_reopen_allowed_types:
+                    raise RuntimeError(
+                        f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
+                    )
+            elif idx > reopen_idx:
+                if ev_type not in post_reopen_allowed_types:
+                    raise RuntimeError(
+                        f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
+                    )
+                for d_key in (
+                    "commit", "git_commit", "head_sha", "head_oid", "review_head_sha",
+                    "branch", "review_pr", "pr_number", "review_file",
+                    "delivery", "delivery_binding", "review_evidence",
+                ):
+                    val = event.get(d_key)
+                    if val is not None and str(val).strip():
+                        raise RuntimeError(
+                            f"Cannot reconcile stale resurrected task: post-reopen delivery activity detected ({d_key}): {task_id}"
+                        )
+
+        if active_task.get("delivery_binding") is not None:
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: active task has post-reopen delivery binding: {task_id}"
+            )
+        if active_task.get("review_file"):
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: active task has post-reopen review_file: {task_id}"
+            )
+        if active_task.get("branch") and active_task.get("branch") != archived_task.get("branch"):
+            raise RuntimeError(
+                f"Cannot reconcile stale resurrected task: active task has altered branch: {task_id}"
+            )
 
     import_events: list[tuple[int, datetime, dict[str, Any]]] = []
-    for idx, event in enumerate(events):
-        if not isinstance(event, Mapping):
-            continue
-        if str(event.get("task_id") or "").strip() != task_id:
-            continue
-        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
-        if ev_ts is None or archived_at is None or ev_ts < archived_at:
-            continue
-        ev_type = str(event.get("type") or "").strip()
-        if ev_type in {"assign", "task_imported", "import", "task_reentered"}:
-            ev_id = str(event.get("event_id") or "").strip()
-            actor = str(event.get("agent") or "").strip()
-            if not ev_id:
-                raise RuntimeError(
-                    f"stale resurrection import event missing event_id: {task_id}"
-                )
-            payload_without_cmd = {
-                k: v for k, v in event.items() if k not in {"event_id", "status_command"}
-            }
-            payload_all = {k: v for k, v in event.items() if k != "event_id"}
-            accepted_digests = {
-                _canonical_json_sha256(payload_without_cmd),
-                _canonical_json_sha256(payload_all),
-            }
-            accepted_ids = {
-                f"{prefix}-{d}"
-                for d in accepted_digests
-                for prefix in (
-                    "ai-status-event",
-                    "human-ops-import",
-                    "human-ops-task-imported",
-                    "human-ops-task-reentered",
-                    "human-ops-assign",
-                )
-            }
-            if ev_id not in accepted_ids:
-                raise RuntimeError(
-                    f"stale resurrection import event unauthenticated event_id ({ev_id!r}): {task_id}"
-                )
-            if actor != "Human/Ops":
-                raise RuntimeError(
-                    f"stale resurrection import event unauthorized actor ({actor!r}): {task_id}"
-                )
-            op_mode = str(event.get("operator_mode") or "").strip()
-            if op_mode != "local_human_ops":
-                raise RuntimeError(
-                    f"stale resurrection import event missing or invalid operator_mode ({op_mode!r}): {task_id}"
-                )
-            raw_gen = event.get("generation")
-            if raw_gen is None or isinstance(raw_gen, bool):
-                raise RuntimeError(
-                    f"stale resurrection import event missing or invalid generation: {task_id}"
-                )
-            try:
-                if int(raw_gen) != archive_gen:
+    if not has_reopen:
+        for idx, ev_ts, event in post_archive_events:
+            ev_type = str(event.get("type") or "").strip()
+            if ev_type in {"assign", "task_imported", "import", "task_reentered"}:
+                ev_id = str(event.get("event_id") or "").strip()
+                actor = str(event.get("agent") or "").strip()
+                if not ev_id:
                     raise RuntimeError(
-                        f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
+                        f"stale resurrection import event missing event_id: {task_id}"
                     )
-            except (ValueError, TypeError) as exc:
-                raise RuntimeError(
-                    f"stale resurrection import event generation invalid: {task_id}"
-                ) from exc
-            raw_arch_gen = event.get("archive_generation")
-            if raw_arch_gen is None or isinstance(raw_arch_gen, bool):
-                raise RuntimeError(
-                    f"stale resurrection import event missing or invalid archive_generation: {task_id}"
-                )
-            try:
-                if int(raw_arch_gen) != archive_gen:
+                payload_without_cmd = {
+                    k: v for k, v in event.items() if k not in {"event_id", "status_command"}
+                }
+                payload_all = {k: v for k, v in event.items() if k != "event_id"}
+                accepted_digests = {
+                    _canonical_json_sha256(payload_without_cmd),
+                    _canonical_json_sha256(payload_all),
+                }
+                accepted_ids = {
+                    f"{prefix}-{d}"
+                    for d in accepted_digests
+                    for prefix in (
+                        "ai-status-event",
+                        "human-ops-import",
+                        "human-ops-task-imported",
+                        "human-ops-task-reentered",
+                        "human-ops-assign",
+                    )
+                }
+                if ev_id not in accepted_ids:
                     raise RuntimeError(
-                        f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
+                        f"stale resurrection import event unauthenticated event_id ({ev_id!r}): {task_id}"
                     )
-            except (ValueError, TypeError) as exc:
-                raise RuntimeError(
-                    f"stale resurrection import event archive_generation invalid: {task_id}"
-                ) from exc
-            raw_owner = event.get("owner") or event.get("new_owner")
-            if not raw_owner:
-                raise RuntimeError(
-                    f"stale resurrection import event missing mandatory owner: {task_id}"
-                )
-            ev_owner = canonical_agent_name(raw_owner)
-            if ev_owner != archive_owner:
-                raise RuntimeError(
-                    f"stale resurrection import event owner mismatch (expected {archive_owner!r}, got {ev_owner!r}): {task_id}"
-                )
-            raw_reviewer = event.get("reviewer") or event.get("new_reviewer")
-            if not raw_reviewer:
-                raise RuntimeError(
-                    f"stale resurrection import event missing mandatory reviewer: {task_id}"
-                )
-            ev_reviewer = canonical_agent_name(raw_reviewer)
-            if ev_reviewer != archive_reviewer:
-                raise RuntimeError(
-                    f"stale resurrection import event reviewer mismatch (expected {archive_reviewer!r}, got {ev_reviewer!r}): {task_id}"
-                )
-            ev_archive_digest = str(event.get("archive_snapshot_sha256") or "").strip()
-            if not ev_archive_digest:
-                raise RuntimeError(
-                    f"stale resurrection import event missing mandatory archive_snapshot_sha256: {task_id}"
-                )
-            if ev_archive_digest != archive_sha256:
-                raise RuntimeError(
-                    f"stale resurrection import event archive digest mismatch (expected {archive_sha256!r}, got {ev_archive_digest!r}): {task_id}"
-                )
-            import_events.append((idx, ev_ts, event))
+                if actor != "Human/Ops":
+                    raise RuntimeError(
+                        f"stale resurrection import event unauthorized actor ({actor!r}): {task_id}"
+                    )
+                op_mode = str(event.get("operator_mode") or "").strip()
+                if op_mode != "local_human_ops":
+                    raise RuntimeError(
+                        f"stale resurrection import event missing or invalid operator_mode ({op_mode!r}): {task_id}"
+                    )
+                raw_gen = event.get("generation")
+                if raw_gen is None or isinstance(raw_gen, bool):
+                    raise RuntimeError(
+                        f"stale resurrection import event missing or invalid generation: {task_id}"
+                    )
+                try:
+                    if int(raw_gen) != archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"stale resurrection import event generation invalid: {task_id}"
+                    ) from exc
+                raw_arch_gen = event.get("archive_generation")
+                if raw_arch_gen is None or isinstance(raw_arch_gen, bool):
+                    raise RuntimeError(
+                        f"stale resurrection import event missing or invalid archive_generation: {task_id}"
+                    )
+                try:
+                    if int(raw_arch_gen) != archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"stale resurrection import event archive_generation invalid: {task_id}"
+                    ) from exc
+                raw_owner = event.get("owner") or event.get("new_owner")
+                if not raw_owner:
+                    raise RuntimeError(
+                        f"stale resurrection import event missing mandatory owner: {task_id}"
+                    )
+                ev_owner = canonical_agent_name(raw_owner)
+                if ev_owner != archive_owner:
+                    raise RuntimeError(
+                        f"stale resurrection import event owner mismatch (expected {archive_owner!r}, got {ev_owner!r}): {task_id}"
+                    )
+                raw_reviewer = event.get("reviewer") or event.get("new_reviewer")
+                if not raw_reviewer:
+                    raise RuntimeError(
+                        f"stale resurrection import event missing mandatory reviewer: {task_id}"
+                    )
+                ev_reviewer = canonical_agent_name(raw_reviewer)
+                if ev_reviewer != archive_reviewer:
+                    raise RuntimeError(
+                        f"stale resurrection import event reviewer mismatch (expected {archive_reviewer!r}, got {ev_reviewer!r}): {task_id}"
+                    )
+                ev_archive_digest = str(event.get("archive_snapshot_sha256") or "").strip()
+                if not ev_archive_digest:
+                    raise RuntimeError(
+                        f"stale resurrection import event missing mandatory archive_snapshot_sha256: {task_id}"
+                    )
+                if ev_archive_digest != archive_sha256:
+                    raise RuntimeError(
+                        f"stale resurrection import event archive digest mismatch (expected {archive_sha256!r}, got {ev_archive_digest!r}): {task_id}"
+                    )
+                import_events.append((idx, ev_ts, event))
 
-    if not import_events:
-        raise RuntimeError(
-            f"stale resurrection lineage missing authoritative import/re-entry event: {task_id}"
-        )
-    if len(import_events) > 1:
-        raise RuntimeError(
-            f"stale resurrection lineage fork: multiple import/re-entry events detected: {task_id}"
-        )
-    import_idx, import_ts, import_ev = import_events[0]
+        if not import_events:
+            raise RuntimeError(
+                f"stale resurrection lineage missing authoritative import/re-entry event: {task_id}"
+            )
+        if len(import_events) > 1:
+            raise RuntimeError(
+                f"stale resurrection lineage fork: multiple import/re-entry events detected: {task_id}"
+            )
+        import_idx, import_ts, import_ev = import_events[0]
+    else:
+        import_idx, import_ts, import_ev = reopen_idx, reopen_ts, reopen_ev
 
-    reassignment_events: list[tuple[int, datetime, dict[str, Any]]] = []
-    for idx, event in enumerate(events):
-        if not isinstance(event, Mapping):
-            continue
-        if str(event.get("task_id") or "").strip() != task_id:
-            continue
-        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
-        if ev_ts is None:
-            continue
+    transition_events: list[tuple[int, datetime, dict[str, Any]]] = []
+    for idx, ev_ts, event in post_archive_events:
         ev_type = str(event.get("type") or "").strip()
         if ev_type in {"task_reassigned", "task_assigned"}:
-            if archived_at is not None and ev_ts < archived_at:
-                continue
-            if idx < import_idx or ev_ts < import_ts:
-                raise RuntimeError(
-                    f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
-                )
+            if not has_reopen:
+                if idx < import_idx or ev_ts < import_ts:
+                    raise RuntimeError(
+                        f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
+                    )
             validated = task_machine.validate_assignment_activity_event(event)
             if validated is None:
                 raise RuntimeError(
@@ -7572,18 +7667,82 @@ def verify_stale_archive_resurrection_proof(
                 raise RuntimeError(
                     f"stale resurrection lineage contains extra generation transition ({validated.old_generation} -> {validated.generation}) beyond active generation ({active_gen}): {task_id}"
                 )
-            reassignment_events.append((idx, ev_ts, validated.as_dict()))
+            ev_dict = validated.as_dict()
+            ev_dict["kind"] = "assignment"
+            ev_dict["operator_mode"] = str(event.get("operator_mode") or "").strip()
+            transition_events.append((idx, ev_ts, ev_dict))
+
+        elif has_reopen and ev_type in {
+            "worker_lost_lease_recovery_held",
+            "worker_lost_lease_recovery_pending",
+            "worker_promotion_continuation_pending",
+        }:
+            rec_actor = str(event.get("agent") or "").strip()
+            if rec_actor != "Orchestrator":
+                raise RuntimeError(
+                    f"stale resurrection lineage recovery event {event.get('event_id')} unauthorized (expected Orchestrator): {task_id}"
+                )
+            rcpt = event.get("worker_recovery_receipt")
+            if not isinstance(rcpt, Mapping):
+                rcpt = event
+            raw_old_gen = rcpt.get("task_generation")
+            raw_new_gen = rcpt.get("fence_generation")
+            if raw_old_gen is not None and raw_new_gen is not None:
+                try:
+                    old_gen = int(raw_old_gen)
+                    new_gen = int(raw_new_gen)
+                except (ValueError, TypeError):
+                    continue
+                if old_gen < new_gen:
+                    if old_gen < archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection lineage historical recovery occurred after archive: {task_id}"
+                        )
+                    if old_gen >= active_gen or new_gen > active_gen:
+                        raise RuntimeError(
+                            f"stale resurrection lineage contains extra generation transition ({old_gen} -> {new_gen}) beyond active generation ({active_gen}): {task_id}"
+                        )
+                    transition_events.append(
+                        (
+                            idx,
+                            ev_ts,
+                            {
+                                "kind": "lease_recovery",
+                                "old_generation": old_gen,
+                                "generation": new_gen,
+                                "event_id": str(event.get("event_id") or ""),
+                                "ts": str(event.get("ts") or event.get("timestamp") or ""),
+                                "message": str(event.get("message") or ""),
+                                "agent": "Orchestrator",
+                            },
+                        )
+                    )
 
     current_owner = archive_owner
     current_reviewer = archive_reviewer
+    if has_reopen:
+        matching_first = [
+            ev for idx, ts, ev in transition_events
+            if ev.get("old_generation") == archive_gen
+        ]
+        if matching_first:
+            first_ev = matching_first[0]
+            evidence_rev = canonical_agent_name(review_evidence.get("reviewer"))
+            if (
+                first_ev.get("kind") == "assignment"
+                and first_ev.get("old_reviewer")
+                and canonical_agent_name(first_ev.get("old_reviewer")) == evidence_rev
+            ):
+                current_reviewer = evidence_rev
+
     chain: list[dict[str, Any]] = []
-    last_file_idx = import_idx
-    last_ts = import_ts
+    last_file_idx = import_idx if not has_reopen else -1
+    last_ts = import_ts if not has_reopen else None
 
     for g in range(archive_gen, active_gen):
         matching = [
             (idx, ts, ev)
-            for idx, ts, ev in reassignment_events
+            for idx, ts, ev in transition_events
             if ev.get("old_generation") == g and ev.get("generation") == g + 1
         ]
         if not matching:
@@ -7596,33 +7755,56 @@ def verify_stale_archive_resurrection_proof(
             )
         ev_file_idx, ev_ts, ev = matching[0]
 
-        if ev_file_idx < last_file_idx:
+        if last_file_idx != -1 and ev_file_idx < last_file_idx:
             raise RuntimeError(
                 f"stale resurrection lineage timestamp ordering is ambiguous: reassignments out of file sequence: {task_id}"
             )
-        if ev_ts < last_ts:
+        if last_ts is not None and ev_ts < last_ts:
             raise RuntimeError(
                 f"stale resurrection lineage timestamp ordering is ambiguous: {task_id}"
             )
 
-        reassign_actor = str(ev.get("agent") or "").strip()
-        reassign_op_mode = str(ev.get("operator_mode") or "").strip()
-        if reassign_actor != "Human/Ops" and reassign_op_mode != "local_human_ops":
-            raise RuntimeError(
-                f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
-            )
-        old_owner = canonical_agent_name(ev.get("old_owner"))
-        old_reviewer = canonical_agent_name(ev.get("old_reviewer"))
-        if old_owner != current_owner:
-            raise RuntimeError(
-                f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old owner {current_owner!r}, got {old_owner!r}: {task_id}"
-            )
-        if old_reviewer != current_reviewer:
-            raise RuntimeError(
-                f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old reviewer {current_reviewer!r}, got {old_reviewer!r}: {task_id}"
-            )
-        new_owner = canonical_agent_name(ev.get("new_owner"))
-        new_reviewer = canonical_agent_name(ev.get("new_reviewer"))
+        if not has_reopen:
+            reassign_actor = str(ev.get("agent") or "").strip()
+            reassign_op_mode = str(ev.get("operator_mode") or "").strip()
+            if reassign_actor != "Human/Ops" and reassign_op_mode != "local_human_ops":
+                raise RuntimeError(
+                    f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
+                )
+        else:
+            if ev_file_idx < reopen_idx:
+                reassign_actor = str(ev.get("agent") or "").strip()
+                reassign_op_mode = str(ev.get("operator_mode") or "").strip()
+                if reassign_actor != "Human/Ops" or reassign_op_mode != "local_human_ops":
+                    raise RuntimeError(
+                        f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
+                    )
+            else:
+                reassign_actor = str(ev.get("agent") or "").strip()
+                if reassign_actor not in {"Human/Ops", "Orchestrator"}:
+                    raise RuntimeError(
+                        f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops or Orchestrator, got {reassign_actor!r}): {task_id}"
+                    )
+
+        if ev.get("kind") == "assignment":
+            old_owner = canonical_agent_name(ev.get("old_owner"))
+            old_reviewer = canonical_agent_name(ev.get("old_reviewer"))
+            if old_owner != current_owner:
+                raise RuntimeError(
+                    f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old owner {current_owner!r}, got {old_owner!r}: {task_id}"
+                )
+            if old_reviewer != current_reviewer:
+                raise RuntimeError(
+                    f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old reviewer {current_reviewer!r}, got {old_reviewer!r}: {task_id}"
+                )
+            new_owner = canonical_agent_name(ev.get("new_owner"))
+            new_reviewer = canonical_agent_name(ev.get("new_reviewer"))
+        else:
+            old_owner = current_owner
+            new_owner = current_owner
+            old_reviewer = current_reviewer
+            new_reviewer = current_reviewer
+
         chain.append(
             {
                 "event_id": str(ev.get("event_id") or ""),
@@ -7642,7 +7824,7 @@ def verify_stale_archive_resurrection_proof(
         last_file_idx = ev_file_idx
         last_ts = ev_ts
 
-    if len(reassignment_events) != len(chain):
+    if len(transition_events) != len(chain):
         raise RuntimeError(
             f"stale resurrection lineage contains extraneous or unhandled reassignment events: {task_id}"
         )
@@ -7663,8 +7845,31 @@ def verify_stale_archive_resurrection_proof(
     archive_sha256 = _canonical_json_sha256(archived)
     audit_proof_digest = _compute_audit_proof_digest(events, task_id)
 
-    import_event_id = str(import_ev.get("event_id") or "")
-    all_event_ids = ([import_event_id] if import_event_id else []) + [item["event_id"] for item in chain]
+    if has_reopen:
+        entry_event_id = str(reopen_ev.get("event_id") or "")
+        entry_ts = str(reopen_ev.get("ts") or "")
+        entry_file_idx = reopen_idx
+    else:
+        entry_event_id = str(import_ev.get("event_id") or "")
+        entry_ts = str(import_ev.get("ts") or "")
+        entry_file_idx = import_idx
+
+    events_ordered = [(entry_file_idx, entry_event_id, entry_ts)]
+    for item, (idx, ts, ev) in zip(chain, transition_events):
+        events_ordered.append((idx, item["event_id"], item["ts"]))
+    events_ordered.sort(key=lambda x: x[0])
+
+    seen_ids = set()
+    all_event_ids = []
+    for _, eid, _ in events_ordered:
+        if eid and eid not in seen_ids:
+            seen_ids.add(eid)
+            all_event_ids.append(eid)
+
+    start_event_id = events_ordered[0][1] if events_ordered else entry_event_id
+    end_event_id = events_ordered[-1][1] if events_ordered else entry_event_id
+    start_ts = events_ordered[0][2] if events_ordered else entry_ts
+    end_ts = events_ordered[-1][2] if events_ordered else entry_ts
 
     proof = {
         "proof_kind": "stale_role_recovery_archive_resurrection",
@@ -7688,14 +7893,15 @@ def verify_stale_archive_resurrection_proof(
             "digest": cas_digest,
         },
         "audit_proof_range": {
-            "import_event_id": import_event_id,
-            "start_event_id": chain[0]["event_id"] if chain else import_event_id,
-            "end_event_id": chain[-1]["event_id"] if chain else import_event_id,
-            "start_timestamp": str(import_ev.get("ts") or ""),
-            "end_timestamp": chain[-1]["ts"] if chain else str(import_ev.get("ts") or ""),
+            "import_event_id": entry_event_id,
+            "start_event_id": start_event_id,
+            "end_event_id": end_event_id,
+            "start_timestamp": start_ts,
+            "end_timestamp": end_ts,
             "hops": len(chain),
             "event_ids": all_event_ids,
             "audit_proof_digest": audit_proof_digest,
+            **({"reopen_event_id": entry_event_id} if has_reopen else {}),
         },
         "reassignment_chain": [
             {
